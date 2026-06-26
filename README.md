@@ -1,5 +1,11 @@
 # Open GENAI
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+![LLM](https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI--compatible-0a7)
+![Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Qdrant%20%7C%20Keycloak-success)
+![Host](https://img.shields.io/badge/host-macOS%20%7C%20Linux%2BNVIDIA-lightgrey)
+![Status](https://img.shields.io/badge/status-experimental-orange)
+
 デジタル庁がオープンソースで公開したガバメント AI「源内（GENAI）」を、
 **完全ローカル環境 × ローカル LLM（OpenAI 互換 API）** で動かすためのプロジェクトです。
 
