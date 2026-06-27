@@ -45,8 +45,9 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `rag-app/` | RAG を「行政実務用 AI アプリ」として提供するマイクロサービス（FastAPI） |
 | `whisper-app/` | 文字起こしを「AI アプリ」として提供（faster-whisper / CPU） |
 | `sd-app/` | 画像生成を「AI アプリ」として提供（ホストの SD サーバへプロキシ） |
+| `dify-app/` | 外部 Dify（ワークフロー / チャットフロー）を「AI アプリ」として連携する汎用プロキシ（FastAPI） |
 | `shared/` | backend と rag-app で共用するドキュメント抽出モジュール（`docextract.py`） |
-| `docker-compose.yml` | web / backend / rag-app / whisper-app / sd-app / qdrant / keycloak / (任意)ollama をまとめて起動 |
+| `docker-compose.yml` | web / backend / rag-app / whisper-app / sd-app / dify-app / qdrant / keycloak / (任意)ollama をまとめて起動 |
 
 ## オリジナル源内からの改修内容（クラウド依存 → オープンアーキテクチャ）
 
@@ -90,6 +91,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 - 改修: `packages/common/src/application/model.ts` — ローカル（Ollama）モデルの定義 + `doc`（ドキュメント添付）フラグを有効化
 - 改修: `packages/web/vite.config.ts` — コンテナ実行向けに `host`/ポーリング監視を設定
 - 改修: `src/features/exapps/hooks/useGenUApps.ts` — クラウド依存の組み込み「文字起こし」をメニューから除外（ローカル Whisper の AI アプリで代替）
+- 改修: `src/features/team-apps/utils/endpointUrl.ts` — AI アプリのエンドポイント URL 検証を `http` も許可（ローカルのコンテナ間通信 `http://dify-app:8004/invoke` 等のため。従来は `https` 必須）
 - 改修: `src/features/teams/components/DialogDeleteTeam.tsx` — チーム削除時に知識ベースも消える旨の警告を追加
 - 改修: 翻訳/ダイアグラム画面の説明文をローカル実態（Ollama）に合わせて修正
 - 削除: `src/components/auth/AuthWithUserpool.tsx` / `AuthWithSAML.tsx`（Cognito 専用のため不要）
@@ -291,6 +293,118 @@ docker compose exec rag-app sh -lc 'curl -s -X POST http://localhost:8001/ingest
 ### AI アプリの表示（ヘルスチェック）
 
 AI アプリ一覧（`/exapps`）は各アプリの `/health` を確認し、**起動していない（到達できない）アプリは自動的に一覧から隠します**。例えばホストの SD サーバが未起動なら「画像生成」は表示されません。起動すると表示されます。
+
+## Dify 連携（AI アプリ）
+
+外部の [Dify](https://dify.ai/) で作成した **ワークフロー / チャットフロー** を、源内の「AI アプリ」として呼び出せます。`dify-app` という汎用プロキシを 1 つ立て、**Dify のフローごとに「AI アプリ」を登録**する方式です（フロー単位に接続先・APIキー・種別を設定）。
+
+```
+[ブラウザ] → backend(Team API) → dify-app → 外部 Dify(/v1)
+```
+
+- `dify-app` は源内の AI アプリ・プロトコル（同期 `{inputs}` → `{outputs}`）を、Dify の API（`/v1/workflows/run` または `/v1/chat-messages`）に変換します。
+- **UI は種別で出し分きます**。`dify_app_type` が `workflow` のアプリは従来の**フォーム実行型 UI**、`chat` のアプリは**対話型 UI**（吹き出し形式のチャット画面）で開きます。どちらも「AI アプリ」一覧に並びます。
+- Dify の **blocking モードには既知の不具合**（1.4.1〜1.13 系で blocking 指定でも `text/event-stream` を返す）があるため、`dify-app` は常に **streaming で受信してサーバ側で集約**し、源内には同期 `outputs` として返します。
+- Dify 本体は本リポジトリには含めません（**既存/外部の Dify** に接続します）。`host.docker.internal` 経由でホスト上の Dify にも接続できます。
+- ワークフロー用アプリとチャットフロー用アプリはエンドポイントが同じ（`dify-app`）でも問題ありません。**APIキー**（ワークフロー用 / チャット用）と `dify_app_type` で区別します。
+
+### 登録手順（チーム管理 → アプリの作成）
+
+ヘッダー右上「アカウント」→「チーム管理」→ 対象チーム →「アプリの作成」で、以下を入力します。**フォームの項目名と入れる内容の対応に注意してください**（接続情報は「コンフィグ」、フォーム定義は「APIリクエストのデータ形式」です）。
+
+| フォーム項目 | 入れる内容 |
+| --- | --- |
+| APIエンドポイントのURL | `http://dify-app:8004/invoke` |
+| APIキー | Dify アプリの API キー（Dify の「APIアクセス」で発行） |
+| APIリクエストのデータ形式(JSON) | フロー入力に合わせた**フォーム定義 JSON**（後述） |
+| コンフィグ（JSON） | **Dify 接続情報 JSON**（接続先・種別など。後述） |
+
+#### コンフィグ（JSON）の例（= AI アプリの config）
+
+```jsonc
+// ワークフロー
+{
+  "dify_base_url": "http://host.docker.internal/v1",
+  "dify_app_type": "workflow",
+  "response_field": "result"   // 任意。workflow の outputs から取り出すキー
+}
+```
+
+```jsonc
+// チャットフロー
+{
+  "dify_base_url": "http://host.docker.internal/v1",
+  "dify_app_type": "chat",
+  "query_field": "query"       // 任意。chat の query に使う入力キー（既定: query）
+}
+```
+
+- `dify_base_url`: Dify の API ベース URL（末尾 `/v1`）。**必須**（未設定時は `.env` の `DIFY_BASE_URL` を使用）。
+- `dify_app_type`: `workflow` または `chat`（既定 `chat`）。
+- `query_field`（chat）: ユーザー入力をどの入力キーから取るか（既定 `query`、後方互換で `question` も可）。
+- `response_field`（workflow）: Dify の `outputs`（dict）から表示に使うキー。未指定なら単一キーはその値、複数キーは全体を整形。
+- `file_var`（任意, chat / workflow 共通）: 添付ファイルを渡す Dify の入力変数名。通常は `/v1/parameters` から**自動検出**するため指定不要。自動検出を上書きしたいときのみ指定します。
+
+> 「コンフィグ（JSON）」の既定値 `{"max_payload_size":"6MB"}` は、上記の Dify 接続情報に置き換えて構いません（必要なら `max_payload_size` も併記できます）。
+
+#### APIリクエストのデータ形式(JSON) の例（= AI アプリの placeholder / 入力フォーム）
+
+入力フォームは [AI アプリ API 仕様](genai-web/docs/AIアプリAPI仕様.md) に従って定義します。**フォームの各キーが Dify の入力変数名に対応**します。
+
+ワークフロー（フォーム型）の例:
+
+```json
+{
+  "query": {
+    "title": "入力",
+    "type": "textarea",
+    "required": true
+  }
+}
+```
+
+> フォーム型（ワークフロー）は、このデータ形式を**空のまま**にすると、アプリを開いたときに `dify-app` が Dify の `/v1/parameters` から入力フォームを**自動生成**します（手書き不要）。Dify のコンポーネント（`text-input`/`paragraph`/`number`/`select`/`file`/`file-list`）を源内のフォーム項目に変換します。手書きで定義した場合はそちらが優先されます。
+
+チャットフロー（`dify_app_type: "chat"`）は**対話型 UI で開くため、このフォーム定義は画面には使われません**。空のままで構いません。
+
+```json
+{
+  "query": { "title": "メッセージ", "type": "textarea", "required": true }
+}
+```
+
+### チャットフロー = 対話型 UI（対話できる）
+
+`dify_app_type` を `chat` にしたアプリは、源内が **対話型 UI**（吹き出し形式のチャット画面）で開きます。フォーム実行型ではなく、メッセージを送るたびに会話が継続します。
+
+- 会話の文脈は、源内が会話ごとに発行する `sessionId` を `dify-app` が **Dify の `conversation_id` に対応付けて保持**することで維持されます（SQLite, `dify_app_data` ボリューム）。
+- 画面の **「新しい会話」** ボタンで `sessionId` をリセットし、新しい Dify 会話を開始できます。
+- 画像 / ドキュメントの添付に対応します（`dify-app` が `/v1/files/upload` 経由で Dify に渡します）。
+- チャットフロー用アプリには **チャットフローの API キー** を登録してください（ワークフローとはキーで区別）。
+
+> 補足: フォーム型アプリ（ワークフロー等）でも、placeholder に `conversation_history` キーを含めると実行結果に「会話を続ける」ボタンが出ます（疑似チャット）。チャットフローは上記の対話型 UI を使うため、この指定は不要です。
+>
+> AI アプリの実行履歴は backend(SQLite, `backend_data` ボリュームの `open-genai-teams.db`) に保存されます。
+
+### ファイル添付
+
+添付ファイルは Dify の `/v1/files/upload` にアップロードし、`upload_file_id` 参照として渡します。ファイル種別（image / audio / video / document）は MIME から自動判定します。
+
+ファイル入力変数の解決は **チャットフロー / ワークフロー共通** で、次の順に行います（**変数名は源内側で固定しません**。フロー作成により変わってよい）。
+
+1. `config` の `"file_var": "<変数名>"`（画面から明示指定・任意の上書き）
+2. Dify の `/v1/parameters` から `file` / `file-list` 型の入力変数（例: `upload_files`）を**自動検出**
+3. 上記で解決できない場合のフォールバック
+   - チャットフロー: メッセージ添付（`sys.files`）として送信
+   - ワークフロー: 源内フォームのキー名を Dify 変数名として割り当て
+
+- 変数の型（`file` / `file-list`）も `/v1/parameters` から判定し、単一/配列で渡します。
+- Dify 側でフローが「メッセージ添付」ではなく「入力変数(file-list)」でファイルを受け取る設計（`file_upload.enabled: false` でも入力変数は利用可）にも対応します。
+
+### 制約
+
+- 呼び出しは**同期形式**です（Dify 側は streaming で受信して集約）。非同期ポーリング形式は未対応です。
+- 会話継続は**チャットフロー**が対象です（ワークフローは状態を持ちません）。
 
 ## チーム / AI アプリ管理
 

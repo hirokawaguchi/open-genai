@@ -23,6 +23,8 @@ services:
       # RAG「AI アプリ」連携先（Team API がここへプロキシする）
       - RAG_APP_URL=${RAG_APP_URL:-http://rag-app:8001/invoke}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # Dify 連携「AI アプリ」プロキシの endpoint（アプリ登録時の endpoint に使う）
+      - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
       # --- SAML 認証 (backend = SAML SP) ---
       - APP_JWT_SECRET=${APP_JWT_SECRET:-change-me-open-genai-secret}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
@@ -38,6 +40,7 @@ services:
       - rag-app
       - whisper-app
       - sd-app
+      - dify-app
       - keycloak
     restart: unless-stopped
 
@@ -115,6 +118,22 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # Dify(ワークフロー/チャットフロー)連携を「AI アプリ」として提供する汎用プロキシ
+  # 接続先(base_url)・種別は AI アプリの設定(config) でアプリ単位に指定する。
+  dify-app:
+    build: ./dify-app
+    container_name: open-genai-dify-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # 既定の Dify 接続先（任意。各 AI アプリの config で個別に上書き可能）
+      - DIFY_BASE_URL=${DIFY_BASE_URL:-}
+    volumes:
+      # session_id -> conversation_id の対応（会話継続用）を永続化
+      - dify_app_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   web:
     build:
       context: ./genai-web
@@ -158,4 +177,5 @@ volumes:
   qdrant_data:
   keycloak_data:
   whisper_cache:
+  dify_app_data:
   ollama_data:

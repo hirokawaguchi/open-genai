@@ -186,17 +186,16 @@ export const TeamAppCreateForm = () => {
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor={`team-app-request-data`} size='lg'>
           APIリクエストのデータ形式(JSON)
-          <RequirementBadge>※必須</RequirementBadge>
+          <RequirementBadge isOptional>※任意</RequirementBadge>
         </Label>
         <SupportText id={`team-app-request-data-support`}>
-          JSON形式で入力してください。
+          JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify チャット）や入力不要のアプリでは空で構いません。
           <Link href='/docs/api-request-data-format' target='_blank'>
             APIリクエストのデータ形式解説
           </Link>
         </SupportText>
         <Textarea
           id={`team-app-request-data`}
-          required
           className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
           aria-describedby={
             errors.uiFormat

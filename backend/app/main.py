@@ -620,6 +620,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     team_id = body.get("teamId", "")
     ex_app_id = body.get("exAppId", "")
     inputs = body.get("inputs", {})
+    session_id = body.get("sessionId", "")
 
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
@@ -646,6 +647,10 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "x-user-groups": ",".join(claims.get("groups") or []),
                     # ナレッジのスコープ = AI アプリを所有するチーム(teamId)
                     "x-scope": team_id,
+                    # AI アプリ固有の設定(JSON)。Dify 連携等で接続先の判別に使う
+                    "x-app-config": app_def.get("config", "") or "",
+                    # 会話継続(疑似チャット)用のセッション ID
+                    "x-session-id": session_id,
                     "Content-Type": "application/json",
                 },
             )
@@ -662,25 +667,109 @@ async def invoke_exapp(request: Request) -> JSONResponse:
         )
 
     data = res.json()
+    outputs = data.get("outputs", "")
+    artifacts = data.get("artifacts")
+
+    # 実行履歴を保存（会話継続「会話を続ける」や履歴表示で参照される）
+    team = teams_store.get_team(team_id)
+    try:
+        teams_store.create_exapp_history(
+            {
+                "teamId": team_id,
+                "teamName": team["teamName"] if team else "",
+                "exAppId": ex_app_id,
+                "exAppName": app_def.get("exAppName", ""),
+                "userId": user_id,
+                "inputs": inputs,
+                "outputs": outputs,
+                "status": "COMPLETED",
+                "progress": "",
+                "artifacts": artifacts,
+                "sessionId": session_id or None,
+            }
+        )
+    except Exception as e:  # noqa: BLE001 - 履歴保存失敗で実行結果は返す
+        print(f"[exapps] 履歴の保存に失敗: {e}")
+
     return JSONResponse(
         content={
-            "outputs": data.get("outputs", ""),
-            "artifacts": data.get("artifacts"),
+            "outputs": outputs,
+            "artifacts": artifacts,
             "timestamps": {"processingStartedAt": started, "processingEndedAt": ended},
         }
     )
 
 
+@app.post("/exapps/schema")
+async def get_exapp_schema(request: Request) -> JSONResponse:
+    """AI アプリの入力フォーム定義(placeholder)を取得する。
+
+    Dify 連携アプリ等で、endpoint の `/schema` から入力スキーマを動的取得する。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    body = await request.json()
+    team_id = body.get("teamId", "")
+    ex_app_id = body.get("exAppId", "")
+
+    app_def = teams_store.get_exapp(team_id, ex_app_id)
+    if not app_def:
+        return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+
+    if (
+        team_id != COMMON_TEAM_ID
+        and not _is_system_admin(claims)
+        and not teams_store.is_team_member(team_id, user_id)
+    ):
+        return _forbidden("このアプリを参照する権限がありません")
+
+    endpoint = app_def.get("endpoint", "")
+    if endpoint.endswith("/invoke"):
+        schema_url = endpoint[: -len("/invoke")] + "/schema"
+    else:
+        schema_url = endpoint.rstrip("/") + "/schema"
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.get(
+                schema_url,
+                headers={
+                    "x-api-key": app_def.get("apiKey", ""),
+                    "x-app-config": app_def.get("config", "") or "",
+                },
+            )
+        if res.status_code != 200:
+            return JSONResponse(content={"placeholder": {}})
+        return JSONResponse(content=res.json())
+    except httpx.HTTPError:
+        return JSONResponse(content={"placeholder": {}})
+
+
 @app.get("/exapps/histories")
-async def list_exapp_histories() -> dict[str, Any]:
-    # ListInvokeExAppHistoriesResponse（履歴はローカルでは未保持）
-    return {"history": [], "lastEvaluatedKey": None}
+async def list_exapp_histories(
+    request: Request,
+    teamId: str = Query(default=""),
+    exAppId: str = Query(default=""),
+) -> dict[str, Any]:
+    # ListInvokeExAppHistoriesResponse（ログインユーザー自身の履歴のみ）
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not teamId or not exAppId:
+        return {"history": [], "lastEvaluatedKey": None}
+    history = teams_store.list_exapp_histories(teamId, exAppId, user_id)
+    return {"history": history, "lastEvaluatedKey": None}
 
 
 @app.get("/exapps/history")
-async def get_exapp_history() -> dict[str, Any]:
+async def get_exapp_history(
+    teamId: str = Query(default=""),
+    exAppId: str = Query(default=""),
+    createdDate: str = Query(default=""),
+) -> dict[str, Any]:
     # GetInvokeExAppHistoryResponse
-    return {"history": None}
+    if not teamId or not exAppId or not createdDate:
+        return {"history": None}
+    return {"history": teams_store.get_exapp_history(teamId, exAppId, createdDate)}
 
 
 # ---------------------------------------------------------------------------
@@ -957,3 +1046,24 @@ async def copy_exapp(team_id: str, ex_app_id: str, request: Request) -> JSONResp
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
     return JSONResponse(content=app_def)
+
+
+@app.delete("/teams/{team_id}/exapps/{ex_app_id}/history")
+async def delete_exapp_history(
+    team_id: str,
+    ex_app_id: str,
+    request: Request,
+    createdDate: str = Query(default=""),
+) -> JSONResponse:
+    """AI アプリの実行履歴を 1 件削除する（共通 / システム管理者 / 所属メンバー）。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if (
+        team_id != COMMON_TEAM_ID
+        and not _is_system_admin(claims)
+        and not teams_store.is_team_member(team_id, user_id)
+    ):
+        return _forbidden()
+    if createdDate:
+        teams_store.delete_exapp_history(team_id, ex_app_id, createdDate)
+    return JSONResponse(content={})

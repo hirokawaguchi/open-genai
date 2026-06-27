@@ -7,6 +7,7 @@ import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { APP_TITLE } from '@/constants';
+import { ExAppChat } from '@/features/exapp/components/ExAppChat';
 import { ExAppForm } from '@/features/exapp/components/ExAppForm';
 import { ExAppHeader } from '@/features/exapp/components/ExAppHeader';
 import { ExAppInvokedHistories } from '@/features/exapp/components/ExAppInvokedHistories';
@@ -16,6 +17,7 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { isJSON } from '@/utils/isJSON';
 import { ExAppInvokedHistoriesLoading } from './components/ExAppInvokedHistoriesLoading';
 import { useFetchExApp } from './hooks/useFetchExApp';
+import { useFetchExAppSchema } from './hooks/useFetchExAppSchema';
 import { useExAppInvokeStore } from './stores/useExAppInvokeStore';
 import { GovAIFormDefaultValue } from './types';
 
@@ -37,22 +39,51 @@ export const ExAppPage = () => {
     clear();
   }, [pathname, clear]);
 
-  const uiJson = useMemo(() => {
+  const placeholderUiJson = useMemo(() => {
     return exApp && isJSON(exApp.placeholder) ? JSON.parse(exApp.placeholder) : {};
   }, [exApp]);
+
+  const configObj = useMemo(() => {
+    if (!exApp?.config || !isJSON(exApp.config)) {
+      return {} as Record<string, unknown>;
+    }
+    try {
+      return (JSON.parse(exApp.config) ?? {}) as Record<string, unknown>;
+    } catch {
+      return {} as Record<string, unknown>;
+    }
+  }, [exApp]);
+
+  // 設定(config)の dify_app_type が "chat" のアプリは対話型 UI で開く
+  const isChatApp = configObj?.dify_app_type === 'chat';
+
+  const placeholderEmpty = useMemo(
+    () => Object.keys(placeholderUiJson ?? {}).length === 0,
+    [placeholderUiJson],
+  );
+
+  // 非chat かつ placeholder 未設定の Dify アプリは、実行時に /schema からフォーム生成
+  const shouldFetchSchema =
+    !!exApp && !isChatApp && placeholderEmpty && !!configObj?.dify_base_url;
+
+  const { uiJson: fetchedUiJson, isLoading: isSchemaLoading } = useFetchExAppSchema(
+    teamId,
+    exAppId,
+    shouldFetchSchema,
+  );
+
+  const uiJson = shouldFetchSchema ? fetchedUiJson : placeholderUiJson;
 
   const defaultValuesJson = useMemo(() => {
     if (!uiJson) {
       return {};
     }
 
-    const defaultValueExistsKeys = Object.keys(uiJson).filter(
-      (key) => uiJson[key]['default_value'],
-    );
-
     const defaultValues: GovAIFormDefaultValue = {};
-    for (const key of defaultValueExistsKeys) {
-      defaultValues[key] = uiJson[key]['default_value'];
+    for (const key of Object.keys(uiJson)) {
+      if (uiJson[key]?.['default_value'] !== undefined) {
+        defaultValues[key] = uiJson[key]['default_value'];
+      }
     }
     return defaultValues;
   }, [uiJson]);
@@ -88,25 +119,40 @@ export const ExAppPage = () => {
             <>
               <ExAppHeader exApp={exApp} />
               <Divider className='my-6' />
-              <ExAppForm exApp={exApp} uiJson={uiJson} defaultValues={defaultValuesJson} />
-              <Divider className='my-6' />
 
-              <ExAppResult
-                shouldShowConversationHistory={exApp.placeholder.includes('conversation_history')}
-              />
+              {isChatApp ? (
+                <ExAppChat exApp={exApp} />
+              ) : (
+                <>
+                  {shouldFetchSchema && isSchemaLoading ? (
+                    <ProgressIndicator label='入力フォームを読み込み中...' />
+                  ) : (
+                    <ExAppForm
+                      exApp={exApp}
+                      uiJson={uiJson}
+                      defaultValues={defaultValuesJson}
+                    />
+                  )}
+                  <Divider className='my-6' />
 
-              <Divider className='my-6' />
+                  <ExAppResult
+                    shouldShowConversationHistory={exApp.placeholder.includes(
+                      'conversation_history',
+                    )}
+                  />
 
-              <div className='mb-3'>
-                <h2 className='my-4 text-std-18B-160'>利用履歴</h2>
-                {exApp && (
-                  <ErrorBoundary resetKeys={[exApp.exAppId]} fallbackRender={ErrorFallback}>
-                    <Suspense fallback={<ExAppInvokedHistoriesLoading />}>
-                      <ExAppInvokedHistories exApp={exApp} />
-                    </Suspense>
-                  </ErrorBoundary>
-                )}
-              </div>
+                  <Divider className='my-6' />
+
+                  <div className='mb-3'>
+                    <h2 className='my-4 text-std-18B-160'>利用履歴</h2>
+                    <ErrorBoundary resetKeys={[exApp.exAppId]} fallbackRender={ErrorFallback}>
+                      <Suspense fallback={<ExAppInvokedHistoriesLoading />}>
+                        <ExAppInvokedHistories exApp={exApp} />
+                      </Suspense>
+                    </ErrorBoundary>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

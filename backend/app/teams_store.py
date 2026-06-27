@@ -78,6 +78,22 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS exapp_histories (
+                teamId TEXT NOT NULL,
+                exAppId TEXT NOT NULL,
+                createdDate TEXT NOT NULL,
+                teamName TEXT NOT NULL DEFAULT '',
+                exAppName TEXT NOT NULL DEFAULT '',
+                userId TEXT NOT NULL DEFAULT '',
+                inputs TEXT NOT NULL DEFAULT '{}',
+                outputs TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'COMPLETED',
+                progress TEXT NOT NULL DEFAULT '',
+                artifacts TEXT,
+                sessionId TEXT,
+                PRIMARY KEY (teamId, exAppId, createdDate)
+            );
             """
         )
         # 共通チーム
@@ -459,3 +475,101 @@ def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, A
         if is_system_admin or app["teamId"] in visible_team_ids:
             result.append({**app, "teamName": teams.get(app["teamId"], "")})
     return result
+
+
+# ---------------------------------------------------------------------------
+# exApp 実行履歴（会話継続/履歴表示のためにローカルでも保持する）
+# ---------------------------------------------------------------------------
+def _row_to_history(r: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "teamId": r["teamId"],
+        "teamName": r["teamName"],
+        "exAppId": r["exAppId"],
+        "exAppName": r["exAppName"],
+        "userId": r["userId"],
+        "inputs": json.loads(r["inputs"] or "{}"),
+        "outputs": r["outputs"],
+        "createdDate": r["createdDate"],
+        "status": r["status"],
+        "progress": r["progress"],
+        "artifacts": json.loads(r["artifacts"]) if r["artifacts"] else None,
+        "sessionId": r["sessionId"],
+    }
+
+
+def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
+    """AI アプリの実行結果を履歴として保存する。
+
+    createdDate は (teamId, exAppId) 内で一意になるよう、衝突時は +1ms ずらす。
+    """
+    team_id = data.get("teamId", "")
+    ex_app_id = data.get("exAppId", "")
+    created = data.get("createdDate") or _now()
+    with _lock, _connect() as conn:
+        # 同一ミリ秒の衝突を避ける
+        while conn.execute(
+            "SELECT 1 FROM exapp_histories WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
+            (team_id, ex_app_id, created),
+        ).fetchone():
+            created = str(int(created) + 1)
+        conn.execute(
+            "INSERT INTO exapp_histories (teamId, exAppId, createdDate, teamName,"
+            " exAppName, userId, inputs, outputs, status, progress, artifacts, sessionId)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                team_id,
+                ex_app_id,
+                created,
+                data.get("teamName", ""),
+                data.get("exAppName", ""),
+                data.get("userId", ""),
+                json.dumps(data.get("inputs") or {}, ensure_ascii=False),
+                data.get("outputs", ""),
+                data.get("status", "COMPLETED"),
+                data.get("progress", ""),
+                json.dumps(data["artifacts"], ensure_ascii=False)
+                if data.get("artifacts")
+                else None,
+                data.get("sessionId"),
+            ),
+        )
+        r = conn.execute(
+            "SELECT * FROM exapp_histories WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
+            (team_id, ex_app_id, created),
+        ).fetchone()
+    return _row_to_history(r)
+
+
+def list_exapp_histories(
+    team_id: str, ex_app_id: str, user_id: str
+) -> list[dict[str, Any]]:
+    """指定ユーザーの、特定 AI アプリの実行履歴を新しい順で返す。"""
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND userId = ?"
+            " ORDER BY createdDate DESC",
+            (team_id, ex_app_id, user_id),
+        ).fetchall()
+    return [_row_to_history(r) for r in rows]
+
+
+def get_exapp_history(
+    team_id: str, ex_app_id: str, created_date: str
+) -> dict[str, Any] | None:
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT * FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
+            (team_id, ex_app_id, created_date),
+        ).fetchone()
+    return _row_to_history(r) if r else None
+
+
+def delete_exapp_history(team_id: str, ex_app_id: str, created_date: str) -> None:
+    with _lock, _connect() as conn:
+        conn.execute(
+            "DELETE FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
+            (team_id, ex_app_id, created_date),
+        )

@@ -31,11 +31,15 @@ export const teamAppCreateSchema = z.object({
         message: 'コンフィグはJSON形式にしてください',
       },
     ),
+  // 入力フォーム定義は任意。フォーム入力が必要なアプリ(ワークフロー等)で定義する。
+  // 対話型(Dify チャット)や入力不要のアプリでは空で構わない。
   uiFormat: z
     .string()
-    .min(1, { message: 'APIリクエストのデータ形式（JSON）を入力してください' })
     .refine(
       (value) => {
+        if (!value || value.trim() === '') {
+          return true;
+        }
         const v = value
           .replace(/("default_value":\s*")((?:[^"\\]|\\.)*)"/g, (_, p1, p2) => {
             const converted = p2.replace(/\r?\n/g, '\\n');
