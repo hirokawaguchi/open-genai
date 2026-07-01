@@ -13,5 +13,14 @@ genai-web/packages/web/dist/
 # --- デジタル庁オリジナルの 源内 AI アプリ（未改変・別途 clone のため除外） ---
 /genai-ai-api/
 
+# --- TLS 証明書・秘密鍵（本番/自己署名とも公開しない） ---
+proxy/certs/*.pem
+
+# --- 契約終了時のデータ削除報告書（生成物） ---
+deletion-report-*.txt
+
 # --- その他 ---
 **/.DS_Store
+
+# --- 検討ドキュメント ---
+/docs/

@@ -17,6 +17,10 @@ from typing import Any
 
 DB_PATH = os.environ.get("DB_PATH", "/data/open-genai.db")
 
+# 既存（userId 無し）チャットの移管先。空の場合は移管せず、どのユーザーからも
+# 不可視になる（開発データのため許容）。本番移行時にメール/sub を設定する。
+LEGACY_CHAT_OWNER = os.environ.get("LEGACY_CHAT_OWNER", "")
+
 _lock = threading.Lock()
 
 
@@ -41,6 +45,7 @@ def init_db() -> None:
                 id TEXT NOT NULL,
                 usecase TEXT NOT NULL DEFAULT '/chat',
                 title TEXT NOT NULL DEFAULT '',
+                userId TEXT NOT NULL DEFAULT '',
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
@@ -71,21 +76,52 @@ def init_db() -> None:
             );
             """
         )
+        _migrate(conn)
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chats_user
+                ON chats(userId, updatedDate DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_chat
+                ON messages(chatId, seq);
+            """
+        )
 
 
-def create_chat() -> dict[str, Any]:
+def _migrate(conn: sqlite3.Connection) -> None:
+    """既存DB（userId 列の無い chats）への冪等マイグレーション。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(chats)").fetchall()]
+    if "userId" not in cols:
+        conn.execute(
+            "ALTER TABLE chats ADD COLUMN userId TEXT NOT NULL DEFAULT ''"
+        )
+        if LEGACY_CHAT_OWNER:
+            conn.execute(
+                "UPDATE chats SET userId = ? WHERE userId = ''",
+                (LEGACY_CHAT_OWNER,),
+            )
+
+
+def create_chat(user_id: str) -> dict[str, Any]:
     chat_id = str(uuid.uuid4())
     now = _now()
     with _lock, _connect() as conn:
         conn.execute(
-            "INSERT INTO chats (chatId, id, usecase, title, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (chat_id, f"chat#{chat_id}", "/chat", "", now, now),
+            "INSERT INTO chats (chatId, id, usecase, title, userId, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (chat_id, f"chat#{chat_id}", "/chat", "", user_id, now, now),
         )
         row = conn.execute(
             "SELECT * FROM chats WHERE chatId = ?", (chat_id,)
         ).fetchone()
     return _row_to_chat(row)
+
+
+def _chat_owner(conn: sqlite3.Connection, chat_id: str) -> str | None:
+    """チャットの所有者 userId を返す。存在しなければ None。"""
+    row = conn.execute(
+        "SELECT userId FROM chats WHERE chatId = ?", (chat_id,)
+    ).fetchone()
+    return row["userId"] if row else None
 
 
 def _row_to_chat(row: sqlite3.Row) -> dict[str, Any]:
@@ -101,38 +137,46 @@ def _row_to_chat(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def list_chats() -> list[dict[str, Any]]:
+def list_chats(user_id: str) -> list[dict[str, Any]]:
     with _lock, _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM chats ORDER BY updatedDate DESC"
+            "SELECT * FROM chats WHERE userId = ? ORDER BY updatedDate DESC",
+            (user_id,),
         ).fetchall()
     return [_row_to_chat(r) for r in rows]
 
 
-def find_chat(chat_id: str) -> dict[str, Any] | None:
+def find_chat(chat_id: str, user_id: str) -> dict[str, Any] | None:
     with _lock, _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM chats WHERE chatId = ?", (chat_id,)
+            "SELECT * FROM chats WHERE chatId = ? AND userId = ?",
+            (chat_id, user_id),
         ).fetchone()
     return _row_to_chat(row) if row else None
 
 
-def update_title(chat_id: str, title: str) -> dict[str, Any] | None:
+def update_title(chat_id: str, user_id: str, title: str) -> dict[str, Any] | None:
     with _lock, _connect() as conn:
+        # 所有者のチャットのみ更新（不一致は更新されず None を返す）
         conn.execute(
-            "UPDATE chats SET title = ?, updatedDate = ? WHERE chatId = ?",
-            (title, _now(), chat_id),
+            "UPDATE chats SET title = ?, updatedDate = ? WHERE chatId = ? AND userId = ?",
+            (title, _now(), chat_id, user_id),
         )
         row = conn.execute(
-            "SELECT * FROM chats WHERE chatId = ?", (chat_id,)
+            "SELECT * FROM chats WHERE chatId = ? AND userId = ?",
+            (chat_id, user_id),
         ).fetchone()
     return _row_to_chat(row) if row else None
 
 
-def delete_chat(chat_id: str) -> None:
+def delete_chat(chat_id: str, user_id: str) -> bool:
+    """所有者一致時のみ削除する。削除したら True。"""
     with _lock, _connect() as conn:
+        if _chat_owner(conn, chat_id) != user_id:
+            return False
         conn.execute("DELETE FROM messages WHERE chatId = ?", (chat_id,))
         conn.execute("DELETE FROM chats WHERE chatId = ?", (chat_id,))
+    return True
 
 
 def _row_to_message(row: sqlite3.Row) -> dict[str, Any]:
@@ -158,8 +202,11 @@ def _row_to_message(row: sqlite3.Row) -> dict[str, Any]:
     return msg
 
 
-def list_messages(chat_id: str) -> list[dict[str, Any]]:
+def list_messages(chat_id: str, user_id: str) -> list[dict[str, Any]]:
     with _lock, _connect() as conn:
+        # 所有者でないチャットのメッセージは返さない
+        if _chat_owner(conn, chat_id) != user_id:
+            return []
         rows = conn.execute(
             "SELECT * FROM messages WHERE chatId = ? ORDER BY seq ASC",
             (chat_id,),
@@ -232,10 +279,18 @@ def delete_system_context(user_id: str, sc_id: str) -> None:
         )
 
 
-def create_messages(chat_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """ToBeRecordedMessage[] を保存し RecordedMessage[] を返す。"""
+def create_messages(
+    chat_id: str, user_id: str, messages: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """ToBeRecordedMessage[] を保存し RecordedMessage[] を返す。
+
+    所有者でないチャットへの書き込みは拒否し None を返す。
+    """
     recorded: list[dict[str, Any]] = []
     with _lock, _connect() as conn:
+        # 所有者のチャットにのみ書き込む
+        if _chat_owner(conn, chat_id) != user_id:
+            return None
         row = conn.execute(
             "SELECT COALESCE(MAX(seq), 0) AS m FROM messages WHERE chatId = ?",
             (chat_id,),
@@ -252,7 +307,7 @@ def create_messages(chat_id: str, messages: list[dict[str, Any]]) -> list[dict[s
                 "createdDate": created,
                 "messageId": message_id,
                 "usecase": usecase,
-                "userId": "local-user",
+                "userId": user_id,
                 "feedback": "",
                 "role": m["role"],
                 "content": m.get("content", ""),
@@ -274,7 +329,7 @@ def create_messages(chat_id: str, messages: list[dict[str, Any]]) -> list[dict[s
                     rec["id"],
                     created,
                     usecase,
-                    "local-user",
+                    user_id,
                     "",
                     m["role"],
                     m.get("content", ""),

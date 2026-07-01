@@ -20,9 +20,23 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       - DB_PATH=/data/open-genai.db
+      # --- 監査ログ（8-(1)）/ チャット履歴ユーザー別分離（6-(8)）---
+      - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
+      - AUDIT_DB_PATH=/data/audit.db
+      - AUDIT_STORE_CONTENT=${AUDIT_STORE_CONTENT:-true}
+      - AUDIT_MAX_CONTENT_CHARS=${AUDIT_MAX_CONTENT_CHARS:-8000}
+      - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-1825}
+      - LEGACY_CHAT_OWNER=${LEGACY_CHAT_OWNER:-}
       # RAG「AI アプリ」連携先（Team API がここへプロキシする）
       - RAG_APP_URL=${RAG_APP_URL:-http://rag-app:8001/invoke}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # 監査ログ参照「AI アプリ」連携先（管理者限定）
+      - AUDIT_APP_URL=${AUDIT_APP_URL:-http://audit-app:8005/invoke}
+      # 利用者一括管理「AI アプリ」連携先（管理者限定）
+      - USERMGMT_APP_URL=${USERMGMT_APP_URL:-http://usermgmt-app:8006/invoke}
+      # モデル利用制御「AI アプリ」連携先（管理者限定）と参照するポリシーDB
+      - MODELPOLICY_APP_URL=${MODELPOLICY_APP_URL:-http://modelpolicy-app:8007/invoke}
+      - POLICY_DB_PATH=/data/policy.db
       # Dify 連携「AI アプリ」プロキシの endpoint（アプリ登録時の endpoint に使う）
       - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
       # --- SAML 認証 (backend = SAML SP) ---
@@ -41,6 +55,9 @@ services:
       - whisper-app
       - sd-app
       - dify-app
+      - audit-app
+      - usermgmt-app
+      - modelpolicy-app
       - keycloak
     restart: unless-stopped
 
@@ -78,6 +95,10 @@ services:
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # フォルダ階層・アクセス権限レジストリ(SQLite)
+      - FOLDERS_DB_PATH=/data/rag_folders.db
+    volumes:
+      - rag_app_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -134,6 +155,45 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 監査ログ参照を「AI アプリ」として提供（管理者限定）。
+  # backend と同じ backend_data ボリュームを共有し、audit.db を読み取り専用で参照する。
+  audit-app:
+    build: ./audit-app
+    container_name: open-genai-audit-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - AUDIT_DB_PATH=/data/audit.db
+    volumes:
+      # backend の監査DBを共有（WAL の -shm 参照のため rw マウント。接続は mode=ro）
+      - backend_data:/data
+    restart: unless-stopped
+
+  # 利用者一括管理を「AI アプリ」として提供（管理者限定）。Keycloak Admin API と連携。
+  usermgmt-app:
+    build: ./usermgmt-app
+    container_name: open-genai-usermgmt-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - keycloak
+    restart: unless-stopped
+
+  # モデル利用制御を「AI アプリ」として提供（管理者限定）。
+  # backend_data を共有し policy.db の唯一のライターとして動作（backend は読取専用）。
+  modelpolicy-app:
+    build: ./modelpolicy-app
+    container_name: open-genai-modelpolicy-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - POLICY_DB_PATH=/data/policy.db
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
   web:
     build:
       context: ./genai-web
@@ -178,4 +238,5 @@ volumes:
   keycloak_data:
   whisper_cache:
   dify_app_data:
+  rag_app_data:
   ollama_data:

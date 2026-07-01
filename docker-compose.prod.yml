@@ -1,0 +1,237 @@
+# Open GENAI 本番用 compose（LGWAN 想定 / TLS リバースプロキシ集約）。
+#
+# 使い方:
+#   cp .env.prod.example .env.prod
+#   # .env.prod の PUBLIC_URL 等を編集
+#   ./proxy/certs/generate-selfsigned.sh <ホスト名>   # または本物の証明書を配置
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up --build
+#
+# 方針:
+# - ユーザに公開するポートは proxy の 80/443 のみ（LGWAN 制約）。
+# - web / backend / keycloak / 各 AI アプリ / qdrant はホストにポート公開せず、
+#   Docker 内部ネットワークでのみ到達（proxy がパスで振り分ける）。
+# - フロントの API 参照は相対パス /api（genai-web 無改修・.env 設定のみ）。
+
+services:
+  # 唯一の公開点: TLS を終端し /、/api/、/kc/ を内部サービスへ振り分ける
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: open-genai-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - web
+      - backend
+      - keycloak
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: open-genai-backend
+    # ホストにポート公開しない（proxy 経由のみ）
+    expose:
+      - "8000"
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - DB_PATH=/data/open-genai.db
+      # 監査ログ / チャット履歴分離
+      - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
+      - AUDIT_DB_PATH=/data/audit.db
+      - AUDIT_STORE_CONTENT=${AUDIT_STORE_CONTENT:-true}
+      - AUDIT_MAX_CONTENT_CHARS=${AUDIT_MAX_CONTENT_CHARS:-8000}
+      - AUDIT_RETENTION_DAYS=${AUDIT_RETENTION_DAYS:-1825}
+      - LEGACY_CHAT_OWNER=${LEGACY_CHAT_OWNER:-}
+      # AI アプリ連携先
+      - RAG_APP_URL=${RAG_APP_URL:-http://rag-app:8001/invoke}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - AUDIT_APP_URL=${AUDIT_APP_URL:-http://audit-app:8005/invoke}
+      - USERMGMT_APP_URL=${USERMGMT_APP_URL:-http://usermgmt-app:8006/invoke}
+      - MODELPOLICY_APP_URL=${MODELPOLICY_APP_URL:-http://modelpolicy-app:8007/invoke}
+      - POLICY_DB_PATH=/data/policy.db
+      - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
+      # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
+      - PUBLIC_BASE_URL=${PUBLIC_URL}/api
+      - FRONTEND_URL=${PUBLIC_URL}
+      - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
+      - SAML_SP_ENTITY_ID=${PUBLIC_URL}/api/auth/saml/metadata
+      - SAML_SP_ACS_URL=${PUBLIC_URL}/api/auth/saml/acs
+      - SAML_SP_SLS_URL=${PUBLIC_URL}/api/auth/saml/sls
+      # backend からは内部ネットワークで Keycloak(relative /kc) を参照
+      - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
+    volumes:
+      - backend_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - rag-app
+      - whisper-app
+      - sd-app
+      - dify-app
+      - audit-app
+      - usermgmt-app
+      - modelpolicy-app
+      - keycloak
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: open-genai-keycloak
+    command: ["start-dev", "--import-realm"]
+    expose:
+      - "8080"
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=${KEYCLOAK_ADMIN:-admin}
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
+      # 公開 URL は proxy(443) の /kc。相対パスを /kc に設定して集約する
+      - KC_HOSTNAME=${PUBLIC_URL}
+      - KC_HTTP_RELATIVE_PATH=/kc
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+      # proxy からの X-Forwarded-* を信頼（TLS は proxy で終端）
+      - KC_PROXY_HEADERS=xforwarded
+    volumes:
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+      - keycloak_data:/opt/keycloak/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./genai-web
+      dockerfile: Dockerfile.local
+    container_name: open-genai-web
+    expose:
+      - "5173"
+    environment:
+      - VITE_USE_POLLING=true
+      # proxy 経由の公開ホスト名を Vite に許可させる（例: genai.example.lg.jp）
+      - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
+    volumes:
+      - ./genai-web:/app
+      - web_node_modules:/app/node_modules
+      - web_pkg_web_node_modules:/app/packages/web/node_modules
+      - web_pkg_common_node_modules:/app/packages/common/node_modules
+      - web_pkg_types_node_modules:/app/packages/types/node_modules
+      - web_pkg_cdk_node_modules:/app/packages/cdk/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: open-genai-qdrant
+    expose:
+      - "6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  rag-app:
+    build:
+      context: .
+      dockerfile: rag-app/Dockerfile
+    container_name: open-genai-rag-app
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - QDRANT_URL=http://qdrant:6333
+      - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
+      - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - FOLDERS_DB_PATH=/data/rag_folders.db
+    volumes:
+      - rag_app_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
+  whisper-app:
+    build: ./whisper-app
+    container_name: open-genai-whisper-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
+    volumes:
+      - whisper_cache:/cache
+    restart: unless-stopped
+
+  sd-app:
+    build: ./sd-app
+    container_name: open-genai-sd-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - SD_API_URL=${SD_API_URL:-http://host.docker.internal:7860}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  dify-app:
+    build: ./dify-app
+    container_name: open-genai-dify-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - DIFY_BASE_URL=${DIFY_BASE_URL:-}
+    volumes:
+      - dify_app_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  audit-app:
+    build: ./audit-app
+    container_name: open-genai-audit-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - AUDIT_DB_PATH=/data/audit.db
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
+  usermgmt-app:
+    build: ./usermgmt-app
+    container_name: open-genai-usermgmt-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # 本番は Keycloak が relative path /kc 配下のため内部URLも /kc を含める
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/kc}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
+    depends_on:
+      - keycloak
+    restart: unless-stopped
+
+  modelpolicy-app:
+    build: ./modelpolicy-app
+    container_name: open-genai-modelpolicy-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - POLICY_DB_PATH=/data/policy.db
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  web_node_modules:
+  web_pkg_web_node_modules:
+  web_pkg_common_node_modules:
+  web_pkg_types_node_modules:
+  web_pkg_cdk_node_modules:
+  qdrant_data:
+  keycloak_data:
+  whisper_cache:
+  dify_app_data:
+  rag_app_data:

@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -30,7 +31,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from . import auth, llm, storage, teams_store
+from . import audit, auth, llm, policy, storage, teams_store
 
 # ファイル添付の保存先と、ブラウザから見たバックエンドの公開 URL
 FILES_DIR = os.environ.get("FILES_DIR", "/data/files")
@@ -53,6 +54,20 @@ PUBLIC_PATH_PREFIXES = (
 RAG_APP_URL = os.environ.get("RAG_APP_URL", "http://rag-app:8001/invoke")
 RAG_API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 
+# 監査ログ参照「AI アプリ」連携先（管理者限定）
+AUDIT_APP_URL = os.environ.get("AUDIT_APP_URL", "http://audit-app:8005/invoke")
+
+# 利用者一括管理「AI アプリ」連携先（管理者限定）
+USERMGMT_APP_URL = os.environ.get("USERMGMT_APP_URL", "http://usermgmt-app:8006/invoke")
+
+# モデル利用制御「AI アプリ」連携先（管理者限定）
+MODELPOLICY_APP_URL = os.environ.get(
+    "MODELPOLICY_APP_URL", "http://modelpolicy-app:8007/invoke"
+)
+
+# 管理者(SystemAdminGroup)のみに一覧表示・実行を許可する exApp
+ADMIN_ONLY_EXAPP_IDS = {"audit", "usermgmt", "modelpolicy"}
+
 COMMON_TEAM_ID = teams_store.COMMON_TEAM_ID
 
 _RAG_FORM = (
@@ -62,6 +77,8 @@ _RAG_FORM = (
     '"files":{"type":"file","title":"参照ドキュメント（任意）",'
     '"desc":"PDF/Word/Excel/テキスト等。下の「添付ファイルの扱い」で保存方法を選べます。",'
     '"accept":".pdf,.docx,.xlsx,.txt,.md,.csv,.html,.json","multiple":true},'
+    '"folder":{"type":"text","title":"フォルダ（任意）",'
+    '"desc":"階層はスラッシュ区切り（例 総務/例規）。指定すると配下のみを対象にします。"},'
     '"store_mode":{"type":"radio","title":"添付ファイルの扱い",'
     '"items":[{"title":"知識ベースに登録（永続）","value":"permanent"},'
     '{"title":"この質問だけで使う（一時）","value":"ephemeral"}],'
@@ -69,12 +86,18 @@ _RAG_FORM = (
     '"top_k":{"type":"number","title":"参照件数","desc":"検索する関連箇所の数",'
     '"default_value":4,"min":1,"max":10},'
     '"action":{"type":"select","title":"操作",'
-    '"desc":"通常は「質問する」。知識ベースの管理も行えます。",'
+    '"desc":"通常は「質問する」。フォルダ/知識ベースの管理も行えます。",'
     '"items":[{"title":"質問する","value":"ask"},'
     '{"title":"登録済みの出典を一覧","value":"list_sources"},'
+    '{"title":"フォルダ一覧","value":"list_folders"},'
+    '{"title":"フォルダ作成（管理者）","value":"create_folder"},'
+    '{"title":"フォルダ権限設定（管理者）","value":"set_folder_acl"},'
+    '{"title":"フォルダ削除（管理者）","value":"delete_folder"},'
     '{"title":"指定した出典を削除（管理者）","value":"delete_source"},'
     '{"title":"知識ベースを全消去（管理者）","value":"clear"}],'
     '"default_value":"ask"},'
+    '"groups":{"type":"text","title":"アクセス許可グループ",'
+    '"desc":"フォルダ作成/権限設定時に、; か , 区切りで許可グループを指定（空=制限なし）。"},'
     '"source":{"type":"text","title":"削除する出典名",'
     '"desc":"「指定した出典を削除」を選んだ場合に、一覧に出る出典名を入力してください。"}'
     '}'
@@ -168,7 +191,123 @@ SD_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-EXAPP_SEEDS = [RAG_SEED, WHISPER_SEED, SD_SEED]
+# 監査ログ参照(Audit) AI アプリ（管理者限定）
+_AUDIT_FORM = (
+    '{'
+    '"action":{"type":"select","title":"操作",'
+    '"items":[{"title":"検索","value":"search"},{"title":"使い方","value":"help"}],'
+    '"default_value":"search"},'
+    '"userId":{"type":"text","title":"ユーザーID（任意）",'
+    '"desc":"特定ユーザー(sub または email)で絞り込み。"},'
+    '"action_filter":{"type":"select","title":"アクション種別（任意）",'
+    '"items":[{"title":"すべて","value":"all"},'
+    '{"title":"チャットメッセージ","value":"chat.message"},'
+    '{"title":"推論ストリーム","value":"predict.stream"},'
+    '{"title":"AIアプリ実行","value":"exapp.invoke"},'
+    '{"title":"ログイン","value":"auth.login"},'
+    '{"title":"APIアクセス","value":"api.access"}],'
+    '"default_value":"all"},'
+    '"q":{"type":"text","title":"キーワード（任意）",'
+    '"desc":"入力/出力内容の部分一致。"},'
+    '"from_date":{"type":"text","title":"開始日（任意）","desc":"YYYY-MM-DD（UTC）"},'
+    '"to_date":{"type":"text","title":"終了日（任意）","desc":"YYYY-MM-DD（UTC）"},'
+    '"limit":{"type":"number","title":"表示件数","default_value":50,"min":1,"max":500}'
+    '}'
+)
+AUDIT_SEED: dict[str, Any] = {
+    "exAppId": "audit",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "監査ログ参照（管理者限定）",
+    "endpoint": AUDIT_APP_URL,
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": _AUDIT_FORM,
+    "description": "利用状況/内容の監査ログを検索します（システム管理者のみ）。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "システム管理者向けの監査ログ参照アプリです。\n\n"
+        "- ユーザーID・アクション種別・キーワード・期間で絞り込めます。\n"
+        "- 内容の全文取得やエクスポートは管理API `GET /admin/audit-logs` を利用します。\n"
+        "- 本アプリは監査ログDBを読み取り専用で参照します（改変しません）。"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
+# 利用者一括管理(User Management) AI アプリ（管理者限定）
+_USERMGMT_FORM = (
+    '{'
+    '"operation":{"type":"select","title":"操作",'
+    '"desc":"まずドライランで内容を確認し、問題なければ適用してください。",'
+    '"items":[{"title":"ドライラン（変更しない）","value":"dry_run"},'
+    '{"title":"適用（Keycloakに反映）","value":"apply"}],'
+    '"default_value":"dry_run"},'
+    '"files":{"type":"file","title":"CSVファイル",'
+    '"desc":"見出し: action,username,email,firstName,lastName,name,password,groups,enabled",'
+    '"accept":".csv,.txt","multiple":false},'
+    '"csv_text":{"type":"textarea","title":"CSV（貼り付け・任意）",'
+    '"desc":"ファイルの代わりにCSVを直接貼り付けても可。"}'
+    '}'
+)
+USERMGMT_SEED: dict[str, Any] = {
+    "exAppId": "usermgmt",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "利用者一括管理（管理者限定）",
+    "endpoint": USERMGMT_APP_URL,
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": _USERMGMT_FORM,
+    "description": "CSV で利用者アカウントを一括登録/更新/削除します（システム管理者のみ）。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "システム管理者向けの利用者一括管理アプリです（Keycloak と連携）。\n\n"
+        "1. CSV を用意します。見出し例:\n"
+        "   `action,username,email,name,password,groups,enabled`\n"
+        "   - action: `create`/`update`/`delete`/`upsert`（既定 upsert）\n"
+        "   - groups: `;` か `,` 区切り（例 `UserGroup;SystemAdminGroup`）\n"
+        "2. まず「ドライラン」で対象と操作内容を確認します（変更されません）。\n"
+        "3. 問題なければ「適用」で Keycloak に反映します。\n\n"
+        "> パスワード列を含む CSV の取り扱いに注意してください。"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
+# モデル利用制御(Model Policy) AI アプリ（管理者限定）
+_MODELPOLICY_FORM = (
+    '{'
+    '"operation":{"type":"select","title":"操作",'
+    '"items":[{"title":"現在の設定を表示","value":"view"},'
+    '{"title":"設定を更新","value":"set"}],"default_value":"view"},'
+    '"policy_json":{"type":"textarea","title":"ポリシーJSON（更新時のみ）",'
+    '"desc":"例: {\\"enabled\\":true,\\"default\\":[\\"gpt-oss:20b\\"],'
+    '\\"groups\\":{\\"PowerUsers\\":[\\"gemma3:27b\\"]}}"}'
+    '}'
+)
+MODELPOLICY_SEED: dict[str, Any] = {
+    "exAppId": "modelpolicy",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "モデル利用制御（管理者限定）",
+    "endpoint": MODELPOLICY_APP_URL,
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": _MODELPOLICY_FORM,
+    "description": "利用者/グループごとに使用可能な LLM を管理者が設定します（システム管理者のみ）。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "利用可能な LLM をグループ単位で制御します（backend が推論時に強制）。\n\n"
+        "- 「現在の設定を表示」で有効/無効・許可モデルを確認できます。\n"
+        "- 「設定を更新」で `ポリシーJSON` を保存します。\n"
+        "  - `enabled`: 制御の有効/無効（無効時は全モデル利用可）\n"
+        "  - `default`: 全ユーザー共通で許可するモデルID\n"
+        "  - `groups`: グループ名→許可モデルID配列\n"
+        "- システム管理者は常に全モデル利用可能です。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
+EXAPP_SEEDS = [RAG_SEED, WHISPER_SEED, SD_SEED, AUDIT_SEED, USERMGMT_SEED, MODELPOLICY_SEED]
 
 
 def _now_iso() -> str:
@@ -199,6 +338,24 @@ def _is_system_admin(claims: dict[str, Any]) -> bool:
 def _forbidden(msg: str = "この操作を行う権限がありません") -> JSONResponse:
     return JSONResponse(status_code=403, content={"error": msg})
 
+
+def _last_user_text(messages: list[dict[str, Any]]) -> str:
+    """監査ログ用に、メッセージ列から最後のユーザー発話のテキストを取り出す。"""
+    for m in reversed(messages or []):
+        if m.get("role") == "user":
+            content = m.get("content", "")
+            return content if isinstance(content, str) else str(content)
+    return ""
+
+
+def _model_denied(claims: dict[str, Any], model: Any) -> str | None:
+    """利用ポリシー上、指定モデルが不許可なら理由メッセージを返す（許可なら None）。"""
+    model_id = llm.resolve_model(model if isinstance(model, dict) else None)
+    groups = claims.get("groups") or []
+    if policy.is_model_allowed(groups, _is_system_admin(claims), model_id):
+        return None
+    return f"モデル「{model_id}」の利用は許可されていません（管理者にお問い合わせください）。"
+
 app = FastAPI(title="Open GENAI Local Backend", version="0.1.0")
 
 app.add_middleware(
@@ -214,6 +371,7 @@ app.add_middleware(
 def _startup() -> None:
     storage.init_db()
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
+    audit.start()
     os.makedirs(FILES_DIR, exist_ok=True)
 
 
@@ -241,6 +399,26 @@ async def auth_middleware(request: Request, call_next):
         content={"error": "unauthorized"},
         headers={"Access-Control-Allow-Origin": "*"},
     )
+
+
+# ---------------------------------------------------------------------------
+# 監査アクセスログ（全 API 共通）。auth_middleware より後に登録 = 外側で動作。
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def audit_access_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    started = time.monotonic()
+    response = await call_next(request)
+    try:
+        audit.record_access(
+            request,
+            status=response.status_code,
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+    except Exception:  # noqa: BLE001 - ログ失敗は本処理に影響させない
+        pass
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +476,9 @@ async def auth_acs(request: Request) -> Response:
     if errors or not saml_auth.is_authenticated():
         reason = saml_auth.get_last_error_reason() or ",".join(errors)
         print(f"[auth] SAML 検証失敗: {reason}")
+        audit.record(
+            request, action="auth.login", status=401, output_text=f"SAML検証失敗: {reason}"
+        )
         return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
 
     attrs = saml_auth.get_attributes()
@@ -306,6 +487,16 @@ async def auth_acs(request: Request) -> Response:
     name = (attrs.get("name") or [email])[0]
     groups = list(attrs.get("groups") or [])
     session_index = saml_auth.get_session_index()
+
+    audit.record(
+        request,
+        action="auth.login",
+        status=200,
+        user_id=nameid,
+        user_email=email,
+        user_name=name,
+        groups=groups,
+    )
 
     # ローカル DB 上でいずれかのチームの管理者なら TeamAdminGroup を付与
     # （Keycloak 側でグループを手動設定しなくてもチーム管理 UI が使えるようにする）
@@ -393,57 +584,84 @@ async def health() -> dict[str, Any]:
 # チャット履歴 (genU API)
 # ---------------------------------------------------------------------------
 @app.post("/chats")
-async def create_chat() -> dict[str, Any]:
-    return {"chat": storage.create_chat()}
+async def create_chat(request: Request) -> dict[str, Any]:
+    user_id = _user_id(_claims_from_request(request))
+    return {"chat": storage.create_chat(user_id)}
 
 
 @app.get("/chats")
-async def list_chats() -> dict[str, Any]:
-    return {"data": storage.list_chats(), "lastEvaluatedKey": None}
+async def list_chats(request: Request) -> dict[str, Any]:
+    user_id = _user_id(_claims_from_request(request))
+    return {"data": storage.list_chats(user_id), "lastEvaluatedKey": None}
 
 
 @app.get("/chats/{chat_id}")
-async def find_chat(chat_id: str) -> JSONResponse:
-    chat = storage.find_chat(chat_id)
+async def find_chat(chat_id: str, request: Request) -> JSONResponse:
+    user_id = _user_id(_claims_from_request(request))
+    chat = storage.find_chat(chat_id, user_id)
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
 
 
 @app.delete("/chats/{chat_id}")
-async def delete_chat(chat_id: str) -> dict[str, Any]:
-    storage.delete_chat(chat_id)
-    return {}
+async def delete_chat(chat_id: str, request: Request) -> JSONResponse:
+    user_id = _user_id(_claims_from_request(request))
+    ok = storage.delete_chat(chat_id, user_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"message": "chat not found"})
+    return JSONResponse(content={})
 
 
 @app.put("/chats/{chat_id}/title")
 async def update_title(chat_id: str, request: Request) -> JSONResponse:
+    user_id = _user_id(_claims_from_request(request))
     body = await request.json()
-    chat = storage.update_title(chat_id, body.get("title", ""))
+    chat = storage.update_title(chat_id, user_id, body.get("title", ""))
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
 
 
 @app.get("/chats/{chat_id}/messages")
-async def list_messages(chat_id: str) -> dict[str, Any]:
-    return {"messages": storage.list_messages(chat_id)}
+async def list_messages(chat_id: str, request: Request) -> dict[str, Any]:
+    user_id = _user_id(_claims_from_request(request))
+    return {"messages": storage.list_messages(chat_id, user_id)}
 
 
 @app.post("/chats/{chat_id}/messages")
-async def create_messages(chat_id: str, request: Request) -> dict[str, Any]:
+async def create_messages(chat_id: str, request: Request) -> JSONResponse:
+    user_id = _user_id(_claims_from_request(request))
     body = await request.json()
     messages = body.get("messages", [])
-    return {"messages": storage.create_messages(chat_id, messages)}
+    recorded = storage.create_messages(chat_id, user_id, messages)
+    if recorded is None:
+        return JSONResponse(status_code=404, content={"message": "chat not found"})
+    # 監査ログ（内容ログ）: 確定メッセージを証跡として記録（messages テーブルとは独立）
+    for m in messages:
+        audit.record(
+            request,
+            action="chat.message",
+            usecase=m.get("usecase") or "/chat",
+            chatId=chat_id,
+            input_text=m.get("content", "") if m.get("role") == "user" else "",
+            output_text=m.get("content", "") if m.get("role") == "assistant" else "",
+            model=m.get("llmType"),
+        )
+    return JSONResponse(content={"messages": recorded})
 
 
 # ---------------------------------------------------------------------------
 # 推論 (genU API / Lambda ストリーム代替)
 # ---------------------------------------------------------------------------
 @app.post("/predict")
-async def predict(request: Request) -> str:
+async def predict(request: Request) -> Response:
     body = await request.json()
-    return await llm.chat_once(body.get("messages", []), body.get("model"))
+    denied = _model_denied(_claims_from_request(request), body.get("model"))
+    if denied:
+        return JSONResponse(status_code=403, content={"error": denied})
+    text = await llm.chat_once(body.get("messages", []), body.get("model"))
+    return JSONResponse(content=text)
 
 
 def _clean_title(text: str) -> str:
@@ -459,18 +677,24 @@ def _clean_title(text: str) -> str:
 
 @app.post("/predict/title")
 async def predict_title(request: Request) -> str:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
     body = await request.json()
+    # 許可外モデルではタイトル生成もしない（空タイトルを返す）
+    if _model_denied(claims, body.get("model")):
+        return ""
     prompt = body.get("prompt", "")
     messages = [{"role": "user", "content": prompt}]
     raw = await llm.chat_once(messages, body.get("model"))
     title = _clean_title(raw)
 
     # クラウド版同様、生成したタイトルをサーバ側でチャットに保存する
+    # （所有者のチャットのみ。update_title が所有者一致を強制する）
     chat = body.get("chat") or {}
     chat_id_raw = chat.get("chatId", "")
     chat_id = chat_id_raw.split("#")[1] if "#" in chat_id_raw else chat_id_raw
     if chat_id and title:
-        storage.update_title(chat_id, title)
+        storage.update_title(chat_id, user_id, title)
 
     return title
 
@@ -518,8 +742,97 @@ async def delete_system_context(sc_id: str, request: Request) -> dict[str, Any]:
 @app.post("/predict/stream")
 async def predict_stream(request: Request) -> StreamingResponse:
     body = await request.json()
-    generator = llm.chat_stream(body.get("messages", []), body.get("model"))
-    return StreamingResponse(generator, media_type="application/x-ndjson")
+    messages = body.get("messages", [])
+    model = body.get("model")
+
+    # 利用ポリシーで許可されていないモデルはブロック（エラー行を1件流して終了）
+    denied = _model_denied(_claims_from_request(request), model)
+    if denied:
+        async def _blocked():
+            yield json.dumps({"text": denied, "stopReason": "error"}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(_blocked(), media_type="application/x-ndjson")
+
+    generator = llm.chat_stream(messages, model)
+    # 監査ログ（内容ログ）: 入力（最終ユーザー発話）と集約した出力を1件記録
+    audited = audit.wrap_stream(
+        generator,
+        request,
+        action="predict.stream",
+        usecase="/chat",
+        input_text=_last_user_text(messages),
+        model=(model or {}).get("modelId") if isinstance(model, dict) else None,
+    )
+    return StreamingResponse(audited, media_type="application/x-ndjson")
+
+
+# ---------------------------------------------------------------------------
+# 監査ログ参照（システム管理者限定） — 8-(1) 管理者による利用状況/内容の確認
+# ---------------------------------------------------------------------------
+def _parse_int(value: str | None) -> int | None:
+    try:
+        return int(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/admin/audit-logs")
+async def list_audit_logs(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログの閲覧には管理者権限が必要です")
+    qp = request.query_params
+    result = audit.query(
+        user_id=qp.get("userId") or None,
+        action=qp.get("action") or None,
+        ts_from=_parse_int(qp.get("from")),
+        ts_to=_parse_int(qp.get("to")),
+        q=qp.get("q") or None,
+        limit=_parse_int(qp.get("limit")) or 100,
+        offset=_parse_int(qp.get("offset")) or 0,
+    )
+    return JSONResponse(content=result)
+
+
+@app.get("/models/allowed")
+async def list_allowed_models(request: Request) -> JSONResponse:
+    """現在のユーザーが利用可能なモデル ID を返す（unrestricted=true は無制限）。"""
+    claims = _claims_from_request(request)
+    allowed = policy.allowed_models(claims.get("groups") or [], _is_system_admin(claims))
+    if allowed is None:
+        return JSONResponse(content={"unrestricted": True, "models": []})
+    return JSONResponse(content={"unrestricted": False, "models": sorted(allowed)})
+
+
+@app.get("/admin/model-policy")
+async def get_model_policy(request: Request) -> JSONResponse:
+    """モデル利用ポリシーの現在値を返す（システム管理者限定・参照のみ）。
+
+    設定変更は管理者限定 exApp「モデル利用制御」（modelpolicy-app）から行う。
+    """
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("モデル利用ポリシーの閲覧には管理者権限が必要です")
+    return JSONResponse(content=policy.get_policy())
+
+
+@app.get("/admin/audit-logs/export")
+async def export_audit_logs(request: Request) -> Response:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログのエクスポートには管理者権限が必要です")
+    qp = request.query_params
+    ts_from = _parse_int(qp.get("from"))
+    ts_to = _parse_int(qp.get("to"))
+
+    def _gen():
+        yield from audit.iter_export(ts_from, ts_to)
+
+    return StreamingResponse(
+        _gen(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=audit-logs.jsonl"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,9 +915,13 @@ async def list_exapps(request: Request) -> list[Any]:
     # ListExAppsResponse = Array<ExApp & { teamName }>
     # 起動していない(ヘルスチェック不通の) AI アプリは一覧から隠す。
     claims = _claims_from_request(request)
-    candidates = teams_store.list_visible_exapps(
-        _user_id(claims), _is_system_admin(claims)
-    )
+    is_admin = _is_system_admin(claims)
+    candidates = teams_store.list_visible_exapps(_user_id(claims), is_admin)
+    # 管理者限定 exApp（監査ログ参照 等）は非管理者の一覧から隠す
+    if not is_admin:
+        candidates = [
+            a for a in candidates if a.get("exAppId") not in ADMIN_ONLY_EXAPP_IDS
+        ]
     checks = await asyncio.gather(
         *[_is_app_up(a["endpoint"]) for a in candidates], return_exceptions=True
     )
@@ -625,6 +942,10 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+
+    # 管理者限定 exApp（監査ログ参照 等）は非管理者の実行を拒否
+    if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
+        return _forbidden("このアプリの実行には管理者権限が必要です")
 
     # 認可: 共通チーム or システム管理者 or 所属メンバー
     if (
@@ -690,6 +1011,23 @@ async def invoke_exapp(request: Request) -> JSONResponse:
         )
     except Exception as e:  # noqa: BLE001 - 履歴保存失敗で実行結果は返す
         print(f"[exapps] 履歴の保存に失敗: {e}")
+
+    # 監査ログ（内容ログ）: AI アプリ実行を証跡として記録
+    try:
+        audit.record(
+            request,
+            action="exapp.invoke",
+            teamId=team_id,
+            exAppId=ex_app_id,
+            session_id=session_id or None,
+            status=200,
+            input_text=json.dumps(inputs, ensure_ascii=False) if inputs else "",
+            output_text=outputs if isinstance(outputs, str) else json.dumps(
+                outputs, ensure_ascii=False
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[exapps] 監査ログの記録に失敗: {e}")
 
     return JSONResponse(
         content={

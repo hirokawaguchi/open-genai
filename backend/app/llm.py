@@ -41,6 +41,11 @@ def _resolve_model(model: dict[str, Any] | None) -> str:
     return DEFAULT_MODEL
 
 
+def resolve_model(model: dict[str, Any] | None) -> str:
+    """リクエストの model 指定から実際に使うモデル ID を解決する（公開版）。"""
+    return _resolve_model(model)
+
+
 def _data_url(media_type: str, data: str) -> str:
     """base64(prefix有無どちらでも)を data URL に正規化する。"""
     if data.startswith("data:"):
