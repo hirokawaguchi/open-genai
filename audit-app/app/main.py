@@ -24,6 +24,8 @@ from typing import Any
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
+from . import intauth
+
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 AUDIT_DB_PATH = os.environ.get("AUDIT_DB_PATH", "/data/audit.db")
 ADMIN_GROUP = os.environ.get("AUDIT_ADMIN_GROUP", "SystemAdminGroup")
@@ -71,11 +73,21 @@ def _date_to_ms(value: str | None, *, end_of_day: bool = False) -> int | None:
 
 
 def _cell(text: Any, limit: int = 80) -> str:
-    """Markdown テーブルのセル用にエスケープ・短縮する。"""
+    """Markdown テーブルのセル用にエスケープ・短縮する。
+
+    利用者入力（inputText/outputText 等）が管理者 UI でリンク・画像・生 HTML として
+    描画されないよう、Markdown/HTML の特殊文字を無害化する（フィッシング対策）。
+    """
     s = "" if text is None else str(text)
-    s = s.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+    s = s.replace("\r", " ").replace("\n", " ")
+    # まず長さを制限（エスケープでバックスラッシュが増える前に）
     if len(s) > limit:
         s = s[:limit] + "…"
+    # HTML を無効化
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Markdown のリンク/画像/強調/コード等を無効化（バックスラッシュエスケープ）
+    for ch in ("\\", "`", "*", "_", "[", "]", "(", ")", "!", "|"):
+        s = s.replace(ch, "\\" + ch)
     return s
 
 
@@ -170,11 +182,20 @@ def _query(inputs: dict[str, Any]) -> str:
 async def invoke(
     request: Request,
     x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
 ) -> Any:
     err = _check_key(x_api_key)
     if err:
         return err
+
+    # backend 署名の検証（x-user-*/x-scope の偽装＝管理者機能バイパス対策）
+    if not intauth.verify(x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
 
     if not _is_admin(x_user_groups):
         return {

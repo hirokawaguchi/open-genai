@@ -27,7 +27,11 @@ interface RequestOptions {
 const buildUrl = (base: string, path: string, params?: RequestOptions['params']): string => {
   const normalizedBase = base.endsWith('/') ? base.slice(0, -1) : base;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const url = new URL(`${normalizedBase}${normalizedPath}`);
+  const combined = `${normalizedBase}${normalizedPath}`;
+  // 相対パス（例: /api）は reverse proxy 同一オリジン向け。絶対 URL のみ new URL(単一引数) 可。
+  const url = /^https?:\/\//.test(normalizedBase)
+    ? new URL(combined)
+    : new URL(combined, window.location.origin);
 
   if (params) {
     for (const [key, value] of Object.entries(params)) {

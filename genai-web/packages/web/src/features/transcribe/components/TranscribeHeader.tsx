@@ -1,3 +1,4 @@
+import { PiBookOpenBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 
@@ -14,8 +15,15 @@ export const TranscribeHeader = () => {
       <h1 className='mb-2 flex justify-start text-std-20B-160 lg:text-std-24B-150'>
         音声ファイルから文字起こし
       </h1>
-      <div className='prose prose-sm max-w-full'>
-        <h2>想定用途</h2>
+      <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+        <DisclosureSummary>
+          <span className='flex items-center text-std-16B-150'>
+            <PiBookOpenBold className='mr-2 size-5 flex-none' />
+            使い方（クリックで開閉）
+          </span>
+        </DisclosureSummary>
+        <div className='prose prose-sm mt-3 max-w-full'>
+          <h2>想定用途</h2>
         <p>音声ファイルから文字起こしすることができます。</p>
         <h3>アプリ個別の留意点</h3>
         <p>
@@ -31,11 +39,12 @@ export const TranscribeHeader = () => {
           <DisclosureSummary>仕組み</DisclosureSummary>
           <div className='pl-7'>
             <p>
-              生成AIの機能を活用し、音声ファイルを文字起こしするよう入力プロンプトに指示して文章を返答させています。特別な文書は読み込ませていません。実行環境はガバメントクラウドのAWSのBedrockを利用しています。
+              音声認識エンジンで音声ファイルを文字起こしします。特別な文書は読み込ませていません。音声はクラウドには送信されません。
             </p>
           </div>
         </Disclosure>
-      </div>
+        </div>
+      </Disclosure>
     </div>
   );
 };

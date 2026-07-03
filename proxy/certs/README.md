@@ -14,6 +14,11 @@
 
 ## 閉域検証用（自己署名）
 
+TLS 不要で HTTP(80) のみ使う場合は `docker-compose.verify.yml` を併用してください
+（証明書の配置は不要）。
+
+自己署名証明書で HTTPS 検証する場合のみ:
+
 ```bash
 ./generate-selfsigned.sh genai.example.lg.jp
 ```

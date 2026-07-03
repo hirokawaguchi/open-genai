@@ -21,6 +21,10 @@ from typing import Any
 DB_PATH = os.environ.get("TEAMS_DB_PATH", "/data/open-genai-teams.db")
 
 COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
+# 管理者向けアプリ（監査ログ参照/利用者一括管理/モデル制御/入力制限/RAGナレッジ管理）を
+# 共通アプリから分離して表示するための専用チーム。システム管理者のみに見える。
+ADMIN_TEAM_ID = "00000000-0000-0000-0000-0000000000a1"
+ADMIN_TEAM_NAME = "管理者ツール"
 
 _lock = threading.Lock()
 
@@ -28,6 +32,16 @@ _lock = threading.Lock()
 def _now() -> str:
     # フロントは createdDate/updatedDate を数値(ms)として扱うためエポック(ms)文字列で返す
     return str(int(time.time() * 1000))
+
+
+def normalize_email(email: str | None) -> str:
+    """利用者識別子(メール)を正規化する（前後空白除去＋小文字化）。
+
+    識別子はメール（SAML NameID）で全体を横断するため、表記ゆれ（大文字小文字・
+    余分な空白）で同一人物が別 ID 扱いになる/取り違えるのを防ぐ。保存・照合の
+    両方で必ず本関数を通す。
+    """
+    return (email or "").strip().lower()
 
 
 def _connect() -> sqlite3.Connection:
@@ -96,17 +110,21 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
             );
             """
         )
-        # 共通チーム
-        row = conn.execute(
-            "SELECT teamId FROM teams WHERE teamId = ?", (COMMON_TEAM_ID,)
-        ).fetchone()
-        if not row:
-            now = _now()
-            conn.execute(
-                "INSERT INTO teams (teamId, teamName, createdDate, updatedDate)"
-                " VALUES (?, ?, ?, ?)",
-                (COMMON_TEAM_ID, "共通アプリ", now, now),
-            )
+        # 共通チーム / 管理者ツール チーム（いずれもシステム管理下の固定チーム）
+        for fixed_id, fixed_name in (
+            (COMMON_TEAM_ID, "共通アプリ"),
+            (ADMIN_TEAM_ID, ADMIN_TEAM_NAME),
+        ):
+            row = conn.execute(
+                "SELECT teamId FROM teams WHERE teamId = ?", (fixed_id,)
+            ).fetchone()
+            if not row:
+                now = _now()
+                conn.execute(
+                    "INSERT INTO teams (teamId, teamName, createdDate, updatedDate)"
+                    " VALUES (?, ?, ?, ?)",
+                    (fixed_id, fixed_name, now, now),
+                )
 
     # 共通チームに既定アプリ(RAG 等)をシード
     for app in seed_exapps or []:
@@ -114,14 +132,39 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
 
 
 def upsert_seed_exapp(app: dict[str, Any]) -> None:
-    """固定 exAppId の既定アプリを冪等に登録する（RAG など）。"""
+    """固定 exAppId の既定アプリを冪等に登録する（RAG など）。
+
+    既存の場合も、システム管理の表示・配線項目（フォーム定義 placeholder・説明・
+    エンドポイント・API キー・config・状態）を最新のシード定義へ**更新**する。
+    これにより、フォーム項目（タグ/URL 等）の追加が再起動で反映される。
+    """
     with _lock, _connect() as conn:
         exists = conn.execute(
             "SELECT exAppId FROM exapps WHERE exAppId = ?", (app["exAppId"],)
         ).fetchone()
-        if exists:
-            return
         now = _now()
+        if exists:
+            # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）
+            conn.execute(
+                "UPDATE exapps SET teamId=?, exAppName=?, endpoint=?, apiKey=?, config=?,"
+                " placeholder=?, description=?, howToUse=?, copyable=?, status=?,"
+                " updatedDate=? WHERE exAppId=?",
+                (
+                    app.get("teamId", COMMON_TEAM_ID),
+                    app.get("exAppName", ""),
+                    app.get("endpoint", ""),
+                    app.get("apiKey", ""),
+                    app.get("config", ""),
+                    app.get("placeholder", ""),
+                    app.get("description", ""),
+                    app.get("howToUse", ""),
+                    1 if app.get("copyable") else 0,
+                    app.get("status", "published"),
+                    now,
+                    app["exAppId"],
+                ),
+            )
+            return
         conn.execute(
             "INSERT INTO exapps (exAppId, teamId, exAppName, endpoint, apiKey, config,"
             " placeholder, systemPrompt, systemPromptKeyName, description, howToUse,"
@@ -147,6 +190,35 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
         )
 
 
+def refresh_placeholder_by_endpoint(
+    endpoint: str,
+    placeholder: str,
+    how_to_use: str | None = None,
+    exclude_team_id: str | None = None,
+) -> int:
+    """指定エンドポイントの exApp のフォーム定義(placeholder)を最新化する。
+
+    同一マイクロサービスを指す既存アプリのフォーム項目を、名前や説明はそのままに
+    更新する（exclude_team_id を指定するとそのチームは対象外＝共通の検索/管理
+    アプリはシード側で個別管理するため除外できる）。更新件数を返す。
+    """
+    params: list[Any] = [placeholder]
+    set_clause = "placeholder=?"
+    if how_to_use is not None:
+        set_clause += ", howToUse=?"
+        params.append(how_to_use)
+    set_clause += ", updatedDate=?"
+    params.append(_now())
+    where = "endpoint=?"
+    params.append(endpoint)
+    if exclude_team_id is not None:
+        where += " AND teamId<>?"
+        params.append(exclude_team_id)
+    with _lock, _connect() as conn:
+        cur = conn.execute(f"UPDATE exapps SET {set_clause} WHERE {where}", params)
+        return cur.rowcount
+
+
 # ---------------------------------------------------------------------------
 # Team
 # ---------------------------------------------------------------------------
@@ -168,6 +240,7 @@ def list_teams() -> list[dict[str, Any]]:
 
 
 def list_teams_for_admin(user_id: str) -> list[dict[str, Any]]:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT t.* FROM teams t"
@@ -189,6 +262,7 @@ def get_team(team_id: str) -> dict[str, Any] | None:
 
 def create_team(team_name: str, admin_email: str) -> dict[str, Any]:
     team_id = str(uuid.uuid4())
+    admin_email = normalize_email(admin_email)
     now = _now()
     with _lock, _connect() as conn:
         conn.execute(
@@ -256,6 +330,7 @@ def list_team_users(team_id: str) -> list[dict[str, Any]]:
 
 
 def get_team_user(team_id: str, user_id: str) -> dict[str, Any] | None:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         r = conn.execute(
             "SELECT * FROM team_users WHERE teamId = ? AND userId = ?",
@@ -264,11 +339,24 @@ def get_team_user(team_id: str, user_id: str) -> dict[str, Any] | None:
     return _row_to_team_user(r) if r else None
 
 
-def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any]:
+def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any] | None:
+    """新規メンバーを追加する。
+
+    既存メンバーがいる場合は **何も変更せず None を返す**（INSERT OR REPLACE による
+    参加日時リセットや権限の意図しない上書きを防ぐ）。権限変更は明示的な更新
+    (`update_team_user`) で行うこと。
+    """
+    email = normalize_email(email)
     now = _now()
     with _lock, _connect() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM team_users WHERE teamId = ? AND userId = ?",
+            (team_id, email),
+        ).fetchone()
+        if existing:
+            return None
         conn.execute(
-            "INSERT OR REPLACE INTO team_users"
+            "INSERT INTO team_users"
             " (teamId, userId, username, isAdmin, createdDate, updatedDate)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (team_id, email, email, 1 if is_admin else 0, now, now),
@@ -281,6 +369,7 @@ def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any]
 
 
 def update_team_user(team_id: str, user_id: str, is_admin: bool) -> dict[str, Any] | None:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         conn.execute(
             "UPDATE team_users SET isAdmin = ?, updatedDate = ?"
@@ -295,6 +384,7 @@ def update_team_user(team_id: str, user_id: str, is_admin: bool) -> dict[str, An
 
 
 def delete_team_user(team_id: str, user_id: str) -> None:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         conn.execute(
             "DELETE FROM team_users WHERE teamId = ? AND userId = ?",
@@ -321,6 +411,7 @@ def is_team_member(team_id: str, user_id: str) -> bool:
 
 
 def user_admins_any_team(user_id: str) -> bool:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         r = conn.execute(
             "SELECT 1 FROM team_users WHERE userId = ? AND isAdmin = 1 LIMIT 1",
@@ -330,11 +421,36 @@ def user_admins_any_team(user_id: str) -> bool:
 
 
 def list_team_ids_for_user(user_id: str) -> list[str]:
+    user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT teamId FROM team_users WHERE userId = ?", (user_id,)
         ).fetchall()
     return [r["teamId"] for r in rows]
+
+
+# 全体公開を表す予約スコープ（全利用者が暗黙保持）。チームIDとは衝突しない固定値。
+PUBLIC_SCOPE = "public"
+
+
+def list_teams_for_member(user_id: str) -> list[dict[str, str]]:
+    """利用者が所属するチーム（id+name）。共有先の選択肢に使う。
+
+    共通/管理者ツールの固定チームは共有先にしないため除外する。
+    """
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT t.teamId AS teamId, t.teamName AS teamName"
+            " FROM teams t JOIN team_users u ON t.teamId = u.teamId"
+            " WHERE u.userId = ? ORDER BY t.createdDate ASC",
+            (user_id,),
+        ).fetchall()
+    return [
+        {"teamId": r["teamId"], "teamName": r["teamName"]}
+        for r in rows
+        if r["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 import { ExApp } from 'genai-web';
+import { PiBookOpenBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ExAppUsageMarkdownRenderer } from './ExAppUsageMarkdownRenderer';
 
 type Props = {
@@ -23,7 +25,22 @@ export const ExAppHeader = (props: Props) => {
           {exApp?.exAppName}
         </h1>
       </div>
-      {exApp?.howToUse && <ExAppUsageMarkdownRenderer content={exApp.howToUse} size='sm' />}
+      {exApp?.description && (
+        <p className='text-std-16N-170 text-solid-gray-700'>{exApp.description}</p>
+      )}
+      {exApp?.howToUse && (
+        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+          <DisclosureSummary>
+            <span className='flex items-center text-std-16B-150'>
+              <PiBookOpenBold className='mr-2 size-5 flex-none' />
+              使い方（クリックで開閉）
+            </span>
+          </DisclosureSummary>
+          <div className='mt-3'>
+            <ExAppUsageMarkdownRenderer content={exApp.howToUse} size='sm' />
+          </div>
+        </Disclosure>
+      )}
     </div>
   );
 };

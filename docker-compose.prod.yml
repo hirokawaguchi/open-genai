@@ -1,13 +1,19 @@
 # Open GENAI 本番用 compose（LGWAN 想定 / TLS リバースプロキシ集約）。
 #
-# 使い方:
+# 使い方（本番 TLS）:
 #   cp .env.prod.example .env.prod
 #   # .env.prod の PUBLIC_URL 等を編集
-#   ./proxy/certs/generate-selfsigned.sh <ホスト名>   # または本物の証明書を配置
+#   # 組織 CA 発行の証明書を proxy/certs/{fullchain.pem,privkey.pem} に配置
 #   docker compose -f docker-compose.prod.yml --env-file .env.prod up --build
 #
+# 使い方（閉域検証: HTTP のみ・自己署名不要・ポート 80）:
+#   cp .env.prod.example .env.prod
+#   # PUBLIC_URL=http://localhost, PROXY_HTTP_PORT=80 等を編集
+#   docker compose -f docker-compose.prod.yml -f docker-compose.verify.yml \
+#     --env-file .env.prod up --build
+#
 # 方針:
-# - ユーザに公開するポートは proxy の 80/443 のみ（LGWAN 制約）。
+# - ユーザに公開するポートは proxy のみ（本番: 80/443、検証: 80 のみ）。
 # - web / backend / keycloak / 各 AI アプリ / qdrant はホストにポート公開せず、
 #   Docker 内部ネットワークでのみ到達（proxy がパスで振り分ける）。
 # - フロントの API 参照は相対パス /api（genai-web 無改修・.env 設定のみ）。
@@ -18,8 +24,8 @@ services:
     image: nginx:1.27-alpine
     container_name: open-genai-proxy
     ports:
-      - "80:80"
-      - "443:443"
+      - "${PROXY_HTTP_PORT:-80}:80"
+      - "${PROXY_HTTPS_PORT:-443}:443"
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./proxy/certs:/etc/nginx/certs:ro
@@ -60,6 +66,11 @@ services:
       - NGWORD_APP_URL=${NGWORD_APP_URL:-http://ngword-app:8008/invoke}
       - NGWORD_DB_PATH=/data/ngwords.db
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
+      # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
+      - ARTIFACT_FETCH_ALLOWED_HOSTS=${ARTIFACT_FETCH_ALLOWED_HOSTS:-}
+      - ARTIFACT_MAX_BYTES=${ARTIFACT_MAX_BYTES:-52428800}
       # 成果物ファイルの再ホスト先（自前 S3 互換: SeaweedFS）
       # S3_PUBLIC_ENDPOINT は利用者がインターネットから到達する公開URLを指定すること
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
@@ -99,19 +110,25 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: open-genai-keycloak
-    command: ["start-dev", "--import-realm"]
+    # 本番モードで起動（dev モードの start-dev は使わない）。
+    # TLS は proxy で終端し、KC には X-Forwarded-* を信頼させる。
+    command: ["start", "--import-realm"]
     expose:
       - "8080"
     environment:
       - KC_BOOTSTRAP_ADMIN_USERNAME=${KEYCLOAK_ADMIN:-admin}
       - KC_BOOTSTRAP_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
-      # 公開 URL は proxy(443) の /kc。相対パスを /kc に設定して集約する
-      - KC_HOSTNAME=${PUBLIC_URL}
+      # 公開 URL は proxy の /kc。フル URL で指定しないと SAML メタデータに /kc が付かない
+      - KC_HOSTNAME=${PUBLIC_URL}/kc
       - KC_HTTP_RELATIVE_PATH=/kc
       - KC_HOSTNAME_STRICT=false
       - KC_HTTP_ENABLED=true
       # proxy からの X-Forwarded-* を信頼（TLS は proxy で終端）
       - KC_PROXY_HEADERS=xforwarded
+      # 本番の永続DBは外部RDBを強く推奨（既定の組込H2は本番非推奨）。
+      # 例: KC_DB=postgres, KC_DB_URL/KC_DB_USERNAME/KC_DB_PASSWORD を設定し、
+      #     初回のみ `kc.sh build` 済みイメージ（--optimized）で運用する。
+      - KC_DB=${KC_DB:-dev-file}
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro
       - keycloak_data:/opt/keycloak/data
@@ -126,6 +143,8 @@ services:
       - "5173"
     environment:
       - VITE_USE_POLLING=true
+      - VITE_APP_API_ENDPOINT=/api
+      - VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
       # proxy 経由の公開ホスト名を Vite に許可させる（例: genai.example.lg.jp）
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
     volumes:
@@ -161,7 +180,11 @@ services:
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
-      - FOLDERS_DB_PATH=/data/rag_folders.db
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - RAG_META_DB_PATH=/data/rag_meta.db
+      - URL_REFRESH_INTERVAL=${URL_REFRESH_INTERVAL:-86400}
+      # URL 取り込みの SSRF 対策: 生成元の既知ホストのみ許可を推奨（カンマ区切り）
+      - URL_FETCH_ALLOWED_HOSTS=${URL_FETCH_ALLOWED_HOSTS:-}
     volumes:
       - rag_app_data:/data
     extra_hosts:
@@ -209,6 +232,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - AUDIT_DB_PATH=/data/audit.db
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
     volumes:
       - backend_data:/data
     restart: unless-stopped
@@ -223,6 +247,7 @@ services:
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
     depends_on:
       - keycloak
     restart: unless-stopped
@@ -233,6 +258,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - POLICY_DB_PATH=/data/policy.db
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
     volumes:
       - backend_data:/data
     restart: unless-stopped
@@ -243,6 +269,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - NGWORD_DB_PATH=/data/ngwords.db
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
     volumes:
       - backend_data:/data
     restart: unless-stopped
@@ -253,6 +280,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - PROMPT_DB_PATH=/data/prompts.db
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
     volumes:
       - backend_data:/data
     restart: unless-stopped

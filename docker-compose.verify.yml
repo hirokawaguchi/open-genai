@@ -1,0 +1,19 @@
+# 本番スタック (docker-compose.prod.yml) の HTTP 検証用オーバーライド。
+#
+# 閉域検証など TLS/自己署名証明書が使えずポート 80 のみ公開できる環境向け。
+# 証明書不要。PUBLIC_URL は http:// で始めること（例: http://localhost）。
+#
+# 使い方:
+#   cp .env.prod.example .env.prod
+#   # PUBLIC_URL=http://localhost, PROXY_HTTP_PORT=80 等を編集
+#   docker compose -f docker-compose.prod.yml -f docker-compose.verify.yml \
+#     --env-file .env.prod up --build
+#
+# ポート 80 が使用中の場合は .env.prod の PROXY_HTTP_PORT=8080 等に変更。
+
+services:
+  proxy:
+    ports: !override
+      - "${PROXY_HTTP_PORT:-80}:80"
+    volumes: !override
+      - ./proxy/nginx.http.conf:/etc/nginx/nginx.conf:ro

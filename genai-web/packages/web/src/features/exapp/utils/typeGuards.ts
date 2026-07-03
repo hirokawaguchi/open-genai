@@ -4,6 +4,7 @@ import type {
   GovAIFormUIHidden,
   GovAIFormUIItem,
   GovAIFormUINumber,
+  GovAIFormUIPreview,
   GovAIFormUIRadio,
   GovAIFormUISelect,
   GovAIFormUIText,
@@ -40,4 +41,8 @@ export const isRadioType = (ui: GovAIFormUIItem): ui is GovAIFormUIRadio => {
 
 export const isHiddenType = (ui: GovAIFormUIItem): ui is GovAIFormUIHidden => {
   return ui.type === 'hidden';
+};
+
+export const isPreviewType = (ui: GovAIFormUIItem): ui is GovAIFormUIPreview => {
+  return ui.type === 'preview';
 };

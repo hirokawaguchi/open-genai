@@ -7,12 +7,14 @@ import {
   UseFormTrigger,
 } from 'react-hook-form';
 import { GovAIFormUIJson } from '../types';
+import { isFieldVisible, isReservedFormKey } from '../utils/formSpec';
 import { formatValidationErrorMessage } from '../utils/formatValidationErrorMessage';
 import {
   isCheckboxType,
   isFileType,
   isHiddenType,
   isNumberType,
+  isPreviewType,
   isRadioType,
   isSelectType,
   isTextareaType,
@@ -22,6 +24,7 @@ import { ExAppCheckbox } from './form/ExAppCheckbox';
 import { ExAppHidden } from './form/ExAppHidden';
 import { ExAppInputFile } from './form/ExAppInputFile';
 import { ExAppNumberTextInput } from './form/ExAppNumberTextInput';
+import { ExAppPreview } from './form/ExAppPreview';
 import { ExAppRadio } from './form/ExAppRadio';
 import { ExAppSelect } from './form/ExAppSelect';
 import { ExAppTextarea } from './form/ExAppTextarea';
@@ -39,10 +42,14 @@ type Props = {
   errors: FieldErrors<FieldValues>;
   /** バリデーションエラー時のフォーカス制御用（ExAppInputFileのみ使用） */
   submitCount?: number;
+  /** OpenGENAI Form Spec v1: visibleWhen 評価・preview 描画に使う現在値 */
+  values?: FieldValues;
 };
 
 export const ExAppFormComponentBuilder = (props: Props) => {
-  const { uiJson, register, setValue, trigger, clearErrors, errors, submitCount } = props;
+  const { uiJson, register, setValue, trigger, clearErrors, errors, submitCount, values } = props;
+
+  const currentValues = values ?? {};
 
   return (
     <>
@@ -52,7 +59,21 @@ export const ExAppFormComponentBuilder = (props: Props) => {
           return null;
         }
 
+        // OpenGENAI Form Spec v1: 予約キー（$始まり）は描画しない
+        if (isReservedFormKey(key)) {
+          return null;
+        }
+
         const uiConfig = uiJson[key];
+
+        // OpenGENAI Form Spec v1: 条件表示（未指定なら常に表示＝従来動作）
+        if (!isFieldVisible(uiConfig, currentValues)) {
+          return null;
+        }
+
+        if (isPreviewType(uiConfig)) {
+          return <ExAppPreview key={key} id={key} uiConfig={uiConfig} values={currentValues} />;
+        }
         if (isTextType(uiConfig)) {
           return (
             <ExAppTextInput

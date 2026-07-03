@@ -71,6 +71,8 @@ def init_db() -> None:
                 userId TEXT NOT NULL,
                 systemContextTitle TEXT NOT NULL DEFAULT '',
                 systemContext TEXT NOT NULL DEFAULT '',
+                sharedTags TEXT NOT NULL DEFAULT '[]',
+                isPublic INTEGER NOT NULL DEFAULT 0,
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
@@ -88,7 +90,7 @@ def init_db() -> None:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """既存DB（userId 列の無い chats）への冪等マイグレーション。"""
+    """既存DB（userId 列の無い chats 等）への冪等マイグレーション。"""
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(chats)").fetchall()]
     if "userId" not in cols:
         conn.execute(
@@ -99,6 +101,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 "UPDATE chats SET userId = ? WHERE userId = ''",
                 (LEGACY_CHAT_OWNER,),
             )
+
+    # system_contexts の共有タグ(ABAC)対応（加算的・後方互換）
+    sc_cols = [
+        r["name"] for r in conn.execute("PRAGMA table_info(system_contexts)").fetchall()
+    ]
+    if "sharedTags" not in sc_cols:
+        conn.execute(
+            "ALTER TABLE system_contexts ADD COLUMN sharedTags TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "isPublic" not in sc_cols:
+        conn.execute(
+            "ALTER TABLE system_contexts ADD COLUMN isPublic INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def create_chat(user_id: str) -> dict[str, Any]:
@@ -217,6 +232,14 @@ def list_messages(chat_id: str, user_id: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # System contexts（保存プロンプト）— クラウドの DynamoDB を SQLite で代替
 # ---------------------------------------------------------------------------
+def _sc_shared_tags(row: sqlite3.Row) -> list[str]:
+    try:
+        val = json.loads(row["sharedTags"]) if row["sharedTags"] else []
+        return [str(x) for x in val] if isinstance(val, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
 def _row_to_system_context(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": f"systemContext#{row['systemContextId']}",
@@ -224,30 +247,50 @@ def _row_to_system_context(row: sqlite3.Row) -> dict[str, Any]:
         "systemContextId": f"systemContext#{row['systemContextId']}",
         "systemContextTitle": row["systemContextTitle"],
         "systemContext": row["systemContext"],
+        # 共有設定(ABAC・加算的)。所有者・全体公開・共有タグ。
+        "ownerUser": row["userId"],
+        "sharedTags": _sc_shared_tags(row),
+        "isPublic": bool(row["isPublic"]),
         "createdDate": row["createdDate"],
     }
 
 
-def list_system_contexts(user_id: str) -> list[dict[str, Any]]:
+def list_system_contexts(user_id: str, tags: list[str] | None = None) -> list[dict[str, Any]]:
+    """本人所有 ＋ 全体公開 ＋ 共有タグ一致（tags）の保存プロンプトを返す。"""
+    ut = set(tags or [])
     with _lock, _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM system_contexts WHERE userId = ? ORDER BY createdDate DESC",
-            (user_id,),
+            "SELECT * FROM system_contexts ORDER BY createdDate DESC",
         ).fetchall()
-    return [_row_to_system_context(r) for r in rows]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        visible = (
+            r["userId"] == user_id
+            or bool(r["isPublic"])
+            or bool(ut.intersection(_sc_shared_tags(r)))
+        )
+        if visible:
+            out.append(_row_to_system_context(r))
+    return out
 
 
 def create_system_context(
-    user_id: str, title: str, system_context: str
+    user_id: str,
+    title: str,
+    system_context: str,
+    shared_tags: list[str] | None = None,
+    is_public: bool = False,
 ) -> dict[str, Any]:
     sc_id = str(uuid.uuid4())
     now = _now()
+    tags_json = json.dumps(sorted({t.strip() for t in (shared_tags or []) if t.strip()}))
     with _lock, _connect() as conn:
         conn.execute(
             "INSERT INTO system_contexts"
-            " (systemContextId, userId, systemContextTitle, systemContext, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (sc_id, user_id, title, system_context, now, now),
+            " (systemContextId, userId, systemContextTitle, systemContext,"
+            "  sharedTags, isPublic, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (sc_id, user_id, title, system_context, tags_json, 1 if is_public else 0, now, now),
         )
         row = conn.execute(
             "SELECT * FROM system_contexts WHERE systemContextId = ?", (sc_id,)
@@ -263,6 +306,48 @@ def update_system_context_title(
             "UPDATE system_contexts SET systemContextTitle = ?, updatedDate = ?"
             " WHERE systemContextId = ? AND userId = ?",
             (title, _now(), sc_id, user_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM system_contexts WHERE systemContextId = ? AND userId = ?",
+            (sc_id, user_id),
+        ).fetchone()
+    return _row_to_system_context(row) if row else None
+
+
+def update_system_context(
+    user_id: str,
+    sc_id: str,
+    *,
+    title: str | None = None,
+    system_context: str | None = None,
+    shared_tags: list[str] | None = None,
+    is_public: bool | None = None,
+) -> dict[str, Any] | None:
+    """所有者のみ更新可。指定された項目のみ変更する（本文・タイトル・共有設定）。"""
+    sets: list[str] = []
+    params: list[Any] = []
+    if title is not None:
+        sets.append("systemContextTitle = ?")
+        params.append(title)
+    if system_context is not None:
+        sets.append("systemContext = ?")
+        params.append(system_context)
+    if shared_tags is not None:
+        sets.append("sharedTags = ?")
+        params.append(json.dumps(sorted({t.strip() for t in shared_tags if t.strip()})))
+    if is_public is not None:
+        sets.append("isPublic = ?")
+        params.append(1 if is_public else 0)
+    if not sets:
+        return None
+    sets.append("updatedDate = ?")
+    params.append(_now())
+    params.extend([sc_id, user_id])
+    with _lock, _connect() as conn:
+        conn.execute(
+            f"UPDATE system_contexts SET {', '.join(sets)}"
+            " WHERE systemContextId = ? AND userId = ?",
+            tuple(params),
         )
         row = conn.execute(
             "SELECT * FROM system_contexts WHERE systemContextId = ? AND userId = ?",

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PiBookOpenBold } from 'react-icons/pi';
 import { useLocation } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
@@ -122,6 +123,53 @@ export const GenerateImagePage = () => {
           />
           <h1 className='flex justify-start text-std-20B-160 lg:text-std-24B-150'>画像を生成</h1>
         </div>
+
+        <Disclosure className='mb-6 rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+          <DisclosureSummary>
+            <span className='flex items-center text-std-16B-150'>
+              <PiBookOpenBold className='mr-2 size-5 flex-none' />
+              使い方（クリックで開閉）
+            </span>
+          </DisclosureSummary>
+          <div className='prose prose-sm mt-3 max-w-full'>
+            <h2>このアプリでできること</h2>
+            <p>
+              プロンプト（文章）から画像を生成します。資料の挿絵やイメージ案の作成、
+              たたき台づくりに役立ちます。
+            </p>
+            <h3>操作方法</h3>
+            <ol>
+              <li>下部の入力欄に、生成したい画像の内容を入力して送信します（英語推奨・具体的に）。</li>
+              <li>右側の「生成結果」に画像が表示されます。</li>
+              <li>
+                「詳細設定」を開くと、ネガティブプロンプト・画像サイズ・ステップ数・シード・
+                スタイルなどを調整できます。
+              </li>
+              <li>スケッチ／マスク機能で、下絵や修正したい範囲を指定した生成もできます。</li>
+            </ol>
+            <h3>入力例・コツ</h3>
+            <ul>
+              <li>
+                プロンプトは具体的に。例:{' '}
+                <code>a flat vector illustration of a city hall, simple, clean</code>
+              </li>
+              <li>
+                避けたい要素はネガティブプロンプトに。例: <code>blurry, text, watermark</code>
+              </li>
+              <li>ステップ数を増やすと描き込みが増えますが、生成に時間がかかります。</li>
+            </ul>
+            <Disclosure className='my-4'>
+              <DisclosureSummary>仕組み・注意</DisclosureSummary>
+              <div className='pl-7'>
+                <ul>
+                  <li>生成AI（画像生成モデル）がプロンプトに基づいて画像を生成します。</li>
+                  <li>同じ入力でも生成結果は毎回変わることがあります（シード固定で再現性を高められます）。</li>
+                  <li>生成画像の公開・配布時は、著作権・肖像権にご注意ください。</li>
+                </ul>
+              </div>
+            </Disclosure>
+          </div>
+        </Disclosure>
 
         <div className='flex justify-between gap-12 xl:gap-16'>
           <div className='flex min-w-0 flex-1 flex-col'>

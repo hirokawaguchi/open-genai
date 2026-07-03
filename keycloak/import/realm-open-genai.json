@@ -38,7 +38,7 @@
   ],
   "clients": [
     {
-      "clientId": "http://localhost:8000/auth/saml/metadata",
+      "clientId": "http://localhost/api/auth/saml/metadata",
       "name": "Open GENAI SP",
       "description": "Open GENAI backend (SAML Service Provider)",
       "protocol": "saml",
@@ -46,8 +46,8 @@
       "fullScopeAllowed": true,
       "frontchannelLogout": true,
       "redirectUris": [
-        "http://localhost:8000/auth/saml/acs",
-        "http://localhost:8000/*"
+        "http://localhost/api/auth/saml/acs",
+        "http://localhost/*"
       ],
       "attributes": {
         "saml.assertion.signature": "true",
@@ -57,8 +57,8 @@
         "saml.authnstatement": "true",
         "saml.force.post.binding": "true",
         "saml_name_id_format": "email",
-        "saml_assertion_consumer_url_post": "http://localhost:8000/auth/saml/acs",
-        "saml_single_logout_service_url_redirect": "http://localhost:8000/auth/saml/sls",
+        "saml_assertion_consumer_url_post": "http://localhost/api/auth/saml/acs",
+        "saml_single_logout_service_url_redirect": "http://localhost/api/auth/saml/sls",
         "saml_signature_algorithm": "RSA_SHA256"
       },
       "protocolMappers": [

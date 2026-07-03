@@ -43,6 +43,12 @@ export const DiagramResult = (props: Props) => {
         </div>
       )}
 
+      {!loading && correctedDiagramCode.length === 0 && !isEmpty && (
+        <div className='rounded-6 border border-error-2 bg-white p-4 text-error-2'>
+          Mermaid コードを取得できませんでした。再度お試しください。
+        </div>
+      )}
+
       {!loading && isEmpty && (
         <div className='leading-175 text-solid-gray-536'>ダイアグラムがここに表示されます</div>
       )}

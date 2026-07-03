@@ -8,9 +8,10 @@
 ポリシー JSON の形:
     {
       "enabled": true,
-      "default": ["gpt-oss:20b"],            # 全ユーザー共通で許可
-      "groups": {"PowerUsers": ["gemma3:27b"]}  # グループ別に追加許可
+      "default": ["gpt-oss:20b"],              # 全ユーザー共通で許可
+      "teams": {"<teamId>": ["gemma3:27b"]}    # チーム別に追加許可（所属チームで判定）
     }
+- 判定は利用者の所属チーム(teamId)で行う。旧 `groups`（ロール別）も後方互換で併用。
 - システム管理者(SystemAdminGroup) は常に全モデル許可。
 """
 
@@ -63,22 +64,28 @@ def get_policy() -> dict[str, Any]:
     return _cache["policy"]
 
 
-def allowed_models(groups: list[str], is_admin: bool) -> set[str] | None:
-    """ユーザーが利用可能なモデル ID 集合。None は「無制限」。"""
+def allowed_models(scopes: list[str], is_admin: bool) -> set[str] | None:
+    """ユーザーが利用可能なモデル ID 集合。None は「無制限」。
+
+    `scopes` は利用者の所属チームID（team-based）。後方互換として旧 `groups`
+    （ロール別）マップも併せて参照する（キーが一致した場合のみ加算許可）。
+    """
     policy = get_policy()
     if not policy.get("enabled"):
         return None
     if is_admin:
         return None
     allowed: set[str] = set(policy.get("default") or [])
-    group_map = policy.get("groups") or {}
-    for g in groups or []:
-        allowed |= set(group_map.get(g) or [])
+    scope_map: dict[str, Any] = {}
+    scope_map.update(policy.get("groups") or {})  # 旧: ロール別（後方互換）
+    scope_map.update(policy.get("teams") or {})  # 新: チーム別
+    for s in scopes or []:
+        allowed |= set(scope_map.get(s) or [])
     return allowed
 
 
-def is_model_allowed(groups: list[str], is_admin: bool, model_id: str) -> bool:
-    allowed = allowed_models(groups, is_admin)
+def is_model_allowed(scopes: list[str], is_admin: bool, model_id: str) -> bool:
+    allowed = allowed_models(scopes, is_admin)
     if allowed is None:
         return True
     return model_id in allowed

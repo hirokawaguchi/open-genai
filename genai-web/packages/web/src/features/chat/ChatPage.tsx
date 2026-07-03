@@ -216,7 +216,7 @@ export const ChatPage = () => {
               )}
 
               {isEmpty && !loadingMessages && (
-                <div className='grid min-h-full w-full place-content-center py-4'>
+                <div className='w-full py-4'>
                   <ChatHints />
                 </div>
               )}
@@ -265,9 +265,9 @@ export const ChatPage = () => {
         isOpen={showSystemContextDialog}
         systemContext={saveSystemContext}
         onClose={() => setShowSystemContextDialog(false)}
-        onSave={async (title, systemContext) => {
+        onSave={async (title, systemContext, options) => {
           try {
-            await onSaveSystemContext(title, systemContext);
+            await onSaveSystemContext(title, systemContext, options);
             setSystemContextTitle(title);
           } catch (e) {
             console.error(e);

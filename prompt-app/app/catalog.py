@@ -24,6 +24,12 @@ from urllib.parse import quote
 
 PROMPT_DB_PATH = os.environ.get("PROMPT_DB_PATH", "/data/prompts.db")
 
+# チャット流し込みディープリンク(/chat?content=...)の最大URL長(パス+クエリ)。
+# URL クエリ(GET)に全文を載せるため、これを超える長文はリンクを出さず「コピー運用」に
+# フォールバックする。日本語は URL エンコードで約9倍に膨らむ点に注意。dev サーバ/プロキシ
+# のヘッダ上限(概ね8〜16KB)や古い環境の ~2KB を考慮した既定値。
+DEEPLINK_MAX_URL = int(os.environ.get("PROMPT_DEEPLINK_MAX_URL", "8000"))
+
 _VAR_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
@@ -79,6 +85,18 @@ def build_deeplink(text: str, target: str = "content", auto_submit: bool = False
     key = "systemContext" if target == "system" else "content"
     auto = "true" if auto_submit else "false"
     return f"/chat?{key}={quote(text or '')}&autoSubmit={auto}"
+
+
+def deeplink_if_fits(
+    text: str, target: str = "content", auto_submit: bool = False
+) -> str | None:
+    """URL長が上限(DEEPLINK_MAX_URL)以内ならディープリンクを返す。超過なら None。
+
+    長文を GET クエリに載せると URL 長制限で壊れるため、超過時はリンクを出さず
+    呼び出し側で「コピーして貼り付け」運用に誘導する。
+    """
+    link = build_deeplink(text, target, auto_submit)
+    return link if len(link) <= DEEPLINK_MAX_URL else None
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +184,14 @@ def get_template(template_id: str) -> dict[str, Any] | None:
     return _row_to_dict(r) if r else None
 
 
-def list_visible(user_id: str, groups: list[str], is_admin: bool) -> list[dict[str, Any]]:
-    """標準＋自分＋グループ共有のテンプレートを返す。"""
-    ug = set(groups or [])
+def list_visible(user_id: str, team_ids: list[str], is_admin: bool) -> list[dict[str, Any]]:
+    """標準＋自分＋チーム共有＋全体公開のテンプレートを返す。
+
+    共有先（列名は歴史的経緯で `sharedGroups` のままだが、意味は「共有先チームID」）と
+    利用者の所属チーム(`team_ids`)の積集合で可視性を判定する。予約値 `public` は
+    全利用者が暗黙保持し、全体公開を表す。
+    """
+    ut = set(team_ids or []) | {"public"}
     out: list[dict[str, Any]] = []
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM templates ORDER BY isStandard DESC, title").fetchall()
@@ -178,7 +201,7 @@ def list_visible(user_id: str, groups: list[str], is_admin: bool) -> list[dict[s
             is_admin
             or t["isStandard"]
             or (t["ownerUser"] and t["ownerUser"] == user_id)
-            or bool(ug.intersection(t["sharedGroups"]))
+            or bool(ut.intersection(t["sharedGroups"]))
         )
         if visible:
             out.append(t)

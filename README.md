@@ -28,13 +28,13 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 - クラウド API（チャット履歴・推論ストリーム）を **ローカルバックエンド（FastAPI）** で代替
 
 ```
-[ブラウザ] ──▶ web (源内 Web / Vite : 5173)
-                  │  REST + ストリーミング
-                  ▼
-              backend (FastAPI : 8000)  ──▶  OpenAI 互換 LLM（Ollama 等 : 11434）
-                  │
-                  ▼  チャット履歴を SQLite に保存
+[ブラウザ] ──▶ proxy (nginx :80) ──▶ web (源内 Web / Vite)
+                  │                    REST + ストリーミング
+                  ├──▶ backend (FastAPI) ──▶ OpenAI 互換 LLM（Ollama 等）
+                  └──▶ keycloak (/kc)      SAML IdP
 ```
+
+本番は `docker-compose.prod.yml` で TLS(443) 終端。閉域検証は HTTP(80) のみ（`docker-compose.verify.yml`）。
 
 ## 構成
 
@@ -47,7 +47,10 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `sd-app/` | 画像生成を「AI アプリ」として提供（ホストの SD サーバへプロキシ） |
 | `dify-app/` | 外部 Dify（ワークフロー / チャットフロー）を「AI アプリ」として連携する汎用プロキシ（FastAPI） |
 | `shared/` | backend と rag-app で共用するドキュメント抽出モジュール（`docextract.py`） |
-| `docker-compose.yml` | web / backend / rag-app / whisper-app / sd-app / dify-app / qdrant / keycloak / (任意)ollama をまとめて起動 |
+| `docker-compose.yml` | proxy + web / backend / … をまとめて起動（HTTP :80 のみ公開） |
+| `docker-compose.prod.yml` | 本番 TLS 構成（proxy :80/:443 のみ公開） |
+| `docker-compose.verify.yml` | 本番スタックの HTTP 検証用オーバーライド（自己署名不要） |
+| `proxy/` | nginx リバースプロキシ設定（`nginx.http.conf` / `nginx.conf`） |
 
 ## オリジナル源内からの改修内容（クラウド依存 → オープンアーキテクチャ）
 
@@ -167,15 +170,19 @@ OPENAI_API_KEY=sk-...   # サーバが要求する場合のみ
 docker compose up --build
 ```
 
-- 源内 Web: http://localhost:5173/
-- バックエンド: http://localhost:8000/health
+- 源内 Web: http://localhost/ （`.env` の `PROXY_HTTP_PORT` / `PUBLIC_URL` で変更可）
+- バックエンド API: http://localhost/api/health
+- Keycloak 管理: http://localhost/kc/
 
 初回はフロントエンドの依存インストールに数分かかります。
 
+> ポート 80 が使用中の場合は `.env` で `PROXY_HTTP_PORT=8080` と
+> `PUBLIC_URL=http://localhost:8080` に設定してください。
+
 ## 動作確認
 
-- http://localhost:8000/health で `status: ok` と取得済みモデル一覧が返ること
-- http://localhost:5173/ を開くと Keycloak のログイン画面に遷移し、`admin` / `password` でログインできること
+- http://localhost/api/health で `status: ok` と取得済みモデル一覧が返ること
+- http://localhost/ を開くと Keycloak のログイン画面に遷移し、`admin` / `password` でログインできること
 - 「チャット」からメッセージを送り、ローカル LLM の応答がストリーミング表示されること
 - 「AIアプリ」→「ローカル RAG」で質問でき、出典付きで回答されること（起動済みアプリのみ一覧に表示）
 - 「翻訳」「ダイアグラムを生成」「文章を生成」がローカル LLM で動作すること
@@ -216,7 +223,7 @@ flowchart LR
 ```
 
 - `backend` が SAML SP（`python3-saml`）として動作し、検証後にアプリ JWT を発行
-- `Keycloak`(`http://localhost:8088`) が SAML IdP兼ユーザー管理
+- `Keycloak`（`http://localhost/kc/`）が SAML IdP兼ユーザー管理
 - 各 API は JWT(Bearer) で保護（未認証は 401）
 
 初期ユーザー（realm `open-genai`、いずれもパスワードは `password`）:
@@ -226,7 +233,7 @@ flowchart LR
 | `admin` | 管理者 | `SystemAdminGroup` 所属。ヘッダーに管理メニュー表示 |
 | `user` | 一般 | |
 
-- ユーザー追加・管理は Keycloak 管理コンソール（`http://localhost:8088`、管理者は `.env` の `KEYCLOAK_ADMIN`/`KEYCLOAK_ADMIN_PASSWORD`）→ realm `open-genai` から行えます。
+- ユーザー追加・管理は Keycloak 管理コンソール（`http://localhost/kc/`、管理者は `.env` の `KEYCLOAK_ADMIN`/`KEYCLOAK_ADMIN_PASSWORD`）→ realm `open-genai` から行えます。
 - 管理者にしたいユーザーは `SystemAdminGroup` グループに追加してください（SAML 属性 `groups` 経由でアプリに連携されます）。
 - 初回は Keycloak の起動に数十秒かかります。起動直後にログインへ進めない場合は少し待って再試行してください。
 

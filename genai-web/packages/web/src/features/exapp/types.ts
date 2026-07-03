@@ -6,12 +6,27 @@ type GovAIFormUIType =
   | 'select'
   | 'radio'
   | 'checkbox'
-  | 'hidden';
+  | 'hidden'
+  | 'preview';
 
 export type GovAIListItem = {
   title: string;
   value: string;
+  // OpenGENAI Form Spec v1 拡張: この選択肢を選んで実行する際に確認ダイアログを出す。
+  // 不可逆な操作（削除・全消去など）向け。メッセージ文字列を指定する。
+  confirm?: string;
 };
+
+/**
+ * OpenGENAI exApp Form Spec v1 拡張: 条件表示。
+ * 別フィールドの現在値が `in` に含まれる時のみ表示する。
+ * 配列で複数条件を渡した場合は全条件を満たす時のみ表示（AND）。
+ */
+export type GovAIFormCondition = {
+  field: string;
+  in: string[];
+};
+export type GovAIFormVisibleWhen = GovAIFormCondition | GovAIFormCondition[];
 
 export type GovAIFormUI = {
   type: GovAIFormUIType; // UIタイプ
@@ -19,6 +34,9 @@ export type GovAIFormUI = {
   desc?: string; // サポートテキスト
   required?: boolean; // 必須かどうか（未指定の場合は任意になる）
   default_value?: string; // デフォルト値
+  // --- OpenGENAI exApp Form Spec v1 拡張（加算的・opt-in。未指定なら従来動作） ---
+  visibleWhen?: GovAIFormVisibleWhen; // 条件表示
+  reactive?: boolean; // 値変更時に /resolve を呼びスキーマを再取得するトリガ
 };
 
 export type GovAIFormUIText = {
@@ -60,6 +78,14 @@ export type GovAIFormUIHidden = {
   default_value: string;
 };
 
+/**
+ * OpenGENAI exApp Form Spec v1 拡張: プレビュー（読み取り専用）。
+ * `template` 中の {{キー}} を他フィールドの現在値で置換して表示する。
+ */
+export type GovAIFormUIPreview = {
+  template?: string;
+} & GovAIFormUI;
+
 export type GovAIFormUIItem =
   | GovAIFormUIText
   | GovAIFormUINumber
@@ -68,7 +94,8 @@ export type GovAIFormUIItem =
   | GovAIFormUISelect
   | GovAIFormUICheckbox
   | GovAIFormUIRadio
-  | GovAIFormUIHidden;
+  | GovAIFormUIHidden
+  | GovAIFormUIPreview;
 
 export type GovAIFormUIJson = {
   [key in string]: GovAIFormUIItem;

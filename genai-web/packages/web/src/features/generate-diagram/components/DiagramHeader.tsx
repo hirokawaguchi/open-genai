@@ -1,3 +1,4 @@
+import { PiBookOpenBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ModelSelector } from './ModelSelector';
@@ -16,8 +17,15 @@ export const DiagramHeader = () => {
         ダイアグラムを生成
       </h1>
       <ModelSelector />
-      <div className='prose prose-sm max-w-full'>
-        <h2>想定用途</h2>
+      <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+        <DisclosureSummary>
+          <span className='flex items-center text-std-16B-150'>
+            <PiBookOpenBold className='mr-2 size-5 flex-none' />
+            使い方（クリックで開閉）
+          </span>
+        </DisclosureSummary>
+        <div className='prose prose-sm mt-3 max-w-full'>
+          <h2>想定用途</h2>
         <p>
           文章を元に、フローチャート/円グラフ/マインドマップなどのダイアグラムの生成をすることができます。
         </p>
@@ -35,11 +43,12 @@ export const DiagramHeader = () => {
           <DisclosureSummary>仕組み</DisclosureSummary>
           <div className='pl-7'>
             <p>
-              生成AIの機能を活用し、図を作成するよう入力プロンプトに指示して図を返答させています。特別な文書は読み込ませていません。実行環境はローカルのLLM(Ollama)を利用しています。
+              生成AIの機能を活用し、図を作成するよう入力プロンプトに指示して図を返答させています。特別な文書は読み込ませていません。利用するモデルは管理者の設定により切り替えられます。
             </p>
           </div>
         </Disclosure>
-      </div>
+        </div>
+      </Disclosure>
     </div>
   );
 };

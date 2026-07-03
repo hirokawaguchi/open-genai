@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import jwt
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
@@ -27,10 +28,38 @@ SP_ACS_URL = os.environ.get("SAML_SP_ACS_URL", "http://localhost:8000/auth/saml/
 SP_SLS_URL = os.environ.get("SAML_SP_SLS_URL", "http://localhost:8000/auth/saml/sls")
 IDP_METADATA_URL = os.environ.get(
     "SAML_IDP_METADATA_URL",
-    "http://keycloak:8080/realms/open-genai/protocol/saml/descriptor",
+    "http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor",
 )
+# IdP メタデータの URL に proxy context path (/kc) が欠ける場合の補正
+IDP_URL_PREFIX = os.environ.get("SAML_IDP_URL_PREFIX", "/kc")
 
 _settings_cache: dict[str, Any] | None = None
+
+
+def _fix_idp_urls(idp: dict[str, Any]) -> dict[str, Any]:
+    """Keycloak メタデータの SSO/SLO URL に /kc が付いていない場合に付与する。"""
+    prefix = IDP_URL_PREFIX.rstrip("/")
+    if not prefix:
+        return idp
+
+    for key in ("singleSignOnService", "singleLogoutService"):
+        services = idp.get(key)
+        if not isinstance(services, dict):
+            continue
+        fixed: dict[str, str] = {}
+        for binding, url in services.items():
+            if not isinstance(url, str):
+                fixed[binding] = url
+                continue
+            parsed = urlparse(url)
+            path = parsed.path or ""
+            if path.startswith("/realms/") and not path.startswith(f"{prefix}/"):
+                path = f"{prefix}{path}"
+                fixed[binding] = urlunparse(parsed._replace(path=path))
+            else:
+                fixed[binding] = url
+        idp[key] = fixed
+    return idp
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +73,7 @@ def get_saml_settings() -> dict[str, Any]:
     idp_data = OneLogin_Saml2_IdPMetadataParser.parse_remote(
         IDP_METADATA_URL, validate_cert=False
     )
+    idp_data["idp"] = _fix_idp_urls(idp_data["idp"])
 
     settings: dict[str, Any] = {
         "strict": True,

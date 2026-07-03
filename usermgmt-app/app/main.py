@@ -26,6 +26,7 @@ import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
+from . import intauth
 from .kcadmin import parse_csv, plan_rows
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
@@ -251,11 +252,18 @@ async def _apply_one(
 async def invoke(
     request: Request,
     x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
 ) -> Any:
     err = _check_key(x_api_key)
     if err:
         return err
+    if not intauth.verify(x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
     if not _is_admin(x_user_groups):
         return {
             "outputs": (

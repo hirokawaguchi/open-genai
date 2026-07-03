@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
+from . import intauth
 from .ngrules import parse_and_validate, render_rules
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
@@ -116,15 +117,104 @@ _EXAMPLE = (
 )
 
 
+def _as_bool(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("true", "1", "yes", "on", "有効", "する")
+
+
+def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
+    """OpenGENAI Form Spec v1: 現在ルールをプレフィルした構造化フォームを返す。"""
+    set_vw = {"field": "operation", "in": ["set"]}
+    return {
+        "$version": "opengenai-form/1",
+        "operation": {
+            "type": "select",
+            "title": "操作",
+            "items": [
+                {"title": "現在の設定を表示", "value": "view"},
+                {
+                    "title": "設定を保存",
+                    "value": "set",
+                    "confirm": "入力制限ルールを上書き保存します。よろしいですか？",
+                },
+            ],
+            "default_value": "view",
+        },
+        "enabled": {
+            "type": "select",
+            "title": "入力制限",
+            "items": [
+                {"title": "有効（制限する）", "value": "true"},
+                {"title": "無効（制限しない）", "value": "false"},
+            ],
+            "default_value": "true" if rules.get("enabled") else "false",
+            "visibleWhen": set_vw,
+        },
+        "case_sensitive": {
+            "type": "select",
+            "title": "大文字小文字の区別",
+            "items": [
+                {"title": "区別しない", "value": "false"},
+                {"title": "区別する", "value": "true"},
+            ],
+            "default_value": "true" if rules.get("case_sensitive") else "false",
+            "visibleWhen": set_vw,
+        },
+        "words": {
+            "type": "textarea",
+            "title": "禁止ワード（1行に1語）",
+            "desc": "入力に含まれるとブロックする語を改行区切りで指定します。",
+            "default_value": "\n".join(rules.get("words") or []),
+            "visibleWhen": set_vw,
+        },
+        "patterns": {
+            "type": "textarea",
+            "title": "機密情報パターン（1行に1正規表現）",
+            "desc": "例: \\d{12}（12桁の数字）。改行区切りで複数指定できます。",
+            "default_value": "\n".join(rules.get("patterns") or []),
+            "visibleWhen": set_vw,
+        },
+    }
+
+
+@app.get("/schema")
+async def schema(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    """現在ルールをプレフィルした構造化フォーム定義を返す。"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    if not intauth.verify(x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
+    if not _is_admin(x_user_groups):
+        return {"placeholder": {}}
+    return {"placeholder": _build_schema(_read_rules())}
+
+
 @app.post("/invoke")
 async def invoke(
     request: Request,
     x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
 ) -> Any:
     err = _check_key(x_api_key)
     if err:
         return err
+    if not intauth.verify(x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
     if not _is_admin(x_user_groups):
         return {
             "outputs": (
@@ -138,7 +228,21 @@ async def invoke(
     operation = (inputs.get("operation") or "view").strip().lower()
 
     if operation == "set":
-        rules, verr = parse_and_validate(inputs.get("rules_json") or "")
+        raw_json = (inputs.get("rules_json") or "").strip()
+        if raw_json:
+            # 後方互換: 生JSON入力も引き続き受理
+            rules, verr = parse_and_validate(raw_json)
+        else:
+            # 構造化フォーム入力（enabled/case_sensitive/words/patterns）から組み立て
+            built = {
+                "enabled": _as_bool(inputs.get("enabled")),
+                "case_sensitive": _as_bool(inputs.get("case_sensitive")),
+                "words": [w.strip() for w in (inputs.get("words") or "").splitlines() if w.strip()],
+                "patterns": [
+                    p.strip() for p in (inputs.get("patterns") or "").splitlines() if p.strip()
+                ],
+            }
+            rules, verr = parse_and_validate(json.dumps(built, ensure_ascii=False))
         if verr:
             return {"outputs": f"設定エラー: {verr}\n\n記入例:\n```json\n{_EXAMPLE}\n```"}
         try:
@@ -151,7 +255,7 @@ async def invoke(
     return {
         "outputs": (
             render_rules(rules)
-            + "\n\n---\n設定するには「操作」で **設定** を選び、`ルールJSON` に記入例の形式で入力してください:\n"
-            + f"```json\n{_EXAMPLE}\n```"
+            + "\n\n---\n変更するには「操作」で **設定を保存** を選ぶと、"
+            "現在の設定が入力欄にプレフィルされます。編集して実行すると保存されます。"
         )
     }

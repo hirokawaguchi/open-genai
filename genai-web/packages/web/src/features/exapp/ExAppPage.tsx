@@ -62,9 +62,14 @@ export const ExAppPage = () => {
     [placeholderUiJson],
   );
 
-  // 非chat かつ placeholder 未設定の Dify アプリは、実行時に /schema からフォーム生成
+  // 非chat かつ placeholder 未設定で、動的フォームを使うアプリは実行時に /schema から生成。
+  // Dify 連携アプリ（dify_base_url あり）に加え、config に dynamic_schema:true を持つ
+  // ローカル AI アプリ（RAG 管理等）も対象にする（OpenGENAI 拡張の一般化）。
   const shouldFetchSchema =
-    !!exApp && !isChatApp && placeholderEmpty && !!configObj?.dify_base_url;
+    !!exApp &&
+    !isChatApp &&
+    placeholderEmpty &&
+    (!!configObj?.dify_base_url || configObj?.dynamic_schema === true);
 
   const { uiJson: fetchedUiJson, isLoading: isSchemaLoading } = useFetchExAppSchema(
     teamId,
