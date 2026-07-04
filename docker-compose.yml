@@ -89,18 +89,28 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - rag-app
-      - whisper-app
-      - sd-app
-      - dify-app
-      - audit-app
-      - usermgmt-app
-      - modelpolicy-app
-      - ngword-app
-      - prompt-app
+      rag-app:
+        condition: service_started
+      whisper-app:
+        condition: service_started
+      sd-app:
+        condition: service_started
+      dify-app:
+        condition: service_started
+      audit-app:
+        condition: service_started
+      usermgmt-app:
+        condition: service_started
+      modelpolicy-app:
+        condition: service_started
+      ngword-app:
+        condition: service_started
+      prompt-app:
+        condition: service_started
       seaweedfs:
         condition: service_healthy
-      - keycloak
+      keycloak:
+        condition: service_started
     restart: unless-stopped
 
   # SAML IdP（ユーザー管理 UI 付き）
