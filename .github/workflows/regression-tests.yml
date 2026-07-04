@@ -1,0 +1,61 @@
+name: Regression tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "shared/**"
+      - "*-app/**"
+      - "tests/**"
+      - "pytest.ini"
+      - "genai-web/**"
+      - "scripts/run-regression-tests.sh"
+      - ".github/workflows/regression-tests.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "shared/**"
+      - "*-app/**"
+      - "tests/**"
+      - "pytest.ini"
+      - "genai-web/**"
+      - "scripts/run-regression-tests.sh"
+      - ".github/workflows/regression-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  python-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Run pytest
+        run: pytest
+
+  web-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: genai-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: genai-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Open GENAI Vitest targets
+        run: npm run web:test -- tests/features/team-apps/utils/endpointUrl.test.ts

@@ -1,6 +1,6 @@
 # Open GENAI
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI--compatible-0a7)
 ![Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Qdrant%20%7C%20Keycloak-success)
@@ -10,7 +10,7 @@
 デジタル庁がオープンソースで公開したガバメント AI「源内（GENAI）」を、
 **完全ローカル環境 × ローカル LLM（OpenAI 互換 API）** で動かすためのプロジェクトです。
 
-> **バージョン:** 現在 **v0.2.0**（自治体・閉域向け拡張）。v0.1.0 はローカル源内化の第一段階。
+> **バージョン:** 現在 **v0.2.1**（セキュリティ・品質保証）。v0.2.0 = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
 > 変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
 
 > **免責 / Disclaimer**: 本リポジトリは有志による**非公式フォーク**です。デジタル庁とは一切関係がなく、
@@ -40,7 +40,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 本番は `docker-compose.prod.yml` で TLS(443) 終端。閉域検証は HTTP(80) のみ（`docker-compose.verify.yml`）。
 
-> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.2.0** = 自治体・閉域向け拡張、**v0.1.0** = ローカル源内化）
+> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.2.1** = セキュリティ・品質保証、**v0.2.0** = 自治体・閉域向け拡張、**v0.1.0** = ローカル源内化）
 
 ## 設計思想：自治体・閉域運用への拡張
 

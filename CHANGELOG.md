@@ -7,6 +7,7 @@
 | --- | --- | --- |
 | [v0.1.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.1.0) | `fc57e53` | 源内のローカル完結化（第一段階） |
 | [v0.2.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.0) | `6d594d5` 以降 | 自治体・閉域（LGWAN 等）向け拡張 |
+| [v0.2.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.1) | `be88a0d` 以降 | セキュリティ更新・リリース前品質保証 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -22,6 +23,20 @@
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.2.1] - 2026-07-04
+
+### Security
+
+- Python 依存（fastapi / starlette / PyJWT / pypdf / python-multipart / requests）を既知脆弱性修正版へ更新
+- リリース前チェック用 `scripts/audit-python-deps.sh` と GitHub Actions ワークフロー `python-deps-audit` を追加
+
+### Testing
+
+- Open GENAI レイヤのリグレッションテスト（pytest 27件 + genai-web Open GENAI 向け Vitest）を追加
+- リリース前一括実行用 `scripts/pre-release-check.sh` と CI ワークフロー `regression-tests` を追加
 
 ---
 
@@ -94,6 +109,7 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hirokawaguchi/open-genai/releases/tag/v0.1.0

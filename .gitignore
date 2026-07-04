@@ -21,6 +21,8 @@ deletion-report-*.txt
 
 # --- その他 ---
 **/.DS_Store
+.venv-pip-audit/
+.venv-regression-tests/
 
 # --- 検討ドキュメント ---
 /docs/
