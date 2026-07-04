@@ -27,6 +27,7 @@
 ### Fixed
 
 - `.gitignore` を強化（`.env.prod`、テスト生成物、証明書拡張子）。`genai-web/packages/web/.env` の追跡をやめ `.env.example` を追加
+- CI `web-regression` の `npm ci` 失敗を修正（`genai-web/package-lock.json` を同期、Node 22.22.2 に合わせる）
 
 ---
 
