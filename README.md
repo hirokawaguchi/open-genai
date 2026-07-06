@@ -74,7 +74,6 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `backend/` | ローカル LLM 用の代替バックエンド（FastAPI / Team API も兼ねる） |
 | `rag-app/` | RAG を「行政実務用 AI アプリ」として提供するマイクロサービス（FastAPI） |
 | `whisper-app/` | 文字起こしを「AI アプリ」として提供（faster-whisper / CPU） |
-| `sd-app/` | 画像生成を「AI アプリ」として提供（ホストの SD サーバへプロキシ） |
 | `dify-app/` | 外部 Dify（ワークフロー / チャットフロー）を「AI アプリ」として連携する汎用プロキシ（FastAPI） |
 | `shared/` | 共用モジュール（`docextract.py` ドキュメント抽出、`ssrfguard.py` SSRF 対策） |
 | `audit-app/` | 監査ログ参照（管理者限定 exApp） |
@@ -105,7 +104,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | ファイル添付ストレージ | Amazon S3（署名付き URL） | チャット添付は `backend` **ローカル保存**。AI アプリ成果物は **SeaweedFS（S3 互換）** へ再ホストし署名付き URL で配信 |
 | RAG（ベクトル検索・埋め込み） | OpenSearch / Bedrock Knowledge Base | **Qdrant** ＋ Ollama `mxbai-embed-large`（`rag-app` として） |
 | 文字起こし | Amazon Transcribe ＋ S3 | **faster-whisper**（`whisper-app` を AI アプリとして） |
-| 画像生成 | Amazon Bedrock（画像モデル） | **Stable Diffusion**（A1111 互換、`sd-app` 経由でプロキシ） |
+| 画像生成 | Amazon Bedrock（画像モデル） | **源内 Web `/image`** + ホスト **Stable Diffusion**（A1111 互換、`backend/image_gen.py` 経由） |
 | ドキュメント読取（PDF 等） | Bedrock の document 入力 | **テキスト抽出**（pypdf / python-docx / openpyxl, `shared/docextract.py`） |
 
 ### 追加したコンポーネント（すべてオープンソース）
@@ -464,9 +463,25 @@ docker compose exec rag-app sh -lc 'curl -s -X POST http://localhost:8001/ingest
 - ベクトル DB: Qdrant（`qdrant_data` ボリュームに永続化）
 - 回答生成モデル: `.env` の `RAG_MODEL`（既定 `gpt-oss:20b`）
 
-## 文字起こし / 画像生成（AI アプリ）
+## 文字起こし / 画像生成
 
-文字起こしと画像生成も、RAG と同じく **外部マイクロサービスの「AI アプリ」** として実装しています（共通チームに登録済み）。
+文字起こしは **外部マイクロサービスの「AI アプリ」**（`whisper-app`）として提供しています。  
+画像生成は源内 Web の **「画像を生成」ページ**（`/image`）から利用します（`backend` の `/image/generate` がホスト SD へプロキシ）。
+
+### UX 方針（源内組み込み vs exApp）
+
+クラウド版源内には組み込みの「文字起こし」（`/transcribe`）と「画像を生成」（`/image`）があります。
+Open GENAI では **機能ごとに入口を分けています**（どちらもローカルで動作するよう置き換え済み）。
+
+| 機能 | Open GENAI での入口 | 理由（UX） |
+| --- | --- | --- |
+| **画像生成** | 源内オリジナル **`/image`** + ホスト **Stable Diffusion** | チャット連携・利用履歴・詳細設定など、源内組み込み UX を活かす。初期の SD 専用 exApp は重複のため廃止 |
+| **文字起こし** | **exApp**（`whisper-app`） | 源内 `/transcribe` は Amazon Transcribe + S3 前提のためメニューから除外。ローカル Whisper を exApp として提供 |
+
+**文字起こしで exApp を選んだ理由**
+
+- 源内 `/transcribe` の主な差分は **話者分離（diarization）** だが、ローカルの faster-whisper では Transcribe 相当の話者認識は提供していない。**あえて外し**、言語指定・タイムスタンプ付き出力・**exApp 利用履歴**に寄せた
+- 音声は exApp 実行時にコンテナ内で処理され、クラウドへ送信されない（源内 `/transcribe` のコードはリポジトリに残るが、Open GENAI では `/apps/.../whisper` から利用する）
 
 ### 文字起こし（ローカル Whisper）
 
@@ -474,17 +489,18 @@ docker compose exec rag-app sh -lc 'curl -s -X POST http://localhost:8001/ingest
 - モデルは `.env` の `WHISPER_MODEL`（既定 `medium`。`small`/`large-v3` も可）。初回実行時にモデルを取得し `whisper_cache` ボリュームにキャッシュします。
 - クラウドの Amazon Transcribe + S3 への依存を置き換えています。
 
-### 画像生成（Stable Diffusion）
+### 画像生成（源内 Web `/image` + Stable Diffusion）
 
-- `sd-app` は **AUTOMATIC1111 互換 SD サーバ**（`/sdapi/v1/txt2img`）にプロキシします。SD 本体の置き場所はホスト環境で選べます。
+- **AUTOMATIC1111 互換 SD サーバ**（`/sdapi/v1/txt2img`）がホストで起動している必要があります。
   - **macOS**: Docker は GPU(Metal) を使えないため、SD 本体は**ホスト**で動かします。[AUTOMATIC1111 stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui) 等を `--api` 付きで `:7860` に起動してください。
-  - **Linux + NVIDIA GPU（DGX Spark 等）**: SD を**コンテナでも GPU 実行**できます（A1111/ComfyUI 等のコンテナ）。その場合は `SD_API_URL` をそのコンテナのアドレスに設定してください。
+  - **Linux + NVIDIA GPU（DGX Spark 等）**: SD を**コンテナでも GPU 実行**できます。`SD_API_URL` をそのコンテナのアドレスに設定してください。
 - 接続先は `.env` の `SD_API_URL`（既定: ホストの `http://host.docker.internal:7860`）で変更できます。
-- SD サーバが起動していない場合、後述のヘルスチェックにより一覧から自動的に隠れます。
+- 検証用モック: `python3 scripts/mock-sd-server.py`（実 SD 不要でパイプライン確認）。
+- 動作確認: `bash scripts/verify-image-gen.sh`
 
 ### AI アプリの表示（ヘルスチェック）
 
-AI アプリ一覧（`/exapps`）は各アプリの `/health` を確認し、**起動していない（到達できない）アプリは自動的に一覧から隠します**。例えばホストの SD サーバが未起動なら「画像生成」は表示されません。起動すると表示されます。
+AI アプリ一覧（`/apps`）は各 exApp の `/health` を確認し、**起動していない（到達できない）アプリは自動的に一覧から隠します**。
 
 ## Dify 連携（AI アプリ）
 
@@ -650,7 +666,7 @@ Dify 等が返すファイル URL をそのまま利用者に渡さず、`backen
 
 ## 制限事項（ローカル版）
 
-- 画像生成（コア機能のページ）はクラウド(Bedrock)依存のため無効化のまま。画像生成は上記の「AI アプリ」(`sd-app`) で代替（別途 SD サーバが必要。macOS はホスト、Linux+NVIDIA はコンテナ/ホストいずれも可）
+- 画像生成は源内 Web の **「画像を生成」**（`/image`）を利用します。ホストで A1111 互換 SD サーバ（または `scripts/mock-sd-server.py`）が必要です。
 - AI アプリの呼び出しは同期形式のみ対応（非同期のポーリング形式は未対応）
 - 添付のうち **動画** はローカル LLM が直接扱えないため未対応（画像・ドキュメントは対応）
 - 認証は SAML（Keycloak）で行います。開発用は HTTP・既定パスワードです。
@@ -659,7 +675,7 @@ Dify 等が返すファイル URL をそのまま利用者に渡さず、`backen
 
 ## ライセンス
 
-- 本プロジェクト独自のコード（`backend/`, `rag-app/`, `whisper-app/`, `sd-app/`, `shared/`,
+- 本プロジェクト独自のコード（`backend/`, `rag-app/`, `whisper-app/`, `shared/`,
   `docker-compose.yml` 等）は **MIT License**（ルート `LICENSE`）。
 - 同梱の `genai-web/` はデジタル庁による公開物（**MIT** / ドキュメントは **CC BY 4.0**）を改変したもので、
   原ライセンス・著作権表示は `genai-web/LICENSE`・`genai-web/THIRD-PARTY-NOTICES.txt` に保持しています。

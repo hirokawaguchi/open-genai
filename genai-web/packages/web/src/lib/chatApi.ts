@@ -13,6 +13,19 @@ import { genUApi } from '@/lib/fetcher';
 import { getIdToken } from '@/local/localAuth';
 import { decomposeId } from '@/utils/decomposeId';
 
+export type SaveImageResultRequest = {
+  images: string[];
+  meta: {
+    prompt: string;
+    negativePrompt: string;
+    stylePreset: string;
+    seeds: number[];
+    step: number;
+    cfgScale: number;
+    imageSample: number;
+  };
+};
+
 export const createChat = async (req: { usecase?: string } = {}) => {
   const res = await genUApi.post<CreateChatResponse>('chats', req);
   return res.data;
@@ -33,6 +46,19 @@ export const updateTitle = async (chatId: string, title: string) => {
     title,
   };
   const res = await genUApi.put<UpdateTitleResponse>(`chats/${chatId}/title`, req);
+  return res.data;
+};
+
+export const saveImageResult = async (
+  chatId: string,
+  messageId: string,
+  req: SaveImageResultRequest,
+) => {
+  const id = decomposeId(chatId) ?? chatId;
+  const res = await genUApi.put<{ message: unknown }>(
+    `chats/${id}/messages/${messageId}/image-result`,
+    req,
+  );
   return res.data;
 };
 

@@ -96,8 +96,6 @@ services:
         condition: service_started
       whisper-app:
         condition: service_started
-      sd-app:
-        condition: service_started
       dify-app:
         condition: service_started
       audit-app:
@@ -187,18 +185,6 @@ services:
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache
-    restart: unless-stopped
-
-  # 画像生成を「AI アプリ」として提供（ホストの SD サーバへプロキシ）
-  sd-app:
-    build: ./sd-app
-    container_name: open-genai-sd-app
-    environment:
-      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
-      # ホストで動く AUTOMATIC1111 互換 SD サーバ
-      - SD_API_URL=${SD_API_URL:-http://host.docker.internal:7860}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   # Dify(ワークフロー/チャットフロー)連携を「AI アプリ」として提供する汎用プロキシ

@@ -86,7 +86,8 @@ async def generate_image_base64(params: dict[str, Any]) -> str:
     except httpx.HTTPError as exc:
         raise RuntimeError(
             "ホストの画像生成サーバ(A1111 互換)に接続できませんでした。"
-            f"`{SD_API_URL}` で起動しているか確認してください: {exc}"
+            f"`{SD_API_URL}` で起動しているか確認してください: {exc} "
+            "（検証用: ホストで `python3 scripts/mock-sd-server.py`）"
         ) from exc
 
     if res.status_code != 200:

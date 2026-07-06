@@ -201,51 +201,6 @@ WHISPER_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-# 画像生成(Stable Diffusion) AI アプリ
-SD_APP_URL = os.environ.get("SD_APP_URL", "http://sd-app:8003/invoke")
-_SD_FORM = (
-    '{'
-    '"prompt":{"type":"textarea","title":"プロンプト",'
-    '"desc":"生成したい画像の説明（英語推奨）","required":true},'
-    '"negative_prompt":{"type":"textarea","title":"ネガティブプロンプト",'
-    '"desc":"避けたい要素（任意）"},'
-    '"steps":{"type":"number","title":"ステップ数","default_value":20,"min":1,"max":50},'
-    '"size":{"type":"select","title":"画像サイズ",'
-    '"items":[{"title":"512x512","value":"512"},{"title":"768x768","value":"768"}],'
-    '"default_value":"512"}'
-    '}'
-)
-SD_SEED: dict[str, Any] = {
-    "exAppId": "sd",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "画像生成（Stable Diffusion）",
-    "endpoint": SD_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": "",
-    "placeholder": _SD_FORM,
-    "description": "プロンプトから画像を生成します（ホストの Stable Diffusion サーバを利用）。",
-    "howToUse": (
-        "## このアプリでできること\n\n"
-        "文章（プロンプト）から画像を生成します。資料の挿絵やイメージ案の作成に使えます。\n\n"
-        "## 操作手順\n\n"
-        "1. 「プロンプト」に生成したい画像の内容を入力します（英語推奨・具体的に）。\n"
-        "2. 必要に応じて「ネガティブプロンプト」に避けたい要素を入力します。\n"
-        "3. 「ステップ数」（既定20）と「画像サイズ」を選びます。\n"
-        "4. 「実行」で画像を生成します。\n\n"
-        "## 各項目\n\n"
-        "- **プロンプト**: 例 `a flat vector illustration of a city hall, simple, clean`。\n"
-        "- **ネガティブプロンプト**: 例 `blurry, text, watermark`（不要な要素を抑制）。\n"
-        "- **ステップ数**: 多いほど描き込みが増えますが時間も増えます（1〜50）。\n"
-        "- **画像サイズ**: 512x512 か 768x768。\n\n"
-        "## 前提・注意\n\n"
-        "- ホスト側で AUTOMATIC1111 互換 API（`/sdapi/v1/txt2img`）の起動が必要です。\n"
-        "- 既定の接続先はホストの `:7860`（`SD_API_URL` で変更可）。生成は GPU のある環境で行います。\n"
-        "- 公開・配布時は著作権・肖像権にご注意ください。"
-    ),
-    "copyable": False,
-    "status": "published",
-}
-
 # 監査ログ参照(Audit) AI アプリ（管理者限定）
 # 「使い方」はページ上部の howToUse に統一（操作プルダウンには含めない）。検索専用フォーム。
 _AUDIT_FORM = (
@@ -516,13 +471,15 @@ EXAPP_SEEDS = [
     RAG_SEED,
     RAG_MANAGE_SEED,
     WHISPER_SEED,
-    SD_SEED,
     AUDIT_SEED,
     USERMGMT_SEED,
     MODELPOLICY_SEED,
     NGWORD_SEED,
     PROMPT_SEED,
 ]
+
+# 源内 Web の汎用ページに統合したため exApp 登録を廃止した ID
+RETIRED_SEED_EXAPP_IDS = ["sd"]
 
 
 def _now_iso() -> str:
@@ -840,6 +797,8 @@ app.add_middleware(
 def _startup() -> None:
     storage.init_db()
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
+    for ex_app_id in RETIRED_SEED_EXAPP_IDS:
+        teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
     # 既存チームの RAG アプリを「検索」「管理」に分割・最新化（冪等）。
     try:
         _ensure_team_rag_split()
@@ -1142,6 +1101,58 @@ async def create_messages(chat_id: str, request: Request) -> JSONResponse:
             model=m.get("llmType"),
         )
     return JSONResponse(content={"messages": recorded})
+
+
+IMAGE_RESULT_EXTRA_NAME = "open-genai-generated-image"
+
+
+@app.put("/chats/{chat_id}/messages/{message_id}/image-result")
+async def save_image_result(
+    chat_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    """画像生成結果を assistant メッセージの extraData に永続化する。"""
+    user_id = _user_id(_claims_from_request(request))
+    body = await request.json()
+    images_b64 = body.get("images") or []
+    meta = body.get("meta") or {}
+
+    stored_images: list[dict[str, str]] = []
+    for b64 in images_b64:
+        if not b64:
+            continue
+        raw_str = b64.split(",", 1)[1] if isinstance(b64, str) and "," in b64 else b64
+        try:
+            raw = base64.b64decode(raw_str)
+        except (ValueError, TypeError):
+            continue
+        key = f"image-gen/{chat_id}/{message_id}/{uuid.uuid4().hex}.png"
+        full = _safe_path(key)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as f:
+            f.write(raw)
+        stored_images.append({"fileUrl": f"{PUBLIC_BASE_URL}/files/{key}"})
+
+    if not stored_images:
+        return JSONResponse(status_code=400, content={"message": "images are empty"})
+
+    payload = {"version": 1, **meta, "images": stored_images}
+    extra_data = [
+        {
+            "type": "json",
+            "name": IMAGE_RESULT_EXTRA_NAME,
+            "source": {
+                "type": "json",
+                "mediaType": "application/json",
+                "data": json.dumps(payload, ensure_ascii=False),
+            },
+        }
+    ]
+    updated = storage.update_message_extra_data(
+        chat_id, user_id, message_id, extra_data
+    )
+    if not updated:
+        return JSONResponse(status_code=404, content={"message": "message not found"})
+    return JSONResponse(content={"message": updated})
 
 
 # ---------------------------------------------------------------------------

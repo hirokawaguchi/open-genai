@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PiBookOpenBold } from 'react-icons/pi';
+import { useNavigate } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
@@ -8,11 +9,15 @@ import { RightPanelCloseIcon } from '@/components/ui/icons/RightPanelClose';
 import { RightPanelOpenIcon } from '@/components/ui/icons/RightPanelOpen';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { APP_TITLE } from '@/constants';
+import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
 import { useGenerateImageHandler } from '@/features/generate-image/hooks/useGenerateImageHandler';
+import { usePersistImageResult } from '@/features/generate-image/hooks/usePersistImageResult';
 import { useReset } from '@/features/generate-image/hooks/useReset';
+import { useRestoreImageFromHistory } from '@/features/generate-image/hooks/useRestoreImageFromHistory';
 import { useSetDefaultValues } from '@/features/generate-image/hooks/useSetDefaultValues';
 import { useGenerateImageStore } from '@/features/generate-image/stores/useGenerateImageStore';
 import { useChat } from '@/hooks/useChat';
+import { useSyncUsecaseChatUrl } from '@/hooks/useSyncUsecaseChatUrl';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useScreen } from '@/hooks/useScreen';
@@ -45,7 +50,20 @@ export const GenerateImagePage = () => {
   } = useGenerateImageStore();
 
   const { usecase, chatId } = useUsecasePath();
-  const { loading: loadingChat, postChat, clear: clearChat } = useChat(usecase, chatId);
+  const navigate = useNavigate();
+  const {
+    loading: loadingChat,
+    loadingMessages,
+    postChat,
+    clear: clearChat,
+    chatTitle,
+    sessionChatId,
+    rawMessages,
+  } = useChat(usecase, chatId);
+  useSyncUsecaseChatUrl(usecase, chatId, sessionChatId);
+  const storageChatId = chatId ?? sessionChatId;
+  const { persistForMessage } = usePersistImageResult(storageChatId);
+  useRestoreImageFromHistory(chatId, rawMessages, loadingMessages);
   const { scrollToBottom } = useScreen({ useWindowScroll: true });
 
   const [generating, setGenerating] = useState(false);
@@ -67,6 +85,31 @@ export const GenerateImagePage = () => {
 
   const { imageGenModelIds } = MODELS;
   const { handleGenerateImage, onClickRandomSeed } = useGenerateImageHandler(setGenerating);
+
+  const getLastAssistantMessageId = useCallback(() => {
+    for (let i = rawMessages.length - 1; i >= 0; i--) {
+      const m = rawMessages[i];
+      if (m.role === 'assistant' && m.messageId) {
+        return m.messageId;
+      }
+    }
+    return undefined;
+  }, [rawMessages]);
+
+  const generateAndPersist = useCallback(
+    async (p: string, np: string, sp?: string) => {
+      await handleGenerateImage(p, np, sp);
+      const messageId = getLastAssistantMessageId();
+      if (messageId) {
+        try {
+          await persistForMessage(messageId);
+        } catch (e) {
+          console.error('画像結果の保存に失敗しました', e);
+        }
+      }
+    },
+    [handleGenerateImage, getLastAssistantMessageId, persistForMessage],
+  );
 
   const [width, height] = resolution.label.split('x').map((v) => Number(v));
 
@@ -96,7 +139,7 @@ export const GenerateImagePage = () => {
   const generateImageWithAnnounce = async (prompt: string, negativePrompt: string) => {
     setIsFormGenerating(true);
     try {
-      await handleGenerateImage(prompt, negativePrompt);
+      await generateAndPersist(prompt, negativePrompt);
     } finally {
       setIsFormGenerating(false);
     }
@@ -108,19 +151,24 @@ export const GenerateImagePage = () => {
     scrollToBottom();
   };
 
+  const onNewSession = () => {
+    clearAll();
+    navigate('/image', { state: { shouldReset: true } });
+  };
+
+  const breadcrumbItems = [
+    { label: 'ホーム', to: '/' },
+    { label: 'AIアプリ', to: '/apps' },
+    { label: '画像を生成', to: chatId ? undefined : '/image' },
+    ...(chatTitle ? [{ label: chatTitle }] : []),
+  ];
+
   return (
     <>
       <PageTitle title={`画像を生成${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
       <div className='mx-auto max-w-(--page-width) min-h-[calc(100dvh-var(--header-height))] pt-6 px-6 lg:px-8 lg:pt-8'>
         <div className='mb-3.5'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: '画像を生成' },
-            ]}
-            className='mb-4'
-          />
+          <BreadcrumbsNav items={breadcrumbItems} className='mb-4' />
           <h1 className='flex justify-start text-std-20B-160 lg:text-std-24B-150'>画像を生成</h1>
         </div>
 
@@ -158,6 +206,13 @@ export const GenerateImagePage = () => {
               </li>
               <li>ステップ数を増やすと描き込みが増えますが、生成に時間がかかります。</li>
             </ul>
+            <h3>前提（Stable Diffusion）</h3>
+            <p>
+              画像の描画にはホスト上の AUTOMATIC1111 互換サーバ（既定: ポート <code>7860</code>
+              ）が必要です。未起動の場合は別ターミナルで{' '}
+              <code>python3 scripts/mock-sd-server.py</code>（検証用）または Stable Diffusion
+              WebUI を <code>--api --listen --port 7860</code> 付きで起動してください。
+            </p>
             <Disclosure className='my-4'>
               <DisclosureSummary>仕組み・注意</DisclosureSummary>
               <div className='pl-7'>
@@ -171,7 +226,8 @@ export const GenerateImagePage = () => {
           </div>
         </Disclosure>
 
-        <div className='flex justify-between gap-12 xl:gap-16'>
+        <div className='flex gap-6 xl:gap-8'>
+          <div className='flex min-w-0 flex-1 justify-between gap-12 xl:gap-16'>
           <div className='flex min-w-0 flex-1 flex-col'>
             <GenerateImageStickyHeader />
 
@@ -187,7 +243,7 @@ export const GenerateImagePage = () => {
                       setStylePreset(sp);
                     }
                   }
-                  return handleGenerateImage(p, np, sp);
+                  return generateAndPersist(p, np, sp);
                 }}
               />
             </div>
@@ -286,6 +342,16 @@ export const GenerateImagePage = () => {
               )}
             </div>
           </div>
+          </div>
+
+          <aside className='hidden shrink-0 lg:block lg:w-56 xl:w-64'>
+            <div className='sticky top-[calc(var(--header-height))] -mt-4 grid max-h-[calc(100vh-var(--header-height)-1.5rem)] grid-rows-[auto_1fr] gap-6 pt-4 pb-2'>
+              <Button variant='solid-fill' size='lg' className='w-full' onClick={onNewSession}>
+                新規セッション
+              </Button>
+              <ChatHistorySidebar />
+            </div>
+          </aside>
         </div>
       </div>
 

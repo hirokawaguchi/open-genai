@@ -276,6 +276,30 @@ def list_messages(chat_id: str, user_id: str) -> list[dict[str, Any]]:
     return [_row_to_message(r) for r in rows]
 
 
+def update_message_extra_data(
+    chat_id: str, user_id: str, message_id: str, extra_data: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """メッセージの extraData を更新する（所有者・存在チェック付き）。"""
+    with _lock, _connect() as conn:
+        if _chat_owner(conn, chat_id) != user_id:
+            return None
+        row = conn.execute(
+            "SELECT messageId FROM messages WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE messages SET extraData = ? WHERE chatId = ? AND messageId = ?",
+            (json.dumps(extra_data, ensure_ascii=False), chat_id, message_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM messages WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    return _row_to_message(updated) if updated else None
+
+
 # ---------------------------------------------------------------------------
 # System contexts（保存プロンプト）— クラウドの DynamoDB を SQLite で代替
 # ---------------------------------------------------------------------------

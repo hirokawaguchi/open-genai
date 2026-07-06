@@ -2,7 +2,6 @@
 # 画像生成パイプラインの動作検証（mock SD または実 SD サーバ前提）
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SD_URL="${SD_API_URL:-http://localhost:7860}"
 FAIL=0
 
@@ -17,25 +16,9 @@ else
 fi
 
 echo
-echo "=== 2. sd-app (Docker) ==="
-SD_HEALTH=$(docker exec open-genai-sd-app python -c "
-import urllib.request
-try:
-    with urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5) as r:
-        print(r.status, r.read().decode())
-except Exception as e:
-    print('ERR', e)
-" 2>&1 || echo "ERR container")
-if echo "$SD_HEALTH" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-  pass "sd-app /health -> $SD_HEALTH"
-else
-  fail "sd-app /health -> $SD_HEALTH"
-fi
-
-echo
-echo "=== 3. backend /image/generate (Docker 内) ==="
+echo "=== 2. backend /image/generate (Docker 内) ==="
 IMG_RESULT=$(docker exec open-genai-backend python -c "
-import asyncio, os, sys
+import asyncio, sys
 sys.path.insert(0, '/app')
 from app.image_gen import generate_image_base64
 
@@ -59,30 +42,9 @@ else
 fi
 
 echo
-echo "=== 4. sd-app /invoke (AI アプリ経由) ==="
-INVOKE=$(docker exec open-genai-sd-app python -c "
-import json, urllib.request
-req = urllib.request.Request(
-    'http://127.0.0.1:8003/invoke',
-    data=json.dumps({'inputs': {'prompt': 'test cat', 'steps': 1, 'size': 64}}).encode(),
-    headers={'Content-Type': 'application/json', 'x-api-key': 'local-rag-key'},
-    method='POST',
-)
-with urllib.request.urlopen(req, timeout=30) as r:
-    body = json.loads(r.read().decode())
-    arts = body.get('artifacts') or []
-    print('ARTIFACTS', len(arts))
-" 2>&1 || echo "ERR invoke")
-if echo "$INVOKE" | grep -q 'ARTIFACTS 1'; then
-  pass "sd-app /invoke -> $INVOKE"
-else
-  fail "sd-app /invoke -> $INVOKE"
-fi
-
-echo
 if [ "$FAIL" -eq 0 ]; then
   echo "すべての検証に成功しました。"
-  echo "源内 Web: http://localhost/ → AIアプリ → 画像を生成"
+  echo "源内 Web: http://localhost/image"
 else
   echo "一部の検証に失敗しました。"
   exit 1

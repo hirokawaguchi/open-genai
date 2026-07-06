@@ -71,6 +71,26 @@ export const LandingPage = () => {
                     />
                   </li>
                 )}
+                {isUseCaseEnabled('image') && (
+                  <li>
+                    <Card
+                      title='画像を生成'
+                      className='h-full'
+                      to='/image'
+                      description='プロンプトから資料用の挿絵やイメージ案を作成'
+                    />
+                  </li>
+                )}
+                {isUseCaseEnabled('diagram') && (
+                  <li>
+                    <Card
+                      title='ダイアグラムを生成'
+                      className='h-full'
+                      to='/diagram'
+                      description='テキストからフローチャートやマインドマップを作成'
+                    />
+                  </li>
+                )}
               </>
             )}
           </ul>

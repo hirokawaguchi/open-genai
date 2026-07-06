@@ -98,8 +98,6 @@ services:
         condition: service_started
       whisper-app:
         condition: service_started
-      sd-app:
-        condition: service_started
       dify-app:
         condition: service_started
       audit-app:
@@ -213,16 +211,6 @@ services:
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache
-    restart: unless-stopped
-
-  sd-app:
-    build: ./sd-app
-    container_name: open-genai-sd-app
-    environment:
-      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
-      - SD_API_URL=${SD_API_URL:-http://host.docker.internal:7860}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   dify-app:
