@@ -58,4 +58,9 @@ jobs:
         run: npm ci
 
       - name: Run Open GENAI Vitest targets
-        run: npm run web:test -- tests/features/team-apps/utils/endpointUrl.test.ts
+        run: |
+          npm run web:test -- \
+            tests/features/team-apps/utils/endpointUrl.test.ts \
+            tests/hooks/useSyncUsecaseChatUrl.test.ts \
+            tests/utils/imageResultExtraData.test.ts \
+            tests/utils/ensureImagePersistTarget.test.ts

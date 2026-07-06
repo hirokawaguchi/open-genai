@@ -12,6 +12,7 @@ import { APP_TITLE } from '@/constants';
 import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
 import { useGenerateImageHandler } from '@/features/generate-image/hooks/useGenerateImageHandler';
 import { usePersistImageResult } from '@/features/generate-image/hooks/usePersistImageResult';
+import { ensureImagePersistTarget } from '@/features/generate-image/utils/ensureImagePersistTarget';
 import { useReset } from '@/features/generate-image/hooks/useReset';
 import { useRestoreImageFromHistory } from '@/features/generate-image/hooks/useRestoreImageFromHistory';
 import { useSetDefaultValues } from '@/features/generate-image/hooks/useSetDefaultValues';
@@ -99,16 +100,35 @@ export const GenerateImagePage = () => {
   const generateAndPersist = useCallback(
     async (p: string, np: string, sp?: string) => {
       await handleGenerateImage(p, np, sp);
-      const messageId = getLastAssistantMessageId();
-      if (messageId) {
-        try {
-          await persistForMessage(messageId);
-        } catch (e) {
-          console.error('画像結果の保存に失敗しました', e);
-        }
+      const target = await ensureImagePersistTarget({
+        usecase,
+        chatId,
+        sessionChatId,
+        lastAssistantMessageId: getLastAssistantMessageId(),
+        prompt: p,
+        negativePrompt: np,
+      });
+      if (!target) {
+        return;
+      }
+      if (!chatId) {
+        navigate(`${usecase}/${target.chatId}`, { replace: true });
+      }
+      try {
+        await persistForMessage(target.messageId, target.chatId);
+      } catch (e) {
+        console.error('画像結果の保存に失敗しました', e);
       }
     },
-    [handleGenerateImage, getLastAssistantMessageId, persistForMessage],
+    [
+      handleGenerateImage,
+      getLastAssistantMessageId,
+      persistForMessage,
+      usecase,
+      chatId,
+      sessionChatId,
+      navigate,
+    ],
   );
 
   const [width, height] = resolution.label.split('x').map((v) => Number(v));

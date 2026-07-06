@@ -14,7 +14,7 @@ from app import storage
 def db_path(monkeypatch):
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    monkeypatch.setenv("DB_PATH", path)
+    monkeypatch.setattr(storage, "DB_PATH", path)
     storage.init_db()
     yield path
     os.unlink(path)

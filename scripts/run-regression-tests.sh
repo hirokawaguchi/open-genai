@@ -25,6 +25,9 @@ WEB_ALL=0
 VENV_DIR="${ROOT_DIR}/.venv-regression-tests"
 WEB_TEST_TARGETS=(
   tests/features/team-apps/utils/endpointUrl.test.ts
+  tests/hooks/useSyncUsecaseChatUrl.test.ts
+  tests/utils/imageResultExtraData.test.ts
+  tests/utils/ensureImagePersistTarget.test.ts
 )
 
 while [ $# -gt 0 ]; do

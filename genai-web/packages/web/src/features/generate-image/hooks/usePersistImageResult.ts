@@ -5,8 +5,9 @@ import { saveImageResult } from '@/lib/chatApi';
 
 export const usePersistImageResult = (chatId: string | undefined) => {
   const persistForMessage = useCallback(
-    async (messageId: string) => {
-      if (!chatId) {
+    async (messageId: string, chatIdOverride?: string) => {
+      const effectiveChatId = chatIdOverride ?? chatId;
+      if (!effectiveChatId) {
         return;
       }
 
@@ -21,7 +22,7 @@ export const usePersistImageResult = (chatId: string | undefined) => {
         return;
       }
 
-      await saveImageResult(chatId, messageId, {
+      await saveImageResult(effectiveChatId, messageId, {
         images,
         meta: {
           prompt: state.prompt,
