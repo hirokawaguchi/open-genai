@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useLocation } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -9,6 +8,7 @@ import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { useGenerateTextStore } from '@/features/generate-text/stores/useGenerateTextStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { GenerateTextFormSchema, generateTextFormSchema } from '../schema';
 
 type Props = {
@@ -21,8 +21,8 @@ export const GenerateTextForm = (props: Props) => {
 
   const { information, setInformation, context, setContext } = useGenerateTextStore();
 
-  const { pathname } = useLocation();
-  const { loading } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading } = useChat(usecase, chatId);
 
   const {
     register,

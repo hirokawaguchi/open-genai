@@ -16,6 +16,10 @@ export type Pagination<T> = {
   lastEvaluatedKey?: string;
 };
 
+export type CreateChatRequest = {
+  usecase?: string;
+};
+
 export type CreateChatResponse = {
   chat: Chat;
 };

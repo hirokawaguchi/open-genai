@@ -1,7 +1,7 @@
-import { useLocation } from 'react-router';
 import { DiagramRenderer } from '@/features/generate-diagram/components/DiagramRenderer';
 import { useDiagram } from '@/features/generate-diagram/hooks/useDiagram';
 import { useDiagramStore } from '@/features/generate-diagram/stores/useDiagramStore';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { DIAGRAM_DATA } from '../constants';
 import { Markdown } from './Markdown';
 
@@ -11,8 +11,8 @@ type Props = {
 
 export const DiagramResult = (props: Props) => {
   const { diagramCode } = props;
-  const { pathname } = useLocation();
-  const { loading, diagramType, isEmpty } = useDiagram(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, diagramType, isEmpty } = useDiagram(usecase, chatId);
   const { diagramGenerationError } = useDiagramStore();
 
   const correctedDiagramCode = diagramCode

@@ -1,7 +1,7 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { useEffect, useRef, useState } from 'react';
 import { PiPencilLine, PiTrash } from 'react-icons/pi';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/dads/Button';
 import { Input } from '@/components/ui/dads/Input';
 import { MoreVertIcon } from '@/components/ui/icons/MoreVertIcon';
@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip
 import { DialogConfirmDeleteChat } from '@/features/chat/components/DialogConfirmDeleteChat';
 import { useChat } from '@/hooks/useChat';
 import { useChatList } from '@/hooks/useChatList';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { focus } from '@/utils/focus';
 
 type Props = {
@@ -18,9 +19,8 @@ type Props = {
 export const Title = (props: Props) => {
   const { title } = props;
 
-  const { chatId } = useParams();
-  const { pathname } = useLocation();
-  const { loadingMessages, isEmpty } = useChat(pathname, chatId);
+  const { usecase, chatId } = useUsecasePath();
+  const { loadingMessages, isEmpty } = useChat(usecase, chatId);
   const { updateChatTitle, deleteChat } = useChatList();
 
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);

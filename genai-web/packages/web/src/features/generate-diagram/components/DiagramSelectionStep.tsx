@@ -1,11 +1,11 @@
-import { useLocation } from 'react-router';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { useDiagram } from '@/features/generate-diagram/hooks/useDiagram';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { DIAGRAM_DATA } from '../constants';
 
 export const DiagramSelectionStep = () => {
-  const { pathname } = useLocation();
-  const { diagramType } = useDiagram(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { diagramType } = useDiagram(usecase, chatId);
 
   return (
     <>

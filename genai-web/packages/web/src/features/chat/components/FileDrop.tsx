@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router';
 import {
   FileUploadViewportOverlay,
   FileUploadViewportOverlayMessage,
@@ -7,6 +6,7 @@ import {
 } from '@/components/ui/dads/FileUpload';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useFiles } from '@/hooks/useFiles';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { FILE_LIMIT } from '../constants';
 
 type Props = {
@@ -19,8 +19,8 @@ export const FileDrop = (props: Props) => {
 
   const { isDragOver, setIsDragOver } = useChatStore();
 
-  const { pathname } = useLocation();
-  const { uploadFiles } = useFiles(pathname);
+  const { usecase } = useUsecasePath();
+  const { uploadFiles } = useFiles(usecase);
 
   const {
     announcerText,

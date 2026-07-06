@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { MODELS } from '@/models';
 import { useDiagramStore } from '../stores/useDiagramStore';
 import { DiagramPageQueryParams } from '../types';
@@ -8,8 +9,9 @@ import { DiagramPageQueryParams } from '../types';
 export const useSetDefaultValues = () => {
   const { setContent } = useDiagramStore();
 
-  const { pathname, search } = useLocation();
-  const { setModelId } = useChat(pathname);
+  const { search } = useLocation();
+  const { usecase, chatId } = useUsecasePath();
+  const { setModelId } = useChat(usecase, chatId);
   const { modelIds: availableModels } = MODELS;
 
   useEffect(() => {

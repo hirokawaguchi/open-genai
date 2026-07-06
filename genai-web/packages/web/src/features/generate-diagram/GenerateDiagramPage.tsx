@@ -1,4 +1,3 @@
-import { useLocation } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { APP_TITLE } from '@/constants';
@@ -16,11 +15,12 @@ import {
   extractDiagramSentence,
 } from '@/features/generate-diagram/utils/extractDiagram';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { LayoutBody } from '@/layout/LayoutBody';
 
 export const GenerateDiagramPage = () => {
-  const { pathname } = useLocation();
-  const { loading, messages } = useDiagram(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, messages } = useDiagram(usecase, chatId);
 
   useReset();
   useSetDefaultValues();

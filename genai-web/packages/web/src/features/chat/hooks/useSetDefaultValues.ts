@@ -1,8 +1,9 @@
 import type { SystemContext } from 'genai-web';
 import { useEffect, useRef } from 'react';
-import { useLocation, useParams } from 'react-router';
+import { useLocation } from 'react-router';
 import { TOP_CHAT_SYSTEM_PROMPT, TOP_CHAT_SYSTEM_PROMPT_TITLE } from '@/features/landing/constants';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { MODELS } from '@/models';
 import { useChatStore } from '../stores/useChatStore';
 import { ChatPageQueryParams } from '../types';
@@ -22,10 +23,10 @@ export const useSetDefaultValues = (systemContextList: SystemContext[]) => {
     setShouldAutoSubmit,
     setHasSent,
   } = useChatStore();
-  const { pathname, search, state } = useLocation();
-  const { chatId } = useParams();
+  const { search, state } = useLocation();
+  const { usecase, chatId } = useUsecasePath();
   const { getModelId, setModelId, clear, getCurrentSystemContext, updateSystemContext } = useChat(
-    pathname,
+    usecase,
     chatId,
   );
   const { modelIds: availableModels } = MODELS;

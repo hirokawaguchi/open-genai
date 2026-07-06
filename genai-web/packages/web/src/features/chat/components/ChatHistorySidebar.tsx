@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { linkDefaultStyle } from '@/components/ui/dads/Link';
 import { decomposeId } from '@/utils/decomposeId';
 import { formatDateTime } from '@/utils/formatDateTime';
+import { getChatHistoryLink, getUsecaseLabel, resolveChatUsecase } from '@/utils/usecasePath';
 import { useChatHistorySidebar } from '../hooks/useChatHistorySidebar';
 
 export const ChatHistorySidebar = () => {
@@ -38,16 +39,20 @@ export const ChatHistorySidebar = () => {
               const decomposedChatId = decomposeId(chat.chatId);
               if (!decomposedChatId) return null;
               const isCurrent = decomposedChatId === chatId;
+              const usecase = resolveChatUsecase(chat);
               return (
                 <li className='border-b border-b-solid-gray-420 text-std-16N-175' key={chat.chatId}>
                   <Link
-                    to={`/chat/${decomposedChatId}`}
+                    to={getChatHistoryLink(chat)}
                     aria-current={isCurrent ? 'page' : undefined}
                     className="group/history flex flex-col gap-1 items-start py-3 pl-2 pr-1.5 hover:bg-solid-gray-50 aria-[current='page']:bg-blue-50 focus-visible:outline-4 focus-visible:-outline-offset-4 focus-visible:outline-black focus-visible:outline-solid focus-visible:rounded-4 focus-visible:bg-yellow-300 focus-visible:ring-[calc(6/16*1rem)] focus-visible:ring-yellow-300 focus-visible:ring-inset"
                   >
                     <time dateTime={new Date(Number(chat.createdDate)).toISOString()}>
                       {formatDateTime(chat.createdDate)}
                     </time>
+                    <span className='text-dns-14N-130 text-solid-gray-600'>
+                      {getUsecaseLabel(usecase)}
+                    </span>
                     <p
                       className={`${linkDefaultStyle} group-hover/history:text-blue-900 group-hover/history:decoration-[calc(3/16*1rem)] group-aria-[current='page']/history:font-bold group-aria-[current='page']/history:text-blue-1000!`}
                     >

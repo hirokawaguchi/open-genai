@@ -173,7 +173,7 @@ const useChatStore = create<{
       return chat.chatId;
     }
 
-    const { chat: newChat } = await createChat();
+    const { chat: newChat } = await createChat({ usecase: id });
 
     set((state) => {
       const newChats = produce(state.chats, (draft) => {
@@ -720,7 +720,7 @@ export const useChat = (id: string, chatId?: string) => {
     if (!isLoadingMessage && messagesData && !isLoadingChat && chatData) {
       restore(id, messagesData.messages, chatData.chat);
     }
-  }, [isLoadingMessage, isLoadingChat, id]);
+  }, [isLoadingMessage, isLoadingChat, id, chatId, messagesData, chatData, restore]);
 
   const filteredMessages = useMemo(() => {
     return chats[id]?.messages.filter((chat) => chat.role !== 'system') ?? [];

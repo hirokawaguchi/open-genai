@@ -1,4 +1,3 @@
-import { useLocation } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { APP_TITLE } from '@/constants';
@@ -6,6 +5,7 @@ import { GenerateTextForm } from '@/features/generate-text/components/GenerateTe
 import { GenerateTextHeader } from '@/features/generate-text/components/GenerateTextHeader';
 import { GenerateTextResult } from '@/features/generate-text/components/GenerateTextResult';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useFollow } from '@/hooks/useFollow';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { usePrompter } from '@/hooks/usePrompter';
@@ -15,8 +15,8 @@ import { useReset } from './hooks/useReset';
 import { useSetDefaultValues } from './hooks/useSetDefaultValues';
 
 export const GenerateTextPage = () => {
-  const { pathname } = useLocation();
-  const { loading, messages, postChat } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, messages, postChat } = useChat(usecase, chatId);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const text = lastMessage?.role === 'assistant' ? lastMessage.content.trim() : '';

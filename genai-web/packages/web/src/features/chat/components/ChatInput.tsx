@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useLocation, useParams } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -23,6 +22,7 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { isSubmitKey } from '@/utils/keyboard';
 import { FILE_LIMIT } from '../constants';
 import { ChatFormSchema, chatFormSchema } from '../schema';
@@ -36,13 +36,12 @@ type Props = {
 export const ChatInput = (props: Props) => {
   const { onSend, fileUpload, accept } = props;
 
-  const { chatId } = useParams();
-  const { pathname } = useLocation();
+  const { usecase, chatId } = useUsecasePath();
   const { content, setContent, hasSent, setHasSent } = useChatStore();
 
-  const { loading } = useChat(pathname, chatId);
+  const { loading } = useChat(usecase, chatId);
   const { uploadedFiles, uploadFiles, checkFiles, deleteUploadedFile, uploading, errorMessages } =
-    useFiles(pathname);
+    useFiles(usecase);
 
   const isInitialChat = !chatId && !hasSent;
 

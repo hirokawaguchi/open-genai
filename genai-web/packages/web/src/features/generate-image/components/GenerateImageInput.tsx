@@ -1,11 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useLocation } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { isSubmitKey } from '@/utils/keyboard';
 import { type GenerateImageChatFormSchema, generateImageChatFormSchema } from '../schema';
 
@@ -20,8 +20,8 @@ type Props = {
 export const GenerateImageInput = (props: Props) => {
   const { textareaId, content, onChangeContent, onSend } = props;
 
-  const { pathname } = useLocation();
-  const { loading: chatLoading } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading: chatLoading } = useChat(usecase, chatId);
 
   const loading = props.loading === undefined ? chatLoading : props.loading;
 

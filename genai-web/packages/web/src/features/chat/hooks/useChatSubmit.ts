@@ -9,7 +9,7 @@ import { useFileUploadable } from './useFileUploadable';
 type UseChatReturn = ReturnType<typeof useChat>;
 
 export const useChatSubmit = ({
-  pathname,
+  usecase,
   postChat,
   retryGeneration,
   updateSystemContext,
@@ -17,7 +17,7 @@ export const useChatSubmit = ({
   loading,
   setFollowing,
 }: {
-  pathname: string;
+  usecase: string;
   postChat: UseChatReturn['postChat'];
   retryGeneration: UseChatReturn['retryGeneration'];
   updateSystemContext: UseChatReturn['updateSystemContext'];
@@ -28,7 +28,7 @@ export const useChatSubmit = ({
   const { content, setContent, inputSystemContext, shouldAutoSubmit, setShouldAutoSubmit } =
     useChatStore();
 
-  const { clear: clearFiles, uploadedFiles, base64Cache } = useFiles(pathname);
+  const { clear: clearFiles, uploadedFiles, base64Cache } = useFiles(usecase);
   const { prompter } = usePrompter();
   const { fileUploadable } = useFileUploadable();
   const { state } = useLocation();

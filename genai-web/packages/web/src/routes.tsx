@@ -55,10 +55,30 @@ export const createRoutes = (): RouteObject[] => {
           element: <ChatPage />,
         },
         { path: 'history', element: <ChatHistoryPage /> },
-        isUseCaseEnabled('generate') ? { path: 'generate', element: <GenerateTextPage /> } : null,
-        isUseCaseEnabled('translate') ? { path: 'translate', element: <TranslatePage /> } : null,
-        isUseCaseEnabled('image') ? { path: 'image', element: <GenerateImagePage /> } : null,
-        isUseCaseEnabled('diagram') ? { path: 'diagram', element: <GenerateDiagramPage /> } : null,
+        isUseCaseEnabled('generate')
+          ? [
+              { path: 'generate', element: <GenerateTextPage /> },
+              { path: 'generate/:chatId', element: <GenerateTextPage /> },
+            ]
+          : null,
+        isUseCaseEnabled('translate')
+          ? [
+              { path: 'translate', element: <TranslatePage /> },
+              { path: 'translate/:chatId', element: <TranslatePage /> },
+            ]
+          : null,
+        isUseCaseEnabled('image')
+          ? [
+              { path: 'image', element: <GenerateImagePage /> },
+              { path: 'image/:chatId', element: <GenerateImagePage /> },
+            ]
+          : null,
+        isUseCaseEnabled('diagram')
+          ? [
+              { path: 'diagram', element: <GenerateDiagramPage /> },
+              { path: 'diagram/:chatId', element: <GenerateDiagramPage /> },
+            ]
+          : null,
         { path: 'transcribe', element: <TranscribePage /> },
         { path: 'teams', element: <TeamsPage /> },
         { path: 'teams/create', element: <TeamCreatePage /> },
@@ -96,7 +116,7 @@ export const createRoutes = (): RouteObject[] => {
         },
         { path: 'docs/api-request-data-format', element: <ApiRequestDataFormatPage /> },
         { path: '*', element: <NotFound /> },
-      ].flatMap((r) => (r ? [r] : [])),
+      ].flatMap((r) => (Array.isArray(r) ? r : r ? [r] : [])),
     },
-  ].flatMap((r) => (r ? [r] : []));
+  ].flatMap((r) => (Array.isArray(r) ? r : r ? [r] : []));
 };

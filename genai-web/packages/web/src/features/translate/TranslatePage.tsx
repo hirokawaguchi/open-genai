@@ -1,5 +1,4 @@
 import { useCallback, useEffect } from 'react';
-import { useLocation } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { Switch } from '@/components/ui/Switch';
@@ -10,6 +9,7 @@ import { useReset } from '@/features/translate/hooks/useReset';
 import { useSetDefaultValues } from '@/features/translate/hooks/useSetDefaultValues';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useLocalStorageBoolean } from '@/hooks/useLocalStorageBoolean';
 import { usePrompter } from '@/hooks/usePrompter';
@@ -20,8 +20,8 @@ import { debounce } from '@/utils/debounce';
 export const TranslatePage = () => {
   const { sentence, additionalContext, language } = useTranslateStore();
 
-  const { pathname } = useLocation();
-  const { loading, messages, postChat, clear } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, messages, postChat, clear } = useChat(usecase, chatId);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const translatedSentence = lastMessage?.role === 'assistant' ? lastMessage.content.trim() : '';

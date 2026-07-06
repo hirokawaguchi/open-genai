@@ -61,7 +61,7 @@ vi.mock('@/hooks/useChat', () => ({
 }));
 
 const createDefaultProps = () => ({
-  pathname: '/chat',
+  usecase: '/chat',
   postChat: vi.fn(),
   retryGeneration: vi.fn(),
   updateSystemContext: vi.fn(),

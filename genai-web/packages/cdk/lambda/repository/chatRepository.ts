@@ -10,15 +10,16 @@ import { Chat, ListChatsResponse } from 'genai-web';
 import { dynamoDbDocument, TABLE_NAME, TTL_DAYS } from './client';
 import { listMessages } from './messageRepository';
 
-export const createChat = async (_userId: string): Promise<Chat> => {
+export const createChat = async (_userId: string, usecase = '/chat'): Promise<Chat> => {
   const userId = `user#${_userId}`;
   const chatId = `chat#${crypto.randomUUID()}`;
   const expire_at = Math.floor(Date.now() / 1000) + TTL_DAYS * 24 * 60 * 60;
+  const normalizedUsecase = usecase.startsWith('/') ? usecase : `/${usecase}`;
   const item = {
     id: userId,
     createdDate: `${Date.now()}`,
     chatId,
-    usecase: '',
+    usecase: normalizedUsecase,
     title: '',
     updatedDate: '',
     expire_at,

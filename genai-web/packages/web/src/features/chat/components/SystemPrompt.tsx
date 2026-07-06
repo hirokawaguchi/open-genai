@@ -1,10 +1,10 @@
-import { useLocation, useParams } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 
 type Props = {
   currentSystemContext: string;
@@ -15,10 +15,9 @@ type Props = {
 export const SystemPrompt = (props: Props) => {
   const { currentSystemContext, setShowSystemContextDialog, setShowPromptListDialog } = props;
 
-  const { pathname } = useLocation();
-  const { chatId } = useParams();
+  const { usecase, chatId } = useUsecasePath();
 
-  const { loadingMessages, isEmpty } = useChat(pathname, chatId);
+  const { loadingMessages, isEmpty } = useChat(usecase, chatId);
 
   const { inputSystemContext, setInputSystemContext, setSaveSystemContext, systemContextTitle } =
     useChatStore();
@@ -29,7 +28,7 @@ export const SystemPrompt = (props: Props) => {
 
   return (
     <div className='border-b border-b-solid-gray-800 pb-1'>
-      <Disclosure key={pathname} className='relative'>
+      <Disclosure key={`${usecase}-${chatId ?? 'new'}`} className='relative'>
         <DisclosureSummary id='system-prompt-input-label' className='font-700'>
           <span>
             システムプロンプト

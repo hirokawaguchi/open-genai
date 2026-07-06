@@ -1,5 +1,4 @@
 import { useRef } from 'react';
-import { useLocation } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { CustomSelect } from '@/components/ui/CustomSelect';
@@ -7,6 +6,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { LANGUAGES } from '../constants';
 
 type Props = {
@@ -19,8 +19,8 @@ export const TranslatedResult = (props: Props) => {
 
   const { language, setLanguage } = useTranslateStore();
 
-  const { pathname } = useLocation();
-  const { loading, continueGeneration, getStopReason } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, continueGeneration, getStopReason } = useChat(usecase, chatId);
 
   const copyTextRef = useRef<HTMLDivElement>(null);
 

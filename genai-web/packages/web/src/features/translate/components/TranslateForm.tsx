@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useLocation } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -9,6 +8,7 @@ import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { TranslateFormSchema, translateFormSchema } from '../schema';
 import { TranslatedResult } from './TranslatedResult';
 
@@ -24,8 +24,8 @@ export const TranslateForm = (props: Props) => {
   const { sentence, setSentence, additionalContext, setAdditionalContext, language } =
     useTranslateStore();
 
-  const { pathname } = useLocation();
-  const { loading } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading } = useChat(usecase, chatId);
 
   const {
     register,

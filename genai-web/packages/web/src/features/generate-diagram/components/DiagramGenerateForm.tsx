@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useLocation } from 'react-router';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
@@ -16,6 +15,7 @@ import {
 import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { useDiagram } from '@/features/generate-diagram/hooks/useDiagram';
 import { useDiagramStore } from '@/features/generate-diagram/stores/useDiagramStore';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { DIAGRAM_DATA } from '../constants';
 import { DiagramFormSchema, diagramFormSchema } from '../schema';
 import { DiagramTypeButton } from './DiagramTypeButton';
@@ -32,9 +32,9 @@ export const DiagramGenerateForm = () => {
   const { content, setContent, selectedType, setSelectedType, setDiagramGenerationError } =
     useDiagramStore();
 
-  const { pathname } = useLocation();
+  const { usecase, chatId } = useUsecasePath();
 
-  const { loading, setLoading, postDiagram } = useDiagram(pathname);
+  const { loading, setLoading, postDiagram } = useDiagram(usecase, chatId);
 
   const {
     register,

@@ -1,10 +1,10 @@
 import type { ShownMessage } from 'genai-web';
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router';
 import { FileCard } from '@/features/chat/components/FileCard';
 import { ZoomUpImage } from '@/features/chat/components/ZoomUpImage';
 import { ZoomUpVideo } from '@/features/chat/components/ZoomUpVideo';
 import { useFiles } from '@/hooks/useFiles';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useTyping } from '@/hooks/useTyping';
 
 type Props = {
@@ -12,8 +12,8 @@ type Props = {
 };
 
 export const UserMessage = ({ chatContent }: Props) => {
-  const { pathname } = useLocation();
-  const { getFileDownloadSignedUrl } = useFiles(pathname);
+  const { usecase } = useUsecasePath();
+  const { getFileDownloadSignedUrl } = useFiles(usecase);
 
   const { typingTextOutput } = useTyping(false, chatContent.content);
 

@@ -8,6 +8,8 @@ export const AMAZON_MODELS = {
   NOVA_CANVAS: 'amazon.nova-canvas-v1:0',
 };
 
+const LOCAL_SD_MODEL = 'local-sd';
+
 const STABILITY_AI_MODELS = {
   STABLE_DIFFUSION_XL: 'stability.stable-diffusion-xl-v1',
   SD3_LARGE: 'stability.sd3-large-v1:0',
@@ -204,6 +206,13 @@ export const STABILITY_AI_2024_MODEL_PRESETS = [
 ];
 
 export const MODEL_INFO: Record<string, ModelInfo<'base' | 'advanced'>> = {
+  [LOCAL_SD_MODEL]: {
+    supportedModes: [
+      GENERATION_MODES.TEXT_IMAGE,
+      GENERATION_MODES.IMAGE_VARIATION,
+    ],
+    resolutionPresets: DEFAULT_MODEL_PRESETS,
+  },
   [STABILITY_AI_MODELS.STABLE_DIFFUSION_XL]: {
     supportedModes: [
       GENERATION_MODES.TEXT_IMAGE,

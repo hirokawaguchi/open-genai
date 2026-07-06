@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { PiBookOpenBold } from 'react-icons/pi';
-import { useLocation } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
@@ -14,6 +13,7 @@ import { useReset } from '@/features/generate-image/hooks/useReset';
 import { useSetDefaultValues } from '@/features/generate-image/hooks/useSetDefaultValues';
 import { useGenerateImageStore } from '@/features/generate-image/stores/useGenerateImageStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useScreen } from '@/hooks/useScreen';
 import { MODELS } from '@/models';
@@ -44,8 +44,8 @@ export const GenerateImagePage = () => {
     clear,
   } = useGenerateImageStore();
 
-  const { pathname } = useLocation();
-  const { loading: loadingChat, postChat, clear: clearChat } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading: loadingChat, postChat, clear: clearChat } = useChat(usecase, chatId);
   const { scrollToBottom } = useScreen({ useWindowScroll: true });
 
   const [generating, setGenerating] = useState(false);
@@ -186,8 +186,8 @@ export const GenerateImagePage = () => {
                     if (sp !== undefined) {
                       setStylePreset(sp);
                     }
-                    return handleGenerateImage(p, np, sp);
                   }
+                  return handleGenerateImage(p, np, sp);
                 }}
               />
             </div>

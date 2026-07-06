@@ -12,6 +12,7 @@ import { useChatList } from '@/hooks/useChatList';
 import { useHighlight } from '@/hooks/useHighlight';
 import { decomposeId } from '@/utils/decomposeId';
 import { focus } from '@/utils/focus';
+import { getChatHistoryLink, getUsecaseLabel, resolveChatUsecase } from '@/utils/usecasePath';
 
 type Props = {
   className?: string;
@@ -35,6 +36,7 @@ export const ChatListItem = (props: Props) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const chatId = decomposeId(chat.chatId) ?? '';
+  const usecase = resolveChatUsecase(chat);
 
   useEffect(() => {
     if (isEditing) {
@@ -95,9 +97,12 @@ export const ChatListItem = (props: Props) => {
           <>
             <div className='py-3'>
               <Link
-                className={`ml-4 flex items-center justify-start rounded-4 py-1 text-dns-16N-130 leading-tight! text-blue-1000 underline underline-offset-[calc(3/16*1rem)] hover:decoration-[calc(3/16*1rem)] focus-visible:relative focus-visible:z-10 focus-visible:bg-yellow-300 focus-visible:ring-[calc(2/16*1rem)] focus-visible:ring-yellow-300 focus-visible:outline-4 focus-visible:outline-offset-[calc(2/16*1rem)] focus-visible:outline-black focus-visible:outline-solid`}
-                to={`/chat/${chatId}`}
+                className={`ml-4 flex flex-col items-start justify-start gap-0.5 rounded-4 py-1 text-dns-16N-130 leading-tight! text-blue-1000 underline underline-offset-[calc(3/16*1rem)] hover:decoration-[calc(3/16*1rem)] focus-visible:relative focus-visible:z-10 focus-visible:bg-yellow-300 focus-visible:ring-[calc(2/16*1rem)] focus-visible:ring-yellow-300 focus-visible:outline-4 focus-visible:outline-offset-[calc(2/16*1rem)] focus-visible:outline-black focus-visible:outline-solid`}
+                to={getChatHistoryLink(chat)}
               >
+                <span className='text-dns-14N-130 text-solid-gray-600 no-underline'>
+                  {getUsecaseLabel(usecase)}
+                </span>
                 <div className='flex w-full items-center justify-start'>
                   <div className='relative flex-1'>
                     <div>{highlightText(chat.title || '無題', highlightWords)}</div>

@@ -31,6 +31,7 @@ import {
   VideoAnalyzerParams,
   WebContentParams,
 } from './index';
+import { pathnameToUsecase } from '@/utils/usecasePath';
 
 const systemContexts: { [key: string]: string } = {
   '/chat': 'あなたはチャットでユーザを支援するAIアシスタントです。',
@@ -95,10 +96,8 @@ const systemContexts: { [key: string]: string } = {
 
 export const claudePrompter: Prompter = {
   systemContext(pathname: string): string {
-    if (pathname.startsWith('/chat/')) {
-      return systemContexts['/chat'];
-    }
-    return systemContexts[pathname] || systemContexts['/chat'];
+    const usecase = pathnameToUsecase(pathname);
+    return systemContexts[usecase] || systemContexts['/chat'];
   },
   chatPrompt(params: ChatParams): string {
     return params.content;

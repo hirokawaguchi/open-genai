@@ -54,7 +54,7 @@ describe('createChat Lambda handler', () => {
     expect(result.statusCode).toBe(200);
     const body = JSON.parse(result.body);
     expect(body.chat.chatId).toBe('chat#new-id');
-    expect(mockedCreateChat).toHaveBeenCalledWith(userId);
+    expect(mockedCreateChat).toHaveBeenCalledWith(userId, '/chat');
   });
 
   test('予期しないエラーが発生した場合は500エラーを返す', async () => {

@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
@@ -24,6 +24,7 @@ import { useReset } from '@/features/chat/hooks/useReset';
 import { useSetDefaultValues } from '@/features/chat/hooks/useSetDefaultValues';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useFollow } from '@/hooks/useFollow';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useScreen } from '@/hooks/useScreen';
@@ -42,7 +43,7 @@ export const ChatPage = () => {
   } = useChatStore();
 
   const { pathname, search, state } = useLocation();
-  const { chatId } = useParams();
+  const { usecase, chatId } = useUsecasePath();
   const navigate = useNavigate();
   const { scrollTopAnchorRef, scrollBottomAnchorRef } = useScreen({
     useWindowScroll: true,
@@ -65,7 +66,7 @@ export const ChatPage = () => {
     getCurrentSystemContext,
     retryGeneration,
     chatTitle,
-  } = useChat(pathname, chatId);
+  } = useChat(usecase, chatId);
 
   const { scrollableContainer, setFollowing } = useFollow();
 
@@ -95,7 +96,7 @@ export const ChatPage = () => {
   const currentSystemContext = getCurrentSystemContext();
 
   const { onSend, onRetry } = useChatSubmit({
-    pathname,
+    usecase,
     postChat,
     retryGeneration,
     updateSystemContext,

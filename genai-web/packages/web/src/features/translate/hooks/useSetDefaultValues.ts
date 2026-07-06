@@ -1,15 +1,17 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { MODELS } from '@/models';
 import { LANGUAGES } from '../constants';
 import { useTranslateStore } from '../stores/useTranslateStore';
 import { TranslatePageQueryParams } from '../types';
 
 export const useSetDefaultValues = () => {
-  const { pathname, search } = useLocation();
+  const { search } = useLocation();
   const { setSentence, setAdditionalContext, setLanguage } = useTranslateStore();
-  const { getModelId, setModelId } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { getModelId, setModelId } = useChat(usecase, chatId);
   const { modelIds: availableModels } = MODELS;
 
   useEffect(() => {

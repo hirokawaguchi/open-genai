@@ -34,7 +34,7 @@ from fastapi.responses import (
 
 from shared import ssrfguard
 
-from . import audit, auth, intauth, llm, ngwords, objstore, policy, storage, teams_store
+from . import audit, auth, image_gen, intauth, llm, ngwords, objstore, policy, storage, teams_store
 
 # ファイル添付の保存先と、ブラウザから見たバックエンドの公開 URL
 FILES_DIR = os.environ.get("FILES_DIR", "/data/files")
@@ -1073,7 +1073,13 @@ async def health() -> dict[str, Any]:
 @app.post("/chats")
 async def create_chat(request: Request) -> dict[str, Any]:
     user_id = _user_id(_claims_from_request(request))
-    return {"chat": storage.create_chat(user_id)}
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - body 省略時はデフォルト usecase
+        body = {}
+    usecase = body.get("usecase") or "/chat"
+    return {"chat": storage.create_chat(user_id, usecase)}
 
 
 @app.get("/chats")
@@ -1141,6 +1147,20 @@ async def create_messages(chat_id: str, request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # 推論 (genU API / Lambda ストリーム代替)
 # ---------------------------------------------------------------------------
+@app.post("/image/generate")
+async def generate_image(request: Request) -> Response:
+    """源内 Web「画像を生成」ページ向け API（Bedrock Lambda 代替）。"""
+    body = await request.json()
+    params = body.get("params") or {}
+    try:
+        image_base64 = await image_gen.generate_image_base64(params)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"message": str(exc)})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=502, content={"message": str(exc)})
+    return Response(content=image_base64, media_type="text/plain")
+
+
 @app.post("/predict")
 async def predict(request: Request) -> Response:
     body = await request.json()

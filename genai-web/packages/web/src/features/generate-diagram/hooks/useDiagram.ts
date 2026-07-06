@@ -9,7 +9,7 @@ import { getPrompter } from '@/prompts';
 
 const validTypes = Object.keys(MERMAID_DIAGRAM_TYPES) as MermaidDiagramType[];
 
-export const useDiagram = (id: string) => {
+export const useDiagram = (usecase: string, chatId?: string) => {
   const { diagramType, setDiagramType } = useDiagramStore();
 
   const {
@@ -22,7 +22,7 @@ export const useDiagram = (id: string) => {
     messages,
     isEmpty,
     postChat,
-  } = useChat(id);
+  } = useChat(usecase, chatId);
 
   const modelId = getModelId();
   const model = findModelByModelId(modelId);
@@ -67,7 +67,7 @@ export const useDiagram = (id: string) => {
             content: `<content>${content}</content>`,
           },
         ],
-        id: id,
+        id: usecase,
       };
 
       const res = await predict(payload);

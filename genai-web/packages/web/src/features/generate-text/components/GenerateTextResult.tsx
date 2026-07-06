@@ -1,10 +1,10 @@
 import { Ref, useRef } from 'react';
-import { useLocation } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { useChat } from '@/hooks/useChat';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 
 type Props = {
   scrollableContainer: Ref<HTMLDivElement>;
@@ -17,8 +17,8 @@ export const GenerateTextResult = (props: Props) => {
 
   const copyTextRef = useRef<HTMLDivElement>(null);
 
-  const { pathname } = useLocation();
-  const { loading, continueGeneration, getStopReason } = useChat(pathname);
+  const { usecase, chatId } = useUsecasePath();
+  const { loading, continueGeneration, getStopReason } = useChat(usecase, chatId);
 
   const stopReason = getStopReason();
   const isInitial = !loading && text === '';

@@ -13,8 +13,8 @@ import { genUApi } from '@/lib/fetcher';
 import { getIdToken } from '@/local/localAuth';
 import { decomposeId } from '@/utils/decomposeId';
 
-export const createChat = async () => {
-  const res = await genUApi.post<CreateChatResponse>('chats', {});
+export const createChat = async (req: { usecase?: string } = {}) => {
+  const res = await genUApi.post<CreateChatResponse>('chats', req);
   return res.data;
 };
 

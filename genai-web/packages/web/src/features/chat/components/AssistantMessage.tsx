@@ -1,6 +1,5 @@
 import type { ShownMessage } from 'genai-web';
 import { useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
@@ -10,6 +9,7 @@ import { FileCard } from '@/features/chat/components/FileCard';
 import { ZoomUpImage } from '@/features/chat/components/ZoomUpImage';
 import { ZoomUpVideo } from '@/features/chat/components/ZoomUpVideo';
 import { useFiles } from '@/hooks/useFiles';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useTyping } from '@/hooks/useTyping';
 
 type Props = {
@@ -27,8 +27,8 @@ export const AssistantMessage = ({
   allowRetry,
   retryGeneration,
 }: Props) => {
-  const { pathname } = useLocation();
-  const { getFileDownloadSignedUrl } = useFiles(pathname);
+  const { usecase } = useUsecasePath();
+  const { getFileDownloadSignedUrl } = useFiles(usecase);
   const copyTextRef = useRef<HTMLDivElement>(null);
 
   const { typingTextOutput } = useTyping(loading, chatContent.content);

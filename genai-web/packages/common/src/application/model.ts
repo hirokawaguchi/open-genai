@@ -386,6 +386,12 @@ export const modelMetadata: Record<string, ModelMetadata> = {
 
   // === Image ===
 
+  // Open GENAI ローカル SD（A1111 互換）
+  'local-sd': {
+    flags: MODEL_FEATURE.IMAGE_GEN,
+    displayName: 'Stable Diffusion (ローカル)',
+  },
+
   // Stability AI Image Gen
   'stability.stable-diffusion-xl-v1': {
     flags: {
