@@ -14,7 +14,10 @@ export const useExAppInvokeState = () => {
     } catch (error: unknown) {
       store.setExAppResponse(null);
       if (isApiError(error)) {
-        throw new Error((error.data as { outputs?: string })?.outputs);
+        const data = error.data as { outputs?: string; error?: string };
+        throw new Error(
+          data?.outputs || data?.error || `リクエストに失敗しました (${error.status})`,
+        );
       } else if (error instanceof Error) {
         throw new Error(error.message);
       }

@@ -67,6 +67,7 @@ export const ExAppForm = (props: Props) => {
     formState: { errors, submitCount },
   } = useForm({
     mode: 'onSubmit',
+    defaultValues: formValues,
     values: formValues,
     // OpenGENAI Form Spec v1: visibleWhen で非表示になったフィールドは登録解除し、
     // 送信対象・バリデーション対象から外す（新キー未使用の静的フォームには影響なし）。
@@ -104,6 +105,17 @@ export const ExAppForm = (props: Props) => {
     );
     return { ...schemaDefaults, ...defined };
   }, [watchedValues, schemaDefaults]);
+
+  // 動的スキーマの default_value は UI に見えても RHF 登録前だと未設定になり、
+  // 必須チェックに引っかかる。スキーマ取得後にフォーム状態へ同期する。
+  useEffect(() => {
+    for (const [key, val] of Object.entries(schemaDefaults)) {
+      const current = getValues(key);
+      if (current === undefined || current === '') {
+        setValue(key, val, { shouldValidate: false, shouldDirty: false });
+      }
+    }
+  }, [schemaDefaults, setValue, getValues]);
 
   // reactive 指定のフィールド群（変更時に /resolve を呼ぶトリガ）。
   const reactiveKeys = useMemo(

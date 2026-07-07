@@ -1,4 +1,4 @@
-import { ExApp } from 'genai-web';
+import { Artifact, ExApp } from 'genai-web';
 import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/dads/Button';
@@ -7,11 +7,13 @@ import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
 import { processFormFiles } from '../utils/processFormFiles';
+import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   fileNames?: string[];
+  artifacts?: Artifact[];
 };
 
 type Props = {
@@ -67,7 +69,10 @@ export const ExAppChat = ({ exApp }: Props) => {
         inputs,
         sessionId,
       });
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.outputs ?? '' }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: res.outputs ?? '', artifacts: res.artifacts },
+      ]);
     } catch {
       setError('応答の取得に失敗しました。時間をおいて再度お試しください。');
     } finally {
@@ -113,7 +118,10 @@ export const ExAppChat = ({ exApp }: Props) => {
                 }`}
               >
                 {m.role === 'assistant' ? (
-                  <Markdown>{m.content}</Markdown>
+                  <>
+                    <Markdown>{m.content}</Markdown>
+                    <ExAppArtifactDownloads artifacts={m.artifacts} />
+                  </>
                 ) : (
                   <div className='whitespace-pre-wrap break-words text-std-16N-170'>
                     {m.content}

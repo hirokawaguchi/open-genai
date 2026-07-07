@@ -5,13 +5,11 @@ import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Ul } from '@/components/ui/dads/Ul';
-import { DownloadIcon } from '@/components/ui/icons/DownloadIcon';
 import { UpdateIcon } from '@/components/ui/icons/UpdateIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
-import { download } from '@/utils/createDownloadLink';
 import { formatDateTime } from '@/utils/formatDateTime';
-import { useGetArtifactFile } from '../hooks/useGetArtifactFile';
 import { FileInputItem } from '../types';
+import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 import { ExAppInvokedHistoryDeleteDialog } from './ExAppInvokedHistoryDeleteDialog';
 import { ExAppInvokeHistoryItemStatusLabel } from './ExAppInvokeHistoryItemStatusLabel';
 
@@ -29,23 +27,8 @@ export const ExAppInvokedHistoryItem = (props: Props) => {
 
   const historyId = useId();
 
-  const [loadingArtifacts, setLoadingArtifacts] = useState<string[]>([]);
-  const { getArtifactFileUrl } = useGetArtifactFile();
-
   const copyTextRef = useRef<HTMLDivElement>(null);
   const [shouldShowDeleteDialog, setShouldShowDeleteDialog] = useState(false);
-
-  const downloadArtifact = async (fileUrl: string, displayName: string) => {
-    setLoadingArtifacts((prev) => [...prev, fileUrl]);
-    try {
-      const signedUrl = await getArtifactFileUrl(fileUrl);
-      download(signedUrl, displayName);
-    } catch (error) {
-      console.error('Error loading file:', error);
-    } finally {
-      setLoadingArtifacts((prev) => prev.filter((url) => url !== fileUrl));
-    }
-  };
 
   const getFilesInfo = (files: FileInputItem[]) => {
     return files.map((item) => item.files.map((file) => file.filename).join(', ')).join(', ');
@@ -183,35 +166,7 @@ export const ExAppInvokedHistoryItem = (props: Props) => {
                     <ButtonCopy text={parsedOutputs} targetRef={copyTextRef} />
                   </div>
 
-                  {history.artifacts && history.artifacts.length > 0 && (
-                    <dl className='mt-2 border-t border-t-solid-gray-420 pt-4'>
-                      <dt className='mb-2 text-std-17B-170'>ファイル一覧:</dt>
-                      <dd>
-                        <ul className='space-y-4'>
-                          {history.artifacts.map((artifact) => {
-                            const isDownloading = loadingArtifacts.includes(artifact.file_url);
-                            return (
-                              <li key={artifact.file_url}>
-                                <LoadingButton
-                                  type='button'
-                                  loading={isDownloading}
-                                  onClick={() =>
-                                    downloadArtifact(artifact.file_url, artifact.display_name)
-                                  }
-                                  variant='outline'
-                                  size='md'
-                                >
-                                  {!isDownloading && <DownloadIcon aria-hidden={true} />}
-                                  {artifact.display_name}
-                                  <span className='sr-only'>をダウンロード</span>
-                                </LoadingButton>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </dd>
-                    </dl>
-                  )}
+                  <ExAppArtifactDownloads artifacts={history.artifacts} />
                 </div>
               )}
             </div>

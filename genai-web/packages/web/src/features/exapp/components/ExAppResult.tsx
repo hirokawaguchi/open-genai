@@ -5,8 +5,8 @@ import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { useExAppInvokeStore } from '../stores/useExAppInvokeStore';
-import { getFileExtension } from '../utils/getFileExtension';
 import { ContinueConversationButton } from './ContinueConversationButton';
+import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 
 type Props = {
   shouldShowConversationHistory: boolean;
@@ -16,7 +16,6 @@ export const ExAppResult = (props: Props) => {
   const { shouldShowConversationHistory } = props;
   const { exAppResponse, requestLoading, error } = useExAppInvokeStore();
   const copyTextRef = useRef<HTMLDivElement>(null);
-  const hasArtifacts = exAppResponse !== null && (exAppResponse.artifacts?.length ?? 0) > 0;
   const isInitial = !requestLoading && !error && !exAppResponse;
   const showResult = !requestLoading && !error && exAppResponse !== null;
 
@@ -38,24 +37,7 @@ export const ExAppResult = (props: Props) => {
           <Markdown>{exAppResponse?.outputs ?? ''}</Markdown>
         </div>
 
-        {hasArtifacts && (
-          <div className='mt-4 space-y-4'>
-            {exAppResponse?.artifacts?.map((artifact, index) => {
-              if (!artifact.content) {
-                return null;
-              }
-
-              return (
-                <img
-                  className='my-4 h-auto w-fit max-w-sm object-cover'
-                  src={`data:image/${getFileExtension(artifact.display_name)};base64,${artifact.content}`}
-                  alt={artifact.display_name}
-                  key={`${artifact.display_name}-${index}`}
-                />
-              );
-            })}
-          </div>
-        )}
+        <ExAppArtifactDownloads artifacts={exAppResponse?.artifacts} />
 
         {requestLoading && <ProgressIndicator className='my-0.5' />}
 

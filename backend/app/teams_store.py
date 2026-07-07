@@ -779,6 +779,26 @@ def get_exapp_history(
     return _row_to_history(r) if r else None
 
 
+def list_exapp_histories_older_than(cutoff_created: str) -> list[dict[str, Any]]:
+    """createdDate が cutoff より古い実行履歴を返す。"""
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM exapp_histories WHERE createdDate < ?",
+            (cutoff_created,),
+        ).fetchall()
+    return [_row_to_history(r) for r in rows]
+
+
+def delete_histories_older_than(cutoff_created: str) -> int:
+    """createdDate が cutoff より古い実行履歴を削除する。削除件数を返す。"""
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM exapp_histories WHERE createdDate < ?",
+            (cutoff_created,),
+        )
+        return cur.rowcount
+
+
 def delete_exapp_history(
     team_id: str, ex_app_id: str, created_date: str, user_id: str | None = None
 ) -> bool:

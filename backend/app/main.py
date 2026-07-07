@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import json
 import os
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Header, Query, Request
@@ -682,6 +684,21 @@ def _md_escape(text: Any) -> str:
     return s
 
 
+def _header_config_value(config: str | None) -> str:
+    """AI アプリ config を HTTP ヘッダ(x-app-config)に載せられる1行文字列へ正規化する。
+
+    UI で整形された JSON（改行入り）をそのままヘッダに入れると httpx が拒否し、
+    /exapps/schema・/exapps/invoke が 502 相当で失敗する。
+    """
+    raw = (config or "").strip()
+    if not raw:
+        return ""
+    try:
+        return json.dumps(json.loads(raw), ensure_ascii=False, separators=(",", ":"))
+    except (json.JSONDecodeError, TypeError):
+        return raw.replace("\r", " ").replace("\n", " ")
+
+
 # 成果物取得（SSRF 対策）の設定
 # - ARTIFACT_FETCH_ALLOWED_HOSTS が指定されていれば、そのホストのみ取得を許可（推奨）。
 # - 未指定でも、プライベート/ループバック/リンクローカル等の内部宛先は常に拒否する。
@@ -692,6 +709,18 @@ _ARTIFACT_ALLOWED_HOSTS = {
     if h.strip()
 }
 _ARTIFACT_MAX_BYTES = int(os.environ.get("ARTIFACT_MAX_BYTES", str(50 * 1024 * 1024)))
+
+# 成果物の配信方式（LGWAN 対応）。
+# - "open"    : 署名付き URL を outputs に直接リンクとして提示（開発・直接 DL 可能な環境向け）。
+# - "carrier" : 署名付き URL を UI に出さず、別途「リンクファイル(.txt/.html)」として
+#               持ち出させる（LGWAN 端末から成果物本体へ直接アクセスできない環境向け）。
+ARTIFACT_DELIVERY_MODE = (os.environ.get("ARTIFACT_DELIVERY_MODE", "open").strip().lower())
+if ARTIFACT_DELIVERY_MODE not in ("open", "carrier"):
+    ARTIFACT_DELIVERY_MODE = "open"
+# キャリアファイルの既定形式（"txt" / "html" / "both"）。"both" は UI からの format 指定で切替。
+ARTIFACT_CARRIER_FORMAT = (os.environ.get("ARTIFACT_CARRIER_FORMAT", "txt").strip().lower())
+if ARTIFACT_CARRIER_FORMAT not in ("txt", "html", "both"):
+    ARTIFACT_CARRIER_FORMAT = "txt"
 
 
 async def _fetch_artifact(file_url: str) -> tuple[bytes | None, str]:
@@ -728,6 +757,8 @@ async def _rehost_artifacts(
         return outputs, artifacts
 
     links: list[tuple[str, str, str]] = []
+    # carrier モードで UI に生 URL を出さず「リンクファイル」で持ち出させる成果物の表示名
+    carrier_names: list[str] = []
     new_arts: list[Any] = []
     for a in artifacts:
         if not isinstance(a, dict):
@@ -750,16 +781,27 @@ async def _rehost_artifacts(
                 mime = mime or fetched_mime
 
         presigned = None
+        object_key = None
         if data is not None and objstore.is_configured():
-            presigned = objstore.put_and_presign(
+            presigned, object_key = objstore.put_and_presign(
                 data, filename=name, content_type=mime, user_id=user_id
             )
 
         final_url = presigned or file_url
         # http(s) 以外(javascript:/data:/相対 等)はリンク化・成果物化しない（注入防止）
         safe_url = final_url if _is_http_url(final_url) else ""
-        new_arts.append({**a, "file_url": safe_url})
-        if safe_url:
+        # carrier モードでは自前ストレージに保存できた成果物の署名 URL を UI から隠し、
+        # object_key 経由で別途「リンクファイル」を発行させる（LGWAN 端末は本体へ直接届かない）。
+        carrier = ARTIFACT_DELIVERY_MODE == "carrier" and bool(object_key)
+        art_out = {**a, "file_url": "" if carrier else safe_url}
+        if object_key:
+            art_out["object_key"] = object_key
+        if mime:
+            art_out["mime_type"] = mime
+        new_arts.append(art_out)
+        if carrier:
+            carrier_names.append(name)
+        elif safe_url:
             links.append((name, safe_url, (mime or "").split(";")[0].strip()))
         try:
             audit.record(
@@ -773,14 +815,80 @@ async def _rehost_artifacts(
         except Exception:  # noqa: BLE001
             pass
 
-    if links and isinstance(outputs, str):
+    if isinstance(outputs, str) and (links or carrier_names):
         lines = ["", "## 生成されたファイル", ""]
         for name, url, mime in links:
             # 表示名は Markdown/HTML を無効化（リンク注入・フィッシング防止）
             suffix = f"（{_md_escape(mime)}）" if mime else ""
             lines.append(f"- [{_md_escape(name)}]({url})" + suffix)
+        if carrier_names:
+            for name in carrier_names:
+                lines.append(f"- {_md_escape(name)}")
+            lines.append("")
+            lines.append(
+                "LGWAN 端末からは上記ファイルを直接ダウンロードできません。"
+                "下の「リンクファイル」ボタンから取得し、"
+                "データ持ち出し経路でインターネット接続端末へ移してから開いてください。"
+            )
         outputs = outputs + "\n" + "\n".join(lines)
     return outputs, new_arts
+
+
+# ---------------------------------------------------------------------------
+# キャリアファイル（LGWAN 持ち出し用のダウンロード URL 記載ファイル）生成
+# ---------------------------------------------------------------------------
+_JST = timezone(timedelta(hours=9))
+
+
+def _carrier_expiry_text() -> str:
+    """キャリア内に記載する URL 有効期限（署名発行時点から S3_PRESIGN_EXPIRY 秒後）。"""
+    dt = datetime.now(_JST) + timedelta(seconds=objstore.S3_PRESIGN_EXPIRY)
+    return dt.strftime("%Y-%m-%d %H:%M (JST)")
+
+
+def _carrier_txt(display_name: str, url: str, expiry: str) -> str:
+    return (
+        "成果物ダウンロード情報\n"
+        "====================\n"
+        f"ファイル名: {display_name}\n"
+        f"有効期限: {expiry}\n"
+        "ダウンロードURL:\n"
+        f"{url}\n"
+        "\n"
+        "【手順】\n"
+        "1. インターネット接続端末のブラウザで上記 URL を開く\n"
+        "2. 表示されたファイルを保存する\n"
+        "※ この URL を知っていれば期限内は誰でもダウンロードできます。第三者に共有しないでください。\n"
+    )
+
+
+def _carrier_html(display_name: str, url: str, expiry: str) -> str:
+    """外部リソース・スクリプトを含まない単一の静的 HTML を返す。"""
+    name = html.escape(display_name)
+    href = html.escape(url, quote=True)
+    text = html.escape(url)
+    exp = html.escape(expiry)
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="ja">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>成果物ダウンロード: {name}</title>\n"
+        "<style>body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 16px;"
+        "line-height:1.7;color:#1a1a1a}h1{font-size:1.3rem}"
+        ".url{width:100%;box-sizing:border-box;padding:8px;font-family:monospace;font-size:.9rem}"
+        ".btn{display:inline-block;margin:12px 0;padding:10px 20px;background:#1a3aad;color:#fff;"
+        "text-decoration:none;border-radius:6px}.note{color:#555;font-size:.9rem}</style>\n"
+        "</head>\n<body>\n"
+        "<h1>成果物ダウンロード情報</h1>\n"
+        f"<p>ファイル名: <strong>{name}</strong><br>有効期限: {exp}</p>\n"
+        f'<p><a class="btn" href="{href}">インターネット接続端末でダウンロード</a></p>\n'
+        "<p>上のボタンが使えない場合は、次の URL をコピーしてブラウザで開いてください。</p>\n"
+        f'<textarea class="url" rows="4" readonly>{text}</textarea>\n'
+        '<p class="note">※ この URL を知っていれば期限内は誰でもダウンロードできます。'
+        "第三者に共有しないでください。</p>\n"
+        "</body>\n</html>\n"
+    )
+
 
 app = FastAPI(title="Open GENAI Local Backend", version="0.1.0")
 
@@ -805,6 +913,7 @@ def _startup() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[startup] チーム RAG の分割・最新化に失敗: {e}")
     audit.start()
+    objstore.start_retention_scheduler()
     os.makedirs(FILES_DIR, exist_ok=True)
 
 
@@ -1599,7 +1708,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
         # ナレッジのスコープ = AI アプリを所有するチーム(teamId)
         "x-scope": team_id,
         # AI アプリ固有の設定(JSON)。Dify 連携等で接続先の判別に使う
-        "x-app-config": app_def.get("config", "") or "",
+        "x-app-config": _header_config_value(app_def.get("config")),
         # 会話継続(疑似チャット)用のセッション ID
         "x-session-id": session_id,
         # 内部サービス間の署名（x-user-*・x-scope の偽装を防ぐ）
@@ -1727,7 +1836,7 @@ async def get_exapp_schema(request: Request) -> JSONResponse:
     _teams_hdr = _user_teams_header(user_id)
     _headers = {
         "x-api-key": app_def.get("apiKey", ""),
-        "x-app-config": app_def.get("config", "") or "",
+        "x-app-config": _header_config_value(app_def.get("config")),
         # ローカル AI アプリがスコープ/権限に応じて動的フォームを作れるよう連携
         "x-scope": team_id,
         "x-user-id": user_id,
@@ -1795,7 +1904,7 @@ async def resolve_exapp_schema(request: Request) -> JSONResponse:
                 json={"inputs": inputs},
                 headers={
                     "x-api-key": app_def.get("apiKey", ""),
-                    "x-app-config": app_def.get("config", "") or "",
+                    "x-app-config": _header_config_value(app_def.get("config")),
                     "x-scope": team_id,
                     "x-user-id": user_id,
                     "x-user-groups": _groups_str,
@@ -1854,6 +1963,75 @@ async def get_exapp_history(
         return {"history": None}
     hist = teams_store.get_exapp_history(teamId, exAppId, createdDate, user_id)
     return {"history": hist}
+
+
+@app.get("/exapps/artifact-carrier")
+async def get_artifact_carrier(
+    request: Request,
+    objectKey: str = Query(default=""),
+    s3Url: str = Query(default=""),
+    format: str = Query(default=""),
+) -> Response:
+    """成果物のダウンロード URL を記載した「リンクファイル(.txt/.html)」を返す。
+
+    LGWAN 端末は成果物本体へ直接アクセスできないため、URL を記したファイルを
+    ダウンロードさせ、データ持ち出し経路でインターネット接続端末へ移して開く運用を支える。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+
+    key = (objectKey or "").strip()
+    if not key and s3Url:
+        key = objstore.key_from_url(s3Url) or ""
+    if not key or not objstore.is_managed_key(key):
+        return JSONResponse(status_code=400, content={"error": "オブジェクトキーが不正です"})
+
+    # 所有者チェック（キーの user_hash セグメント一致。管理者は横断可）
+    if not objstore.owns_key(key, user_id) and not _is_system_admin(claims):
+        return _forbidden("このファイルにアクセスする権限がありません")
+
+    url = objstore.presign_existing(key)
+    if not url:
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+
+    display_name = objstore.filename_from_key(key)
+    expiry = _carrier_expiry_text()
+
+    fmt = (format or "").strip().lower()
+    if fmt not in ("txt", "html"):
+        fmt = "html" if ARTIFACT_CARRIER_FORMAT == "html" else "txt"
+
+    if fmt == "html":
+        body = _carrier_html(display_name, url, expiry)
+        media_type = "text/html; charset=utf-8"
+        carrier_name = f"{display_name}_link.html"
+    else:
+        body = _carrier_txt(display_name, url, expiry)
+        media_type = "text/plain; charset=utf-8"
+        carrier_name = f"{display_name}_link.txt"
+
+    try:
+        audit.record(
+            request,
+            action="file.carrier",
+            usecase="exapp",
+            output_text=f"{display_name} ({fmt})",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    ascii_name = objstore.sanitize_filename(carrier_name)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(carrier_name)}"
+    )
+    return Response(
+        content=body.encode("utf-8"),
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2154,6 +2332,14 @@ async def delete_exapp_history(
     ):
         return _forbidden()
     if createdDate:
+        if _is_system_admin(claims):
+            hist = teams_store.get_exapp_history(team_id, ex_app_id, createdDate)
+        else:
+            hist = teams_store.get_exapp_history(
+                team_id, ex_app_id, createdDate, user_id
+            )
+        if hist and objstore.is_configured():
+            objstore.delete_keys(objstore.keys_from_artifacts(hist.get("artifacts")))
         if _is_system_admin(claims):
             teams_store.delete_exapp_history(team_id, ex_app_id, createdDate)
         else:

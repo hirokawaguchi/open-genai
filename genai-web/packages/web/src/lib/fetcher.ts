@@ -91,8 +91,33 @@ const createApiClient = (baseURL: string) => {
     return { data, status: res.status };
   };
 
+  const getBlob = async (
+    path: string,
+    options?: RequestOptions,
+  ): Promise<{ blob: Blob; disposition: string | null; status: number }> => {
+    const url = buildUrl(baseURL, path, options?.params);
+    const authHeaders = await getAuthHeaders(false);
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { ...authHeaders, ...options?.headers },
+    });
+
+    if (!res.ok) {
+      const errorData = await parseResponseBody<unknown>(res);
+      throw new ApiError(res.status, errorData);
+    }
+
+    return {
+      blob: await res.blob(),
+      disposition: res.headers.get('Content-Disposition'),
+      status: res.status,
+    };
+  };
+
   return {
     get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
+    getBlob,
     post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
       request<T>('POST', path, body, options),
     put: <T>(path: string, body?: unknown, options?: RequestOptions) =>

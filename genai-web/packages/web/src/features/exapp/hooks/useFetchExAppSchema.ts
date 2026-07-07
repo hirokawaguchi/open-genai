@@ -13,10 +13,12 @@ type SchemaResponse = {
  */
 export const useFetchExAppSchema = (teamId: string, exAppId: string, enabled: boolean) => {
   const [uiJson, setUiJson] = useState<GovAIFormUIJson>({});
-  const [isLoading, setIsLoading] = useState(false);
+  // 初回レンダーで空フォームが一瞬出るのを防ぐ（effect より先に loading 表示）
+  const [isLoading, setIsLoading] = useState(enabled);
 
   useEffect(() => {
     if (!enabled || !teamId || !exAppId) {
+      setIsLoading(false);
       return;
     }
     let cancelled = false;

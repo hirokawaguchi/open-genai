@@ -79,6 +79,11 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:?S3_ACCESS_KEY を設定してください}
       - S3_SECRET_KEY=${S3_SECRET_KEY:?S3_SECRET_KEY を設定してください}
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
+      - S3_ARTIFACT_RETENTION_DAYS=${S3_ARTIFACT_RETENTION_DAYS:-30}
+      - S3_ARTIFACT_PURGE_INTERVAL=${S3_ARTIFACT_PURGE_INTERVAL:-86400}
+      # 成果物の配信方式（LGWAN 等では carrier 推奨。open は署名付きURLを直接提示）
+      - ARTIFACT_DELIVERY_MODE=${ARTIFACT_DELIVERY_MODE:-carrier}
+      - ARTIFACT_CARRIER_FORMAT=${ARTIFACT_CARRIER_FORMAT:-txt}
       - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
       # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api

@@ -20,10 +20,7 @@ export type UsageMetadata = {
 
 export type InvokeExAppResponse = {
   outputs: string;
-  artifacts?: {
-    content: string;
-    display_name: string;
-  }[];
+  artifacts?: Artifact[];
   timestamps: {
     processingEndedAt: string;
     processingStartedAt: string;
@@ -33,7 +30,13 @@ export type InvokeExAppResponse = {
 
 export type Artifact = {
   display_name: string;
-  file_url: string;
+  // 直接ダウンロード可能な署名付き URL（carrier 配信時は空になる）
+  file_url?: string;
+  // 自前ストレージのオブジェクトキー（carrier リンクファイル発行に使う）
+  object_key?: string;
+  mime_type?: string;
+  // インライン表示用の base64（画像など）
+  content?: string;
 };
 
 export type ExAppInvokeStatus = 'ACCEPTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ERROR';
