@@ -8,6 +8,7 @@
 | [v0.1.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.1.0) | `fc57e53` | 源内のローカル完結化（第一段階） |
 | [v0.2.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.0) | `6d594d5` 以降 | 自治体・閉域（LGWAN 等）向け拡張 |
 | [v0.2.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.1) | `be88a0d` 以降 | セキュリティ更新・リリース前品質保証 |
+| [v0.3.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.0) | `daac82e` 以降 | 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -24,10 +25,35 @@
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] - 2026-07-07
+
+### 画像生成の源内一本化
+
+- `sd-app` を廃止し、画像生成を源内 `/image` + `backend/app/image_gen.py`（A1111 互換）に統合
+- 汎用 AI アプリ・画像の実行履歴を usecase 別に保存・復元、詳細設定からの永続化
+- 画像生成(SD)サーバのヘルスチェック（`/image/health`）に連動し、停止時は「画像を生成」を一覧・トップから非表示
+
+### AI アプリのピン留め
+
+- 利用者ごとに AI アプリをピン留め（カテゴリ横断・本人のみ・上限 8 件）。トップページに「ピン留め」セクションを表示（`open-genai/app-pins/`）
+
+### 成果物配信（SeaweedFS）と LGWAN 対応
+
+- Dify 成果物の SeaweedFS 再ホストを整理し、保持期限超過分と実行履歴連動での自動削除を追加（`S3_ARTIFACT_RETENTION_DAYS` / `S3_ARTIFACT_PURGE_INTERVAL`）
+- **LGWAN 向けキャリア配信**を追加（`ARTIFACT_DELIVERY_MODE=carrier`）。署名付き URL を画面に出さず、URL を記載したリンクファイル（`.txt` / `.html`）を所有者チェック付き `GET /exapps/artifact-carrier` から発行し、データ持ち出し後に別端末で開く運用に対応（`ARTIFACT_CARRIER_FORMAT`）
+- 検証用 Dify DSL `dify-app/dsl/File Output Test.yml` と、Dify 連携・キャリア配信・リバースプロキシの手順を README に追記
+
 ### Fixed
 
 - `.gitignore` を強化（`.env.prod`、テスト生成物、証明書拡張子）。`genai-web/packages/web/.env` の追跡をやめ `.env.example` を追加
 - CI `web-regression` の `npm ci` 失敗を修正（`genai-web/package-lock.json` を同期、Node 22.22.2 に合わせる）
+
+### 移行上の注意（0.2 → 0.3）
+
+- `sd-app` を利用していた場合はサービスを削除（compose から除外済み。画像生成は源内 `/image` に統合）
+- 閉域（LGWAN 等）では `ARTIFACT_DELIVERY_MODE=carrier` を推奨（本番 compose 既定は `carrier`、開発は `open`）
 
 ---
 
@@ -114,7 +140,8 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hirokawaguchi/open-genai/releases/tag/v0.1.0
