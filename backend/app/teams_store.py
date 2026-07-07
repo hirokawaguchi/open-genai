@@ -26,6 +26,12 @@ COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
 ADMIN_TEAM_ID = "00000000-0000-0000-0000-0000000000a1"
 ADMIN_TEAM_NAME = "管理者ツール"
 
+# GenU 組み込み機能（DB 未登録）の itemId。共通チームのアプリとしてピン留め対象になる。
+GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram"})
+
+# 利用者ごとのピン留め上限
+MAX_APP_PINS = 8
+
 _lock = threading.Lock()
 
 
@@ -107,6 +113,15 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 artifacts TEXT,
                 sessionId TEXT,
                 PRIMARY KEY (teamId, exAppId, createdDate)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_app_pins (
+                userId TEXT NOT NULL,
+                teamId TEXT NOT NULL,
+                itemId TEXT NOT NULL,
+                displayOrder INTEGER NOT NULL,
+                pinnedDate TEXT NOT NULL,
+                PRIMARY KEY (userId, teamId, itemId)
             );
             """
         )
@@ -301,6 +316,7 @@ def update_team(team_id: str, team_name: str) -> dict[str, Any] | None:
 
 def delete_team(team_id: str) -> None:
     with _lock, _connect() as conn:
+        conn.execute("DELETE FROM user_app_pins WHERE teamId = ?", (team_id,))
         conn.execute("DELETE FROM exapps WHERE teamId = ?", (team_id,))
         conn.execute("DELETE FROM team_users WHERE teamId = ?", (team_id,))
         conn.execute("DELETE FROM teams WHERE teamId = ?", (team_id,))
@@ -559,6 +575,10 @@ def delete_exapp(team_id: str, ex_app_id: str) -> None:
             "DELETE FROM exapps WHERE teamId = ? AND exAppId = ?",
             (team_id, ex_app_id),
         )
+        conn.execute(
+            "DELETE FROM user_app_pins WHERE teamId = ? AND itemId = ?",
+            (team_id, ex_app_id),
+        )
 
 
 def copy_exapp(team_id: str, ex_app_id: str, overrides: dict[str, Any]) -> dict[str, Any] | None:
@@ -593,6 +613,74 @@ def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, A
         if is_system_admin or app["teamId"] in visible_team_ids:
             result.append({**app, "teamName": teams.get(app["teamId"], "")})
     return result
+
+
+# ---------------------------------------------------------------------------
+# 利用者ごとの AI アプリ ピン留め（カテゴリ横断・本人のみ）
+# ---------------------------------------------------------------------------
+def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
+    """本人のピン留め一覧（displayOrder 昇順）。"""
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT teamId, itemId, displayOrder FROM user_app_pins"
+            " WHERE userId = ? ORDER BY displayOrder ASC",
+            (user_id,),
+        ).fetchall()
+    return [
+        {"teamId": r["teamId"], "itemId": r["itemId"], "displayOrder": r["displayOrder"]}
+        for r in rows
+    ]
+
+
+def _is_pinnable_app(user_id: str, team_id: str, item_id: str, is_system_admin: bool) -> bool:
+    """ピン留め可能か（本人が見える公開 exApp、または共通チームの GenU 機能）。"""
+    if team_id == COMMON_TEAM_ID and item_id in GENU_APP_IDS:
+        return True
+    visible = list_visible_exapps(user_id, is_system_admin)
+    return any(a["teamId"] == team_id and a["exAppId"] == item_id for a in visible)
+
+
+def add_user_app_pin(
+    user_id: str, team_id: str, item_id: str, is_system_admin: bool
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """ピンを追加する。成功時は最新一覧、失敗時はエラーメッセージを返す。"""
+    user_id = normalize_email(user_id)
+    if not _is_pinnable_app(user_id, team_id, item_id, is_system_admin):
+        return None, "ピン留めできないアプリです"
+    with _lock, _connect() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
+            (user_id, team_id, item_id),
+        ).fetchone()
+        if not existing:
+            count_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM user_app_pins WHERE userId = ?", (user_id,)
+            ).fetchone()
+            if int(count_row["c"]) >= MAX_APP_PINS:
+                return None, f"ピン留めは{MAX_APP_PINS}件までです"
+            max_row = conn.execute(
+                "SELECT COALESCE(MAX(displayOrder), -1) AS m FROM user_app_pins"
+                " WHERE userId = ?",
+                (user_id,),
+            ).fetchone()
+            next_order = int(max_row["m"]) + 1
+            conn.execute(
+                "INSERT INTO user_app_pins (userId, teamId, itemId, displayOrder, pinnedDate)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (user_id, team_id, item_id, next_order, _now()),
+            )
+    return list_user_app_pins(user_id), None
+
+
+def remove_user_app_pin(user_id: str, team_id: str, item_id: str) -> list[dict[str, Any]]:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "DELETE FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
+            (user_id, team_id, item_id),
+        )
+    return list_user_app_pins(user_id)
 
 
 # ---------------------------------------------------------------------------

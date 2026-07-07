@@ -4,6 +4,10 @@ import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
 import { SearchIcon } from '@/components/ui/icons/SearchIcon';
 import { useAccessibilityAnnouncer } from '@/hooks/useAccessibilityAnnouncer';
+import { toPinKey } from '@/open-genai/app-pins/appPinKey';
+import { MAX_APP_PINS } from '@/open-genai/app-pins/types';
+import { useFetchAppPins } from '@/open-genai/app-pins/useFetchAppPins';
+import { useToggleAppPin } from '@/open-genai/app-pins/useToggleAppPin';
 import { useFilteredTeams } from '../hooks/useFilteredTeams';
 import { ExAppOptions } from '../types';
 import { ExAppListCard } from './ExAppListCard';
@@ -29,6 +33,14 @@ export const ExAppList = (props: Props) => {
   }, [searchQuery]);
 
   const { filteredTeams } = useFilteredTeams(exAppOptions, searchWords);
+  const { pins } = useFetchAppPins();
+  const { pin, unpin, error: pinError } = useToggleAppPin();
+
+  const pinnedKeys = useMemo(
+    () => new Set(pins.map((p) => toPinKey(p.teamId, p.itemId))),
+    [pins],
+  );
+  const pinLimitReached = pins.length >= MAX_APP_PINS;
 
   const totalAppsCount = filteredTeams.reduce((sum, team) => sum + team.filteredExApps.length, 0);
 
@@ -70,6 +82,13 @@ export const ExAppList = (props: Props) => {
           />
         </div>
       </search>
+
+      {pinError && (
+        <p className='mt-2 text-dns-14N-130 text-error-1' role='alert'>
+          {pinError}
+        </p>
+      )}
+
       {filteredTeams.length === 0 ? (
         <p className='mt-8 text-std-16N-170'>該当するAIアプリはありません。</p>
       ) : (
@@ -79,22 +98,31 @@ export const ExAppList = (props: Props) => {
               {teamData.teamName}（{filteredExApps.length}）
             </h2>
             <ul className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4'>
-              {filteredExApps.map((exApp) => (
-                <li key={`${teamIdKey}-${exApp.value}`}>
-                  <ExAppListCard
-                    href={exApp.isDefault ? `/${exApp.value}` : `/apps/${teamIdKey}/${exApp.value}`}
-                    label={exApp.label}
-                    description={exApp.description}
-                    onClick={() => {
-                      if (!exApp.isDefault) {
-                        setTeamId(teamIdKey);
-                        setExAppId(exApp.value);
-                      }
-                    }}
-                    highlightWords={searchWords}
-                  />
-                </li>
-              ))}
+              {filteredExApps.map((exApp) => {
+                const isPinned = pinnedKeys.has(toPinKey(teamIdKey, exApp.value));
+                return (
+                  <li key={`${teamIdKey}-${exApp.value}`}>
+                    <ExAppListCard
+                      href={exApp.isDefault ? `/${exApp.value}` : `/apps/${teamIdKey}/${exApp.value}`}
+                      label={exApp.label}
+                      description={exApp.description}
+                      onClick={() => {
+                        if (!exApp.isDefault) {
+                          setTeamId(teamIdKey);
+                          setExAppId(exApp.value);
+                        }
+                      }}
+                      highlightWords={searchWords}
+                      pinControl={{
+                        isPinned,
+                        disabled: pinLimitReached,
+                        onToggle: () =>
+                          isPinned ? unpin(teamIdKey, exApp.value) : pin(teamIdKey, exApp.value),
+                      }}
+                    />
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))

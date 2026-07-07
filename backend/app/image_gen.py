@@ -71,6 +71,16 @@ def build_a1111_payload(params: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+async def is_sd_up() -> bool:
+    """A1111 互換 SD サーバが起動・到達可能かを短時間で確認する。"""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            res = await client.get(f"{SD_API_URL}/sdapi/v1/sd-models")
+        return res.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
 async def generate_image_base64(params: dict[str, Any]) -> str:
     """A1111 互換 SD サーバで画像を生成し、base64 文字列を返す。"""
     payload = build_a1111_payload(params)

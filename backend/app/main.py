@@ -1158,6 +1158,13 @@ async def save_image_result(
 # ---------------------------------------------------------------------------
 # 推論 (genU API / Lambda ストリーム代替)
 # ---------------------------------------------------------------------------
+@app.get("/image/health")
+async def image_health() -> JSONResponse:
+    """画像生成(SD)サーバの稼働状況。フロントの表示出し分けに使う。"""
+    ok = await image_gen.is_sd_up()
+    return JSONResponse(content={"ok": ok})
+
+
 @app.post("/image/generate")
 async def generate_image(request: Request) -> Response:
     """源内 Web「画像を生成」ページ向け API（Bedrock Lambda 代替）。"""
@@ -1501,6 +1508,46 @@ async def list_exapps(request: Request) -> list[Any]:
         *[_is_app_up(a["endpoint"]) for a in candidates], return_exceptions=True
     )
     return [a for a, ok in zip(candidates, checks) if ok is True]
+
+
+@app.get("/my/app-pins")
+async def list_my_app_pins(request: Request) -> JSONResponse:
+    """本人の AI アプリ ピン留め一覧。"""
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return JSONResponse(content={"pins": teams_store.list_user_app_pins(_user_id(claims))})
+
+
+@app.post("/my/app-pins")
+async def add_my_app_pin(request: Request) -> JSONResponse:
+    """AI アプリをピン留めする（本人のみ・上限あり）。"""
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    body = await request.json()
+    team_id = body.get("teamId", "")
+    item_id = body.get("itemId", "")
+    if not team_id or not item_id:
+        return JSONResponse(
+            status_code=400, content={"error": "teamId と itemId は必須です"}
+        )
+    pins, error = teams_store.add_user_app_pin(
+        _user_id(claims), team_id, item_id, _is_system_admin(claims)
+    )
+    if error:
+        return JSONResponse(status_code=400, content={"error": error})
+    return JSONResponse(content={"pins": pins})
+
+
+@app.delete("/my/app-pins/{team_id}/{item_id}")
+async def remove_my_app_pin(team_id: str, item_id: str, request: Request) -> JSONResponse:
+    """ピン留めを解除する（本人のみ）。"""
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    pins = teams_store.remove_user_app_pin(_user_id(claims), team_id, item_id)
+    return JSONResponse(content={"pins": pins})
 
 
 @app.post("/exapps/invoke")

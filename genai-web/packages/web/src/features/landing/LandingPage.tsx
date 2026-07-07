@@ -1,3 +1,5 @@
+import { Suspense } from 'react';
+import { ErrorBoundary } from 'react-error-boundary';
 import { Link } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
 import { Button } from '@/components/ui/dads/Button';
@@ -6,10 +8,13 @@ import { Card } from '@/features/landing/components/Card';
 import { TOP_CHAT_SYSTEM_PROMPT } from '@/features/landing/constants';
 import { RecommendedGovAI } from '@/features/landing/types';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { PinnedAppsSection } from '@/open-genai/app-pins/PinnedAppsSection';
+import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { LandingForm } from './components/LandingForm';
 
 export const LandingPage = () => {
+  const imageAvailable = useImageAvailable();
   // 各環境のGovAIの情報を取得
   const recommendedGovAI: RecommendedGovAI[] = (() => {
     try {
@@ -26,6 +31,12 @@ export const LandingPage = () => {
       <PageTitle title={APP_TITLE ? `${APP_TITLE} :` : 'トップページ'} />
       <div className='mx-auto px-6 max-w-(--page-width) lg:px-8 pb-24'>
         {TOP_CHAT_SYSTEM_PROMPT && <LandingForm />}
+
+        <ErrorBoundary fallbackRender={() => null}>
+          <Suspense fallback={null}>
+            <PinnedAppsSection />
+          </Suspense>
+        </ErrorBoundary>
 
         <div className='mt-8 lg:mt-10'>
           <h2 className='mb-6 flex justify-start text-std-24B-150'>おすすめアプリ</h2>
@@ -71,7 +82,7 @@ export const LandingPage = () => {
                     />
                   </li>
                 )}
-                {isUseCaseEnabled('image') && (
+                {isUseCaseEnabled('image') && imageAvailable && (
                   <li>
                     <Card
                       title='画像を生成'

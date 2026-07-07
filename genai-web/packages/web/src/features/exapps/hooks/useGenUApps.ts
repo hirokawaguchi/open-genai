@@ -1,7 +1,11 @@
+import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { ExAppOptions } from '../types';
 
 export const useGenUApps = () => {
+  // 画像生成は SD サーバの稼働状況に応じて出し分ける（他アプリのヘルスチェックに準拠）
+  const imageAvailable = useImageAvailable();
+
   const genUApps: ExAppOptions[string]['exApps'] = [
     {
       label: 'チャット',
@@ -23,7 +27,7 @@ export const useGenUApps = () => {
         ]
       : []),
 
-    ...(isUseCaseEnabled('image')
+    ...(isUseCaseEnabled('image') && imageAvailable
       ? [
           {
             label: '画像を生成',
