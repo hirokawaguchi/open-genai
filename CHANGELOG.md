@@ -9,6 +9,7 @@
 | [v0.2.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.0) | `6d594d5` 以降 | 自治体・閉域（LGWAN 等）向け拡張 |
 | [v0.2.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.1) | `be88a0d` 以降 | セキュリティ更新・リリース前品質保証 |
 | [v0.3.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.0) | `daac82e` 以降 | 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信 |
+| [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -24,6 +25,16 @@
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.3.1] - 2026-07-14
+
+### Fixed
+
+- README の使い方に `genai-web/packages/web/.env` 作成手順を追加し、`.env.example` の `VITE_APP_MODEL_IDS` 既定値を README 推奨の `qwen2.5:7b` に合わせる（[#2](https://github.com/hirokawaguchi/open-genai/issues/2) / [#3](https://github.com/hirokawaguchi/open-genai/pull/3)）
+- 添付ファイルの拡張子判定を大文字・小文字非依存にする
+- CI `python-regression` の失敗と GitHub Actions の Node 20 非推奨警告を解消
 
 ---
 
@@ -140,7 +151,8 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.1.0...v0.2.0
