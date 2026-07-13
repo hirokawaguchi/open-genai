@@ -209,6 +209,10 @@ ollama pull qwen2.5:7b
 cp .env.example .env    # 必要に応じて DEFAULT_MODEL などを編集
 ```
 
+```bash
+cp genai-web/packages/web/.env.example genai-web/packages/web/.env    # 必要に応じて VITE_APP_MODEL_IDS などを編集
+```
+
 利用したいモデルを増やす場合は `genai-web/packages/web/.env` の
 `VITE_APP_MODEL_IDS`（Ollama のモデル名と一致させる）を編集してください。
 モデルの表示名は `genai-web/packages/common/src/application/model.ts` に定義しています。
