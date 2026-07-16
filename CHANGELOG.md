@@ -10,6 +10,7 @@
 | [v0.2.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.2.1) | `be88a0d` 以降 | セキュリティ更新・リリース前品質保証 |
 | [v0.3.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.0) | `daac82e` 以降 | 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信 |
 | [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
+| [v0.3.2](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.2) | `1a9eb42` 以降 | 出典表示・ローカルDify成果物取得・Enter送信など |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -25,6 +26,10 @@
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.3.2] - 2026-07-17
 
 ### 出典表示（RAG / Dify）
 
@@ -175,7 +180,8 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.0...v0.2.1
