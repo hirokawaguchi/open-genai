@@ -3,6 +3,7 @@ import { FieldErrors, FieldValues, UseFormRegister } from 'react-hook-form';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 
 type Props = {
   exApp: ExApp;
@@ -24,7 +25,9 @@ export const SystemPrompt = (props: Props) => {
       <AutoResizeTextarea
         className='my-2'
         aria-labelledby='system-prompt-input-label'
+        aria-describedby='exapp-submit-hint'
         defaultValue={exApp.systemPrompt}
+        onKeyDown={requestSubmitOnEnter}
         {...register(key, {
           required: true,
         })}

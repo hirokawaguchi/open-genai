@@ -86,7 +86,15 @@ describe('LandingForm', () => {
       renderComponent();
 
       const textarea = screen.getByRole('textbox');
-      expect(textarea.getAttribute('aria-describedby')).toBe('chat-input-support');
+      expect(textarea.getAttribute('aria-describedby')).toBe(
+        'chat-input-support chat-input-submit-hint',
+      );
+    });
+
+    it('renders the submit key hint', () => {
+      renderComponent();
+
+      expect(screen.getByText('Enter で送信 / Shift+Enter で改行')).toBeDefined();
     });
   });
 
@@ -207,31 +215,31 @@ describe('LandingForm', () => {
     });
   });
 
-  describe('Ctrl+Enter submit', () => {
-    it('navigates to /chat when pressing Ctrl+Enter with valid input', async () => {
+  describe('Enter submit', () => {
+    it('navigates to /chat when pressing Enter with valid input', async () => {
       const user = userEvent.setup();
       renderComponent();
 
       const textarea = screen.getByRole('textbox');
-      await user.type(textarea, 'Ctrl+Enterテスト');
+      await user.type(textarea, 'Enterテスト');
 
-      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+      fireEvent.keyDown(textarea, { key: 'Enter' });
 
       await vi.waitFor(() => {
         expect(mockNavigate).toHaveBeenCalledTimes(1);
       });
       expect(mockNavigate.mock.calls[0][0]).toBe('/chat');
-      expect(mockNavigate.mock.calls[0][1].state.content).toBe('Ctrl+Enterテスト');
+      expect(mockNavigate.mock.calls[0][1].state.content).toBe('Enterテスト');
     });
 
-    it('does not navigate when pressing Ctrl+Enter with whitespace-only input', async () => {
+    it('does not navigate when pressing Enter with whitespace-only input', async () => {
       const user = userEvent.setup();
       renderComponent();
 
       const textarea = screen.getByRole('textbox');
       await user.type(textarea, '   ');
 
-      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+      fireEvent.keyDown(textarea, { key: 'Enter' });
 
       await vi.waitFor(() => {
         expect(screen.getByText(/メッセージは空白のみでは送信できません/)).toBeDefined();
@@ -239,14 +247,14 @@ describe('LandingForm', () => {
       expect(mockNavigate).not.toHaveBeenCalled();
     });
 
-    it('does not navigate when pressing Enter without Ctrl', async () => {
+    it('does not navigate when pressing Shift+Enter', async () => {
       const user = userEvent.setup();
       renderComponent();
 
       const textarea = screen.getByRole('textbox');
       await user.type(textarea, 'テスト');
 
-      fireEvent.keyDown(textarea, { key: 'Enter' });
+      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
       expect(mockNavigate).not.toHaveBeenCalled();
     });

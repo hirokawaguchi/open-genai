@@ -13,9 +13,11 @@ import {
   linkHoverStyle,
 } from '@/components/ui/dads/Link';
 import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { useDiagram } from '@/features/generate-diagram/hooks/useDiagram';
 import { useDiagramStore } from '@/features/generate-diagram/stores/useDiagramStore';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 import { DIAGRAM_DATA } from '../constants';
 import { DiagramFormSchema, diagramFormSchema } from '../schema';
 import { DiagramTypeButton } from './DiagramTypeButton';
@@ -128,7 +130,12 @@ export const DiagramGenerateForm = () => {
               id='generate-diagram-original-input'
               rows={2}
               maxHeight={500}
-              aria-describedby={errors.content ? 'generate-diagram-content-input-error' : undefined}
+              aria-describedby={
+                errors.content
+                  ? 'generate-diagram-submit-hint generate-diagram-content-input-error'
+                  : 'generate-diagram-submit-hint'
+              }
+              onKeyDown={requestSubmitOnEnter}
               {...register('content', {
                 onChange: (e) => setValue('content', e.target.value),
               })}
@@ -140,6 +147,10 @@ export const DiagramGenerateForm = () => {
             )}
           </div>
         </div>
+
+        <SupportText id='generate-diagram-submit-hint' className='mb-3 text-center'>
+          {submitKeyHint}
+        </SupportText>
 
         <div className='flex justify-center'>
           <Button

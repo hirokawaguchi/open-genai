@@ -119,6 +119,40 @@ async def clear(scope: str) -> None:
         res.raise_for_status()
 
 
+async def count_scope(scope: str) -> int:
+    """指定スコープのチャンク数を返す。"""
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            f"{QDRANT_URL}/collections/{COLLECTION}/points/count",
+            json={"filter": _scope_filter(scope), "exact": True},
+        )
+        if res.status_code != 200:
+            return 0
+        return int(res.json().get("result", {}).get("count", 0) or 0)
+
+
+async def reassign_scope(from_scope: str, to_scope: str) -> int:
+    """payload.scope を一括書き換えする（誤登録スコープの移行用）。
+
+    戻り値は移行対象だったチャンク数。to_scope 側に既にある点はそのまま残る。
+    """
+    if from_scope == to_scope:
+        return 0
+    n = await count_scope(from_scope)
+    if n <= 0:
+        return 0
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            f"{QDRANT_URL}/collections/{COLLECTION}/points/payload?wait=true",
+            json={
+                "payload": {"scope": to_scope},
+                "filter": _scope_filter(from_scope),
+            },
+        )
+        res.raise_for_status()
+    return n
+
+
 async def _scroll(scope: str, with_payload: list[str], tags: list[str] | None = None):
     """指定スコープの点を payload 付きで走査するジェネレータ。"""
     offset: Any = None

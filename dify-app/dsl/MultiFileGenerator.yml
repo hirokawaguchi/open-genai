@@ -1,0 +1,1172 @@
+app:
+  description: |
+    複数ドキュメントと指示から新規ファイルを生成するワークフロー。
+    必要に応じて Tavily で Web 検索し、markdown / text / json / docx / pptx で出力する。
+    依存: File Tools, Markdown Exporter, Tavily, Azure OpenAI。Tavily は認証（APIキー）設定が必要。
+  icon: 📎
+  icon_background: '#E4FBCC'
+  icon_type: emoji
+  mode: workflow
+  name: MultiFileGenerator
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: kurokobo/file_tools:0.0.2@8bde7b4d2c30cf22e8f6ce851572af244f7a5776addab94330b820dc2160726c
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: bowenliang123/md_exporter:3.6.9@3f027d63e80b44d5d5a9f706871afaef37905b8f8a89a2d152dc530211a8acb1
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tavily:0.1.2@aa7a8744b2ccf3a7aec818da6c504997a6319b29040e541bfc73b4fbaa9e98d9
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/azure_openai:0.0.28@9b0339feb86b34393abd921e9cc906192fc46daad3a0f15c1d2a35ba20e8f704
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .HTML
+      - .XLSX
+      - .XLS
+      - .DOCX
+      - .CSV
+      - .EML
+      - .MSG
+      - .PPTX
+      - .PPT
+      - .XML
+      - .EPUB
+      allowed_file_types:
+      - document
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 50
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 10
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: document-extractor
+      id: edge-start-extract
+      source: '1750000000001'
+      sourceHandle: source
+      target: '1750000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: document-extractor
+        targetType: code
+      id: edge-extract-merge
+      source: '1750000000002'
+      sourceHandle: source
+      target: '1750000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: edge-merge-planner
+      source: '1750000000003'
+      sourceHandle: source
+      target: '1750000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-planner-parse
+      source: '1750000000004'
+      sourceHandle: source
+      target: '1750000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: edge-parse-if
+      source: '1750000000005'
+      sourceHandle: source
+      target: '1750000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: tool
+      id: edge-if-tavily
+      source: '1750000000006'
+      sourceHandle: 'true'
+      target: '1750000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: tool
+        targetType: code
+      id: edge-tavily-enrich
+      source: '1750000000007'
+      sourceHandle: source
+      target: '1750000000008'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-if-pass
+      source: '1750000000006'
+      sourceHandle: 'false'
+      target: '1750000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: variable-aggregator
+      id: edge-enrich-agg
+      source: '1750000000008'
+      sourceHandle: source
+      target: '1750000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: variable-aggregator
+      id: edge-pass-agg
+      source: '1750000000009'
+      sourceHandle: source
+      target: '1750000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: variable-aggregator
+        targetType: llm
+      id: edge-agg-gen
+      source: '1750000000010'
+      sourceHandle: source
+      target: '1750000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-gen-finalize
+      source: '1750000000011'
+      sourceHandle: source
+      target: '1750000000012'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: edge-finalize-format
+      source: '1750000000012'
+      sourceHandle: source
+      target: '1750000000013'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: tool
+      id: edge-format-docx
+      source: '1750000000013'
+      sourceHandle: case_docx
+      target: '1750000000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: tool
+      id: edge-format-pptx
+      source: '1750000000013'
+      sourceHandle: case_pptx
+      target: '1750000000015'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: tool
+      id: edge-format-plain
+      source: '1750000000013'
+      sourceHandle: 'false'
+      target: '1750000000016'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: tool
+        targetType: variable-aggregator
+      id: edge-docx-agg
+      source: '1750000000014'
+      sourceHandle: source
+      target: '1750000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: tool
+        targetType: variable-aggregator
+      id: edge-pptx-agg
+      source: '1750000000015'
+      sourceHandle: source
+      target: '1750000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: tool
+        targetType: variable-aggregator
+      id: edge-plain-agg
+      source: '1750000000016'
+      sourceHandle: source
+      target: '1750000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: variable-aggregator
+        targetType: end
+      id: edge-agg-end
+      source: '1750000000017'
+      sourceHandle: source
+      target: '1750000000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 複数ファイル・指示・出力形式を受け取る
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - allowed_file_extensions: []
+          allowed_file_types:
+          - document
+          allowed_file_upload_methods:
+          - local_file
+          - remote_url
+          label: 入力ファイル（複数可）
+          max_length: 10
+          number_limits: 10
+          options: []
+          required: true
+          type: file-list
+          variable: input_files
+        - label: 指示（プロンプト）
+          max_length: 8000
+          options: []
+          required: true
+          type: paragraph
+          variable: prompt
+        - default: generated
+          label: 出力ファイル名（拡張子なし可）
+          max_length: 200
+          options: []
+          required: false
+          type: text-input
+          variable: output_filename
+        - default: markdown
+          label: 出力形式
+          options:
+          - markdown
+          - text
+          - json
+          - docx
+          - pptx
+          required: false
+          type: select
+          variable: output_format
+      height: 220
+      id: '1750000000001'
+      position:
+        x: 0
+        y: 280
+      positionAbsolute:
+        x: 0
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: アップロード文書からテキストを抽出
+        is_array_file: true
+        selected: false
+        title: 文書抽出
+        type: document-extractor
+        variable_selector:
+        - '1750000000001'
+        - input_files
+      height: 90
+      id: '1750000000002'
+      position:
+        x: 300
+        y: 320
+      positionAbsolute:
+        x: 300
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          def main(texts, prompt: str, output_filename: str, output_format: str) -> dict:
+              if texts is None:
+                  texts = []
+              if isinstance(texts, str):
+                  texts = [texts]
+              parts = []
+              for i, t in enumerate(texts):
+                  body = (t or "").strip()
+                  parts.append(f"### ファイル {i + 1}\n\n{body if body else '(空のファイル)'}")
+              context = "\n\n---\n\n".join(parts) if parts else "(入力ファイルなし)"
+              fmt = (output_format or "markdown").strip().lower() or "markdown"
+              if fmt not in ("markdown", "text", "json", "docx", "pptx"):
+                  fmt = "markdown"
+              name = (output_filename or "").strip() or "generated"
+              return {
+                  "context": context,
+                  "prompt": (prompt or "").strip(),
+                  "filename": name,
+                  "output_format": fmt,
+                  "file_count": len(texts),
+              }
+        code_language: python3
+        desc: 抽出テキストを結合し、出力メタ情報を整える
+        outputs:
+          context:
+            children: null
+            type: string
+          prompt:
+            children: null
+            type: string
+          filename:
+            children: null
+            type: string
+          output_format:
+            children: null
+            type: string
+          file_count:
+            children: null
+            type: number
+        selected: false
+        title: コンテキスト結合
+        type: code
+        variables:
+        - value_selector:
+          - '1750000000002'
+          - text
+          variable: texts
+        - value_selector:
+          - '1750000000001'
+          - prompt
+          variable: prompt
+        - value_selector:
+          - '1750000000001'
+          - output_filename
+          variable: output_filename
+        - value_selector:
+          - '1750000000001'
+          - output_format
+          variable: output_format
+      height: 54
+      id: '1750000000003'
+      position:
+        x: 600
+        y: 320
+      positionAbsolute:
+        x: 600
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 参照資料だけでは不足する場合に検索が必要か判定する
+        model:
+          completion_params:
+            temperature: 0
+          mode: chat
+          name: gpt-4.1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: mfg-plan-sys
+          role: system
+          text: |
+            あなたは調査プランナーです。ユーザー指示と参照資料を見て、Web検索が必要かどうかを判定してください。
+
+            ## 判定基準
+            - 参照資料だけで指示を十分に満たせる → need_search=false
+            - 最新情報・外部事実・資料にない補足が必要 → need_search=true
+            - 迷ったら need_search=false（不要な検索を避ける）
+
+            ## 出力（厳守）
+            - JSON オブジェクトのみ。解説・コードフェンス禁止
+            - Schema: {"need_search":true|false,"search_query":"string|null"}
+            - need_search=true のとき search_query は短い日本語検索クエリ
+            - need_search=false のとき search_query は null
+        - id: mfg-plan-user
+          role: user
+          text: |
+            ## 指示
+
+            {{#1750000000003.prompt#}}
+
+            ## 参照資料（{{#1750000000003.file_count#}} 件）
+
+            {{#1750000000003.context#}}
+        selected: false
+        title: 検索要否判定
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1750000000004'
+      position:
+        x: 900
+        y: 320
+      positionAbsolute:
+        x: 900
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          import json
+          import re
+
+          def main(text: str) -> dict:
+              s = (text or "").strip()
+              if s.startswith("```"):
+                  lines = s.split("\n")
+                  if lines and lines[0].startswith("```"):
+                      lines = lines[1:]
+                  if lines and lines[-1].strip() == "```":
+                      lines = lines[:-1]
+                  s = "\n".join(lines).strip()
+              need = "false"
+              query = ""
+              try:
+                  m = re.search(r"\{[\s\S]*\}", s)
+                  obj = json.loads(m.group(0) if m else s)
+                  raw = obj.get("need_search")
+                  need = "true" if raw in (True, "true", "True", 1, "1") else "false"
+                  q = obj.get("search_query")
+                  query = "" if q is None else str(q).strip()
+              except Exception:
+                  need = "false"
+                  query = ""
+              if need == "true" and not query:
+                  need = "false"
+              return {"need_search": need, "search_query": query}
+        code_language: python3
+        desc: 判定JSONをパースする
+        outputs:
+          need_search:
+            children: null
+            type: string
+          search_query:
+            children: null
+            type: string
+        selected: false
+        title: 判定パース
+        type: code
+        variables:
+        - value_selector:
+          - '1750000000004'
+          - text
+          variable: text
+      height: 54
+      id: '1750000000005'
+      position:
+        x: 1200
+        y: 320
+      positionAbsolute:
+        x: 1200
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: cond-need-search
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1750000000005'
+            - need_search
+          id: 'true'
+          logical_operator: and
+        desc: need_search=true のときだけ検索する
+        selected: false
+        title: 検索する？
+        type: if-else
+      height: 126
+      id: '1750000000006'
+      position:
+        x: 1500
+        y: 300
+      positionAbsolute:
+        x: 1500
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: 必要時のみ Web 検索
+        provider_id: tavily
+        provider_name: tavily
+        provider_type: builtin
+        selected: false
+        title: Tavily Search
+        tool_configurations:
+          days: 7
+          exclude_domains: null
+          include_answer: 1
+          include_domains: null
+          include_image_descriptions: 0
+          include_images: 0
+          include_raw_content: 0
+          max_results: 5
+          search_depth: basic
+          topic: general
+        tool_label: Tavily Search
+        tool_name: tavily_search
+        tool_parameters:
+          query:
+            type: mixed
+            value: '{{#1750000000005.search_query#}}'
+        type: tool
+      height: 200
+      id: '1750000000007'
+      position:
+        x: 1800
+        y: 160
+      positionAbsolute:
+        x: 1800
+        y: 160
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          def main(context: str, search_text: str, search_query: str) -> dict:
+              ctx = (context or "").strip()
+              hit = (search_text or "").strip()
+              q = (search_query or "").strip()
+              if hit:
+                  enriched = (
+                      f"{ctx}\n\n---\n\n## Web検索結果\n\n"
+                      f"クエリ: {q}\n\n{hit}"
+                  )
+              else:
+                  enriched = ctx
+              return {"enriched_context": enriched}
+        code_language: python3
+        desc: 参照資料に検索結果を追記
+        outputs:
+          enriched_context:
+            children: null
+            type: string
+        selected: false
+        title: 検索結果を結合
+        type: code
+        variables:
+        - value_selector:
+          - '1750000000003'
+          - context
+          variable: context
+        - value_selector:
+          - '1750000000007'
+          - text
+          variable: search_text
+        - value_selector:
+          - '1750000000005'
+          - search_query
+          variable: search_query
+      height: 54
+      id: '1750000000008'
+      position:
+        x: 2100
+        y: 180
+      positionAbsolute:
+        x: 2100
+        y: 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          def main(context: str) -> dict:
+              return {"enriched_context": (context or "").strip()}
+        code_language: python3
+        desc: 検索なしで参照資料のみを渡す
+        outputs:
+          enriched_context:
+            children: null
+            type: string
+        selected: false
+        title: 検索スキップ
+        type: code
+        variables:
+        - value_selector:
+          - '1750000000003'
+          - context
+          variable: context
+      height: 54
+      id: '1750000000009'
+      position:
+        x: 1800
+        y: 420
+      positionAbsolute:
+        x: 1800
+        y: 420
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        advanced_settings: null
+        desc: 検索あり/なしのコンテキストを集約
+        output_type: string
+        selected: false
+        title: コンテキスト集約
+        type: variable-aggregator
+        variables:
+        - - '1750000000008'
+          - enriched_context
+        - - '1750000000009'
+          - enriched_context
+      height: 90
+      id: '1750000000010'
+      position:
+        x: 2400
+        y: 300
+      positionAbsolute:
+        x: 2400
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 指示と参照（＋必要なら検索結果）から本文を生成
+        model:
+          completion_params:
+            temperature: 0.3
+          mode: chat
+          name: gpt-4.1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: mfg-gen-sys
+          role: system
+          text: |
+            あなたは複数の参照資料を読み、ユーザー指示に従って新しいファイル本文を作成するアシスタントです。
+
+            ## 共通ルール
+            - 前置き・後書き・説明文は書かない（本文のみ）
+            - 参照資料や検索結果にない事実を捏造しない。不足は「要確認」と明記
+            - コードフェンスで全体を囲まない
+
+            ## 出力形式別ルール
+            - markdown / docx: 見出し・箇条書きを使った Markdown
+            - text: プレーンテキスト
+            - json: 有効な JSON のみ
+            - pptx: Pandoc スライド形式。各スライドを --- で区切る。1枚目はタイトル、以降は箇条書き中心。1スライドあたり要点は多くしすぎない
+        - id: mfg-gen-user
+          role: user
+          text: |
+            ## 出力形式
+
+            {{#1750000000003.output_format#}}
+
+            ## 指示
+
+            {{#1750000000003.prompt#}}
+
+            ## 参照資料（検索結果があれば含む）
+
+            {{#1750000000010.output#}}
+        selected: false
+        title: ファイル生成 LLM
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1750000000011'
+      position:
+        x: 2700
+        y: 320
+      positionAbsolute:
+        x: 2700
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          def main(text: str, filename: str, output_format: str) -> dict:
+              content = (text or "").strip()
+              if content.startswith("```"):
+                  lines = content.split("\n")
+                  if lines and lines[0].startswith("```"):
+                      lines = lines[1:]
+                  if lines and lines[-1].strip() == "```":
+                      lines = lines[:-1]
+                  content = "\n".join(lines).strip()
+
+              fmt = (output_format or "markdown").strip().lower() or "markdown"
+              ext_map = {
+                  "markdown": ".md",
+                  "text": ".txt",
+                  "json": ".json",
+                  "docx": ".docx",
+                  "pptx": ".pptx",
+              }
+              mime_map = {
+                  "markdown": "text/markdown",
+                  "text": "text/plain",
+                  "json": "application/json",
+                  "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                  "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              }
+              ext = ext_map.get(fmt, ".md")
+              mime = mime_map.get(fmt, "text/markdown")
+
+              name = (filename or "generated").strip() or "generated"
+              if "." in name:
+                  stem = name.rsplit(".", 1)[0] or "generated"
+              else:
+                  stem = name
+              full_name = stem + ext
+              return {
+                  "content": content,
+                  "filename": full_name,
+                  "filename_stem": stem,
+                  "mime_type": mime,
+                  "output_format": fmt,
+              }
+        code_language: python3
+        desc: 本文整形とファイル名・形式の確定
+        outputs:
+          content:
+            children: null
+            type: string
+          filename:
+            children: null
+            type: string
+          filename_stem:
+            children: null
+            type: string
+          mime_type:
+            children: null
+            type: string
+          output_format:
+            children: null
+            type: string
+        selected: false
+        title: 出力整形
+        type: code
+        variables:
+        - value_selector:
+          - '1750000000011'
+          - text
+          variable: text
+        - value_selector:
+          - '1750000000003'
+          - filename
+          variable: filename
+        - value_selector:
+          - '1750000000003'
+          - output_format
+          variable: output_format
+      height: 54
+      id: '1750000000012'
+      position:
+        x: 3000
+        y: 320
+      positionAbsolute:
+        x: 3000
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        cases:
+        - case_id: case_docx
+          conditions:
+          - comparison_operator: is
+            id: cond-docx
+            value: docx
+            varType: string
+            variable_selector:
+            - '1750000000012'
+            - output_format
+          id: case_docx
+          logical_operator: and
+        - case_id: case_pptx
+          conditions:
+          - comparison_operator: is
+            id: cond-pptx
+            value: pptx
+            varType: string
+            variable_selector:
+            - '1750000000012'
+            - output_format
+          id: case_pptx
+          logical_operator: and
+        desc: 出力形式に応じて変換ツールを分岐
+        selected: false
+        title: 出力形式分岐
+        type: if-else
+      height: 180
+      id: '1750000000013'
+      position:
+        x: 3300
+        y: 280
+      positionAbsolute:
+        x: 3300
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: Markdown を DOCX に変換
+        is_team_authorization: true
+        paramSchemas: []
+        params:
+          md_text: ''
+          output_filename: ''
+        plugin_id: bowenliang123/md_exporter
+        plugin_unique_identifier: bowenliang123/md_exporter:3.6.9@3f027d63e80b44d5d5a9f706871afaef37905b8f8a89a2d152dc530211a8acb1
+        provider_icon: ''
+        provider_id: bowenliang123/md_exporter/md_exporter
+        provider_name: bowenliang123/md_exporter/md_exporter
+        provider_type: builtin
+        selected: false
+        title: DOCX 変換
+        tool_configurations:
+          enable_toc:
+            type: constant
+            value: 'false'
+        tool_description: Markdown を DOCX に変換する
+        tool_label: Markdown ⮕ DOCX
+        tool_name: md_to_docx
+        tool_node_version: '2'
+        tool_parameters:
+          md_text:
+            type: mixed
+            value: '{{#1750000000012.content#}}'
+          output_filename:
+            type: mixed
+            value: '{{#1750000000012.filename_stem#}}'
+        type: tool
+      height: 120
+      id: '1750000000014'
+      position:
+        x: 3600
+        y: 80
+      positionAbsolute:
+        x: 3600
+        y: 80
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: Markdown を PPTX に変換
+        is_team_authorization: true
+        paramSchemas: []
+        params:
+          md_text: ''
+          output_filename: ''
+        plugin_id: bowenliang123/md_exporter
+        plugin_unique_identifier: bowenliang123/md_exporter:3.6.9@3f027d63e80b44d5d5a9f706871afaef37905b8f8a89a2d152dc530211a8acb1
+        provider_icon: ''
+        provider_id: bowenliang123/md_exporter/md_exporter
+        provider_name: bowenliang123/md_exporter/md_exporter
+        provider_type: builtin
+        selected: false
+        title: PPTX 変換
+        tool_configurations: {}
+        tool_description: Markdown を PPTX に変換する
+        tool_label: Markdown ⮕ PPTX
+        tool_name: md_to_pptx
+        tool_node_version: '2'
+        tool_parameters:
+          md_text:
+            type: mixed
+            value: '{{#1750000000012.content#}}'
+          output_filename:
+            type: mixed
+            value: '{{#1750000000012.filename_stem#}}'
+        type: tool
+      height: 120
+      id: '1750000000015'
+      position:
+        x: 3600
+        y: 280
+      positionAbsolute:
+        x: 3600
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: markdown / text / json をファイル保存
+        is_team_authorization: true
+        paramSchemas: []
+        params:
+          content: ''
+          encoding: ''
+          filename: ''
+          format: ''
+          mime_type: ''
+        plugin_id: kurokobo/file_tools
+        plugin_unique_identifier: kurokobo/file_tools:0.0.2@8bde7b4d2c30cf22e8f6ce851572af244f7a5776addab94330b820dc2160726c
+        provider_icon: ''
+        provider_id: kurokobo/file_tools/file_tools
+        provider_name: kurokobo/file_tools/file_tools
+        provider_type: builtin
+        selected: false
+        title: テキストファイル保存
+        tool_configurations:
+          format:
+            type: constant
+            value: text
+        tool_description: テキストをファイルとして保存
+        tool_label: ファイルとして保存
+        tool_name: save_as_file
+        tool_node_version: '2'
+        tool_parameters:
+          content:
+            type: mixed
+            value: '{{#1750000000012.content#}}'
+          encoding:
+            type: mixed
+            value: utf-8
+          filename:
+            type: mixed
+            value: '{{#1750000000012.filename#}}'
+          mime_type:
+            type: mixed
+            value: '{{#1750000000012.mime_type#}}'
+        type: tool
+      height: 120
+      id: '1750000000016'
+      position:
+        x: 3600
+        y: 480
+      positionAbsolute:
+        x: 3600
+        y: 480
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        advanced_settings: null
+        desc: 形式別の成果物ファイルを集約
+        output_type: array[file]
+        selected: false
+        title: 成果物集約
+        type: variable-aggregator
+        variables:
+        - - '1750000000014'
+          - files
+        - - '1750000000015'
+          - files
+        - - '1750000000016'
+          - files
+      height: 110
+      id: '1750000000017'
+      position:
+        x: 3900
+        y: 300
+      positionAbsolute:
+        x: 3900
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: 生成本文と成果物ファイルを返す
+        outputs:
+        - value_selector:
+          - '1750000000012'
+          - content
+          value_type: string
+          variable: result
+        - value_selector:
+          - '1750000000017'
+          - output
+          value_type: array[file]
+          variable: generated_file
+        - value_selector:
+          - '1750000000012'
+          - filename
+          value_type: string
+          variable: filename
+        - value_selector:
+          - '1750000000005'
+          - need_search
+          value_type: string
+          variable: searched
+        selected: false
+        title: 終了
+        type: end
+      height: 160
+      id: '1750000000018'
+      position:
+        x: 4200
+        y: 280
+      positionAbsolute:
+        x: 4200
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: -200
+      y: 40
+      zoom: 0.45
+  rag_pipeline_variables: []
