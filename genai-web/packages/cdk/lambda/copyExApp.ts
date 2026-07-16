@@ -3,6 +3,7 @@ import { findTeamById } from './repository/teamRepository';
 import { copyExAppSchema } from './schemas/copyExAppSchema';
 import { getApiKeyValue, setApiKey } from './utils/apiKey';
 import { createApiHandler } from './utils/createApiHandler';
+import { assertPublicEndpointUrl, isExAppUrlValidationError } from './utils/exAppUrlSecurity';
 import { HttpError } from './utils/httpError';
 import { parseRequestBody } from './utils/parseRequestBody';
 import { requirePathParam } from './utils/requirePathParam';
@@ -31,7 +32,17 @@ export const handler = createApiHandler(async (event) => {
     throw new HttpError(403, 'このAIアプリはコピーできません。');
   }
 
-  const apiKeyValue = await getApiKeyValue(teamId, exAppId, APP_ENV);
+  const endpoint = req.endpoint ?? exApp.endpoint;
+  try {
+    await assertPublicEndpointUrl(endpoint);
+  } catch (error) {
+    if (isExAppUrlValidationError(error)) {
+      throw new HttpError(400, 'APIエンドポイントには公開 HTTPS URL を指定してください。');
+    }
+    throw error;
+  }
+
+  const apiKeyValue = req.apiKey || (await getApiKeyValue(teamId, exAppId, APP_ENV));
   if (!apiKeyValue) {
     throw new HttpError(400, 'APIキーの取得に失敗しました。');
   }
@@ -39,9 +50,9 @@ export const handler = createApiHandler(async (event) => {
   const copiedExApp = await createExApp({
     teamId,
     exAppName: req.exAppName,
-    endpoint: exApp.endpoint,
+    endpoint,
     config: req.config ?? '',
-    placeholder: req.placeholder,
+    placeholder: req.placeholder ?? '',
     systemPrompt: req.systemPrompt ?? '',
     systemPromptKeyName: req.systemPromptKeyName ?? '',
     description: req.description,

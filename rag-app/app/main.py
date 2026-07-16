@@ -36,6 +36,11 @@ API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 DEFAULT_SCOPE = os.environ.get(
     "RAG_DEFAULT_SCOPE", "00000000-0000-0000-0000-000000000000"
 )
+# 旧「ナレッジ管理（管理者）」が ADMIN_TEAM スコープへ誤登録していた分の移行元。
+# backend の ADMIN_TEAM_ID と同一。環境変数で上書き可能。
+LEGACY_ADMIN_SCOPE = os.environ.get(
+    "RAG_LEGACY_ADMIN_SCOPE", "00000000-0000-0000-0000-0000000000a1"
+)
 
 # チャンク内容から決定的な ID を生成する名前空間（重複排除に利用）
 _CHUNK_NS = uuid.UUID("6f1e0c2a-9b4d-5e7a-8c3f-0a1b2c3d4e5f")
@@ -215,6 +220,22 @@ async def _startup() -> None:
         urlstore.init_db()
     except Exception as e:  # noqa: BLE001 - 起動を止めない
         print(f"[rag-app] URL DB初期化をスキップ: {e}")
+    # 旧 rag-manage(ADMIN_TEAM scope) → 共有ナレッジ(COMMON) への一度きり移行
+    try:
+        moved = await vectorstore.reassign_scope(LEGACY_ADMIN_SCOPE, DEFAULT_SCOPE)
+        if moved:
+            print(
+                f"[rag-app] 共有ナレッジのスコープを移行: "
+                f"{LEGACY_ADMIN_SCOPE} → {DEFAULT_SCOPE}（{moved} チャンク）"
+            )
+        url_moved = urlstore.reassign_scope(LEGACY_ADMIN_SCOPE, DEFAULT_SCOPE)
+        if url_moved:
+            print(
+                f"[rag-app] URL 登録のスコープを移行: "
+                f"{LEGACY_ADMIN_SCOPE} → {DEFAULT_SCOPE}（{url_moved} 件）"
+            )
+    except Exception as e:  # noqa: BLE001 - 起動を止めない
+        print(f"[rag-app] 旧管理スコープ移行をスキップ: {e}")
     # URL 自動更新スケジューラ（6-(26)）
     try:
         asyncio.create_task(_url_refresh_loop())
@@ -484,17 +505,31 @@ def _extract_uploaded_texts(inputs: dict[str, Any]) -> list[dict[str, str]]:
     return docs
 
 
-async def _answer_with_hits(question: str, hits: list[dict[str, Any]]) -> str:
-    """検索ヒット(共通形式 [{score, payload:{text,source}}])から回答を生成する。"""
+# フロントの出典アコーディオン用。画像 base64(content) と区別する。
+CITATION_MIME = "text/x.open-genai.citation"
+
+
+async def _answer_with_hits(question: str, hits: list[dict[str, Any]]) -> dict[str, Any]:
+    """検索ヒットから回答と出典 artifacts を生成する。
+
+    戻り値: {"outputs": str, "artifacts": list}
+    artifacts は mime_type=CITATION_MIME の引用。フロントがアコーディオン表示する。
+    """
     context_blocks = []
-    sources = []
+    artifacts: list[dict[str, Any]] = []
     for i, hit in enumerate(hits, start=1):
         payload = hit.get("payload", {})
         text = payload.get("text", "")
         source = payload.get("source", "unknown")
-        score = hit.get("score", 0)
+        score = float(hit.get("score", 0) or 0)
         context_blocks.append(f"[{i}] (ドキュメント: {source})\n{text}")
-        sources.append(f"[{i}] {source} (類似度: {score:.3f})")
+        artifacts.append(
+            {
+                "display_name": f"[{i}] {source}（類似度: {score:.3f}）",
+                "mime_type": CITATION_MIME,
+                "text": text,
+            }
+        )
 
     context = "\n\n".join(context_blocks)
     system_prompt = (
@@ -510,7 +545,10 @@ async def _answer_with_hits(question: str, hits: list[dict[str, Any]]) -> str:
             {"role": "user", "content": user_prompt},
         ]
     )
-    return f"{answer}\n\n---\n**参照ドキュメント**\n" + "\n".join(f"- {s}" for s in sources)
+    return {
+        "outputs": f"{answer}\n\n---\n**参照ドキュメント**",
+        "artifacts": artifacts,
+    }
 
 
 def _user_groups(x_user_groups: str | None) -> list[str]:
@@ -720,9 +758,12 @@ async def invoke(
             hits = await ephemeral_search(question, uploaded, top_k)
             if not hits:
                 return {"outputs": "添付ドキュメントから情報を抽出できませんでした。"}
-            answer = await _answer_with_hits(question, hits)
+            result = await _answer_with_hits(question, hits)
             note = "\n\n> ※ 添付ファイルはこの回答のみで使用し、ナレッジには保存していません。"
-            return {"outputs": answer + note}
+            return {
+                "outputs": result["outputs"] + note,
+                "artifacts": result["artifacts"],
+            }
 
         # 永続: 添付があればこのチームのスコープへ取り込み（重複排除）、その後検索
         if uploaded:
@@ -740,8 +781,8 @@ async def invoke(
             )
         }
 
-    answer = await _answer_with_hits(question, hits)
+    result = await _answer_with_hits(question, hits)
     return {
-        "outputs": answer,
+        **result,
         "_meta": {"generated_at": datetime.now(timezone.utc).isoformat()},
     }

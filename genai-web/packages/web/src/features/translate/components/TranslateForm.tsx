@@ -9,6 +9,7 @@ import { SupportText } from '@/components/ui/dads/SupportText';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 import { TranslateFormSchema, translateFormSchema } from '../schema';
 import { TranslatedResult } from './TranslatedResult';
 
@@ -67,7 +68,8 @@ export const TranslateForm = (props: Props) => {
                     id='translate-original-input'
                     rows={5}
                     maxHeight={-1}
-                    aria-describedby={`translate-original-input-support${errors.sentence ? ' translate-original-input-error' : ''}`}
+                    aria-describedby={`translate-original-input-support translate-submit-hint${errors.sentence ? ' translate-original-input-error' : ''}`}
+                    onKeyDown={requestSubmitOnEnter}
                     {...register('sentence', {
                       onChange: (e) => setSentence(e.target.value),
                     })}
@@ -100,7 +102,8 @@ export const TranslateForm = (props: Props) => {
           </SupportText>
           <AutoResizeTextarea
             id='translate-additional-context-input'
-            aria-describedby={`translate-additional-context-input-support${errors.additionalContext ? ' translate-additional-context-input-error' : ''}`}
+            aria-describedby={`translate-additional-context-input-support translate-submit-hint${errors.additionalContext ? ' translate-additional-context-input-error' : ''}`}
+            onKeyDown={requestSubmitOnEnter}
             {...register('additionalContext')}
           />
           {errors.additionalContext && (
@@ -110,7 +113,11 @@ export const TranslateForm = (props: Props) => {
           )}
         </div>
 
-        <div className='mt-6 flex justify-center'>
+        <SupportText id='translate-submit-hint' className='mt-4 text-center'>
+          {submitKeyHint}
+        </SupportText>
+
+        <div className='mt-3 flex justify-center'>
           <Button
             type='submit'
             variant='solid-fill'

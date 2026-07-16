@@ -66,6 +66,10 @@ vi.mock('@/components/ui/dads/ErrorText', () => ({
   ErrorText: (props: React.ComponentProps<'span'>) => <span {...props} />,
 }));
 
+vi.mock('@/components/ui/dads/SupportText', () => ({
+  SupportText: (props: React.ComponentProps<'p'>) => <p {...props} />,
+}));
+
 vi.mock('@/components/ui/dads/FileUpload', () => ({
   FileUpload: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   FileUploadFileInfo: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -91,6 +95,8 @@ vi.mock('@/components/ui/icons/SendIcon', () => ({
 
 vi.mock('@/utils/keyboard', () => ({
   isSubmitKey: () => false,
+  requestSubmitOnEnter: () => {},
+  submitKeyHint: 'Enter で送信 / Shift+Enter で改行',
 }));
 
 const defaultProps = {
@@ -198,6 +204,21 @@ describe('ChatInput', () => {
 
       const textarea = screen.getByRole('textbox');
       expect(textarea.getAttribute('rows')).toBe('1');
+    });
+  });
+
+  describe('submit key hint', () => {
+    it('should show Enter/Shift+Enter hint near the input', () => {
+      renderChatInput();
+
+      expect(screen.getByText('Enter で送信 / Shift+Enter で改行')).toBeDefined();
+    });
+
+    it('should associate hint with textarea via aria-describedby', () => {
+      renderChatInput();
+
+      const textarea = screen.getByRole('textbox');
+      expect(textarea.getAttribute('aria-describedby')).toContain('chat-input-submit-hint');
     });
   });
 

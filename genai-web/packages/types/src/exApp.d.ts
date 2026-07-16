@@ -53,12 +53,14 @@ export type UpdateExAppRequest = {
 
 export type CopyExAppRequest = {
   exAppName?: string;
+  endpoint?: string;
   config?: string;
   placeholder?: string;
   systemPrompt?: string;
   systemPromptKeyName?: string;
   description?: string;
   howToUse?: string;
+  apiKey?: string;
   copyable?: boolean;
   status?: ExAppStatus;
 };

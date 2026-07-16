@@ -12,7 +12,9 @@ import {
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { isJSON } from '@/utils/isJSON';
+import { submitKeyHint } from '@/utils/keyboard';
 import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
 import { getExAppHistoriesKey } from '../hooks/useFetchInvokedExAppHistories';
 import { useResolveExAppSchema } from '../hooks/useResolveExAppSchema';
@@ -299,15 +301,18 @@ ${parsedHistory.outputs}
 
         {validationError && <ErrorText>＊{validationError}</ErrorText>}
 
-        <Button
-          aria-disabled={requestLoading ? true : undefined}
-          variant='solid-fill'
-          size='lg'
-          className='w-60 self-center'
-          type='submit'
-        >
-          {requestLoading ? '実行中...' : '実行'}
-        </Button>
+        <div className='flex flex-col items-center gap-3'>
+          <SupportText id='exapp-submit-hint'>{submitKeyHint}</SupportText>
+          <Button
+            aria-disabled={requestLoading ? true : undefined}
+            variant='solid-fill'
+            size='lg'
+            className='w-60'
+            type='submit'
+          >
+            {requestLoading ? '実行中...' : '実行'}
+          </Button>
+        </div>
       </form>
 
       <CustomDialog

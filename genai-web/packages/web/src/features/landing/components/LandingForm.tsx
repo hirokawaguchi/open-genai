@@ -12,7 +12,7 @@ import { ChatNotificationDialogButton } from '@/features/chat/components/ChatNot
 import { ModelSelector } from '@/features/landing/components/ModelSelector';
 import { TOP_CHAT_SYSTEM_PROMPT, TOP_CHAT_SYSTEM_PROMPT_TITLE } from '@/features/landing/constants';
 import { LandingChatFormSchema, landingChatFormSchema } from '@/features/landing/schema';
-import { isSubmitKey } from '@/utils/keyboard';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 
 export const LandingForm = () => {
   const navigate = useNavigate();
@@ -56,20 +56,17 @@ export const LandingForm = () => {
             id='chat-input'
             aria-labelledby='landing-chat-input-heading'
             aria-describedby={
-              errors.chatInput ? 'chat-input-support chat-input-error' : 'chat-input-support'
+              errors.chatInput
+                ? 'chat-input-support chat-input-submit-hint chat-input-error'
+                : 'chat-input-support chat-input-submit-hint'
             }
             aria-invalid={errors.chatInput ? true : undefined}
             required
             rows={3}
-            onKeyDown={(e) => {
-              if (isSubmitKey(e)) {
-                e.preventDefault();
-                e.currentTarget.form?.requestSubmit();
-              }
-            }}
+            onKeyDown={requestSubmitOnEnter}
             {...register('chatInput')}
           />
-
+          <SupportText id='chat-input-submit-hint'>{submitKeyHint}</SupportText>
           <div className='flex justify-end'>
             {errors.chatInput && (
               <ErrorText className='mr-auto -mt-1' id='chat-input-error'>

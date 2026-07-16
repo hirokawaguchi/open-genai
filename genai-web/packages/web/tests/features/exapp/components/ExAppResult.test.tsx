@@ -109,6 +109,27 @@ describe('ExAppResult', () => {
     expect(image.tagName).toEqual('IMG');
   });
 
+  it('renders citation accordion for RAG sources', () => {
+    const mockResponse = createMockExAppResponse({
+      artifacts: [
+        {
+          display_name: '[1] sample.pdf（類似度: 0.800）',
+          mime_type: 'text/x.open-genai.citation',
+          text: 'これはヒットしたチャンク本文です。',
+        },
+      ],
+    });
+    mockUseExAppInvokeStore.mockReturnValue({
+      ...defaultStoreValue,
+      exAppResponse: mockResponse,
+    });
+
+    const { getByText } = render(<ExAppResult shouldShowConversationHistory={false} />);
+
+    expect(getByText('[1] sample.pdf（類似度: 0.800）')).toBeDefined();
+    expect(getByText('これはヒットしたチャンク本文です。')).toBeDefined();
+  });
+
   it('renders copy button when result exists', () => {
     const mockResponse = createMockExAppResponse();
     mockUseExAppInvokeStore.mockReturnValue({
