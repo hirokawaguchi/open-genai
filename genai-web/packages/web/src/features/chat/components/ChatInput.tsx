@@ -18,12 +18,13 @@ import {
 import { formatSize } from '@/components/ui/dads/FileUpload/utils/formatSize';
 import { AttachmentIcon } from '@/components/ui/icons/AttachmentIcon';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { isSubmitKey } from '@/utils/keyboard';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 import { FILE_LIMIT } from '../constants';
 import { ChatFormSchema, chatFormSchema } from '../schema';
 
@@ -151,6 +152,9 @@ export const ChatInput = (props: Props) => {
             ? '調べたいことやお困りごとなど、何でも入力してみましょう'
             : '追加で質問や不明点などあれば返答してみましょう'}
         </h2>
+        <SupportText id='chat-input-submit-hint' className='mb-1'>
+          {submitKeyHint}
+        </SupportText>
         <div className='relative flex items-end bg-white'>
           <div className='flex w-full flex-col gap-2'>
             <AutoResizeTextarea
@@ -160,14 +164,9 @@ export const ChatInput = (props: Props) => {
               required
               placeholder=''
               aria-labelledby='chat-input-heading'
-              aria-describedby='chat-input-error chat-input-file-error'
+              aria-describedby='chat-input-submit-hint chat-input-error chat-input-file-error'
               onPaste={fileUpload ? handlePaste : undefined}
-              onKeyDown={(e) => {
-                if (isSubmitKey(e)) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }}
+              onKeyDown={requestSubmitOnEnter}
               {...register('content', {
                 onChange: (e) => {
                   setValue('content', e.target.value);

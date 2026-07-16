@@ -155,17 +155,19 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
     """
     with _lock, _connect() as conn:
         exists = conn.execute(
-            "SELECT exAppId FROM exapps WHERE exAppId = ?", (app["exAppId"],)
+            "SELECT exAppId, teamId FROM exapps WHERE exAppId = ?", (app["exAppId"],)
         ).fetchone()
         now = _now()
+        new_team = app.get("teamId", COMMON_TEAM_ID)
         if exists:
+            old_team = exists["teamId"]
             # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）
             conn.execute(
                 "UPDATE exapps SET teamId=?, exAppName=?, endpoint=?, apiKey=?, config=?,"
                 " placeholder=?, description=?, howToUse=?, copyable=?, status=?,"
                 " updatedDate=? WHERE exAppId=?",
                 (
-                    app.get("teamId", COMMON_TEAM_ID),
+                    new_team,
                     app.get("exAppName", ""),
                     app.get("endpoint", ""),
                     app.get("apiKey", ""),
@@ -179,6 +181,50 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
                     app["exAppId"],
                 ),
             )
+            # teamId 変更時は履歴・ピン留めも追随（例: rag-manage の ADMIN→COMMON）
+            if old_team != new_team:
+                team_row = conn.execute(
+                    "SELECT teamName FROM teams WHERE teamId = ?", (new_team,)
+                ).fetchone()
+                if team_row:
+                    new_team_name = team_row["teamName"]
+                elif new_team == COMMON_TEAM_ID:
+                    new_team_name = "共通アプリ"
+                elif new_team == ADMIN_TEAM_ID:
+                    new_team_name = ADMIN_TEAM_NAME
+                else:
+                    new_team_name = ""
+                conn.execute(
+                    "UPDATE exapp_histories SET teamId = ?, teamName = ?"
+                    " WHERE teamId = ? AND exAppId = ?",
+                    (
+                        new_team,
+                        new_team_name,
+                        old_team,
+                        app["exAppId"],
+                    ),
+                )
+                # ピンは PK(userId, teamId, itemId)。移行先に既にある行は旧側を捨てる
+                conflict_users = [
+                    r["userId"]
+                    for r in conn.execute(
+                        "SELECT userId FROM user_app_pins"
+                        " WHERE teamId = ? AND itemId = ?",
+                        (new_team, app["exAppId"]),
+                    ).fetchall()
+                ]
+                if conflict_users:
+                    placeholders = ",".join("?" for _ in conflict_users)
+                    conn.execute(
+                        f"DELETE FROM user_app_pins WHERE teamId = ? AND itemId = ?"
+                        f" AND userId IN ({placeholders})",
+                        (old_team, app["exAppId"], *conflict_users),
+                    )
+                conn.execute(
+                    "UPDATE user_app_pins SET teamId = ?"
+                    " WHERE teamId = ? AND itemId = ?",
+                    (new_team, old_team, app["exAppId"]),
+                )
             return
         conn.execute(
             "INSERT INTO exapps (exAppId, teamId, exAppName, endpoint, apiKey, config,"
@@ -187,7 +233,7 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 app["exAppId"],
-                app.get("teamId", COMMON_TEAM_ID),
+                new_team,
                 app.get("exAppName", ""),
                 app.get("endpoint", ""),
                 app.get("apiKey", ""),

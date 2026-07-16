@@ -551,10 +551,10 @@ Dify Studio の「APIアクセス」に表示される Base URL（`https://api.d
 
 - APIキーは **`app-` で始まるワークフロー用キー**（そのアプリ専用。別フローのキーは不可）
 - ワークフローを **公開** してから呼び出す
-- 成果物の再ホスト（Dify ファイル URL の取得）用に `.env` へ以下を追加:
+- 成果物の再ホスト（Dify ファイル URL の取得）用に `.env` へ以下を追加（ローカル／セルフホストと併用する場合はホストを追記）:
 
 ```bash
-ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai
+ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai,host.docker.internal
 ```
 
 ##### セルフホスト版（Docker 等）
@@ -565,6 +565,8 @@ ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai
 | --- | --- |
 | 標準（API が `/v1`） | `http://host.docker.internal/v1` |
 | nginx 等で `/api/v1` にマウント | `http://host.docker.internal/api/v1` |
+
+成果物ファイルの URL ホスト（`FILES_URL`）は API ホストと異なることがあります。再ホストのため `.env` の `ARTIFACT_FETCH_ALLOWED_HOSTS` に **ファイル URL のホスト名** を追加してください（例: `host.docker.internal`、公開ドメイン、リバプロのホスト名）。allowlist に載せたホストは private IP 解決も許可されます。
 
 ```json
 {"dify_base_url":"http://host.docker.internal/v1","dify_app_type":"workflow","response_field":"result"}
@@ -624,7 +626,7 @@ curl -s -w "\nHTTP %{http_code}\n" \
 | `401` | API キー不一致・未公開 | 正しい `app-` キー、ワークフロー公開を確認 |
 | 入力フォームが出ない / 実行しても何も表示されない | コンフィグ JSON の改行 | 1 行 JSON に修正し backend 再起動 |
 | `※必須` エラー（値が入っているのに） | 動的スキーマの `default_value` 未同期 | ページをリロード（修正済み。古い web イメージの場合は再ビルド） |
-| ファイルリンクが Dify 直 URL のまま | `ARTIFACT_FETCH_ALLOWED_HOSTS` 未設定、または backend 未再起動 | `.env` に Dify ホストを追加、`docker compose up -d backend` |
+| ファイルリンクが Dify 直 URL のまま（`host.docker.internal` 等） | 再ホスト失敗。`ARTIFACT_FETCH_ALLOWED_HOSTS` に **ファイル URL のホスト**が無い、または backend 未再起動 | `.env` に該当ホスト（例: `host.docker.internal`）を追加し `docker compose up -d backend`。成功時は SeaweedFS の署名付き URL になる |
 | `502`（源内からの実行） | `dify-app` 未起動、コンフィグ改行 | `docker compose ps`、コンフィグを確認 |
 
 #### APIリクエストのデータ形式(JSON) の例（= AI アプリの placeholder / 入力フォーム）
@@ -709,7 +711,7 @@ Dify 等が返すファイル URL をそのまま利用者に渡さず、`backen
 | `S3_PRESIGN_EXPIRY` | `86400`（24h） | 署名付き URL の有効期限（秒）。**ファイル本体の保持期限ではない** |
 | `S3_ARTIFACT_RETENTION_DAYS` | `30` | 成果物と実行履歴の保持日数（超過分を日次削除。`0` で無効） |
 | `S3_ARTIFACT_PURGE_INTERVAL` | `86400` | 上記パージの実行間隔（秒） |
-| `ARTIFACT_FETCH_ALLOWED_HOSTS` | （空） | Dify クラウド利用時は `files.dify.ai,upload.dify.ai` を推奨 |
+| `ARTIFACT_FETCH_ALLOWED_HOSTS` | （空） | 成果物取得を許可するホスト。クラウドは `files.dify.ai,upload.dify.ai`、ローカルは `host.docker.internal`、セルフホストは FILES_URL のホストを追加。allowlist ホストは private IP も可 |
 | `ARTIFACT_DELIVERY_MODE` | `open`（本番既定 `carrier`） | 配信方式。`open`=結果画面に直接リンク、`carrier`=リンクファイル持ち出し（下記 LGWAN） |
 | `ARTIFACT_CARRIER_FORMAT` | `txt` | `carrier` 時のリンクファイル形式（`txt` / `html` / `both`） |
 

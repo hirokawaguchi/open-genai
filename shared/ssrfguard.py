@@ -5,8 +5,11 @@
 
 対策:
 - スキームは http/https のみ。
-- ホスト名を解決し、**解決された全 IP が公開アドレス**であることを要求（プライベート/
-  ループバック/リンクローカル/予約/マルチキャスト等は拒否）。
+- ホスト名を解決し、**既定では解決された全 IP が公開アドレス**であることを要求
+  （プライベート/ループバック/リンクローカル/予約/マルチキャスト等は拒否）。
+- **allowlist に明示したホスト**は、運用者が信頼した接続先（ローカル/セルフホスト
+  Dify の `host.docker.internal` や社内ホスト等）として、プライベート／ループバック
+  への解決を許可する。ただしクラウドメタデータ等のリンクローカルは引き続き拒否。
 - **DNS リバインディング対策**: 検証済み IP へ接続を固定（URL のホストを IP へ書換え、
   Host ヘッダと TLS SNI は元のホスト名を維持して証明書検証を保つ）。
 - リダイレクトは自動追従せず、各ホップの遷移先を**都度再検証**する。
@@ -43,12 +46,26 @@ def ip_is_public(ip_str: str) -> bool:
     )
 
 
+def ip_is_safe_for_trusted_host(ip_str: str) -> bool:
+    """allowlist 済みホスト向け。private/loopback は可、メタデータ系は不可。"""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return not (
+        ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
 def _default_port(scheme: str) -> int:
     return 443 if scheme == "https" else 80
 
 
-def _resolve_public_ip(host: str, port: int) -> str:
-    """host を解決し、全 IP が公開なら最初の IP を返す。1つでも内部なら拒否。"""
+def _resolve_connect_ip(host: str, port: int, *, allow_private: bool) -> str:
+    """host を解決し、方針に合う最初の IP を返す。不適合があれば拒否。"""
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
@@ -56,10 +73,20 @@ def _resolve_public_ip(host: str, port: int) -> str:
     addrs = [info[4][0] for info in infos]
     if not addrs:
         raise SsrfBlocked(f"解決アドレスなし: {host}")
+    check = ip_is_safe_for_trusted_host if allow_private else ip_is_public
     for addr in addrs:
-        if not ip_is_public(addr):
+        if not check(addr):
             raise SsrfBlocked(f"内部宛先は不可: {host} -> {addr}")
     return addrs[0]
+
+
+def _resolve_public_ip(host: str, port: int) -> str:
+    """後方互換: 公開アドレスのみ許可して解決する。"""
+    return _resolve_connect_ip(host, port, allow_private=False)
+
+
+def _normalize_allowlist(allowed_hosts: Iterable[str] | None) -> set[str]:
+    return {h.strip().lower() for h in (allowed_hosts or ()) if h and h.strip()}
 
 
 def _validate_and_pin(url: str, allowed_hosts: Iterable[str] | None) -> tuple[str, dict, str]:
@@ -70,11 +97,13 @@ def _validate_and_pin(url: str, allowed_hosts: Iterable[str] | None) -> tuple[st
     host = (parsed.hostname or "").lower()
     if not host:
         raise SsrfBlocked("ホスト名なし")
-    allow = {h.strip().lower() for h in (allowed_hosts or ()) if h and h.strip()}
+    allow = _normalize_allowlist(allowed_hosts)
     if allow and host not in allow:
         raise SsrfBlocked(f"許可されていないホスト: {host}")
+    # allowlist に載ったホストのみ private/loopback 解決を許可（明示的な運用設定）。
+    allow_private = bool(allow) and host in allow
     port = parsed.port or _default_port(parsed.scheme)
-    ip = _resolve_public_ip(host, port)
+    ip = _resolve_connect_ip(host, port, allow_private=allow_private)
     # 接続先を検証済み IP に固定（IPv6 は角括弧で囲う）
     netloc_ip = f"[{ip}]" if ":" in ip else ip
     if parsed.port:

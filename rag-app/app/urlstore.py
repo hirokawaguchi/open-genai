@@ -118,6 +118,40 @@ def delete_scope(scope: str) -> int:
         return cur.rowcount or 0
 
 
+def reassign_scope(from_scope: str, to_scope: str) -> int:
+    """URL 登録の scope を付け替える（誤登録スコープの移行用）。
+
+    to_scope に同一 URL がある場合は from_scope 側を削除し、衝突を避ける。
+    """
+    if from_scope == to_scope:
+        return 0
+    with _connect() as conn:
+        existing = {
+            r["url"]
+            for r in conn.execute(
+                "SELECT url FROM url_sources WHERE scope = ?", (to_scope,)
+            ).fetchall()
+        }
+        rows = conn.execute(
+            "SELECT url FROM url_sources WHERE scope = ?", (from_scope,)
+        ).fetchall()
+        moved = 0
+        for r in rows:
+            url = r["url"]
+            if url in existing:
+                conn.execute(
+                    "DELETE FROM url_sources WHERE scope = ? AND url = ?",
+                    (from_scope, url),
+                )
+            else:
+                conn.execute(
+                    "UPDATE url_sources SET scope = ? WHERE scope = ? AND url = ?",
+                    (to_scope, from_scope, url),
+                )
+                moved += 1
+        return moved
+
+
 def scope_urls(scope: str) -> list[dict[str, Any]]:
     """指定スコープの全カラム付き URL 行（当該チームの再クロール用）。"""
     with _connect() as conn:

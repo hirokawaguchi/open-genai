@@ -1,0 +1,805 @@
+app:
+  description: 調査テーマを入力すると、繰り返し検索してレポートを作成する Deep Research ワークフロー
+  icon: 🔍
+  icon_background: '#D1E9FF'
+  icon_type: emoji
+  mode: workflow
+  name: DeepResearch
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tavily:0.1.2@aa7a8744b2ccf3a7aec818da6c504997a6319b29040e541bfc73b4fbaa9e98d9
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/azure_openai:0.0.28@9b0339feb86b34393abd921e9cc906192fc46daad3a0f15c1d2a35ba20e8f704
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 128
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: loop
+      id: 1739229221219-source-1739244888446-target
+      source: '1739229221219'
+      sourceHandle: source
+      target: '1739244888446'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: loop
+        targetType: llm
+      id: 1739244888446-source-1739246156652-target
+      source: '1739244888446'
+      sourceHandle: source
+      target: '1739246156652'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1739246156652-source-1739249999999-target
+      source: '1739246156652'
+      sourceHandle: source
+      target: '1739249999999'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: loop-start
+        targetType: llm
+        loop_id: '1739244888446'
+      id: 1739244888446start-source-1739245286499-target
+      source: 1739244888446start
+      sourceHandle: source
+      target: '1739245286499'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: assigner
+        targetType: code
+        loop_id: '1739244888446'
+      id: 1739245826988-source-1739245700000-target
+      source: '1739245826988'
+      sourceHandle: source
+      target: '1739245700000'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: code
+        targetType: if-else
+        loop_id: '1739244888446'
+      id: 1739245700000-source-1739245723720-target
+      source: '1739245700000'
+      sourceHandle: source
+      target: '1739245723720'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: if-else
+        targetType: tool
+        loop_id: '1739244888446'
+      id: 1739245723720-true-1739245424964-target
+      source: '1739245723720'
+      sourceHandle: 'true'
+      target: '1739245424964'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: tool
+        targetType: assigner
+        loop_id: '1739244888446'
+      id: 1739245424964-source-1739246085820-target
+      source: '1739245424964'
+      sourceHandle: source
+      target: '1739246085820'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: if-else
+        targetType: loop-end
+        loop_id: '1739244888446'
+      id: 1739245723720-false-1739244888446end-target
+      source: '1739245723720'
+      sourceHandle: 'false'
+      target: 1739244888446end
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: llm
+        targetType: code
+        loop_id: '1739244888446'
+      id: 1739245286499-source-1739245600000-target
+      source: '1739245286499'
+      sourceHandle: source
+      target: '1739245600000'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: true
+        sourceType: code
+        targetType: assigner
+        loop_id: '1739244888446'
+      id: 1739245600000-source-1739245826988-target
+      source: '1739245600000'
+      sourceHandle: source
+      target: '1739245826988'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    nodes:
+    - data:
+        desc: 調査テーマと探索の深さ
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - label: 調査テーマ
+          max_length: 2000
+          options: []
+          required: true
+          type: paragraph
+          variable: query
+        - default: '3'
+          label: 探索の深さ (depth)
+          max_length: 48
+          options: []
+          required: false
+          type: number
+          variable: depth
+      height: 116
+      id: '1739229221219'
+      position:
+        x: 80
+        y: 300
+      positionAbsolute:
+        x: 80
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        break_conditions: []
+        desc: depth 回を上限に、十分な情報が集まるまで検索を繰り返す
+        error_handle_mode: terminated
+        height: 900
+        logical_operator: and
+        loop_count: 10
+        loop_variables:
+        - id: lv-topics
+          label: topics
+          value: []
+          value_type: constant
+          var_type: array[string]
+        - id: lv-next
+          label: nextSearchTopic
+          value: ''
+          value_type: constant
+          var_type: string
+        - id: lv-findings
+          label: findings
+          value: []
+          value_type: constant
+          var_type: array[string]
+        - id: lv-continue
+          label: shouldContinue
+          value: 'true'
+          value_type: constant
+          var_type: string
+        - id: lv-round
+          label: round
+          value: 0
+          value_type: constant
+          var_type: number
+        selected: false
+        start_node_id: 1739244888446start
+        title: Deep Research Loop
+        type: loop
+        width: 1200
+      height: 900
+      id: '1739244888446'
+      position:
+        x: 400
+        y: 200
+      positionAbsolute:
+        x: 400
+        y: 200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 1200
+      zIndex: 1
+    - data:
+        desc: ''
+        isInLoop: true
+        loop_id: '1739244888446'
+        selected: false
+        title: ''
+        type: loop-start
+      draggable: false
+      height: 48
+      id: 1739244888446start
+      parentId: '1739244888446'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 424
+        y: 268
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-loop-start
+      width: 44
+      zIndex: 1002
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        isInLoop: true
+        loop_id: '1739244888446'
+        model:
+          completion_params:
+            json_schema: ''
+          mode: chat
+          name: gpt-4.1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: 2acdb5a9-823a-4ce3-8dbe-401540a61bc5
+          role: system
+          text: 'You are a research agent investigating the following topic.
+
+            What have you found? What questions remain unanswered? What specific aspects should be investigated next?
+
+
+            ## Output rules (strict)
+
+            - Output ONLY one JSON object. No markdown fences. No commentary.
+
+            - Use compact single-line JSON if possible.
+
+            - Do NOT put raw newlines/tabs inside string values. Escape them.
+
+            - Do not output topics that are exactly the same as already searched topics.
+
+            - If further search is needed, set nextSearchTopic to a short Japanese search query string.
+
+            - If enough information is obtained, set shouldContinue to false and nextSearchTopic to null.
+
+
+            Schema:
+
+            {"nextSearchTopic":"string|null","shouldContinue":true|false}
+
+            '
+        - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          role: user
+          text: '## Topic
+
+
+            {{#1739229221219.query#}}
+
+
+            ## Findings
+
+
+            {{#1739244888446.findings#}}
+
+
+            ## Searched Topics
+
+
+            {{#1739244888446.topics#}}
+
+            '
+        selected: false
+        title: Research Planner
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1739245286499'
+      parentId: '1739244888446'
+      position:
+        x: 100
+        y: 80
+      positionAbsolute:
+        x: 500
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInLoop: true
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1739245600000'
+          - nextSearchTopic
+          variable_selector:
+          - '1739244888446'
+          - nextSearchTopic
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1739245600000'
+          - shouldContinue
+          variable_selector:
+          - '1739244888446'
+          - shouldContinue
+          write_mode: over-write
+        - input_type: variable
+          operation: append
+          value:
+          - '1739245600000'
+          - nextSearchTopic
+          variable_selector:
+          - '1739244888446'
+          - topics
+          write_mode: over-write
+        - input_type: constant
+          operation: +=
+          value: 1
+          variable_selector:
+          - '1739244888446'
+          - round
+          write_mode: over-write
+        loop_id: '1739244888446'
+        selected: false
+        title: Update Loop State
+        type: assigner
+        version: '2'
+      height: 160
+      id: '1739245826988'
+      parentId: '1739244888446'
+      position:
+        x: 400
+        y: 200
+      positionAbsolute:
+        x: 800
+        y: 400
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        code: "def main(round: int, depth: int, should_continue: str) -> dict:\n    depth = int(depth or 3)\n    round = int(round\
+          \ or 0)\n    s = str(should_continue or \"\").strip().lower()\n    cont = s in (\"true\", \"1\", \"yes\")\n    #\
+          \ Invalid control character 等のパース失敗文字列は継続しない\n    if \"invalid\" in s or \"error\" in s:\n        cont = False\n\
+          \    stop = (not cont) or (round > depth)\n    return {\"stop\": \"true\" if stop else \"false\", \"round\": round,\
+          \ \"depth\": depth}\n"
+        code_language: python3
+        desc: depth 到達 or shouldContinue=false で停止判定
+        isInLoop: true
+        loop_id: '1739244888446'
+        outputs:
+          stop:
+            children: null
+            type: string
+          round:
+            children: null
+            type: number
+          depth:
+            children: null
+            type: number
+        selected: false
+        title: Check Stop
+        type: code
+        variables:
+        - value_selector:
+          - '1739244888446'
+          - round
+          variable: round
+        - value_selector:
+          - '1739229221219'
+          - depth
+          variable: depth
+        - value_selector:
+          - '1739244888446'
+          - shouldContinue
+          variable: should_continue
+      height: 54
+      id: '1739245700000'
+      parentId: '1739244888446'
+      position:
+        x: 400
+        y: 400
+      positionAbsolute:
+        x: 800
+        y: 600
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: cond-continue
+            value: 'false'
+            varType: string
+            variable_selector:
+            - '1739245700000'
+            - stop
+          id: 'true'
+          logical_operator: and
+        desc: stop=false のときだけ検索続行
+        isInLoop: true
+        loop_id: '1739244888446'
+        selected: false
+        title: IF Continue Search
+        type: if-else
+      height: 126
+      id: '1739245723720'
+      parentId: '1739244888446'
+      position:
+        x: 700
+        y: 300
+      positionAbsolute:
+        x: 1100
+        y: 500
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInLoop: true
+        loop_id: '1739244888446'
+        provider_id: tavily
+        provider_name: tavily
+        provider_type: builtin
+        selected: false
+        title: Tavily Search
+        tool_configurations:
+          days: 3
+          exclude_domains: null
+          include_answer: 0
+          include_domains: null
+          include_image_descriptions: 0
+          include_images: 0
+          include_raw_content: 0
+          max_results: 5
+          search_depth: advanced
+          topic: general
+        tool_label: Tavily Search
+        tool_name: tavily_search
+        tool_parameters:
+          query:
+            type: mixed
+            value: '{{#1739244888446.nextSearchTopic#}}'
+        type: tool
+      height: 324
+      id: '1739245424964'
+      parentId: '1739244888446'
+      position:
+        x: 700
+        y: 80
+      positionAbsolute:
+        x: 1100
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInLoop: true
+        items:
+        - input_type: variable
+          operation: append
+          value:
+          - '1739245424964'
+          - text
+          variable_selector:
+          - '1739244888446'
+          - findings
+          write_mode: over-write
+        loop_id: '1739244888446'
+        selected: false
+        title: Append Findings
+        type: assigner
+        version: '2'
+      height: 88
+      id: '1739246085820'
+      parentId: '1739244888446'
+      position:
+        x: 980
+        y: 80
+      positionAbsolute:
+        x: 1380
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInLoop: true
+        loop_id: '1739244888446'
+        selected: false
+        title: Exit Loop
+        type: loop-end
+      height: 54
+      id: 1739244888446end
+      parentId: '1739244888446'
+      position:
+        x: 980
+        y: 400
+      positionAbsolute:
+        x: 1380
+        y: 600
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-simple
+      width: 244
+      zIndex: 1002
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        model:
+          completion_params:
+            frequency_penalty: 0.5
+            presence_penalty: 0.5
+            temperature: 0.2
+            top_p: 0.75
+          mode: chat
+          name: o1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: 89c17d58-6a63-4f4f-98fe-f6534ec1ecb0
+          role: system
+          text: '# Important Notes
+
+            - この出力は常に日本語で行ってください。
+
+
+            Based on the investigation results, create a comprehensive analysis of the topic.
+
+            Provide important insights, conclusions, and remaining uncertainties.
+
+            This analysis should be very comprehensive and detailed. It is expected to be a long text.
+
+
+            ## 出典の書き方（厳守）
+
+            - 出典は必要。ただし本文の読みやすさを最優先する。
+
+            - 文中では番号のみを使う。例: ［1］［2］ または （出典1）。
+
+            - 文中に URL・「タイトル — URL」・長いサイト名を埋め込まない。
+
+            - Findings にタイトルが途中で切れている（...）場合でも、本文中にその省略タイトルを転記しない。番号引用に留める。
+
+            - 末尾に「参考文献」を置き、そこでだけ「[番号] タイトル — URL」を列挙する。
+
+            - 参考文献のタイトルは可能な範囲で自然な短称にする（エンコードだらけのURL文字列をタイトル代わりにしない）。
+
+            - 検索結果の生本文・Relevance Score・ページナビ残骸は転載しない。
+
+            '
+        - id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          role: user
+          text: '## Topic
+
+            {{#1739229221219.query#}}
+
+
+            ## Findings
+
+            {{#1739244888446.findings#}}
+
+            '
+        selected: false
+        title: Reasoning Model
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1739246156652'
+      position:
+        x: 1700
+        y: 300
+      positionAbsolute:
+        x: 1700
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        outputs:
+        - value_selector:
+          - '1739246156652'
+          - text
+          variable: result
+        selected: false
+        title: 終了
+        type: end
+      height: 116
+      id: '1739249999999'
+      position:
+        x: 2020
+        y: 300
+      positionAbsolute:
+        x: 2020
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: "import json\nimport re\n\ndef main(text: str) -> dict:\n    raw = text or \"\"\n    # ```json ... ``` を優先抽出\n\
+          \    m = re.search(r\"```(?:json)?\\s*([\\s\\S]*?)```\", raw, re.I)\n    candidate = (m.group(1) if m else raw).strip()\n\
+          \    # 最初の { ... } を抽出\n    brace = re.search(r\"\\{[\\s\\S]*\\}\", candidate)\n    if brace:\n        candidate\
+          \ = brace.group(0)\n\n    def try_load(s: str):\n        return json.loads(s)\n\n    data = None\n    err = \"\"\
+          \n    for s in (candidate, candidate.replace(\"\\r\\n\", \"\\n\")):\n        try:\n            data = try_load(s)\n\
+          \            break\n        except Exception as e1:\n            err = str(e1)\n            # 文字列値内の素の制御文字をエスケープして再試行\n\
+          \            fixed = []\n            in_str = False\n            esc = False\n            for ch in s:\n       \
+          \         if esc:\n                    fixed.append(ch)\n                    esc = False\n                    continue\n\
+          \                if ch == \"\\\\\":\n                    fixed.append(ch)\n                    esc = True\n    \
+          \                continue\n                if ch == '\"':\n                    in_str = not in_str\n           \
+          \         fixed.append(ch)\n                    continue\n                if in_str and ord(ch) < 32:\n        \
+          \            fixed.append(\"\\\\u%04x\" % ord(ch))\n                    continue\n                fixed.append(ch)\n\
+          \            try:\n                data = try_load(\"\".join(fixed))\n                break\n            except\
+          \ Exception as e2:\n                err = str(e2)\n\n    if not isinstance(data, dict):\n        return {\n    \
+          \        \"nextSearchTopic\": \"\",\n            \"shouldContinue\": \"false\",\n            \"parse_ok\": \"false\"\
+          ,\n            \"parse_error\": err or \"json parse failed\",\n        }\n\n    topic = data.get(\"nextSearchTopic\"\
+          )\n    if topic is None:\n        topic = \"\"\n    topic = str(topic).strip()\n    if topic.lower() in (\"none\"\
+          , \"null\"):\n        topic = \"\"\n\n    cont = data.get(\"shouldContinue\", False)\n    if isinstance(cont, str):\n\
+          \        cont_s = \"true\" if cont.strip().lower() in (\"true\", \"1\", \"yes\") else \"false\"\n    else:\n   \
+          \     cont_s = \"true\" if bool(cont) else \"false\"\n\n    # トピックが空なら継続しない\n    if cont_s == \"true\" and not topic:\n\
+          \        cont_s = \"false\"\n\n    return {\n        \"nextSearchTopic\": topic,\n        \"shouldContinue\": cont_s,\n\
+          \        \"parse_ok\": \"true\",\n        \"parse_error\": \"\",\n    }\n"
+        code_language: python3
+        desc: Planner JSON を制御文字に耐えて抽出する
+        isInLoop: true
+        loop_id: '1739244888446'
+        outputs:
+          nextSearchTopic:
+            children: null
+            type: string
+          shouldContinue:
+            children: null
+            type: string
+          parse_ok:
+            children: null
+            type: string
+          parse_error:
+            children: null
+            type: string
+        selected: false
+        title: Parse Planner JSON
+        type: code
+        variables:
+        - value_selector:
+          - '1739245286499'
+          - text
+          variable: text
+      height: 54
+      id: '1739245600000'
+      parentId: '1739244888446'
+      position:
+        x: 100
+        y: 250
+      positionAbsolute:
+        x: 500
+        y: 450
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.5
+  rag_pipeline_variables: []

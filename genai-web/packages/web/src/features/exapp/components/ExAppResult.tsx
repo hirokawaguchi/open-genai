@@ -7,6 +7,7 @@ import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { useExAppInvokeStore } from '../stores/useExAppInvokeStore';
 import { ContinueConversationButton } from './ContinueConversationButton';
 import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
+import { ExAppCitations } from './ExAppCitations';
 
 type Props = {
   shouldShowConversationHistory: boolean;
@@ -35,6 +36,7 @@ export const ExAppResult = (props: Props) => {
 
         <div ref={copyTextRef}>
           <Markdown>{exAppResponse?.outputs ?? ''}</Markdown>
+          <ExAppCitations artifacts={exAppResponse?.artifacts} />
         </div>
 
         <ExAppArtifactDownloads artifacts={exAppResponse?.artifacts} />

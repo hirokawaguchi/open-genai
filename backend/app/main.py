@@ -127,9 +127,11 @@ RAG_SEED: dict[str, Any] = {
 }
 
 # 共有ナレッジの「管理」アプリ（管理者限定）。検索は含めない。
+# teamId は検索アプリと同じ COMMON_TEAM_ID にする（x-scope = ナレッジ分離キーのため）。
+# 管理者限定は ADMIN_ONLY_EXAPP_IDS で担保する（ADMIN_TEAM に置くと登録先と検索先が食い違う）。
 RAG_MANAGE_SEED: dict[str, Any] = {
     "exAppId": "rag-manage",
-    "teamId": ADMIN_TEAM_ID,
+    "teamId": COMMON_TEAM_ID,
     "exAppName": "ナレッジ管理（管理者）",
     "endpoint": RAG_APP_URL,
     "apiKey": RAG_API_KEY,
@@ -701,7 +703,9 @@ def _header_config_value(config: str | None) -> str:
 
 # 成果物取得（SSRF 対策）の設定
 # - ARTIFACT_FETCH_ALLOWED_HOSTS が指定されていれば、そのホストのみ取得を許可（推奨）。
-# - 未指定でも、プライベート/ループバック/リンクローカル等の内部宛先は常に拒否する。
+# - allowlist に載せたホストは、ローカル/セルフホスト Dify 向けに private/loopback
+#   解決を許可する（未掲載ホストや allowlist 空の場合は公開アドレスのみ）。
+# - リンクローカル（クラウドメタデータ等）は allowlist でも拒否。
 # - 取得は shared.ssrfguard 経由（DNS リバインディング対策・リダイレクト都度検証つき）。
 _ARTIFACT_ALLOWED_HOSTS = {
     h.strip().lower()
