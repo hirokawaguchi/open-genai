@@ -1,4 +1,5 @@
 import { AmazonUIImageGenerationMode, ControlMode } from 'genai-web';
+import type { KeyboardEvent } from 'react';
 import { MdDeleteOutline } from 'react-icons/md';
 import { PiDiceFive } from 'react-icons/pi';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
@@ -19,6 +20,7 @@ import {
   useGenerateImageStore,
 } from '@/features/generate-image/stores/useGenerateImageStore';
 import { findModelDisplayNameByModelId, MODELS } from '@/models';
+import { isSubmitKey, submitKeyHint } from '@/utils/keyboard';
 import {
   AMAZON_ADVANCED_GENERATION_MODE,
   AMAZON_MODELS,
@@ -119,6 +121,34 @@ export const ImageGeneratorForm = (props: Props) => {
     .map((option) => option.value)
     .includes(GENERATION_MODES.IMAGE_VARIATION);
 
+  const isGenerateDisabled =
+    (generationMode !== AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL &&
+      (prompt.length === 0 || negativePrompt.length === 0)) ||
+    (generationMode !== GENERATION_MODES.TEXT_IMAGE &&
+      generationMode !== AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION &&
+      !initImage.imageBase64) ||
+    ((generationMode === GENERATION_MODES.INPAINTING ||
+      generationMode === GENERATION_MODES.OUTPAINTING) &&
+      !maskImage.imageBase64 &&
+      !maskPrompt) ||
+    (generationMode === AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION && !colors);
+
+  const runGenerate = () => {
+    if (generating || loadingChat || isGenerateDisabled) {
+      return;
+    }
+    setSelectedImageIndex(0);
+    generateImage(prompt, negativePrompt);
+  };
+
+  const handleGenerateKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!isSubmitKey(e)) {
+      return;
+    }
+    e.preventDefault();
+    runGenerate();
+  };
+
   const generateImageVariant = () => {
     if (image[selectedImageIndex].base64) {
       if (generationMode === GENERATION_MODES.TEXT_IMAGE) {
@@ -150,9 +180,11 @@ export const ImageGeneratorForm = (props: Props) => {
               value={prompt}
               className='py-1.5!'
               onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleGenerateKeyDown}
               maxHeight={80}
               rows={2}
               required
+              aria-describedby='generate-image-prompt-input-support generate-image-submit-hint'
             />
           </div>
 
@@ -172,9 +204,11 @@ export const ImageGeneratorForm = (props: Props) => {
               value={negativePrompt}
               className='py-1.5!'
               onChange={(e) => setNegativePrompt(e.target.value)}
+              onKeyDown={handleGenerateKeyDown}
               maxHeight={80}
               rows={2}
               required
+              aria-describedby='generate-image-negative-prompt-input-support generate-image-submit-hint'
             />
           </div>
         </div>
@@ -385,10 +419,12 @@ export const ImageGeneratorForm = (props: Props) => {
               id='mask-prompt-input'
               value={maskPrompt}
               onChange={(e) => setMaskPrompt(e.target.value)}
+              onKeyDown={handleGenerateKeyDown}
               maxHeight={80}
               rows={2}
               className='w-full'
               aria-disabled={!!maskImage.imageBase64}
+              aria-describedby='mask-prompt-input-support generate-image-submit-hint'
             />
           </div>
         )}
@@ -563,27 +599,17 @@ export const ImageGeneratorForm = (props: Props) => {
         )}
       </div>
 
+      <SupportText id='generate-image-submit-hint' className='mt-4 mb-2 text-center text-dns-14N-130!'>
+        {submitKeyHint}
+      </SupportText>
+
       <div className='flex flex-row-reverse items-center justify-center gap-x-5'>
         <LoadingButton
           variant='solid-fill'
           size='lg'
-          onClick={() => {
-            setSelectedImageIndex(0);
-            generateImage(prompt, negativePrompt);
-          }}
+          onClick={runGenerate}
           loading={generating || loadingChat}
-          disabled={
-            (generationMode !== AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL &&
-              (prompt.length === 0 || negativePrompt.length === 0)) ||
-            (generationMode !== GENERATION_MODES.TEXT_IMAGE &&
-              generationMode !== AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION &&
-              !initImage.imageBase64) ||
-            ((generationMode === GENERATION_MODES.INPAINTING ||
-              generationMode === GENERATION_MODES.OUTPAINTING) &&
-              !maskImage.imageBase64 &&
-              !maskPrompt) ||
-            (generationMode === AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION && !colors)
-          }
+          disabled={isGenerateDisabled}
         >
           実行
         </LoadingButton>

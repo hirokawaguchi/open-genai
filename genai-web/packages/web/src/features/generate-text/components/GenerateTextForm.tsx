@@ -9,6 +9,7 @@ import { SupportText } from '@/components/ui/dads/SupportText';
 import { useGenerateTextStore } from '@/features/generate-text/stores/useGenerateTextStore';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 import { GenerateTextFormSchema, generateTextFormSchema } from '../schema';
 
 type Props = {
@@ -61,7 +62,8 @@ export const GenerateTextForm = (props: Props) => {
               required
               rows={2}
               maxHeight={500}
-              aria-describedby={`generate-text-original-input-support${errors.information ? ' generate-text-original-input-error' : ''}`}
+              aria-describedby={`generate-text-original-input-support generate-text-submit-hint${errors.information ? ' generate-text-original-input-error' : ''}`}
+              onKeyDown={requestSubmitOnEnter}
               {...register('information')}
             />
             {errors.information && (
@@ -83,7 +85,8 @@ export const GenerateTextForm = (props: Props) => {
             </SupportText>
             <AutoResizeTextarea
               id='generate-text-format-input'
-              aria-describedby={`generate-text-format-input-support${errors.format ? ' generate-text-format-input-error' : ''}`}
+              aria-describedby={`generate-text-format-input-support generate-text-submit-hint${errors.format ? ' generate-text-format-input-error' : ''}`}
+              onKeyDown={requestSubmitOnEnter}
               {...register('format')}
             />
             {errors.format && (
@@ -92,7 +95,11 @@ export const GenerateTextForm = (props: Props) => {
           </div>
         </div>
 
-        <div className='mt-6 flex justify-center'>
+        <SupportText id='generate-text-submit-hint' className='mt-4 text-center'>
+          {submitKeyHint}
+        </SupportText>
+
+        <div className='mt-3 flex justify-center'>
           <Button
             type='submit'
             variant='solid-fill'

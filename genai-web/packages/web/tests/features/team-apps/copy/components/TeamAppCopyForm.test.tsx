@@ -100,25 +100,25 @@ describe('TeamAppCopyForm', () => {
       expect(textarea.value).toBe('初期使い方');
     });
 
-    it('renders endpoint input field as readonly', () => {
-      const app = createMockApp({ endpoint: 'https://readonly.example.com' });
+    it('renders endpoint input field as editable with initial value', () => {
+      const app = createMockApp({ endpoint: 'https://editable.example.com' });
       renderWithRouter(app);
 
       const input = screen.getByRole('textbox', {
         name: /APIエンドポイントのURL/,
       }) as HTMLInputElement;
       expect(input).toBeDefined();
-      expect(input.getAttribute('readonly')).toBe('');
-      expect(input.value).toBe('https://readonly.example.com');
+      expect(input.getAttribute('readonly')).toBeNull();
+      expect(input.value).toBe('https://editable.example.com');
     });
 
-    it('renders API key input field as readonly with masked value', () => {
+    it('renders API key input field as editable and empty by default', () => {
       renderWithRouter();
 
       const input = screen.getByRole('textbox', { name: /APIキー/ }) as HTMLInputElement;
       expect(input).toBeDefined();
-      expect(input.getAttribute('readonly')).toBe('');
-      expect(input.value).toBe('************');
+      expect(input.getAttribute('readonly')).toBeNull();
+      expect(input.value).toBe('');
     });
 
     it('renders UI format textarea with initial value', () => {
@@ -129,7 +129,7 @@ describe('TeamAppCopyForm', () => {
         name: /APIリクエストのデータ形式/,
       }) as HTMLTextAreaElement;
       expect(textarea).toBeDefined();
-      expect(textarea.getAttribute('required')).toBe('');
+      expect(textarea.getAttribute('required')).toBeNull();
       expect(textarea.value).toBe('{"test": "data"}');
     });
 
@@ -192,11 +192,10 @@ describe('TeamAppCopyForm', () => {
       expect(button.getAttribute('type')).toBe('submit');
     });
 
-    it('shows readonly badges for endpoint and API key fields', () => {
+    it('does not show readonly badges for endpoint and API key fields', () => {
       renderWithRouter();
 
-      const readonlyBadges = screen.getAllByText('編集不可');
-      expect(readonlyBadges.length).toBe(2);
+      expect(screen.queryByText('編集不可')).toBeNull();
     });
   });
 
@@ -230,6 +229,7 @@ describe('TeamAppCopyForm', () => {
           'app-456',
           expect.objectContaining({
             exAppName: 'テストアプリ',
+            endpoint: 'https://api.example.com/test',
             config: '{"max_payload_size": 1000}',
             placeholder: '{"input": "value"}',
             systemPrompt: '',
@@ -243,11 +243,45 @@ describe('TeamAppCopyForm', () => {
       });
     });
 
-    it('does not include endpoint and apiKey in copy request', async () => {
+    it('includes edited endpoint and apiKey in copy request', async () => {
       const user = userEvent.setup();
       const app = createMockApp({
-        endpoint: 'https://api.example.com/should-not-be-in-request',
+        endpoint: 'https://api.example.com/original',
       });
+      mockCopyTeamApp.mockResolvedValue({
+        exAppId: 'app-new',
+        exAppName: 'テストアプリ',
+      });
+
+      renderWithRouter(app);
+
+      const endpointInput = screen.getByRole('textbox', { name: /APIエンドポイントのURL/ });
+      await user.clear(endpointInput);
+      await user.type(endpointInput, 'https://api.example.com/custom');
+
+      const apiKeyInput = screen.getByRole('textbox', { name: /APIキー/ });
+      await user.type(apiKeyInput, 'custom-api-key');
+
+      await selectStatus(user);
+
+      const submitButton = screen.getByRole('button', { name: 'コピーして作成' });
+      await user.click(submitButton);
+
+      await waitFor(() => {
+        expect(mockCopyTeamApp).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(String),
+          expect.objectContaining({
+            endpoint: 'https://api.example.com/custom',
+            apiKey: 'custom-api-key',
+          }),
+        );
+      });
+    });
+
+    it('allows empty UI format for chat apps', async () => {
+      const user = userEvent.setup();
+      const app = createMockApp({ placeholder: '' });
       mockCopyTeamApp.mockResolvedValue({
         exAppId: 'app-new',
         exAppName: 'テストアプリ',
@@ -261,10 +295,13 @@ describe('TeamAppCopyForm', () => {
       await user.click(submitButton);
 
       await waitFor(() => {
-        expect(mockCopyTeamApp).toHaveBeenCalled();
-        const callArgs = mockCopyTeamApp.mock.calls[0][2];
-        expect(callArgs).not.toHaveProperty('endpoint');
-        expect(callArgs).not.toHaveProperty('apiKey');
+        expect(mockCopyTeamApp).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(String),
+          expect.objectContaining({
+            placeholder: '',
+          }),
+        );
       });
     });
 
@@ -436,6 +473,7 @@ describe('TeamAppCopyForm', () => {
     it('validates name is required in schema', () => {
       const result = teamAppCopySchema.safeParse({
         name: '',
+        endpoint: 'https://api.example.com/test',
         uiFormat: '{}',
         description: 'test',
         howToUse: 'test',
@@ -447,6 +485,19 @@ describe('TeamAppCopyForm', () => {
         const nameError = result.error.issues.find((issue) => issue.path.includes('name'));
         expect(nameError?.message).toContain('AIアプリ名を入力してください');
       }
+    });
+
+    it('allows empty uiFormat in schema', () => {
+      const result = teamAppCopySchema.safeParse({
+        name: 'test',
+        endpoint: 'https://api.example.com/test',
+        uiFormat: '',
+        description: 'test',
+        howToUse: 'test',
+        copyable: false,
+        status: 'published',
+      });
+      expect(result.success).toBe(true);
     });
 
     it('shows error message for invalid JSON in UI format', async () => {
@@ -621,19 +672,17 @@ describe('TeamAppCopyForm', () => {
       expect(supportText).toBeDefined();
     });
 
-    it('has support text indicating endpoint is readonly', () => {
+    it('has support text indicating API key falls back to source', () => {
       renderWithRouter();
 
-      const supportText = screen.getByText(
-        /コピーしたAIアプリのAPIエンドポイントのURLは編集できません/,
-      );
+      const supportText = screen.getByText(/未入力の場合はコピー元のAPIキーを使用します/);
       expect(supportText).toBeDefined();
     });
 
-    it('has support text indicating API key is readonly', () => {
+    it('has support text indicating UI format can be empty for chat apps', () => {
       renderWithRouter();
 
-      const supportText = screen.getByText(/コピーしたAIアプリのAPIキーは編集できません/);
+      const supportText = screen.getByText(/対話型（Dify チャット）や入力不要のアプリでは空で構いません/);
       expect(supportText).toBeDefined();
     });
   });

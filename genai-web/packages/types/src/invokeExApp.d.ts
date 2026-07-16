@@ -37,6 +37,8 @@ export type Artifact = {
   mime_type?: string;
   // インライン表示用の base64（画像など）
   content?: string;
+  // RAG 出典など、プレーンテキストの該当箇所（アコーディオン表示用）
+  text?: string;
 };
 
 export type ExAppInvokeStatus = 'ACCEPTED' | 'IN_PROGRESS' | 'COMPLETED' | 'ERROR';

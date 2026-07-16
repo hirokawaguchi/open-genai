@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { submitKeyHint, isSubmitKey } from '@/utils/keyboard';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
 import { processFormFiles } from '../utils/processFormFiles';
 import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
+import { ExAppCitations } from './ExAppCitations';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -81,7 +83,7 @@ export const ExAppChat = ({ exApp }: Props) => {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing.current) {
+    if (isSubmitKey(e) && !isComposing.current) {
       e.preventDefault();
       void send();
     }
@@ -120,6 +122,7 @@ export const ExAppChat = ({ exApp }: Props) => {
                 {m.role === 'assistant' ? (
                   <>
                     <Markdown>{m.content}</Markdown>
+                    <ExAppCitations artifacts={m.artifacts} />
                     <ExAppArtifactDownloads artifacts={m.artifacts} />
                   </>
                 ) : (
@@ -166,7 +169,7 @@ export const ExAppChat = ({ exApp }: Props) => {
           onCompositionStart={() => (isComposing.current = true)}
           onCompositionEnd={() => (isComposing.current = false)}
           rows={2}
-          placeholder='メッセージを入力（Enter で送信 / Shift+Enter で改行）'
+          placeholder={`メッセージを入力（${submitKeyHint}）`}
           className='w-full'
         />
 

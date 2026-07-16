@@ -4,7 +4,9 @@
 「行政実務用 AI アプリ」プロトコル（同期形式）でラップして呼び出せるようにする。
 
 - リクエスト: { "inputs": { ... } }（backend がプロキシ）
-- レスポンス: { "outputs": "<Markdown テキスト>" }
+- レスポンス: { "outputs": "<Markdown テキスト>", "artifacts": [...] }
+  artifacts にはファイル成果物に加え、Knowledge Retrieval の引用
+  （mime_type=text/x.open-genai.citation）を含めることがある。
 
 1 つの汎用プロキシで複数の Dify フローに対応する。Dify ごとの接続情報
 （base_url / 種別 など）は、源内 の AI アプリ設定(config) に持たせ、
@@ -305,6 +307,75 @@ def _files_to_artifacts(base: str, files: list[dict[str, Any]]) -> list[dict[str
     return arts
 
 
+# フロントの出典アコーディオン用（rag-app と同一定義）
+CITATION_MIME = "text/x.open-genai.citation"
+
+
+def _citations_to_artifacts(resources: list[Any]) -> list[dict[str, Any]]:
+    """Dify の引用情報を citation artifacts へ変換する。
+
+    受け付ける入力:
+    - 通常チャットの retriever_resources
+      {document_name, score, content, position}
+    - Chatflow の knowledge-retrieval ノード outputs.result
+      {title, content, metadata: {document_name, score, position, ...}}
+
+    Dify Studio の「引用」と同じ情報を、源内の ExAppCitations が
+    アコーディオン表示できる形式にする。
+    """
+    arts: list[dict[str, Any]] = []
+    for r in resources or []:
+        if not isinstance(r, dict):
+            continue
+        meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        name = (
+            str(
+                r.get("document_name")
+                or meta.get("document_name")
+                or r.get("title")
+                or r.get("document_id")
+                or meta.get("document_id")
+                or "unknown"
+            ).strip()
+            or "unknown"
+        )
+        position = r.get("position") or meta.get("position") or (len(arts) + 1)
+        score = r.get("score")
+        if score is None:
+            score = meta.get("score")
+        try:
+            score_f = float(score) if score is not None else None
+        except (TypeError, ValueError):
+            score_f = None
+        if score_f is not None:
+            display = f"[{position}] {name}（類似度: {score_f:.3f}）"
+        else:
+            display = f"[{position}] {name}"
+        content = r.get("content")
+        arts.append(
+            {
+                "display_name": display,
+                "mime_type": CITATION_MIME,
+                "text": content if isinstance(content, str) else "",
+            }
+        )
+    return arts
+
+
+def _extract_knowledge_results(node_data: dict[str, Any]) -> list[Any]:
+    """node_finished(data) から knowledge-retrieval のヒット一覧を取り出す。"""
+    if not isinstance(node_data, dict):
+        return []
+    ntype = str(node_data.get("node_type") or "")
+    if ntype not in ("knowledge-retrieval", "knowledge_retrieval"):
+        return []
+    outputs = node_data.get("outputs") or {}
+    if not isinstance(outputs, dict):
+        return []
+    result = outputs.get("result")
+    return result if isinstance(result, list) else []
+
+
 def _outputs_to_text(outputs: Any, response_field: str | None) -> str:
     """ワークフローの outputs(dict) を表示用テキストに整形する。
 
@@ -430,7 +501,11 @@ async def _run_chat(
     user: str,
     conversation_id: str,
     files: list[dict[str, Any]],
-) -> tuple[str, str, list[dict[str, Any]]]:
+) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """チャットフローを実行する。
+
+    戻り値: (answer, conversation_id, file_objs, citation_artifacts)
+    """
     payload: dict[str, Any] = {
         "query": query,
         "inputs": inputs,
@@ -444,6 +519,7 @@ async def _run_chat(
 
     answer_parts: list[str] = []
     file_objs: list[dict[str, Any]] = []
+    retriever_resources: list[Any] = []
     new_conv_id = conversation_id
     error: str | None = None
 
@@ -462,6 +538,7 @@ async def _run_chat(
                 return (
                     f"Dify チャットフローの呼び出しに失敗しました (status: {res.status_code}).\n\n```\n{body[:1000]}\n```",
                     new_conv_id,
+                    [],
                     [],
                 )
             async for line in res.aiter_lines():
@@ -483,20 +560,37 @@ async def _run_chat(
                 elif event == "message_file":
                     # ツール等が生成したファイル（画像/文書）
                     file_objs.append(obj)
+                elif event == "node_finished":
+                    # Chatflow: message_end.retriever_resources が空でも
+                    # knowledge-retrieval ノードの outputs.result に出典がある
+                    hits = _extract_knowledge_results(obj.get("data") or {})
+                    if hits:
+                        retriever_resources.extend(hits)
                 elif event == "message_end":
                     # message_end に files 配列が入る版がある
                     for f in obj.get("files") or []:
                         if isinstance(f, dict):
                             file_objs.append(f)
+                    # 通常チャットアプリの引用（Chatflow では空配列のことがある）
+                    meta = obj.get("metadata") or {}
+                    resources = meta.get("retriever_resources") or []
+                    if isinstance(resources, list) and resources:
+                        retriever_resources = list(resources)
                 elif event == "error":
                     error = obj.get("message") or "unknown error"
 
     if error:
-        return (f"Dify チャットフローでエラーが発生しました: {error}", new_conv_id, [])
+        return (
+            f"Dify チャットフローでエラーが発生しました: {error}",
+            new_conv_id,
+            [],
+            [],
+        )
     answer = "".join(answer_parts)
     # 生成ファイルは backend で再ホストするため、参照(file_obj)を返す
     out_files = _extract_dify_files(file_objs)
-    return (answer, new_conv_id, out_files)
+    citations = _citations_to_artifacts(retriever_resources)
+    return (answer, new_conv_id, out_files, citations)
 
 
 # ---------------------------------------------------------------------------
@@ -682,13 +776,13 @@ async def invoke(
             if file_var:
                 dify_inputs[file_var] = all_file_refs if is_list else all_file_refs[0]
                 chat_files = []
-        answer, new_conv_id, out_files = await _run_chat(
+        answer, new_conv_id, out_files, citations = await _run_chat(
             base, api_key, query, dify_inputs, user, conversation_id, chat_files
         )
         if new_conv_id and x_session_id:
             _save_conversation_id(x_session_id, new_conv_id)
         resp = {"outputs": answer}
-        arts = _files_to_artifacts(base, out_files)
+        arts = _files_to_artifacts(base, out_files) + citations
         if arts:
             resp["artifacts"] = arts
         return resp

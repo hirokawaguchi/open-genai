@@ -26,6 +26,30 @@
 
 ## [Unreleased]
 
+### 出典表示（RAG / Dify）
+
+- RAG 検索ヒットと Dify Knowledge Retrieval の引用を `text/x.open-genai.citation` artifact として返し、源内 UI でアコーディオン表示（`ExAppCitations`）
+- ダウンロード一覧からは citation を除外し、ファイル成果物と分離
+
+### ローカル／セルフホスト Dify 向け成果物取得
+
+- SSRF ガードで allowlist ホストの private/loopback 解決を許可（リンクローカルは拒否のまま）
+- `ARTIFACT_FETCH_ALLOWED_HOSTS` に `host.docker.internal` 等を載せる手順を README / `.env.example` に明記
+
+### UX
+
+- 入力欄の送信を Enter（Shift+Enter で改行、IME 変換中は除外）に統一
+- AI アプリ複製で endpoint / apiKey を編集可能にし、入力フォーム JSON（`uiFormat`）を任意化
+
+### ナレッジ管理
+
+- `rag-manage` を共有チーム（COMMON）へ移設し、旧 ADMIN スコープのチャンク／URL を一度きり移行
+- シードアプリの teamId 変更時に履歴・ピン留めを追随
+
+### Added
+
+- 検証用 Dify DSL: `DeepResearch` / `DeepResearch.chatflow` / `MultiFileGenerator`
+
 ---
 
 ## [0.3.1] - 2026-07-14

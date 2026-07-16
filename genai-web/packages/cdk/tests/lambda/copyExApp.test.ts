@@ -372,22 +372,146 @@ describe('copyExApp Lambda handler', () => {
     });
   });
 
-  test('placeholderが空の場合は400エラーを返す', async () => {
+  test('placeholderが空でもコピーできる', async () => {
     const teamId = 'test-team-id';
     const exAppId = 'source-exapp-id';
+    const now = Date.now().toString();
 
     mockedIsSystemAdmin.mockReturnValue(true);
     mockedIsTeamAdmin.mockResolvedValue(false);
+
+    mockedFindTeamById.mockResolvedValue({
+      teamId,
+      teamName: 'テストチーム',
+      createdDate: now,
+      updatedDate: now,
+    });
+
+    mockedFindExAppById.mockResolvedValue({
+      teamId,
+      exAppId,
+      exAppName: '元アプリ',
+      description: '元アプリの概要',
+      howToUse: '元アプリの使い方',
+      endpoint: 'https://api.example.com/original',
+      apiKey: '',
+      placeholder: '',
+      config: '{"model": "original"}',
+      systemPrompt: '元プロンプト',
+      systemPromptKeyName: 'system',
+      copyable: true,
+      status: 'published',
+      createdDate: now,
+      updatedDate: now,
+    });
+
+    mockedGetApiKeyValue.mockResolvedValue('original-api-key');
+    mockedCreateExApp.mockResolvedValue({
+      teamId,
+      exAppId: 'copied-exapp-id',
+      exAppName: 'コピーされたアプリ',
+      description: 'コピーされたアプリの概要',
+      howToUse: 'コピーされたアプリの使い方',
+      endpoint: 'https://api.example.com/original',
+      apiKey: '',
+      placeholder: '',
+      config: '{"model": "test"}',
+      systemPrompt: 'テストプロンプト',
+      systemPromptKeyName: 'system',
+      copyable: true,
+      status: 'draft',
+      createdDate: now,
+      updatedDate: now,
+    });
+    mockedSetApiKey.mockResolvedValue(undefined);
 
     const body = { ...createValidRequestBody(), placeholder: '' };
     const event = createAPIGatewayProxyEvent(body, teamId, exAppId);
 
     const result = await handler(event);
 
-    expect(result.statusCode).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      error: 'APIリクエストは必須です。',
+    expect(result.statusCode).toBe(200);
+    expect(mockedCreateExApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        placeholder: '',
+      }),
+    );
+  });
+
+  test('リクエストのendpointとapiKeyを優先してコピーできる', async () => {
+    const teamId = 'test-team-id';
+    const exAppId = 'source-exapp-id';
+    const now = Date.now().toString();
+
+    mockedIsSystemAdmin.mockReturnValue(true);
+    mockedIsTeamAdmin.mockResolvedValue(false);
+
+    mockedFindTeamById.mockResolvedValue({
+      teamId,
+      teamName: 'テストチーム',
+      createdDate: now,
+      updatedDate: now,
     });
+
+    mockedFindExAppById.mockResolvedValue({
+      teamId,
+      exAppId,
+      exAppName: '元アプリ',
+      description: '元アプリの概要',
+      howToUse: '元アプリの使い方',
+      endpoint: 'https://api.example.com/original',
+      apiKey: '',
+      placeholder: '{"input": "original"}',
+      config: '{"model": "original"}',
+      systemPrompt: '元プロンプト',
+      systemPromptKeyName: 'system',
+      copyable: true,
+      status: 'published',
+      createdDate: now,
+      updatedDate: now,
+    });
+
+    mockedCreateExApp.mockResolvedValue({
+      teamId,
+      exAppId: 'copied-exapp-id',
+      exAppName: 'コピーされたアプリ',
+      description: 'コピーされたアプリの概要',
+      howToUse: 'コピーされたアプリの使い方',
+      endpoint: 'https://api.example.com/custom',
+      apiKey: '',
+      placeholder: '{"input": "test"}',
+      config: '{"model": "test"}',
+      systemPrompt: 'テストプロンプト',
+      systemPromptKeyName: 'system',
+      copyable: true,
+      status: 'draft',
+      createdDate: now,
+      updatedDate: now,
+    });
+    mockedSetApiKey.mockResolvedValue(undefined);
+
+    const body = {
+      ...createValidRequestBody(),
+      endpoint: 'https://api.example.com/custom',
+      apiKey: 'custom-api-key',
+    };
+    const event = createAPIGatewayProxyEvent(body, teamId, exAppId);
+
+    const result = await handler(event);
+
+    expect(result.statusCode).toBe(200);
+    expect(mockedCreateExApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: 'https://api.example.com/custom',
+      }),
+    );
+    expect(mockedGetApiKeyValue).not.toHaveBeenCalled();
+    expect(mockedSetApiKey).toHaveBeenCalledWith(
+      teamId,
+      'copied-exapp-id',
+      'custom-api-key',
+      expect.any(String),
+    );
   });
 
   test('placeholderが文字列でない場合は400エラーを返す', async () => {

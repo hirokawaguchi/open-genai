@@ -13,7 +13,6 @@ import { Legend } from '@/components/ui/dads/Legend';
 import { Link } from '@/components/ui/dads/Link';
 import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { Select } from '@/components/ui/dads/Select';
-import { StatusBadge } from '@/components/ui/dads/StatusBadge';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
@@ -46,12 +45,14 @@ export const TeamAppCopyForm = (props: Props) => {
     resolver: zodResolver(teamAppCopySchema),
     values: {
       name: app.exAppName,
+      endpoint: app.endpoint,
       config: app.config ?? '',
       uiFormat: app.placeholder.replace(/\\n/g, '\r\n') ?? '',
       systemPrompt: app.systemPrompt ?? '',
       systemPromptKeyName: app.systemPromptKeyName ?? '',
       description: app.description,
       howToUse: app.howToUse ?? '',
+      apiKey: undefined,
       copyable: app.copyable ?? false,
       status: '',
     },
@@ -63,12 +64,14 @@ export const TeamAppCopyForm = (props: Props) => {
       setIsLoading(true);
       await copyTeamApp(app.teamId, app.exAppId, {
         exAppName: data.name,
+        endpoint: data.endpoint,
         config: data.config,
         placeholder: escapeNewlinesInJsonFields(data.uiFormat, ['default_value', 'desc']),
         systemPrompt: data.systemPrompt,
         systemPromptKeyName: data.systemPromptKeyName,
         description: data.description,
         howToUse: data.howToUse,
+        apiKey: data.apiKey || undefined,
         copyable: data.copyable,
         status: data.status,
       });
@@ -172,55 +175,57 @@ export const TeamAppCopyForm = (props: Props) => {
 
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor={`team-app-copy-endpoint-url`} size='lg'>
-          APIエンドポイントのURL
-          <StatusBadge>編集不可</StatusBadge>
+          APIエンドポイントのURL<RequirementBadge>※必須</RequirementBadge>
         </Label>
-        <SupportText id={`team-app-copy-endpoint-url-support`}>
-          コピーしたAIアプリのAPIエンドポイントのURLは編集できません。
-        </SupportText>
         <Input
           id={`team-app-copy-endpoint-url`}
           type='url'
           required
           className='w-full'
-          value={app.endpoint}
-          readOnly
-          aria-describedby={`team-app-copy-endpoint-url-support`}
+          aria-describedby={errors.endpoint ? `team-app-copy-endpoint-url-error` : undefined}
+          {...register('endpoint')}
         />
+        {errors.endpoint && (
+          <ErrorText id={`team-app-copy-endpoint-url-error`}>＊{errors.endpoint.message}</ErrorText>
+        )}
       </div>
 
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor={`team-app-copy-api-key`} size='lg'>
-          APIキー
-          <StatusBadge>編集不可</StatusBadge>
+          APIキー<RequirementBadge isOptional>※任意</RequirementBadge>
         </Label>
         <SupportText id={`team-app-copy-api-key-support`}>
-          コピーしたAIアプリのAPIキーは編集できません。
+          未入力の場合はコピー元のAPIキーを使用します
         </SupportText>
         <Input
           id={`team-app-copy-api-key`}
           type='text'
           className='w-full'
-          value={'************'}
-          readOnly
-          aria-describedby={`team-app-copy-api-key-support`}
+          aria-describedby={
+            errors.apiKey
+              ? `team-app-copy-api-key-support team-app-copy-api-key-error`
+              : `team-app-copy-api-key-support`
+          }
+          {...register('apiKey')}
         />
+        {errors.apiKey && (
+          <ErrorText id={`team-app-copy-api-key-error`}>＊{errors.apiKey.message}</ErrorText>
+        )}
       </div>
 
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor={`team-app-copy-request-data`} size='lg'>
           APIリクエストのデータ形式(JSON)
-          <RequirementBadge>※必須</RequirementBadge>
+          <RequirementBadge isOptional>※任意</RequirementBadge>
         </Label>
         <SupportText id={`team-app-copy-request-data-support`}>
-          JSON形式で入力してください。
+          JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify チャット）や入力不要のアプリでは空で構いません。
           <Link href='/docs/api-request-data-format' target='_blank'>
             APIリクエストのデータ形式解説
           </Link>
         </SupportText>
         <Textarea
           id={`team-app-copy-request-data`}
-          required
           className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
           aria-describedby={
             errors.uiFormat

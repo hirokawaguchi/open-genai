@@ -2,11 +2,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { isSubmitKey } from '@/utils/keyboard';
+import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
 import { type GenerateImageChatFormSchema, generateImageChatFormSchema } from '../schema';
 
 type Props = {
@@ -49,19 +50,17 @@ export const GenerateImageInput = (props: Props) => {
       <h2 id={`${textareaId}-heading`} className='self-start my-1 text-std-16N-170'>
         生成したい画像の内容を入力してみましょう
       </h2>
+      <SupportText id={`${textareaId}-submit-hint`} className='mb-1'>
+        {submitKeyHint}
+      </SupportText>
       <div className='flex w-full flex-col gap-2'>
         <AutoResizeTextarea
           id={textareaId}
           className='resize-none'
           required
           aria-labelledby={`${textareaId}-heading`}
-          aria-describedby={`${textareaId}-error`}
-          onKeyDown={(e) => {
-            if (isSubmitKey(e)) {
-              e.preventDefault();
-              e.currentTarget.form?.requestSubmit();
-            }
-          }}
+          aria-describedby={`${textareaId}-submit-hint ${textareaId}-error`}
+          onKeyDown={requestSubmitOnEnter}
           {...register('content', {
             onChange: (e) => {
               setValue('content', e.target.value);

@@ -5,17 +5,28 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { download } from '@/utils/createDownloadLink';
 import { useDownloadArtifactCarrier } from '../hooks/useDownloadArtifactCarrier';
 import { getFileExtension } from '../utils/getFileExtension';
+import { isCitationArtifact } from './ExAppCitations';
 
 type Props = {
   artifacts?: Artifact[];
 };
 
-const isImage = (a: Artifact): boolean => Boolean(a.content);
+const isImage = (a: Artifact): boolean => {
+  if (!a.content || isCitationArtifact(a)) {
+    return false;
+  }
+  // mime が明示されていれば image/* のみ。未設定時は従来どおり content を画像とみなす。
+  if (a.mime_type) {
+    return a.mime_type.startsWith('image/');
+  }
+  return true;
+};
 const isCarrier = (a: Artifact): boolean => Boolean(a.object_key) && !a.file_url;
 
 // AI アプリ成果物の表示。画像はインライン、ファイルはダウンロードボタンで提示する。
 // carrier 配信（LGWAN 想定）では本体 URL を UI に出さず、URL を記載した
 // 「リンクファイル」を取得させ、別端末で開く運用を案内する。
+// RAG 出典(citation)は ExAppCitations 側で扱うためここでは除外する。
 export const ExAppArtifactDownloads = ({ artifacts }: Props) => {
   const [loadingKeys, setLoadingKeys] = useState<string[]>([]);
   const { downloadCarrier } = useDownloadArtifactCarrier();
@@ -24,9 +35,14 @@ export const ExAppArtifactDownloads = ({ artifacts }: Props) => {
     return null;
   }
 
-  const images = artifacts.filter(isImage);
-  const files = artifacts.filter((a) => !isImage(a));
+  const downloadable = artifacts.filter((a) => !isCitationArtifact(a));
+  const images = downloadable.filter(isImage);
+  const files = downloadable.filter((a) => !isImage(a));
   const hasCarrier = files.some(isCarrier);
+
+  if (images.length === 0 && files.length === 0) {
+    return null;
+  }
 
   const handleCarrier = async (objectKey: string) => {
     setLoadingKeys((prev) => [...prev, objectKey]);

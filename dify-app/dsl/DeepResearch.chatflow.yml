@@ -1,0 +1,1126 @@
+app:
+  description: ''
+  icon: 🔍
+  icon_background: '#D1E9FF'
+  mode: advanced-chat
+  name: DeepResearch
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/json_process:0.0.2@dde6d7b676ccdcea89206d29232181a840170c19277d3d978e27cd1e3c92c707
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tavily:0.1.2@aa7a8744b2ccf3a7aec818da6c504997a6319b29040e541bfc73b4fbaa9e98d9
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/azure_openai:0.0.28@9b0339feb86b34393abd921e9cc906192fc46daad3a0f15c1d2a35ba20e8f704
+kind: app
+version: 0.3.0
+workflow:
+  conversation_variables:
+  - description: ''
+    id: 07ea9b5b-edf2-471d-8206-50e95e7ab87e
+    name: topics
+    selector:
+    - conversation
+    - topics
+    value: []
+    value_type: array[string]
+  - description: ''
+    id: a9049588-f66f-4c3a-a30e-5952a677baa9
+    name: nextSearchTopic
+    selector:
+    - conversation
+    - nextSearchTopic
+    value: ''
+    value_type: string
+  - description: ''
+    id: 2e0a2539-345c-4723-8b1b-b653e1a0caef
+    name: findings
+    selector:
+    - conversation
+    - findings
+    value: []
+    value_type: array[string]
+  - description: ''
+    id: 23d208d1-a50d-468c-8757-ad49da0886e1
+    name: shouldContinue
+    selector:
+    - conversation
+    - shouldContinue
+    value: 'true'
+    value_type: string
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 128
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: iteration-start
+        targetType: llm
+      id: 1739244888446start-source-1739245286499-target
+      selected: false
+      source: 1739244888446start
+      sourceHandle: source
+      target: '1739245286499'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: llm
+        targetType: tool
+      id: 1739245286499-source-1739245446901-target
+      selected: false
+      source: '1739245286499'
+      sourceHandle: source
+      target: '1739245446901'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: llm
+        targetType: tool
+      id: 1739245286499-source-1739245524260-target
+      selected: false
+      source: '1739245286499'
+      sourceHandle: source
+      target: '1739245524260'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: iteration
+      id: 1739245548624-source-1739244888446-target
+      selected: false
+      source: '1739245548624'
+      sourceHandle: source
+      target: '1739244888446'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: if-else
+        targetType: tool
+      id: 1739245723720-true-1739245424964-target
+      selected: false
+      source: '1739245723720'
+      sourceHandle: 'true'
+      target: '1739245424964'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: tool
+        targetType: assigner
+      id: 1739245446901-source-1739245826988-target
+      selected: false
+      source: '1739245446901'
+      sourceHandle: source
+      target: '1739245826988'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: tool
+        targetType: assigner
+      id: 1739245424964-source-1739246085820-target
+      selected: false
+      source: '1739245424964'
+      sourceHandle: source
+      target: '1739246085820'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        sourceType: iteration
+        targetType: llm
+      id: 1739244888446-source-1739246156652-target
+      selected: false
+      source: '1739244888446'
+      sourceHandle: source
+      target: '1739246156652'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: answer
+      id: 1739246156652-source-answer-target
+      selected: false
+      source: '1739246156652'
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: tool
+        targetType: assigner
+      id: 1739245524260-source-1739245826988-target
+      selected: false
+      source: '1739245524260'
+      sourceHandle: source
+      target: '1739245826988'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: assigner
+        targetType: if-else
+      id: 1739245826988-source-1739245723720-target
+      selected: false
+      source: '1739245826988'
+      sourceHandle: source
+      target: '1739245723720'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: assigner
+        targetType: template-transform
+      id: 1739246085820-source-1739254060247-target
+      selected: false
+      source: '1739246085820'
+      sourceHandle: source
+      target: '1739254060247'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: template-transform
+        targetType: variable-aggregator
+      id: 1739254060247-source-1739254296073-target
+      selected: false
+      source: '1739254060247'
+      sourceHandle: source
+      target: '1739254296073'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: variable-aggregator
+        targetType: answer
+      id: 1739254296073-source-1739253994297-target
+      selected: false
+      source: '1739254296073'
+      sourceHandle: source
+      target: '1739253994297'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: if-else
+        targetType: template-transform
+      id: 1739245723720-false-1739254516383-target
+      selected: false
+      source: '1739245723720'
+      sourceHandle: 'false'
+      target: '1739254516383'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1739244888446'
+        sourceType: template-transform
+        targetType: variable-aggregator
+      id: 1739254516383-source-1739254296073-target
+      selected: false
+      source: '1739254516383'
+      sourceHandle: source
+      target: '1739254296073'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: answer
+      id: 1739229221219-source-1749860117765-target
+      source: '1739229221219'
+      sourceHandle: source
+      target: '1749860117765'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: answer
+        targetType: code
+      id: 1749860117765-source-1739245548624-target
+      source: '1749860117765'
+      sourceHandle: source
+      target: '1739245548624'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: Start
+        type: start
+        variables:
+        - label: depth
+          max_length: 48
+          options: []
+          required: false
+          type: number
+          variable: depth
+      height: 90
+      id: '1739229221219'
+      position:
+        x: 45.869626339652996
+        y: 372.5275076825334
+      positionAbsolute:
+        x: 45.869626339652996
+        y: 372.5275076825334
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        answer: '
+
+          {{#1739246156652.text#}}'
+        desc: ''
+        selected: false
+        title: Answer
+        type: answer
+        variables: []
+      height: 104
+      id: answer
+      position:
+        x: 2158.4472130110016
+        y: 676.2043901579685
+      positionAbsolute:
+        x: 2158.4472130110016
+        y: 676.2043901579685
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        error_handle_mode: terminated
+        height: 1042
+        is_parallel: false
+        iterator_selector:
+        - '1739245548624'
+        - array
+        output_selector:
+        - '1739254296073'
+        - output
+        output_type: array[string]
+        parallel_nums: 10
+        selected: false
+        start_node_id: 1739244888446start
+        title: Iteration
+        type: iteration
+        width: 1186
+      height: 1042
+      id: '1739244888446'
+      position:
+        x: 935.8527105601752
+        y: 630.3552263575378
+      positionAbsolute:
+        x: 935.8527105601752
+        y: 630.3552263575378
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 1186
+      zIndex: 1
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1739244888446start
+      parentId: '1739244888446'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 959.8527105601752
+        y: 698.3552263575378
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        memory:
+          query_prompt_template: '## Topic
+
+            {{#sys.query#}}
+
+
+            ## Findings
+
+            {{#conversation.findings#}}
+
+
+            ## Searched Topics
+
+            {{#conversation.topics#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            json_schema: ''
+          mode: chat
+          name: gpt-4.1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: 2acdb5a9-823a-4ce3-8dbe-401540a61bc5
+          role: system
+          text: "You are a research agent investigating the following topic.\nWhat\
+            \ have you found? What questions remain unanswered? What specific aspects\
+            \ should be investigated next?\n\n## Output\n- Do not output topics that\
+            \ are exactly the same as already searched topics.\n- If further information\
+            \ search is needed, set nextSearchTopic.\n- If sufficient information\
+            \ has been obtained, set shouldContinue to false.\n- Please output in\
+            \ json format\n\n```json\nnextSearchTopic: str | None\nshouldContinue:\
+            \ bool \n```\n\n\n"
+        selected: false
+        title: LLM
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1739245286499'
+      parentId: '1739244888446'
+      position:
+        x: 16
+        y: 65
+      positionAbsolute:
+        x: 951.8527105601752
+        y: 695.3552263575378
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        provider_id: tavily
+        provider_name: tavily
+        provider_type: builtin
+        selected: false
+        title: Tavily Search
+        tool_configurations:
+          days: 3
+          exclude_domains: null
+          include_answer: 0
+          include_domains: null
+          include_image_descriptions: 0
+          include_images: 0
+          include_raw_content: 0
+          max_results: 5
+          search_depth: advanced
+          topic: general
+        tool_label: Tavily Search
+        tool_name: tavily_search
+        tool_parameters:
+          query:
+            type: mixed
+            value: '{{#conversation.nextSearchTopic#}}'
+        type: tool
+      height: 324
+      id: '1739245424964'
+      parentId: '1739244888446'
+      position:
+        x: 326.22599578713334
+        y: 498.438562962014
+      positionAbsolute:
+        x: 1262.0787063473085
+        y: 1128.7937893195517
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        provider_id: json_process
+        provider_name: json_process
+        provider_type: builtin
+        selected: false
+        title: Extract nextSearchTopic
+        tool_configurations:
+          ensure_ascii: 1
+        tool_label: JSON Parse
+        tool_name: parse
+        tool_parameters:
+          content:
+            type: mixed
+            value: '{{#1739245286499.text#}}'
+          json_filter:
+            type: mixed
+            value: nextSearchTopic
+        type: tool
+      height: 90
+      id: '1739245446901'
+      parentId: '1739244888446'
+      position:
+        x: 47.75538842320191
+        y: 247.82584481078118
+      positionAbsolute:
+        x: 983.6080989833771
+        y: 878.181071168319
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        provider_id: json_process
+        provider_name: json_process
+        provider_type: builtin
+        selected: false
+        title: Extract shouldContinue
+        tool_configurations:
+          ensure_ascii: 1
+        tool_label: JSON Parse
+        tool_name: parse
+        tool_parameters:
+          content:
+            type: mixed
+            value: '{{#1739245286499.text#}}'
+          json_filter:
+            type: mixed
+            value: shouldContinue
+        type: tool
+      height: 90
+      id: '1739245524260'
+      parentId: '1739244888446'
+      position:
+        x: 49.19865333377197
+        y: 358.53359239733356
+      positionAbsolute:
+        x: 985.0513638939472
+        y: 988.8888187548714
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        code: "\ndef main(depth: int) -> dict:\n    depth = depth or 3\n    array\
+          \ = list(range(depth))\n    return {\n        \"array\": array,\n      \
+          \  \"depth\": depth\n    }\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          array:
+            children: null
+            type: array[number]
+          depth:
+            children: null
+            type: number
+        selected: false
+        title: Create Array
+        type: code
+        variables:
+        - value_selector:
+          - '1739229221219'
+          - depth
+          variable: depth
+      height: 54
+      id: '1739245548624'
+      position:
+        x: 671.3682249201732
+        y: 563.5
+      positionAbsolute:
+        x: 671.3682249201732
+        y: 563.5
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: b3169e80-3090-4a5b-8df4-3148d7afcb4d
+            value: 'True'
+            varType: string
+            variable_selector:
+            - '1739245524260'
+            - text
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        selected: false
+        title: IF/ELSE
+        type: if-else
+      height: 126
+      id: '1739245723720'
+      parentId: '1739244888446'
+      position:
+        x: 48.74608363090499
+        y: 534.403100663696
+      positionAbsolute:
+        x: 984.5987941910802
+        y: 1164.758327021234
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1739245446901'
+          - text
+          variable_selector:
+          - conversation
+          - nextSearchTopic
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1739245524260'
+          - text
+          variable_selector:
+          - conversation
+          - shouldContinue
+          write_mode: over-write
+        - input_type: variable
+          operation: append
+          value:
+          - conversation
+          - nextSearchTopic
+          variable_selector:
+          - conversation
+          - topics
+          write_mode: over-write
+        iteration_id: '1739244888446'
+        selected: false
+        title: Assign Variables
+        type: assigner
+        version: '2'
+      height: 144
+      id: '1739245826988'
+      parentId: '1739244888446'
+      position:
+        x: 751.8559564663802
+        y: 65
+      positionAbsolute:
+        x: 1687.7086670265553
+        y: 695.3552263575378
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        items:
+        - input_type: variable
+          operation: append
+          value:
+          - '1739245424964'
+          - text
+          variable_selector:
+          - conversation
+          - findings
+          write_mode: over-write
+        iteration_id: '1739244888446'
+        selected: false
+        title: Assign Variables
+        type: assigner
+        version: '2'
+      height: 88
+      id: '1739246085820'
+      parentId: '1739244888446'
+      position:
+        x: 606.0088891085952
+        y: 628.4868835893722
+      positionAbsolute:
+        x: 1541.8615996687704
+        y: 1258.84210994691
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        memory:
+          query_prompt_template: "## topic\n{{#sys.query#}}\n\n# findings \n{{#conversation.findings#}}\n"
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            frequency_penalty: 0.5
+            presence_penalty: 0.5
+            temperature: 0.2
+            top_p: 0.75
+          mode: chat
+          name: o1
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: 89c17d58-6a63-4f4f-98fe-f6534ec1ecb0
+          role: system
+          text: "# Important Notes\n - この出力は常に日本語で行ってください。\n\n  Based on the investigation\
+            \ results, create a comprehensive analysis of the topic.\\nProvide important\
+            \ insights, conclusions, and remaining uncertainties. Cite sources where\
+            \ appropriate. This analysis should be very comprehensive and detailed.\
+            \ It is expected to be a long text.\\n\\n## Topic\\n{{#sys.query#}}\\\
+            n\\n## Findings \\n{{#conversation.findings#}}\\n"
+        selected: false
+        title: Reasoning Model
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1739246156652'
+      position:
+        x: 2158.4472130110016
+        y: 563.5
+      positionAbsolute:
+        x: 2158.4472130110016
+        y: 563.5
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        answer: '{{#1739254296073.output#}}'
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        selected: false
+        title: Answer
+        type: answer
+        variables: []
+      height: 104
+      id: '1739253994297'
+      parentId: '1739244888446'
+      position:
+        x: 906.5415537904462
+        y: 878.1347002855746
+      positionAbsolute:
+        x: 1842.3942643506214
+        y: 1508.4899266431125
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        selected: false
+        template: '{{ index + 1 }}/{{ depth }}th search executed.
+
+
+          '
+        title: Intermediate Output Format
+        type: template-transform
+        variables:
+        - value_selector:
+          - '1739244888446'
+          - index
+          variable: index
+        - value_selector:
+          - '1739229221219'
+          - depth
+          variable: depth
+      height: 54
+      id: '1739254060247'
+      parentId: '1739244888446'
+      position:
+        x: 867.6964657330811
+        y: 631.2310099968581
+      positionAbsolute:
+        x: 1803.5491762932563
+        y: 1261.586236354396
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        output_type: string
+        selected: false
+        title: Variable Aggregator
+        type: variable-aggregator
+        variables:
+        - - '1739254060247'
+          - output
+        - - '1739254516383'
+          - output
+      height: 130
+      id: '1739254296073'
+      parentId: '1739244888446'
+      position:
+        x: 640.0246481283732
+        y: 876.3796107886387
+      positionAbsolute:
+        x: 1575.8773586885484
+        y: 1506.7348371461767
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        iteration_id: '1739244888446'
+        selected: false
+        template: ' '
+        title: Empty
+        type: template-transform
+        variables: []
+      height: 54
+      id: '1739254516383'
+      parentId: '1739244888446'
+      position:
+        x: 325.67632971971057
+        y: 879.2385925098547
+      positionAbsolute:
+        x: 1261.5290402798857
+        y: 1509.5938188673927
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 371
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Deep
+          Research  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Author:
+          Takashi Kishida  https://x.com/omluc_ai","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Simply
+          input what you want to search for, and it will repeatedly execute searches
+          to create a report.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"User
+          Input Reception: The user inputs an initial question (sys.query) and the
+          depth of research (depth).  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Search
+          Initialization: Using GPT-4o, the initial question is analyzed to extract
+          the search theme and determine whether further searches are necessary.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Iterative
+          Search: Based on the specified depth, multiple rounds of iterative searches
+          are conducted.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"In
+          each iteration, the Tavily search engine is used to conduct searches based
+          on the previously extracted search themes and to collect search results.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"It
+          assesses whether further searches are needed through the LLM and controls
+          the iterative process.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Analysis
+          and Summary: When the iterative search concludes (or when it is determined
+          that further searches are unnecessary), the deepseek-reasoner model is used
+          to comprehensively analyze and summarize all collected search results.  ","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Report
+          Generation: The analysis results are generated and output as a final report
+          in Markdown format.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 798
+      height: 371
+      id: '1739283628844'
+      position:
+        x: 342.95357738991356
+        y: 24.07121075782824
+      positionAbsolute:
+        x: 342.95357738991356
+        y: 24.07121075782824
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 798
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 227
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"The
+          main function takes an integer representing depth and returns a dictionary
+          containing a list and the final depth value.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0},{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"array
+          = list(range(depth)): range(depth) creates a sequence of integers from 0
+          to depth-1. list() converts this sequence to a list. For example, if depth
+          is 3, array becomes [0, 1, 2].","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"listitem","version":1,"value":1}],"direction":"ltr","format":"","indent":0,"type":"list","version":1,"listType":"bullet","start":1,"tag":"ul"}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 265
+      height: 227
+      id: '1739283923251'
+      position:
+        x: 85.35900567854111
+        y: 550.399123970737
+      positionAbsolute:
+        x: 85.35900567854111
+        y: 550.399123970737
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 265
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 122
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"The
+          GPT-4o model is used to analyze the user’s initial query, extract search
+          keywords and topics, and determine whether further search is needed. The
+          output is a JSON-formatted text.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 350
+      height: 122
+      id: '1739285077334'
+      position:
+        x: 788.6385688481537
+        y: 416.30802094190165
+      positionAbsolute:
+        x: 788.6385688481537
+        y: 416.30802094190165
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 350
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 88
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Extracts
+          the value of the nextSearchTopic field from the JSON text output by the
+          “LLM” node.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 240
+      height: 88
+      id: '1739285156227'
+      position:
+        x: 392.6233739231274
+        y: 790.0751712082184
+      positionAbsolute:
+        x: 392.6233739231274
+        y: 790.0751712082184
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 240
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 88
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Extracts
+          the value of the shouldContinue field from the JSON text output by the “LLM”
+          node.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1,"textFormat":0}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 240
+      height: 88
+      id: '1739285211334'
+      position:
+        x: 385.9489605255146
+        y: 921.3386346946035
+      positionAbsolute:
+        x: 385.9489605255146
+        y: 921.3386346946035
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 240
+    - data:
+        author: stvlynn
+        desc: ''
+        height: 140
+        selected: false
+        showAuthor: true
+        text: '{"root":{"children":[{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Overwrites
+          the values extracted from the “EXTRACT NEXTSEARCHTOPIC” and “EXTRACT SHOULDCONTINUE”
+          nodes to the nextSearchTopic and shouldContinue variables, respectively.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"listitem","version":1,"value":1},{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Adds
+          the value of nextSearchTopic to the topics array, forming a list of search
+          topics.","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"listitem","version":1,"value":2}],"direction":"ltr","format":"","indent":0,"type":"list","version":1,"listType":"bullet","start":1,"tag":"ul"}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}'
+        theme: blue
+        title: ''
+        type: ''
+        width: 433
+      height: 140
+      id: '1739285254837'
+      position:
+        x: 1330.3784562877254
+        y: 402.9591941466761
+      positionAbsolute:
+        x: 1330.3784562877254
+        y: 402.9591941466761
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-note
+      width: 433
+    - data:
+        answer: 少しお待ちください…
+        desc: ''
+        selected: false
+        title: WAIT A MOMENT...
+        type: answer
+        variables: []
+      height: 102
+      id: '1749860117765'
+      position:
+        x: 371.36822492017325
+        y: 563.5
+      positionAbsolute:
+        x: 371.36822492017325
+        y: 563.5
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 292.5403641201466
+      y: 31.381270004003966
+      zoom: 0.42570549015493825

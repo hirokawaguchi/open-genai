@@ -10,6 +10,7 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { formatDateTime } from '@/utils/formatDateTime';
 import { FileInputItem } from '../types';
 import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
+import { ExAppCitations } from './ExAppCitations';
 import { ExAppInvokedHistoryDeleteDialog } from './ExAppInvokedHistoryDeleteDialog';
 import { ExAppInvokeHistoryItemStatusLabel } from './ExAppInvokeHistoryItemStatusLabel';
 
@@ -161,6 +162,7 @@ export const ExAppInvokedHistoryItem = (props: Props) => {
                 <div>
                   <div ref={copyTextRef}>
                     <Markdown>{parsedOutputs}</Markdown>
+                    <ExAppCitations artifacts={history.artifacts} />
                   </div>
                   <div className='mt-1 flex w-full justify-end'>
                     <ButtonCopy text={parsedOutputs} targetRef={copyTextRef} />
