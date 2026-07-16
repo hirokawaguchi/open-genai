@@ -183,12 +183,23 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             )
             # teamId 変更時は履歴・ピン留めも追随（例: rag-manage の ADMIN→COMMON）
             if old_team != new_team:
+                team_row = conn.execute(
+                    "SELECT teamName FROM teams WHERE teamId = ?", (new_team,)
+                ).fetchone()
+                if team_row:
+                    new_team_name = team_row["teamName"]
+                elif new_team == COMMON_TEAM_ID:
+                    new_team_name = "共通アプリ"
+                elif new_team == ADMIN_TEAM_ID:
+                    new_team_name = ADMIN_TEAM_NAME
+                else:
+                    new_team_name = ""
                 conn.execute(
                     "UPDATE exapp_histories SET teamId = ?, teamName = ?"
                     " WHERE teamId = ? AND exAppId = ?",
                     (
                         new_team,
-                        app.get("exAppName", ""),
+                        new_team_name,
                         old_team,
                         app["exAppId"],
                     ),
