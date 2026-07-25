@@ -207,6 +207,20 @@ services:
       - qdrant
     restart: unless-stopped
 
+  # ナレッジ検索 MCP（Dify Agent 向け）。外部公開が必要なら ports を追加する。
+  knowledge-mcp:
+    build: ./knowledge-mcp
+    container_name: open-genai-knowledge-mcp
+    environment:
+      - RAG_BASE_URL=${RAG_BASE_URL:-http://rag-app:8001}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - RAG_DEFAULT_SCOPE=${RAG_DEFAULT_SCOPE:-00000000-0000-0000-0000-000000000000}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+    depends_on:
+      - rag-app
+    restart: unless-stopped
+
   whisper-app:
     build: ./whisper-app
     container_name: open-genai-whisper-app

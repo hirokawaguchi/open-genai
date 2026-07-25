@@ -90,7 +90,11 @@ async def search(
     tags: list[str] | None = None,
     *,
     require_tags: bool = True,
+    source: str | None = None,
 ) -> list[dict[str, Any]]:
+    extra: list[dict[str, Any]] | None = None
+    if source:
+        extra = [{"key": "source", "match": {"value": source}}]
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
@@ -98,7 +102,9 @@ async def search(
                 "vector": vector,
                 "limit": limit,
                 "with_payload": True,
-                "filter": _scope_filter(scope, tags=tags, require_tags=require_tags),
+                "filter": _scope_filter(
+                    scope, extra, tags=tags, require_tags=require_tags
+                ),
             },
         )
         res.raise_for_status()

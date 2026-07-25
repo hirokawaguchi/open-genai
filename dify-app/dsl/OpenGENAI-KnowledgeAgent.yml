@@ -1,0 +1,584 @@
+app:
+  description: |
+    OpenGENAI ナレッジへの HTTP 連携入門用ワークフロー（根拠付き Q&A）。
+    流れ: 質問+タグ（任意で source）→ POST /retrieve → citation_artifacts 整形 → LLM 回答。
+    Agent+MCP で対話的に探す場合は OpenGENAI-KnowledgeAgent.chatflow.yml を使う。
+    議事録スタンス分析など業務特化は OpenGENAI-MinutesStance.yml（応用例）。
+    インポート後: (1) LLM モデルを利用可能なものへ付け替え
+    (2) 環境変数 RAG_BASE_URL / RAG_API_KEY / RAG_SCOPE を環境に合わせる。
+  icon: 🔎
+  icon_background: '#E8F3FF'
+  icon_type: emoji
+  mode: workflow
+  name: OpenGENAI-KnowledgeAgent
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - id: env-rag-base
+    name: RAG_BASE_URL
+    value: http://host.docker.internal:8001
+    value_type: string
+  - id: env-rag-key
+    name: RAG_API_KEY
+    value: local-rag-key
+    value_type: string
+  - id: env-rag-scope
+    name: RAG_SCOPE
+    value: '00000000-0000-0000-0000-000000000000'
+    value_type: string
+  features:
+    file_upload:
+      enabled: false
+      allowed_file_extensions: []
+      allowed_file_types: []
+      allowed_file_upload_methods: []
+      number_limits: 3
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: edge-start-build
+      source: '1770000000001'
+      sourceHandle: source
+      target: '1770000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+      id: edge-build-retrieve
+      source: '1770000000002'
+      sourceHandle: source
+      target: '1770000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: edge-retrieve-format
+      source: '1770000000003'
+      sourceHandle: source
+      target: '1770000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: edge-format-llm
+      source: '1770000000004'
+      sourceHandle: source
+      target: '1770000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: edge-llm-end
+      source: '1770000000005'
+      sourceHandle: source
+      target: '1770000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 質問・タグ・任意の資料名（source）
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - label: 質問
+          max_length: 2000
+          options: []
+          required: true
+          type: paragraph
+          variable: query
+        - default: 規程
+          label: タグ（必須・カンマ区切り可）
+          max_length: 500
+          options: []
+          required: true
+          type: text-input
+          variable: tags
+        - default: ''
+          label: 対象ファイル名 source（任意。空ならタグ横断）
+          max_length: 500
+          options: []
+          required: false
+          type: text-input
+          variable: source
+        - default: '4'
+          label: 参照件数 top_k（源内では非表示・自動注入可）
+          max_length: 8
+          options: []
+          required: false
+          type: text-input
+          variable: top_k
+        - default: '00000000-0000-0000-0000-000000000000'
+          label: ナレッジ scope（源内では非表示・x-scope を自動注入）
+          max_length: 64
+          options: []
+          required: false
+          type: text-input
+          variable: scope
+      height: 180
+      id: '1770000000001'
+      position:
+        x: 40
+        y: 280
+      positionAbsolute:
+        x: 40
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          import json
+          import re
+
+          def main(query: str, tags: str, source: str, top_k: str, scope: str) -> dict:
+              query = (query or "").strip()
+              scope = (scope or "").strip()
+              src = (source or "").strip()
+              raw = (tags or "").strip()
+              tag_list = [t for t in re.split(r"[,;、]\s*", raw) if t] if raw else []
+              try:
+                  k = int(str(top_k or "4").strip() or "4")
+              except Exception:
+                  k = 4
+              k = max(1, min(k, 20))
+              if not query:
+                  return {
+                      "ok": "false",
+                      "skip_retrieve": "true",
+                      "body_json": "{}",
+                      "tag_note": ", ".join(tag_list) if tag_list else "(未指定)",
+                      "source_note": src or "(指定なし)",
+                      "error": "質問（query）は必須です。",
+                  }
+              if not tag_list:
+                  return {
+                      "ok": "false",
+                      "skip_retrieve": "true",
+                      "body_json": "{}",
+                      "tag_note": "(未指定)",
+                      "source_note": src or "(指定なし)",
+                      "error": (
+                          "タグ（tags）は必須です。"
+                          "先に GET /knowledge/tags または knowledge_list_tags で確認してください。"
+                      ),
+                  }
+              body = {
+                  "question": query,
+                  "mode": "auto",
+                  "top_k": k,
+                  "tags": tag_list,
+              }
+              if scope:
+                  body["scope"] = scope
+              if src:
+                  body["source"] = src
+              return {
+                  "ok": "true",
+                  "skip_retrieve": "false",
+                  "body_json": json.dumps(body, ensure_ascii=False),
+                  "tag_note": ", ".join(tag_list),
+                  "source_note": src or "(指定なし・タグ横断)",
+                  "error": "",
+              }
+        code_language: python3
+        desc: POST /retrieve 用 JSON を組み立てる（任意 source）
+        outputs:
+          ok:
+            children: null
+            type: string
+          skip_retrieve:
+            children: null
+            type: string
+          body_json:
+            children: null
+            type: string
+          tag_note:
+            children: null
+            type: string
+          source_note:
+            children: null
+            type: string
+          error:
+            children: null
+            type: string
+        selected: false
+        title: 検索条件組み立て
+        type: code
+        variables:
+        - value_selector:
+          - '1770000000001'
+          - query
+          variable: query
+        - value_selector:
+          - '1770000000001'
+          - tags
+          variable: tags
+        - value_selector:
+          - '1770000000001'
+          - source
+          variable: source
+        - value_selector:
+          - '1770000000001'
+          - top_k
+          variable: top_k
+        - value_selector:
+          - '1770000000001'
+          - scope
+          variable: scope
+      height: 140
+      id: '1770000000002'
+      position:
+        x: 340
+        y: 280
+      positionAbsolute:
+        x: 340
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: body
+            key: ''
+            type: text
+            value: '{{#1770000000002.body_json#}}'
+          type: raw-text
+        desc: OpenGENAI rag-app の POST /retrieve
+        headers: "Content-Type: application/json\nx-api-key:{{#env.RAG_API_KEY#}}\nx-scope:{{#1770000000001.scope#}}"
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 2
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 120
+          max_write_timeout: 20
+        title: Retrieval（/retrieve）
+        type: http-request
+        url: '{{#env.RAG_BASE_URL#}}/retrieve'
+        variables: []
+      height: 140
+      id: '1770000000003'
+      position:
+        x: 640
+        y: 280
+      positionAbsolute:
+        x: 640
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          import json
+
+          def main(
+              body: str,
+              status_code: str,
+              skip_retrieve: str,
+              tag_note: str,
+              source_note: str,
+              pre_error: str,
+          ) -> dict:
+              if (skip_retrieve or "") == "true" or (pre_error or "").strip():
+                  return {
+                      "ok": "false",
+                      "context": "",
+                      "citation_artifacts": "[]",
+                      "resolved_mode": "",
+                      "hit_count": 0,
+                      "error": (pre_error or "").strip() or "検索条件エラー",
+                  }
+              try:
+                  code = int(str(status_code or "0"))
+              except Exception:
+                  code = 0
+              raw = body or ""
+              if code < 200 or code >= 300:
+                  return {
+                      "ok": "false",
+                      "context": "",
+                      "citation_artifacts": "[]",
+                      "resolved_mode": "",
+                      "hit_count": 0,
+                      "error": f"retrieve HTTP {code}: {raw[:500]}",
+                  }
+              try:
+                  data = json.loads(raw)
+              except Exception as e:
+                  return {
+                      "ok": "false",
+                      "context": "",
+                      "citation_artifacts": "[]",
+                      "resolved_mode": "",
+                      "hit_count": 0,
+                      "error": f"JSON parse error: {e}",
+                  }
+              nodes = data.get("nodes") or []
+              resolved = str(data.get("resolved_mode") or "")
+              parts = []
+              citation_arts = []
+              hit_count = 0
+              for i, n in enumerate(nodes, start=1):
+                  title = (n.get("title") or "").strip()
+                  source = (n.get("source") or "").strip() or "unknown"
+                  text = (n.get("text") or "").strip()
+                  mode = (n.get("mode") or "").strip()
+                  if not text:
+                      continue
+                  hit_count += 1
+                  label_parts = [source]
+                  if title and title != source and title.lower() != "chunk":
+                      label_parts.append(title)
+                  ps, pe = n.get("page_start"), n.get("page_end")
+                  if ps is not None:
+                      try:
+                          ps_i = int(ps)
+                          pe_i = int(pe) if pe is not None else ps_i
+                          label_parts.append(
+                              f"p.{ps_i}-{pe_i}" if pe_i != ps_i else f"p.{ps_i}"
+                          )
+                      except (TypeError, ValueError):
+                          pass
+                  label = " / ".join(label_parts)
+                  body_text = text
+                  if title and mode in ("tree", "hybrid", "full") and not text.startswith("【"):
+                      body_text = f"【{title}】\n{text}"
+                  parts.append(
+                      f"### 根拠 [{i}]: {title or source}\n"
+                      f"（出典: {label} / mode={mode or '-'}）\n\n{body_text}"
+                  )
+                  citation_arts.append(
+                      {
+                          "display_name": f"[{i}] {label}",
+                          "source": label,
+                          "text": body_text,
+                          "mime_type": "text/x.open-genai.citation",
+                      }
+                  )
+              ok = "true" if hit_count > 0 else "false"
+              err = ""
+              if hit_count == 0:
+                  err = (
+                      "該当箇所が見つかりませんでした。"
+                      f" tags={tag_note} / source={source_note}"
+                      f" / resolved_mode={resolved or '-'}"
+                  )
+              return {
+                  "ok": ok,
+                  "context": "\n\n---\n\n".join(parts),
+                  "citation_artifacts": json.dumps(
+                      citation_arts, ensure_ascii=False
+                  ),
+                  "resolved_mode": resolved,
+                  "hit_count": hit_count,
+                  "error": err,
+              }
+        code_language: python3
+        desc: 検索結果をコンテキストと citation_artifacts に整形
+        outputs:
+          ok:
+            children: null
+            type: string
+          context:
+            children: null
+            type: string
+          citation_artifacts:
+            children: null
+            type: string
+          resolved_mode:
+            children: null
+            type: string
+          hit_count:
+            children: null
+            type: number
+          error:
+            children: null
+            type: string
+        selected: false
+        title: 結果整形
+        type: code
+        variables:
+        - value_selector:
+          - '1770000000003'
+          - body
+          variable: body
+        - value_selector:
+          - '1770000000003'
+          - status_code
+          variable: status_code
+        - value_selector:
+          - '1770000000002'
+          - skip_retrieve
+          variable: skip_retrieve
+        - value_selector:
+          - '1770000000002'
+          - tag_note
+          variable: tag_note
+        - value_selector:
+          - '1770000000002'
+          - source_note
+          variable: source_note
+        - value_selector:
+          - '1770000000002'
+          - error
+          variable: pre_error
+      height: 140
+      id: '1770000000004'
+      position:
+        x: 940
+        y: 280
+      positionAbsolute:
+        x: 940
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 根拠のみで回答。出典は [n]
+        model:
+          completion_params:
+            temperature: 0.2
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: sys
+          role: system
+          text: |
+            あなたは組織内ナレッジに基づく Q&A アシスタントです。
+            与えられた根拠テキストだけを使い、推測で補完しないでください。
+            出典は参照番号のみ（例: [1]）。文末に出典一覧を繰り返さないでください。
+            根拠が空、またはエラーがある場合はその旨を簡潔に伝えてください。
+            日本語で回答してください。
+        - id: user
+          role: user
+          text: |
+            ## 質問
+            {{#1770000000001.query#}}
+
+            ## 検索条件
+            tags={{#1770000000002.tag_note#}}
+            source={{#1770000000002.source_note#}}
+            ok={{#1770000000004.ok#}}
+            error={{#1770000000004.error#}}
+            resolved_mode={{#1770000000004.resolved_mode#}}
+            hit_count={{#1770000000004.hit_count#}}
+
+            ## 根拠
+            {{#1770000000004.context#}}
+        selected: false
+        title: 回答 LLM
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 140
+      id: '1770000000005'
+      position:
+        x: 1240
+        y: 280
+      positionAbsolute:
+        x: 1240
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: report + citation_artifacts（源内アコーディオン用）
+        outputs:
+        - value_selector:
+          - '1770000000005'
+          - text
+          variable: report
+        - value_selector:
+          - '1770000000004'
+          - citation_artifacts
+          variable: citation_artifacts
+        selected: false
+        title: 終了
+        type: end
+      height: 120
+      id: '1770000000006'
+      position:
+        x: 1540
+        y: 280
+      positionAbsolute:
+        x: 1540
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.65
+  features_backup: {}

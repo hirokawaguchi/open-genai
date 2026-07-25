@@ -1,0 +1,403 @@
+app:
+  description: |
+    OpenGENAI ナレッジを MCP ツール経由で検索するチャットフロー（Agent ノード）。
+    前提:
+    (1) Dify Tools→MCP に http://host.docker.internal:8002/mcp を登録済み
+    (2) MCP のサーバー識別子（Server ID）が open_genai_knowledge であること
+       （異なる場合は Agent ノードの各ツール provider_name を付け替え）
+    (3) プラグイン「Dify Agent Strategies」(langgenius/agent) がインストール済み
+    (4) knowledge-mcp / rag-app が起動していること
+    インポート後: Agent のモデルを利用可能なものへ付け替え → 公開。
+  icon: 🔎
+  icon_background: '#E8F3FF'
+  icon_type: emoji
+  mode: advanced-chat
+  name: OpenGENAI-KnowledgeAgent-Chat
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/agent:0.0.40@d00a70e81bfb28fadd52cba7fd7a1f7c344c67b051e4a2e356a06c690736a7c4
+kind: app
+version: 0.3.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions: []
+      allowed_file_types: []
+      allowed_file_upload_methods: []
+      enabled: false
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: |
+      OpenGENAI ナレッジ検索エージェントです。議題や質問を送ってください。
+      タグが分からない場合は、こちらでタグ一覧を確認してから検索します。
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+    - 利用できるタグを教えて
+    - 議事録タグで、ダブルチェック義務についてのスタンスを整理して
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: agent
+      id: edge-start-agent
+      source: '1780000000001'
+      sourceHandle: source
+      target: '1780000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: agent
+        targetType: answer
+      id: edge-agent-answer
+      source: '1780000000002'
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: scope は源内から自動注入。Studio 単体では teamId を手入力
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - default: '00000000-0000-0000-0000-000000000000'
+          label: ナレッジ scope（源内では非表示・x-scope を自動注入）
+          max_length: 64
+          options: []
+          required: false
+          type: text-input
+          variable: scope
+      height: 88
+      id: '1780000000001'
+      position:
+        x: 40
+        y: 280
+      positionAbsolute:
+        x: 40
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        agent_parameters:
+          instruction:
+            type: constant
+            value: |
+              あなたは OpenGENAI のナレッジ検索エージェントです。
+              根拠はツール結果の本文だけを使い、推測で補完しないでください。
+
+              ## ナレッジ識別
+              - scope（teamId）: {{#1780000000001.scope#}}
+              - ツール呼び出しでは必ずこの scope を渡すこと
+              - ナレッジはタグ付きのみ検索対象。タグ未付与はヒットしない
+
+              ## ツールの使い方
+              1. ユーザーがタグを明示していなければ、先に knowledge_list_tags を呼ぶ
+              2. 適切なタグが分からなければ、一覧を示してユーザーに確認する
+              3. 特定の資料名・ファイル名が質問に含まれる、またはユーザーが資料を指定している場合:
+                 - knowledge_list_docs で正確な source / doc_id を確認する
+                 - knowledge_search に source（または doc_id）を必ず渡してその文書内だけを検索する
+                 - mode は通常 auto のまま（構造化文書なら節・ページ単位で返る）
+              4. 資料未指定なら knowledge_search でタグ横断検索（tags 必須。クエリを変えて最大 3 回まで）
+              5. 回答の出典は参照番号のみ（例: [1]）。文末に出典一覧を繰り返さない
+
+              ## 出力
+              - 根拠が無い場合はその旨と、利用可能タグを簡潔に伝える
+              - 日本語で回答する
+          maximum_iterations:
+            type: constant
+            value: 5
+          model:
+            type: constant
+            value:
+              completion_params:
+                temperature: 0.2
+              mode: chat
+              model: gpt-4o-mini
+              model_type: llm
+              provider: langgenius/openai/openai
+              type: model-selector
+          query:
+            type: constant
+            value: '{{#sys.query#}}'
+          tools:
+            type: constant
+            value:
+            - enabled: true
+              extra:
+                description: 指定チーム(scope)のナレッジタグ一覧を返す。検索前に呼び出す。
+              parameters:
+                scope:
+                  auto: 1
+                  value: null
+              provider_name: open_genai_knowledge
+              provider_show_name: OpenGENAI Knowledge
+              schemas:
+              - form: llm
+                human_description:
+                  en_US: Knowledge scope (teamId)
+                  ja_JP: ナレッジスコープ（teamId）
+                  zh_Hans: ナレッジスコープ（teamId）
+                label:
+                  en_US: scope
+                  ja_JP: scope
+                  zh_Hans: scope
+                llm_description: ナレッジスコープ（teamId）。指示に記載の scope をそのまま渡す。
+                name: scope
+                required: false
+                type: string
+              settings: {}
+              tool_description: 指定チーム(scope)のナレッジタグ一覧を返す。検索前に呼び出す。
+              tool_label: knowledge_list_tags
+              tool_name: knowledge_list_tags
+              type: mcp
+            - enabled: true
+              extra:
+                description: 指定チームの文書一覧。tags で絞り込み可能。
+              parameters:
+                scope:
+                  auto: 1
+                  value: null
+                tags:
+                  auto: 1
+                  value: null
+              provider_name: open_genai_knowledge
+              provider_show_name: OpenGENAI Knowledge
+              schemas:
+              - form: llm
+                human_description:
+                  en_US: Knowledge scope (teamId)
+                  ja_JP: ナレッジスコープ（teamId）
+                  zh_Hans: ナレッジスコープ（teamId）
+                label:
+                  en_US: scope
+                  ja_JP: scope
+                  zh_Hans: scope
+                llm_description: ナレッジスコープ（teamId）。指示に記載の scope をそのまま渡す。
+                name: scope
+                required: false
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Filter tags (comma-separated)
+                  ja_JP: 絞り込みタグ（カンマ区切り可）
+                  zh_Hans: 絞り込みタグ（カンマ区切り可）
+                label:
+                  en_US: tags
+                  ja_JP: tags
+                  zh_Hans: tags
+                llm_description: "絞り込みタグ。例: 議事録 または 議事録,規程。空なら全件。"
+                name: tags
+                required: false
+                type: string
+              settings: {}
+              tool_description: 指定チームの文書一覧。tags で絞り込み可能。
+              tool_label: knowledge_list_docs
+              tool_name: knowledge_list_docs
+              type: mcp
+            - enabled: true
+              extra:
+                description: ナレッジを検索して該当箇所を返す。tags は必須。特定資料は source または doc_id で絞る。
+              parameters:
+                query:
+                  auto: 1
+                  value: null
+                tags:
+                  auto: 1
+                  value: null
+                scope:
+                  auto: 1
+                  value: null
+                top_k:
+                  auto: 1
+                  value: null
+                mode:
+                  auto: 1
+                  value: null
+                source:
+                  auto: 1
+                  value: null
+                doc_id:
+                  auto: 1
+                  value: null
+              provider_name: open_genai_knowledge
+              provider_show_name: OpenGENAI Knowledge
+              schemas:
+              - form: llm
+                human_description:
+                  en_US: Search query
+                  ja_JP: 検索クエリ
+                  zh_Hans: 検索クエリ
+                label:
+                  en_US: query
+                  ja_JP: query
+                  zh_Hans: query
+                llm_description: 検索クエリ（議題・質問文など）
+                name: query
+                required: true
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Tags (required)
+                  ja_JP: タグ（必須）
+                  zh_Hans: タグ（必須）
+                label:
+                  en_US: tags
+                  ja_JP: tags
+                  zh_Hans: tags
+                llm_description: "検索対象タグ（必須）。例: 議事録"
+                name: tags
+                required: true
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Knowledge scope (teamId)
+                  ja_JP: ナレッジスコープ（teamId）
+                  zh_Hans: ナレッジスコープ（teamId）
+                label:
+                  en_US: scope
+                  ja_JP: scope
+                  zh_Hans: scope
+                llm_description: ナレッジスコープ（teamId）。指示に記載の scope をそのまま渡す。
+                name: scope
+                required: false
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Number of hits
+                  ja_JP: 取得件数
+                  zh_Hans: 取得件数
+                label:
+                  en_US: top_k
+                  ja_JP: top_k
+                  zh_Hans: top_k
+                llm_description: 取得件数（既定 4。最大 8 程度）
+                name: top_k
+                required: false
+                type: number
+              - form: llm
+                human_description:
+                  en_US: Retrieval mode
+                  ja_JP: 検索モード
+                  zh_Hans: 検索モード
+                label:
+                  en_US: mode
+                  ja_JP: mode
+                  zh_Hans: mode
+                llm_description: "auto|full|vector|tree|hybrid（既定 auto）。資料指定時は auto のまま（構造化なら tree）"
+                name: mode
+                required: false
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Source filename
+                  ja_JP: 対象ファイル名
+                  zh_Hans: 対象文件名
+                label:
+                  en_US: source
+                  ja_JP: source
+                  zh_Hans: source
+                llm_description: 対象ファイル名（任意）。ユーザーが資料を指定したときは必ず渡す。knowledge_list_docs の source と一致させる。
+                name: source
+                required: false
+                type: string
+              - form: llm
+                human_description:
+                  en_US: Document ID
+                  ja_JP: 文書 ID
+                  zh_Hans: 文档 ID
+                label:
+                  en_US: doc_id
+                  ja_JP: doc_id
+                  zh_Hans: doc_id
+                llm_description: 対象文書 ID（任意）。knowledge_list_docs の doc_id。source のどちらか一方でよい。
+                name: doc_id
+                required: false
+                type: string
+              settings: {}
+              tool_description: ナレッジを検索して該当箇所を返す。tags は必須。特定資料は source または doc_id で絞る。
+              tool_label: knowledge_search
+              tool_name: knowledge_search
+              type: mcp
+        agent_strategy_label: FunctionCalling
+        agent_strategy_name: function_calling
+        agent_strategy_provider_name: langgenius/agent/agent
+        desc: OpenGENAI Knowledge MCP ツールを使う Agent
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          window:
+            enabled: true
+            size: 10
+        output_schema: null
+        plugin_unique_identifier: langgenius/agent:0.0.40@d00a70e81bfb28fadd52cba7fd7a1f7c344c67b051e4a2e356a06c690736a7c4
+        selected: false
+        title: Knowledge Agent
+        tool_node_version: '2'
+        type: agent
+      height: 220
+      id: '1780000000002'
+      position:
+        x: 340
+        y: 260
+      positionAbsolute:
+        x: 340
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        answer: '{{#1780000000002.text#}}'
+        desc: ''
+        selected: false
+        title: 直接返信
+        type: answer
+        variables: []
+      height: 100
+      id: answer
+      position:
+        x: 640
+        y: 280
+      positionAbsolute:
+        x: 640
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.85

@@ -4,9 +4,13 @@
     {
       "enabled": true,
       "case_sensitive": false,
+      "check_mynumber": true,
       "words": ["禁止語1"],
-      "patterns": ["\\d{12}"]
+      "patterns": ["\\\\d{3}-\\\\d{4}"]
     }
+
+注: 個人番号は検査用数字付きの専用判定（check_mynumber）。
+    パターンに \\d{12} だけを書いても専用判定へ委譲される。
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
 
     enabled = bool(data.get("enabled", False))
     case_sensitive = bool(data.get("case_sensitive", False))
+    check_mynumber = bool(data.get("check_mynumber", True))
 
     words = data.get("words", [])
     if not isinstance(words, list) or not all(isinstance(x, str) for x in words):
@@ -47,6 +52,7 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
         {
             "enabled": enabled,
             "case_sensitive": case_sensitive,
+            "check_mynumber": check_mynumber,
             "words": [str(w) for w in words if w],
             "patterns": [str(p) for p in patterns if p],
         },
@@ -62,6 +68,8 @@ def render_rules(rules: dict[str, Any]) -> str:
         "",
         f"- 制御: **{'有効' if rules.get('enabled') else '無効（制限なし）'}**",
         f"- 大文字小文字の区別: {'する' if rules.get('case_sensitive') else 'しない'}",
+        f"- マイナンバー検査（検査数字）: "
+        f"{'する' if rules.get('check_mynumber', True) else 'しない'}",
         f"- 禁止ワード数: {len(words)}",
         f"- 機密パターン数: {len(patterns)}",
     ]
@@ -73,6 +81,10 @@ def render_rules(rules: dict[str, Any]) -> str:
         lines.append("")
         lines.append("### 機密情報パターン（正規表現）")
         lines.extend(f"- `{p}`" for p in patterns)
+        lines.append("")
+        lines.append(
+            "> `\\d{12}` 単体はマイナンバー専用検査（検査数字一致）に委譲されます。"
+        )
     lines.append("")
     lines.append(
         "> システム管理者による管理系アプリの実行は本制限の対象外です。"

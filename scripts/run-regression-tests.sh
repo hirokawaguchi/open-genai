@@ -56,7 +56,8 @@ ensure_python_env() {
 run_python_tests() {
   echo "=== Python regression tests (pytest) ==="
   ensure_python_env
-  pytest
+  # activate 後でも PATH 解決が揺れる環境があるため venv の pytest を明示する
+  "$VENV_DIR/bin/pytest"
 }
 
 run_web_tests() {

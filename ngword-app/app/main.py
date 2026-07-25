@@ -111,8 +111,9 @@ _EXAMPLE = (
     '{\n'
     '  "enabled": true,\n'
     '  "case_sensitive": false,\n'
+    '  "check_mynumber": true,\n'
     '  "words": ["禁止語の例"],\n'
-    '  "patterns": ["\\\\d{12}"]\n'
+    '  "patterns": []\n'
     '}'
 )
 
@@ -161,6 +162,19 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
             "default_value": "true" if rules.get("case_sensitive") else "false",
             "visibleWhen": set_vw,
         },
+        "check_mynumber": {
+            "type": "select",
+            "title": "マイナンバー検査",
+            "items": [
+                {"title": "する（検査数字が一致する12桁のみ）", "value": "true"},
+                {"title": "しない", "value": "false"},
+            ],
+            "default_value": "false"
+            if rules.get("check_mynumber") is False
+            else "true",
+            "desc": "総務省令の検査用数字で個人番号らしさを判定します（単なる12桁数字では止めません）。",
+            "visibleWhen": set_vw,
+        },
         "words": {
             "type": "textarea",
             "title": "禁止ワード（1行に1語）",
@@ -171,8 +185,15 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
         "patterns": {
             "type": "textarea",
             "title": "機密情報パターン（1行に1正規表現）",
-            "desc": "例: \\d{12}（12桁の数字）。改行区切りで複数指定できます。",
-            "default_value": "\n".join(rules.get("patterns") or []),
+            "desc": (
+                "任意の正規表現。マイナンバーは上の専用検査を使ってください。"
+                "なお `\\d{12}` 単体は専用検査へ委譲されます。"
+            ),
+            "default_value": "\n".join(
+                p
+                for p in (rules.get("patterns") or [])
+                if p.strip() not in (r"\d{12}", r"[0-9]{12}")
+            ),
             "visibleWhen": set_vw,
         },
     }
@@ -233,10 +254,11 @@ async def invoke(
             # 後方互換: 生JSON入力も引き続き受理
             rules, verr = parse_and_validate(raw_json)
         else:
-            # 構造化フォーム入力（enabled/case_sensitive/words/patterns）から組み立て
+            # 構造化フォーム入力から組み立て
             built = {
                 "enabled": _as_bool(inputs.get("enabled")),
                 "case_sensitive": _as_bool(inputs.get("case_sensitive")),
+                "check_mynumber": _as_bool(inputs.get("check_mynumber", True)),
                 "words": [w.strip() for w in (inputs.get("words") or "").splitlines() if w.strip()],
                 "patterns": [
                     p.strip() for p in (inputs.get("patterns") or "").splitlines() if p.strip()

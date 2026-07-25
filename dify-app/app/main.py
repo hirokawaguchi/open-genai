@@ -26,6 +26,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import sqlite3
 import threading
 from typing import Any
@@ -177,6 +178,25 @@ def _strip_meta(inputs: dict[str, Any], *extra: str) -> dict[str, Any]:
     """Dify の inputs として送らない源内 固有キーを除外する。"""
     drop = {"files", "conversation_histories", "action", *extra}
     return {k: v for k, v in inputs.items() if k not in drop}
+
+
+def _coerce_dify_input_values(inputs: dict[str, Any]) -> dict[str, Any]:
+    """源内フォーム由来の値を Dify inputs 向けに整える。
+
+    Dify の text-input は string 必須。源内の number フィールドや JSON 数値化で
+    int/float が渡ると `(type 'text-input') X in input form must be a string` になる。
+    ファイル参照オブジェクト等の dict/list はそのまま残す。
+    """
+    out: dict[str, Any] = {}
+    for key, value in inputs.items():
+        if isinstance(value, bool):
+            # bool は int のサブクラスなので先に扱う
+            out[key] = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            out[key] = str(value)
+        else:
+            out[key] = value
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +382,215 @@ def _citations_to_artifacts(resources: list[Any]) -> list[dict[str, Any]]:
     return arts
 
 
+def _normalize_citation_list(raw: Any) -> list[dict[str, Any]]:
+    """citation_artifacts 配列（または JSON 文字列）を artifact 化する。"""
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            raw = json.loads(s)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    arts: list[dict[str, Any]] = []
+    for i, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str):
+            text = item.get("content") if isinstance(item.get("content"), str) else ""
+        text = (text or "").strip()
+        if not text:
+            continue
+        display = str(item.get("display_name") or "").strip()
+        if not display:
+            source = str(item.get("source") or item.get("title") or "unknown").strip()
+            display = f"[{i}] {source or 'unknown'}"
+        arts.append(
+            {
+                "display_name": display,
+                "mime_type": CITATION_MIME,
+                "text": text,
+            }
+        )
+    return arts
+
+
+def _citation_artifacts_from_workflow_outputs(
+    outputs: Any,
+) -> list[dict[str, Any]]:
+    """workflow outputs の citation_artifacts（JSON 文字列 or 配列）を artifact 化する。
+
+    OpenGENAI Retrieval を HTTP で呼ぶワークフロー向け。各要素は
+    {display_name?, source?, text|content, mime_type?} を想定。
+    """
+    if not isinstance(outputs, dict):
+        return []
+    raw = outputs.get("citation_artifacts")
+    if raw is None:
+        raw = outputs.get("citations_json")
+    return _normalize_citation_list(raw)
+
+
+def _extract_first_json_value(s: str) -> Any | None:
+    """文字列中の最初の JSON 値を取り出す。
+
+    Dify Agent の tool_response は
+    `tool response: {...}', stream=False).` のように後続ゴミが付くことがあるため、
+    JSONDecoder.raw_decode で先頭オブジェクトだけ読む。
+    """
+    if not s:
+        return None
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(s):
+        if ch not in "{[":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(s, i)
+            return obj
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _citations_from_knowledge_search_payload(
+    data: Any,
+) -> list[dict[str, Any]]:
+    """knowledge_search / MCP ツール応答から citation artifacts を取り出す。"""
+    if isinstance(data, str):
+        s = data.strip()
+        if not s:
+            return []
+        parsed = _extract_first_json_value(s)
+        if parsed is None:
+            return []
+        data = parsed
+    if not isinstance(data, dict):
+        return []
+
+    arts = _normalize_citation_list(
+        data.get("citation_artifacts") or data.get("citations_json")
+    )
+    if arts:
+        return arts
+
+    # citation_artifacts が無い場合は nodes から組み立てる
+    nodes = data.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for i, n in enumerate(nodes, start=1):
+        if not isinstance(n, dict):
+            continue
+        text = n.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        ref = n.get("ref") or i
+        source = str(n.get("source") or "").strip() or "unknown"
+        title = str(n.get("title") or "").strip()
+        parts = [source]
+        if title and title != source and title.lower() != "chunk":
+            parts.append(title)
+        ps, pe = n.get("page_start"), n.get("page_end")
+        if ps is not None:
+            try:
+                ps_i = int(ps)
+                pe_i = int(pe) if pe is not None else ps_i
+                parts.append(
+                    f"p.{ps_i}-{pe_i}" if pe_i != ps_i else f"p.{ps_i}"
+                )
+            except (TypeError, ValueError):
+                pass
+        label = " / ".join(parts)
+        out.append(
+            {
+                "display_name": f"[{ref}] {label}",
+                "mime_type": CITATION_MIME,
+                "text": text.strip(),
+            }
+        )
+    return out
+
+
+def _merge_citation_arts(
+    dst: list[dict[str, Any]], src: list[dict[str, Any]]
+) -> None:
+    """display_name+text で重複を除きながら追加する。"""
+    seen = {(a.get("display_name"), a.get("text")) for a in dst}
+    for a in src:
+        key = (a.get("display_name"), a.get("text"))
+        if key in seen:
+            continue
+        seen.add(key)
+        dst.append(a)
+
+
+_ANSWER_REF_RE = re.compile(r"\[(\d+)\]")
+_CITATION_REF_RE = re.compile(r"^\[(\d+)\]")
+
+
+def _filter_citations_cited_in_answer(
+    answer: str, citations: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """回答本文で参照された [n] に対応する出典だけ残す。
+
+    タグ検索の全ヒットをアコーディオンに載せると、本文未使用の別文書まで
+    並んでしまうため。本文に [n] が無い場合はフィルタしない（従来どおり）。
+    """
+    if not citations:
+        return citations
+    refs = {m.group(1) for m in _ANSWER_REF_RE.finditer(answer or "")}
+    if not refs:
+        return citations
+    kept: list[dict[str, Any]] = []
+    for a in citations:
+        name = str(a.get("display_name") or "")
+        m = _CITATION_REF_RE.match(name.strip())
+        if m and m.group(1) in refs:
+            kept.append(a)
+    # 参照番号はあるが display_name 形式が合わない場合は落とさない
+    return kept if kept else citations
+
+
+def _scavenge_citations(value: Any, dst: list[dict[str, Any]], *, depth: int = 0) -> None:
+    """agent_log / node outputs を再帰的に歩き knowledge_search 由来の出典を集める。
+
+    Chatflow の Agent ノードは agent_thought ではなく agent_log を流す。
+    ツール結果は data.output.tool_response や outputs.json[*].data などに入る。
+    """
+    if depth > 8 or value is None:
+        return
+    if isinstance(value, str):
+        if "citation_artifacts" in value or '"nodes"' in value or "'nodes'" in value:
+            _merge_citation_arts(dst, _citations_from_knowledge_search_payload(value))
+        return
+    if isinstance(value, dict):
+        if "citation_artifacts" in value or (
+            isinstance(value.get("nodes"), list) and value.get("nodes")
+        ):
+            _merge_citation_arts(dst, _citations_from_knowledge_search_payload(value))
+        # 優先キーを先に見る
+        for key in (
+            "tool_response",
+            "output",
+            "observation",
+            "text",
+            "result",
+            "json",
+            "data",
+            "citation_artifacts",
+            "nodes",
+        ):
+            if key in value:
+                _scavenge_citations(value.get(key), dst, depth=depth + 1)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _scavenge_citations(item, dst, depth=depth + 1)
+
+
 def _extract_knowledge_results(node_data: dict[str, Any]) -> list[Any]:
     """node_finished(data) から knowledge-retrieval のヒット一覧を取り出す。"""
     if not isinstance(node_data, dict):
@@ -376,11 +605,34 @@ def _extract_knowledge_results(node_data: dict[str, Any]) -> list[Any]:
     return result if isinstance(result, list) else []
 
 
-def _outputs_to_text(outputs: Any, response_field: str | None) -> str:
+def _normalize_field_names(value: Any) -> list[str]:
+    """config の response_field / query_field を文字列リストへ正規化する。
+
+    文字列・配列の両方を受け付ける（配列をそのまま `in dict` すると
+    unhashable type: 'list' になるため）。
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else []
+    if isinstance(value, (list, tuple)):
+        out: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+        return out
+    s = str(value).strip()
+    return [s] if s else []
+
+
+def _outputs_to_text(outputs: Any, response_field: Any) -> str:
     """ワークフローの outputs(dict) を表示用テキストに整形する。
 
     Dify のファイル出力（`__dify__file__`）は、配列 JSON をそのまま出さず、
     ダウンロードリンク（[ファイル名](url)）として整形する。
+
+    response_field は文字列または配列（例: ["report","citations"]）を受け付ける。
     """
     if outputs is None:
         return ""
@@ -392,15 +644,44 @@ def _outputs_to_text(outputs: Any, response_field: str | None) -> str:
 
     if not isinstance(outputs, dict):
         return json.dumps(outputs, ensure_ascii=False, indent=2)
-    if response_field and response_field in outputs:
-        val = outputs[response_field]
-        return "" if _contains_file(val) else _val_text(val)
-    # ファイル項目は artifacts 側で扱うため、テキストからは除外
-    non_file = [(k, v) for k, v in outputs.items() if not _contains_file(v)]
+
+    fields = _normalize_field_names(response_field)
+    if fields:
+        parts: list[str] = []
+        for key in fields:
+            if key not in outputs:
+                continue
+            val = outputs[key]
+            if _contains_file(val):
+                continue
+            text = _val_text(val).strip()
+            if not text:
+                continue
+            # 複数キー指定時は見出し付き、単一なら本文のみ
+            if len(fields) == 1:
+                parts.append(text)
+            else:
+                parts.append(f"**{key}**\n\n{text}")
+        if parts:
+            return "\n\n".join(parts)
+
+    # ファイル／出典 JSON は artifacts 側で扱うため、テキストからは除外
+    skip_keys = {"citation_artifacts", "citations_json"}
+    non_file = [
+        (k, v)
+        for k, v in outputs.items()
+        if k not in skip_keys and not _contains_file(v)
+    ]
     if not non_file:
         return ""
     if len(non_file) == 1:
         return _val_text(non_file[0][1])  # 単一キーは値をそのまま
+    # response_field 未指定時はよく使う本文キーを優先（複数キーの **report** 羅列を避ける）
+    preferred = ("report", "result", "text", "answer", "output", "response")
+    by_key = {k: v for k, v in non_file}
+    for key in preferred:
+        if key in by_key and isinstance(by_key[key], str) and by_key[key].strip():
+            return by_key[key]
     return "\n\n".join(f"**{k}**\n\n{_val_text(v)}" for k, v in non_file)
 
 
@@ -439,7 +720,8 @@ async def _run_workflow(
     inputs: dict[str, Any],
     user: str,
     response_field: str | None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """戻り値: (表示テキスト, ファイルobjs, citation artifacts)。"""
     payload = {"inputs": inputs, "response_mode": "streaming", "user": user}
     text_parts: list[str] = []
     final_outputs: Any = None
@@ -459,6 +741,7 @@ async def _run_workflow(
                 body = (await res.aread()).decode("utf-8", "replace")
                 return (
                     f"Dify ワークフローの呼び出しに失敗しました (status: {res.status_code}).\n\n```\n{body[:1000]}\n```",
+                    [],
                     [],
                 )
             async for line in res.aiter_lines():
@@ -484,13 +767,14 @@ async def _run_workflow(
                     error = obj.get("message") or data.get("message") or "unknown error"
 
     if error:
-        return (f"Dify ワークフローでエラーが発生しました: {error}", [])
+        return (f"Dify ワークフローでエラーが発生しました: {error}", [], [])
     if final_outputs is not None:
         text = _outputs_to_text(final_outputs, response_field)
         files = _extract_dify_files(final_outputs)
-        return (text, files)
+        citations = _citation_artifacts_from_workflow_outputs(final_outputs)
+        return (text, files, citations)
     # workflow_finished が無い場合はストリームされたテキストを返す
-    return ("".join(text_parts), [])
+    return ("".join(text_parts), [], [])
 
 
 async def _run_chat(
@@ -520,6 +804,7 @@ async def _run_chat(
     answer_parts: list[str] = []
     file_objs: list[dict[str, Any]] = []
     retriever_resources: list[Any] = []
+    tool_citations: list[dict[str, Any]] = []
     new_conv_id = conversation_id
     error: str | None = None
 
@@ -560,12 +845,26 @@ async def _run_chat(
                 elif event == "message_file":
                     # ツール等が生成したファイル（画像/文書）
                     file_objs.append(obj)
+                elif event == "agent_thought":
+                    # 旧 Agent チャット: observation にツール結果が入る
+                    obs = obj.get("observation")
+                    if obs:
+                        _scavenge_citations(obs, tool_citations)
+                elif event == "agent_log":
+                    # Chatflow の Agent ノード: ツール結果は agent_log.data 配下
+                    # 例: data.data.output.tool_response = knowledge_search の JSON
+                    _scavenge_citations(obj.get("data"), tool_citations)
                 elif event == "node_finished":
                     # Chatflow: message_end.retriever_resources が空でも
                     # knowledge-retrieval ノードの outputs.result に出典がある
-                    hits = _extract_knowledge_results(obj.get("data") or {})
+                    data = obj.get("data") or {}
+                    hits = _extract_knowledge_results(data)
                     if hits:
                         retriever_resources.extend(hits)
+                    # Agent / Tool / Code ノード outputs（json / text 等）を走査
+                    if isinstance(data, dict):
+                        _scavenge_citations(data.get("outputs"), tool_citations)
+                        _scavenge_citations(data.get("process_data"), tool_citations)
                 elif event == "message_end":
                     # message_end に files 配列が入る版がある
                     for f in obj.get("files") or []:
@@ -590,7 +889,33 @@ async def _run_chat(
     # 生成ファイルは backend で再ホストするため、参照(file_obj)を返す
     out_files = _extract_dify_files(file_objs)
     citations = _citations_to_artifacts(retriever_resources)
+    _merge_citation_arts(citations, tool_citations)
+    citations = _filter_citations_cited_in_answer(answer, citations)
     return (answer, new_conv_id, out_files, citations)
+
+
+# 源内フォームには出さず、invoke 時に自動注入する Dify 入力変数
+_HIDDEN_FORM_VARS = frozenset({"top_k", "scope", "rag_scope"})
+
+
+def _inject_hidden_inputs(
+    inputs: dict[str, Any],
+    *,
+    scope: str | None,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """非表示項目へ適切な値を入れる（チーム scope・参照件数）。"""
+    out = dict(inputs)
+    team_scope = (scope or "").strip()
+    if team_scope:
+        out["scope"] = team_scope
+    elif not str(out.get("scope") or "").strip():
+        default_scope = str(cfg.get("default_scope") or "").strip()
+        if default_scope:
+            out["scope"] = default_scope
+    if not str(out.get("top_k") or "").strip():
+        out["top_k"] = str(cfg.get("default_top_k") or "8")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +927,8 @@ def _convert_user_input_form(form: list[Any]) -> dict[str, Any]:
     Dify のコンポーネント型 → 源内の type:
       text-input -> text, paragraph -> textarea, number -> number,
       select -> select(items), file / file-list -> file
+
+    top_k / scope は源内では非表示（実行時に自動注入）。
     """
     ui: dict[str, Any] = {}
     for item in form or []:
@@ -612,6 +939,8 @@ def _convert_user_input_form(form: list[Any]) -> dict[str, Any]:
                 continue
             variable = spec.get("variable")
             if not variable:
+                continue
+            if variable in _HIDDEN_FORM_VARS:
                 continue
             field: dict[str, Any] = {
                 "title": spec.get("label") or variable,
@@ -683,6 +1012,7 @@ async def invoke(
     x_app_config: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
 ) -> Any:
     err = _check_key(x_api_key)
     if err:
@@ -704,13 +1034,21 @@ async def invoke(
         }
 
     app_type = (cfg.get("dify_app_type") or "chat").strip().lower()
-    query_field = cfg.get("query_field") or "query"
+    query_fields = _normalize_field_names(cfg.get("query_field")) or ["query"]
+    query_field = query_fields[0]
+    # response_field または response_fields を受理（文字列 / 配列）
     response_field = cfg.get("response_field")
+    if response_field in (None, "", []):
+        response_field = cfg.get("response_fields")
     api_key = x_api_key or ""
     user = x_user_id or "open-genai"
 
     body = await request.json()
-    inputs = body.get("inputs", body) or {}
+    inputs = _inject_hidden_inputs(
+        body.get("inputs", body) or {},
+        scope=x_scope,
+        cfg=cfg,
+    )
 
     # ファイルを Dify にアップロードして参照オブジェクト化
     file_refs_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -743,7 +1081,7 @@ async def invoke(
             return None, False
 
         if app_type == "workflow":
-            dify_inputs = _strip_meta(inputs)
+            dify_inputs = _coerce_dify_input_values(_strip_meta(inputs))
             if all_file_refs:
                 file_var, is_list = await _resolve_file_var()
                 if file_var:
@@ -754,11 +1092,11 @@ async def invoke(
                     # フォールバック: 源内フォームのキー名を Dify 変数名として割り当て
                     for key, refs in file_refs_by_key.items():
                         dify_inputs[key] = refs if len(refs) > 1 else refs[0]
-            outputs, out_files = await _run_workflow(
+            outputs, out_files, citations = await _run_workflow(
                 base, api_key, dify_inputs, user, response_field
             )
             resp: dict[str, Any] = {"outputs": outputs}
-            arts = _files_to_artifacts(base, out_files)
+            arts = _files_to_artifacts(base, out_files) + citations
             if arts:
                 resp["artifacts"] = arts
             return resp
@@ -767,7 +1105,9 @@ async def invoke(
         query = str(inputs.get(query_field) or inputs.get("question") or "").strip()
         if not query:
             return {"outputs": "メッセージ(query)が空です。入力してください。"}
-        dify_inputs = _strip_meta(inputs, query_field, "question")
+        dify_inputs = _coerce_dify_input_values(
+            _strip_meta(inputs, query_field, "question")
+        )
         conversation_id = _get_conversation_id(x_session_id or "")
         # 解決した入力変数へ。解決できなければメッセージ添付(sys.files)として送る。
         chat_files = all_file_refs

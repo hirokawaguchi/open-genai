@@ -1,0 +1,540 @@
+app:
+  description: |
+    OpenGENAI の Retrieval API（POST /retrieve）で議事録ナレッジを検索し、
+    指定議題に対する発言者のスタンス（賛成／反対／中立／不明）を分析するワークフロー。
+    前提: 議事録をドキュメント登録（標準推奨）しタグ付与済みであること。
+    インポート後: (1) LLM モデルを利用可能なものへ付け替え
+    (2) 環境変数 RAG_BASE_URL / RAG_API_KEY / RAG_SCOPE を環境に合わせて設定。
+  icon: 🗳️
+  icon_background: '#E8F3FF'
+  icon_type: emoji
+  mode: workflow
+  name: OpenGENAI-MinutesStance
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - id: env-rag-base
+    name: RAG_BASE_URL
+    value: http://host.docker.internal:8001
+    value_type: string
+  - id: env-rag-key
+    name: RAG_API_KEY
+    value: local-rag-key
+    value_type: string
+  - id: env-rag-scope
+    name: RAG_SCOPE
+    value: '00000000-0000-0000-0000-000000000000'
+    value_type: string
+  features:
+    file_upload:
+      enabled: false
+      allowed_file_extensions: []
+      allowed_file_types: []
+      allowed_file_upload_methods: []
+      number_limits: 3
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: edge-start-build
+      source: '1760000000001'
+      sourceHandle: source
+      target: '1760000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+      id: edge-build-http
+      source: '1760000000002'
+      sourceHandle: source
+      target: '1760000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: edge-http-parse
+      source: '1760000000003'
+      sourceHandle: source
+      target: '1760000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: edge-parse-llm
+      source: '1760000000004'
+      sourceHandle: source
+      target: '1760000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: edge-llm-end
+      source: '1760000000006'
+      sourceHandle: source
+      target: '1760000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 分析したい議題と検索条件
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - label: 議題（分析対象）
+          max_length: 2000
+          options: []
+          required: true
+          type: paragraph
+          variable: agenda
+        - default: 議事録
+          label: タグ（任意・カンマ区切り）
+          max_length: 500
+          options: []
+          required: false
+          type: text-input
+          variable: tags
+        - default: '8'
+          label: 参照件数 top_k（源内では非表示・自動注入）
+          max_length: 8
+          options: []
+          required: false
+          type: text-input
+          variable: top_k
+        - default: '00000000-0000-0000-0000-000000000000'
+          label: ナレッジ scope（源内では非表示・x-scope を自動注入）
+          max_length: 64
+          options: []
+          required: false
+          type: text-input
+          variable: scope
+      height: 160
+      id: '1760000000001'
+      position:
+        x: 40
+        y: 280
+      positionAbsolute:
+        x: 40
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          import json
+          import re
+
+          def main(agenda: str, tags: str, top_k: str, scope: str) -> dict:
+              agenda = (agenda or "").strip()
+              raw_tags = (tags or "").strip()
+              tag_list = []
+              if raw_tags:
+                  tag_list = [t for t in re.split(r"[,;、]\s*", raw_tags) if t]
+              try:
+                  k = int(str(top_k or "8").strip() or "8")
+              except Exception:
+                  k = 8
+              k = max(1, min(k, 20))
+              scope = (scope or "").strip()
+              question = (
+                  f"議題「{agenda}」について、発言者ごとの発言内容とスタンス"
+                  f"（賛成・反対・中立・条件付き等）が分かる箇所を抽出してください。"
+              )
+              body = {
+                  "question": question,
+                  "mode": "auto",
+                  "top_k": k,
+              }
+              if scope:
+                  body["scope"] = scope
+              if tag_list:
+                  body["tags"] = tag_list
+              return {
+                  "question": question,
+                  "body_json": json.dumps(body, ensure_ascii=False),
+                  "tag_note": ", ".join(tag_list) if tag_list else "(タグ指定なし)",
+                  "scope": scope,
+              }
+        code_language: python3
+        desc: /retrieve 用の質問と JSON ボディを組み立てる
+        outputs:
+          question:
+            children: null
+            type: string
+          body_json:
+            children: null
+            type: string
+          tag_note:
+            children: null
+            type: string
+          scope:
+            children: null
+            type: string
+        selected: false
+        title: 検索クエリ組み立て
+        type: code
+        variables:
+        - value_selector:
+          - '1760000000001'
+          - agenda
+          variable: agenda
+        - value_selector:
+          - '1760000000001'
+          - tags
+          variable: tags
+        - value_selector:
+          - '1760000000001'
+          - top_k
+          variable: top_k
+        - value_selector:
+          - '1760000000001'
+          - scope
+          variable: scope
+      height: 54
+      id: '1760000000002'
+      position:
+        x: 340
+        y: 300
+      positionAbsolute:
+        x: 340
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data: '{{#1760000000002.body_json#}}'
+          type: raw-text
+        desc: OpenGENAI rag-app の POST /retrieve（mode=auto）
+        headers: "Content-Type: application/json\nx-api-key: {{#env.RAG_API_KEY#}}\nx-scope: {{#1760000000002.scope#}}"
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 2
+          retry_enabled: true
+          retry_interval: 100
+        selected: false
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 120
+          max_write_timeout: 20
+        title: ナレッジ検索（/retrieve）
+        type: http-request
+        url: '{{#env.RAG_BASE_URL#}}/retrieve'
+        variables: []
+      height: 168
+      id: '1760000000003'
+      position:
+        x: 640
+        y: 280
+      positionAbsolute:
+        x: 640
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |
+          import json
+
+          def main(body: str, status_code: str) -> dict:
+              try:
+                  code = int(str(status_code or "0"))
+              except Exception:
+                  code = 0
+              raw = body or ""
+              context = ""
+              citations = ""
+              resolved = ""
+              hit_count = 0
+              ok = "false"
+              err = ""
+              if code < 200 or code >= 300:
+                  err = f"retrieve HTTP {code}: {raw[:500]}"
+                  return {
+                      "ok": ok,
+                      "context": "",
+                      "citations": "",
+                      "citation_artifacts": "[]",
+                      "resolved_mode": "",
+                      "hit_count": 0,
+                      "error": err,
+                  }
+              try:
+                  data = json.loads(raw)
+              except Exception as e:
+                  return {
+                      "ok": "false",
+                      "context": "",
+                      "citations": "",
+                      "citation_artifacts": "[]",
+                      "resolved_mode": "",
+                      "hit_count": 0,
+                      "error": f"JSON parse error: {e}",
+                  }
+              nodes = data.get("nodes") or []
+              resolved = str(data.get("resolved_mode") or "")
+              parts = []
+              cites = []
+              citation_arts = []
+              for i, n in enumerate(nodes, start=1):
+                  title = (n.get("title") or "").strip()
+                  source = (n.get("source") or "").strip()
+                  text = (n.get("text") or "").strip()
+                  mode = (n.get("mode") or "").strip()
+                  if not text:
+                      continue
+                  hit_count += 1
+                  label = source or title or "chunk"
+                  head = f"### 根拠 [{i}]: {title or label}"
+                  meta = f"（出典: {label} / mode={mode or '-'}）"
+                  parts.append(f"{head}\n{meta}\n\n{text}")
+                  cites.append(f"- [{i}] {label}")
+                  citation_arts.append(
+                      {
+                          "display_name": f"[{i}] {label}",
+                          "source": label,
+                          "text": text,
+                          "mime_type": "text/x.open-genai.citation",
+                      }
+                  )
+              context = "\n\n---\n\n".join(parts)
+              citations = "\n".join(cites)
+              if hit_count > 0 and context.strip():
+                  ok = "true"
+              else:
+                  err = (
+                      "ナレッジから該当箇所が見つかりませんでした。"
+                      "実行中チームのナレッジに、指定タグ付きの議事録が登録されているか確認してください"
+                      "（他チームや共通チームにだけある資料は検索されません）。"
+                      f" resolved_mode={resolved or '-'} / hits={hit_count}"
+                  )
+              return {
+                  "ok": ok,
+                  "context": context,
+                  "citations": citations,
+                  "citation_artifacts": json.dumps(
+                      citation_arts, ensure_ascii=False
+                  ),
+                  "resolved_mode": resolved,
+                  "hit_count": hit_count,
+                  "error": err,
+              }
+        code_language: python3
+        desc: retrieve 応答を分析用コンテキスト＋出典 artifacts 用 JSON に整形
+        outputs:
+          ok:
+            children: null
+            type: string
+          context:
+            children: null
+            type: string
+          citations:
+            children: null
+            type: string
+          citation_artifacts:
+            children: null
+            type: string
+          resolved_mode:
+            children: null
+            type: string
+          hit_count:
+            children: null
+            type: number
+          error:
+            children: null
+            type: string
+        selected: false
+        title: 検索結果整形
+        type: code
+        variables:
+        - value_selector:
+          - '1760000000003'
+          - body
+          variable: body
+        - value_selector:
+          - '1760000000003'
+          - status_code
+          variable: status_code
+      height: 54
+      id: '1760000000004'
+      position:
+        x: 940
+        y: 300
+      positionAbsolute:
+        x: 940
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 議題に対する発言者スタンスを分析（根拠が空なら該当なしと返す）
+        model:
+          completion_params:
+            temperature: 0.2
+          mode: chat
+          name: gpt-4o-mini
+          provider: openai
+        prompt_template:
+        - id: stance-sys
+          role: system
+          text: |
+            あなたは議事録アナリストです。与えられた根拠テキストだけを使い、指定議題に対する各発言者のスタンスを分析してください。
+
+            ## スタンス区分（厳守）
+            - 賛成
+            - 反対
+            - 中立
+            - 条件付き賛成
+            - 不明（根拠不足）
+
+            ## 出力形式（Markdown）
+            1. 冒頭に「## 議題」と議題文
+            2. 「## スタンス一覧」表: | 発言者 | スタンス | 根拠要約 | 出典 |
+               - 出典列はファイル名ではなく参照番号のみ（例: `[1]`）。複数なら `[1][2]`
+            3. 「## 対立・合意ポイント」箇条書き
+            4. 「## 注意」根拠に無い推測はしない旨
+            5. 出典の本文は源内 UI のアコーディオンで別表示されるため、文末に出典一覧を繰り返さない
+
+            根拠テキストが空、または検索エラーの場合は、スタンス表を作らず
+            「該当する根拠が見つかりませんでした」と理由（エラー文があればそれ）を書いて終了すること。
+            根拠に発言者が明示されない場合は「不明」とし、でっち上げないこと。
+        - id: stance-user
+          role: user
+          text: |
+            ## 分析対象の議題
+
+            {{#1760000000001.agenda#}}
+
+            ## 検索タグ
+
+            {{#1760000000002.tag_note#}}
+
+            ## 検索モード（resolved_mode） / ヒット件数
+
+            {{#1760000000004.resolved_mode#}} / {{#1760000000004.hit_count#}}
+
+            ## 検索エラー（あれば）
+
+            {{#1760000000004.error#}}
+
+            ## 根拠テキスト（OpenGENAI ナレッジ）
+
+            {{#1760000000004.context#}}
+        selected: false
+        title: スタンス分析
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: '1760000000006'
+      position:
+        x: 1240
+        y: 280
+      positionAbsolute:
+        x: 1240
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: report 本文＋citation_artifacts（源内アコーディオン用）
+        outputs:
+        - value_selector:
+          - '1760000000006'
+          - text
+          variable: report
+        - value_selector:
+          - '1760000000004'
+          - citation_artifacts
+          variable: citation_artifacts
+        - value_selector:
+          - '1760000000004'
+          - resolved_mode
+          variable: resolved_mode
+        - value_selector:
+          - '1760000000004'
+          - hit_count
+          variable: hit_count
+        selected: false
+        title: 終了
+        type: end
+      height: 140
+      id: '1760000000007'
+      position:
+        x: 1540
+        y: 280
+      positionAbsolute:
+        x: 1540
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: -200
+      y: 40
+      zoom: 0.7
+  rag_pipeline_variables: []
