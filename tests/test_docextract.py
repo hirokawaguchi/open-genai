@@ -42,3 +42,33 @@ def test_extract_doc_text_truncates_long_content(monkeypatch: pytest.MonkeyPatch
     assert result is not None
     assert result.endswith("…(以下省略)")
     assert len(result) <= 10 + len("\n…(以下省略)")
+
+
+def test_extract_doc_pages_keeps_full_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """構造化経路は MAX_DOC_CHARS で切り捨てない。"""
+    monkeypatch.setattr(docextract, "MAX_DOC_CHARS", 10)
+    monkeypatch.setattr(docextract, "SYNTHETIC_PAGE_CHARS", 100)
+    body = "あ" * 250
+    payload = base64.b64encode(body.encode()).decode("ascii")
+    pages = docextract.extract_doc_pages("long.txt", "text/plain", payload)
+    joined = "".join(p["text"] for p in pages)
+    assert joined == body
+    assert len(pages) >= 3
+
+
+def test_extract_doc_pages_rejects_too_many_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(docextract, "MAX_DOC_PAGES", 2)
+    monkeypatch.setattr(docextract, "SYNTHETIC_PAGE_CHARS", 10)
+    payload = base64.b64encode(("x" * 50).encode()).decode("ascii")
+    with pytest.raises(docextract.DocExtractError):
+        docextract.extract_doc_pages("long.txt", "text/plain", payload)
+
+
+def test_extract_doc_pages_blank_pdf_raises() -> None:
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    buf = io.BytesIO()
+    writer.write(buf)
+    payload = base64.b64encode(buf.getvalue()).decode("ascii")
+    with pytest.raises(docextract.DocExtractError):
+        docextract.extract_doc_pages("doc.pdf", "application/pdf", payload)

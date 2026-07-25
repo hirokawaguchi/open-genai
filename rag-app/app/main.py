@@ -23,9 +23,20 @@ import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
-from shared.docextract import extract_doc_text
+from shared.docextract import DocExtractError, extract_doc_text
 
-from . import embeddings, intauth, urlfetch, urlstore, vectorstore
+from . import (
+    docstore,
+    embeddings,
+    intauth,
+    rag_schema,
+    retrieve,
+    tagstore,
+    tree_ingest,
+    urlfetch,
+    urlstore,
+    vectorstore,
+)
 
 # URL 自動更新の間隔（秒）。既定 1 日。
 URL_REFRESH_INTERVAL = int(os.environ.get("URL_REFRESH_INTERVAL", str(24 * 3600)))
@@ -78,38 +89,27 @@ def chunk_text(text: str, size: int = 600, overlap: int = 80) -> list[str]:
 async def ingest_documents(
     docs: list[dict[str, Any]], scope: str, tags: list[str] | None = None
 ) -> int:
-    """docs を埋め込んで、指定スコープ(teamId 等)・タグに紐付けて Qdrant に登録。
+    """docs を全文保存＋埋め込みして登録する。
 
-    チャンクは (スコープ+ドキュメント+本文) の決定的 ID を持つため、再登録は
-    上書きとなり重複しない（重複排除）。tags は分類用のフラットなラベル配列。
+    全文は docstore（index_kind=fulltext）へ、チャンクは Qdrant へ保存する。
+    チャンク ID は決定的なため再登録は上書き（重複排除）。
     """
     tags = [t for t in (tags or []) if t]
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    total = 0
     for doc in docs:
-        text = doc.get("text", "")
-        source = doc.get("source", "unknown")
-        for chunk in chunk_text(text):
-            cid = _chunk_id(scope, source, chunk)
-            if cid in seen:
-                continue  # 同一リクエスト内の重複も排除
-            seen.add(cid)
-            vector = await embeddings.embed(chunk)
-            items.append(
-                {
-                    "id": cid,
-                    "vector": vector,
-                    "payload": {
-                        "text": chunk,
-                        "source": source,
-                        "scope": scope,
-                        "tags": tags,
-                    },
-                }
-            )
-    if not items:
-        return 0
-    return await vectorstore.upsert(items)
+        text = (doc.get("text") or "").strip()
+        source = doc.get("source") or "unknown"
+        if not text:
+            continue
+        info = await tree_ingest.ingest_fulltext_text(
+            scope=scope,
+            source=source,
+            text=text,
+            tags=tags,
+            also_vector=True,
+        )
+        total += int(info.get("vector_chunks") or 0)
+    return total
 
 
 async def ingest_url(
@@ -126,10 +126,14 @@ async def ingest_url(
     content_hash = hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()
     if prev_hash and prev_hash == content_hash:
         return 0, content_hash, title  # 変更なし
-    # 既存チャンクを消してから入れ直す（更新反映）
-    await vectorstore.delete_by_source(url, scope)
-    added = await ingest_documents([{"text": text, "source": url}], scope, tags)
-    return added, content_hash, title
+    info = await tree_ingest.ingest_fulltext_text(
+        scope=scope,
+        source=url,
+        text=text,
+        tags=tags,
+        also_vector=True,
+    )
+    return int(info.get("vector_chunks") or 0), content_hash, title
 
 
 async def _refresh_urls(rows: list[dict[str, Any]]) -> None:
@@ -213,6 +217,28 @@ SAMPLE_DOCS = [
 ]
 
 
+async def _migrate_tags_into_registry() -> None:
+    """既存データのタグをレジストリへ upsert する。"""
+    # 共通＋判明しているスコープを走査するのは重いので、
+    # URL レジストリと構造化 docs の scope 一覧＋ベクトルのサンプル投入分を対象にする。
+    scopes: set[str] = {DEFAULT_SCOPE}
+    try:
+        for row in urlstore.all_urls():
+            scopes.add(row["scope"])
+            tagstore.ensure_tags(row["scope"], row.get("tags") or [])
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] URL タグ移行警告: {e}")
+    try:
+        # docstore に scope 一覧 API は無いので DEFAULT と URL 由来のみ＋ベクトル tags
+        for scope in list(scopes):
+            for r in await vectorstore.list_tags(scope):
+                tagstore.ensure_tags(scope, [r["tag"]])
+            for d in docstore.list_docs(scope):
+                tagstore.ensure_tags(scope, d.get("tags") or [])
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] ベクトル/構造化タグ移行警告: {e}")
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await vectorstore.ensure_collection()
@@ -220,6 +246,19 @@ async def _startup() -> None:
         urlstore.init_db()
     except Exception as e:  # noqa: BLE001 - 起動を止めない
         print(f"[rag-app] URL DB初期化をスキップ: {e}")
+    try:
+        docstore.init_db()
+    except Exception as e:  # noqa: BLE001 - 起動を止めない
+        print(f"[rag-app] 構造化ドキュメント DB初期化をスキップ: {e}")
+    try:
+        tagstore.init_db()
+    except Exception as e:  # noqa: BLE001 - 起動を止めない
+        print(f"[rag-app] タグレジストリ DB初期化をスキップ: {e}")
+    # 既存チャンク／構造化／URL からタグレジストリを埋める（冪等）
+    try:
+        await _migrate_tags_into_registry()
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] タグ移行をスキップ: {e}")
     # 旧 rag-manage(ADMIN_TEAM scope) → 共有ナレッジ(COMMON) への一度きり移行
     try:
         moved = await vectorstore.reassign_scope(LEGACY_ADMIN_SCOPE, DEFAULT_SCOPE)
@@ -243,8 +282,9 @@ async def _startup() -> None:
         print(f"[rag-app] URL 自動更新スケジューラ起動をスキップ: {e}")
     try:
         if await vectorstore.count() == 0:
-            # サンプルは共通スコープにタグなしで投入
-            await ingest_documents(SAMPLE_DOCS, DEFAULT_SCOPE)
+            # サンプルは共通スコープにタグ付きで投入（タグなしは検索対象外のため）
+            tagstore.ensure_tags(DEFAULT_SCOPE, ["サンプル"])
+            await ingest_documents(SAMPLE_DOCS, DEFAULT_SCOPE, ["サンプル"])
     except Exception as e:  # noqa: BLE001 - 起動を止めない
         print(f"[rag-app] サンプル投入をスキップ: {e}")
 
@@ -261,159 +301,31 @@ async def health() -> dict[str, Any]:
         n = await vectorstore.count()
     except Exception:  # noqa: BLE001
         n = -1
-    return {"status": "ok", "chunks": n}
+    try:
+        # scope 横断の件数は持たないため、ヘルスでは DB 初期化可否のみ見る
+        docstore.init_db()
+        tree_ok = True
+    except Exception:  # noqa: BLE001
+        tree_ok = False
+    return {"status": "ok", "chunks": n, "tree_store": tree_ok}
 
 
 # ---------------------------------------------------------------------------
-# 動的フォーム（/schema）: タグ/ドキュメント/URL を選択式で提示（案P）
+# 動的フォーム（/schema）: rag_role 別に分割
 # ---------------------------------------------------------------------------
-_ACCEPT = ".pdf,.docx,.xlsx,.txt,.md,.csv,.html,.json"
-
-# 管理系アクションの基底定義。`admin=True` は SystemAdminGroup 必須のアクション。
-# ラベルの「（管理者）」注記は、権限差が意味を持つ非管理者（チーム用RAG管理を使う
-# チームメンバー）にのみ付ける。システム管理者には冗長なので付けない。
-_MANAGE_ACTIONS = [
-    {"title": "ドキュメント一覧", "value": "list_sources"},
-    {"title": "ドキュメント登録（タグ付け）", "value": "add_docs"},
-    {
-        "title": "ドキュメント削除",
-        "value": "delete_source",
-        "confirm": "選択したドキュメントをナレッジから削除します。元に戻せません。よろしいですか？",
-    },
-    {"title": "タグ一覧", "value": "list_tags"},
-    {"title": "URL取り込み", "value": "add_url", "admin": True},
-    {"title": "URL一覧", "value": "list_urls"},
-    {
-        "title": "URL削除",
-        "value": "delete_url",
-        "admin": True,
-        "confirm": "選択したURLの取り込み内容を削除します。元に戻せません。よろしいですか？",
-    },
-    {"title": "URL再取り込み", "value": "refresh_urls", "admin": True},
-    {
-        "title": "ナレッジを全消去",
-        "value": "clear",
-        "admin": True,
-        "confirm": "このナレッジを全消去します。元に戻せません。本当に実行しますか？",
-    },
-]
-
-
-def _manage_action_items(is_admin: bool) -> list[dict[str, Any]]:
-    """操作プルダウンの選択肢を作る。非管理者にのみ管理者専用アクションへ注記する。"""
-    items: list[dict[str, Any]] = []
-    for a in _MANAGE_ACTIONS:
-        title = a["title"]
-        if a.get("admin") and not is_admin:
-            title += "（管理者）"
-        item: dict[str, Any] = {"title": title, "value": a["value"]}
-        if a.get("confirm"):
-            item["confirm"] = a["confirm"]
-        items.append(item)
-    return items
-
-
-async def _tag_items(scope: str) -> list[dict[str, str]]:
-    """使用中タグを複数選択用の選択肢にする。"""
-    try:
-        rows = await vectorstore.list_tags(scope)
-    except Exception:  # noqa: BLE001
-        rows = []
-    return [{"title": f"{r['tag']}（{r['chunks']}）", "value": r["tag"]} for r in rows]
-
-
-async def _build_search_schema(scope: str) -> dict[str, Any]:
-    tag_items = await _tag_items(scope)
-    ui: dict[str, Any] = {
-        "question": {
-            "type": "text",
-            "title": "質問",
-            "required": True,
-            "desc": "ナレッジへの質問を入力してください。",
-        },
-    }
-    # タグが1つでもあれば絞り込み用の複数選択（checkbox）を出す（無ければ非表示）
-    if tag_items:
-        ui["tags"] = {
-            "type": "checkbox",
-            "title": "タグで絞り込み（任意・複数選択可）",
-            "items": tag_items,
-        }
-    ui["top_k"] = {
-        "type": "number",
-        "title": "参照件数",
-        "default_value": 4,
-        "min": 1,
-        "max": 10,
-    }
-    return ui
-
-
-async def _build_manage_schema(scope: str, is_admin: bool = True) -> dict[str, Any]:
-    try:
-        srcs = await vectorstore.list_sources(scope)
-    except Exception:  # noqa: BLE001
-        srcs = []
-    doc_items = [{"title": s["source"], "value": s["source"]} for s in srcs]
-    try:
-        urls = urlstore.list_urls(scope)
-    except Exception:  # noqa: BLE001
-        urls = []
-    url_items = [{"title": (u.get("title") or u["url"]), "value": u["url"]} for u in urls]
-    tag_items = await _tag_items(scope)
-
-    # OpenGENAI Form Spec v1: action ごとに関連フィールドだけ表示する（visibleWhen）。
-    ui: dict[str, Any] = {
-        "action": {
-            "type": "select",
-            "title": "操作",
-            "items": _manage_action_items(is_admin),
-            "default_value": "list_sources",
-        },
-        "files": {
-            "type": "file",
-            "title": "登録するドキュメント（登録時）",
-            "accept": _ACCEPT,
-            "multiple": True,
-            "visibleWhen": {"field": "action", "in": ["add_docs"]},
-        },
-        "new_tags": {
-            "type": "text",
-            "title": "付与するタグ（登録時・任意）",
-            "desc": "分類ラベルを ; か , 区切りで（例 総務,例規）。後から付け替えも可。",
-            "visibleWhen": {"field": "action", "in": ["add_docs", "add_url"]},
-        },
-        "new_url": {
-            "type": "text",
-            "title": "取り込む URL（URL取り込み時）",
-            "desc": "本市ホームページ等（http/https）。取り込むと自動更新の対象になります。",
-            "visibleWhen": {"field": "action", "in": ["add_url"]},
-        },
-    }
-    # 既存タグがあれば絞り込み用の複数選択（一覧/登録時の絞り込み・付与に使用）
-    if tag_items:
-        ui["tags"] = {
-            "type": "checkbox",
-            "title": "タグで絞り込み（一覧時・任意・複数選択可）",
-            "items": tag_items,
-            "visibleWhen": {"field": "action", "in": ["list_sources", "add_docs", "add_url"]},
-        }
-    # ドキュメント/URL は既存があれば選択式、無ければ手入力にフォールバック
-    _doc_base = (
-        {"type": "select", "title": "ドキュメント（削除時に選択）", "items": doc_items}
-        if doc_items
-        else {"type": "text", "title": "ドキュメント名（削除時）"}
-    )
-    _doc_base["visibleWhen"] = {"field": "action", "in": ["delete_source"]}
-    ui["document"] = _doc_base
-    _url_base = (
-        {"type": "select", "title": "URL（削除時に選択）", "items": url_items}
-        if url_items
-        else {"type": "text", "title": "URL（削除時）"}
-    )
-    _url_base["visibleWhen"] = {"field": "action", "in": ["delete_url"]}
-    ui["url"] = _url_base
-    return ui
+async def _build_schema_for_role(
+    role: str, scope: str, is_admin: bool
+) -> dict[str, Any]:
+    if role == "search":
+        return await rag_schema.build_search_schema(scope)
+    if role == "tags":
+        return await rag_schema.build_tags_schema(scope)
+    if role == "register":
+        return await rag_schema.build_register_schema(scope, is_admin)
+    if role == "maintain":
+        return await rag_schema.build_maintain_schema(scope, is_admin)
+    # manage / 未指定: 後方互換の統合管理
+    return await rag_schema.build_manage_schema(scope, is_admin)
 
 
 @app.get("/schema")
@@ -439,9 +351,11 @@ async def schema(
         role = (cfg.get("rag_role") or "manage").strip()
     except (json.JSONDecodeError, TypeError):
         cfg = {}
-    if role == "search":
-        return {"placeholder": await _build_search_schema(scope)}
-    return {"placeholder": await _build_manage_schema(scope, _is_admin(x_user_groups))}
+    return {
+        "placeholder": await _build_schema_for_role(
+            role, scope, _is_admin(x_user_groups)
+        )
+    }
 
 
 @app.post("/clear_scope")
@@ -468,6 +382,14 @@ async def clear_scope(
         urlstore.delete_scope(scope)
     except Exception as e:  # noqa: BLE001 - ベクトル削除は成功しているため握りつぶす
         print(f"[rag-app] clear_scope: URL 登録の削除に失敗: {e}")
+    try:
+        docstore.delete_scope(scope)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] clear_scope: 構造化索引の削除に失敗: {e}")
+    try:
+        tagstore.delete_scope(scope)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] clear_scope: タグレジストリの削除に失敗: {e}")
     return {"cleared": scope}
 
 
@@ -482,6 +404,175 @@ async def ingest(request: Request, x_api_key: str | None = Header(default=None))
     tags = _parse_tags(body.get("tags"))
     added = await ingest_documents(docs, scope, tags)
     return {"added_chunks": added, "total_chunks": await vectorstore.count()}
+
+
+# ---------------------------------------------------------------------------
+# 機械向け Retrieval API（Dify / 他クライアント用）
+# ---------------------------------------------------------------------------
+def _auth_scoped(
+    x_api_key: str | None,
+    x_user_id: str | None,
+    x_user_groups: str | None,
+    x_scope: str | None,
+    x_user_ts: str | None,
+    x_user_sig: str | None,
+    x_user_tags: str | None,
+) -> tuple[str | None, JSONResponse | None]:
+    """API キー + 内部署名を検証し scope を返す。"""
+    err = _check_key(x_api_key)
+    if err:
+        return None, err
+    if not intauth.verify(
+        x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    ):
+        return None, JSONResponse(
+            status_code=401, content={"error": "invalid internal signature"}
+        )
+    return (x_scope or DEFAULT_SCOPE).strip(), None
+
+
+@app.get("/knowledge/docs")
+async def api_list_docs(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    tags: str | None = None,
+) -> Any:
+    scope, err = _auth_scoped(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    tag_list = _parse_tags(tags) if tags else None
+    return {"documents": docstore.list_docs(scope, tag_list)}  # type: ignore[arg-type]
+
+
+@app.get("/knowledge/docs/{doc_id}/toc")
+async def api_get_toc(
+    doc_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, err = _auth_scoped(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    doc = docstore.get_doc(doc_id, scope)  # type: ignore[arg-type]
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "document not found"})
+    return {"doc_id": doc_id, "source": doc["source"], "nodes": docstore.get_toc(doc_id)}
+
+
+@app.post("/knowledge/docs/{doc_id}/nodes")
+async def api_get_nodes(
+    doc_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, err = _auth_scoped(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    doc = docstore.get_doc(doc_id, scope)  # type: ignore[arg-type]
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "document not found"})
+    body = await request.json()
+    node_ids = body.get("node_ids") or []
+    if not isinstance(node_ids, list) or not node_ids:
+        return JSONResponse(status_code=400, content={"error": "node_ids required"})
+    nodes = docstore.get_nodes_with_text(doc_id, [str(x) for x in node_ids])
+    return {"doc_id": doc_id, "source": doc["source"], "nodes": nodes}
+
+
+@app.post("/retrieve")
+async def api_retrieve(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    """共通 Retrieval API。mode=auto|full|vector|tree|hybrid。"""
+    scope, err = _auth_scoped(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    question = (body.get("question") or body.get("query") or "").strip()
+    if not question:
+        return JSONResponse(status_code=400, content={"error": "question required"})
+    mode = (body.get("mode") or "auto").strip().lower()
+    top_k = int(body.get("top_k") or 4)
+    tags = _parse_tags(body.get("tags"))
+    try:
+        result = await retrieve.retrieve(
+            question,
+            scope,  # type: ignore[arg-type]
+            mode=mode,
+            top_k=top_k,
+            tags=tags or None,
+            doc_id=(body.get("doc_id") or "").strip() or None,
+            source=(body.get("source") or "").strip() or None,
+        )
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return result
+
+
+@app.post("/ingest_tree")
+async def api_ingest_tree(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+) -> Any:
+    """構造化取込（内部／CLI 向け）。files: [{filename, content(base64), media_type?}]"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    body = await request.json()
+    scope = (body.get("scope") or DEFAULT_SCOPE).strip()
+    tags = _parse_tags(body.get("tags"))
+    if tags:
+        tagstore.ensure_tags(scope, tags)
+    also_vector = bool(body.get("also_vector", True))
+    files = body.get("files") or []
+    if not files:
+        return JSONResponse(status_code=400, content={"error": "files required"})
+    results: list[dict[str, Any]] = []
+    for f in files:
+        try:
+            info = await tree_ingest.ingest_structured_file(
+                scope=scope,
+                filename=f.get("filename") or "uploaded",
+                media_type=f.get("media_type") or "",
+                content_b64=f.get("content") or "",
+                tags=tags,
+                also_vector=also_vector,
+            )
+            results.append(info)
+        except DocExtractError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"documents": results}
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +594,24 @@ def _extract_uploaded_texts(inputs: dict[str, Any]) -> list[dict[str, str]]:
             if text and text.strip():
                 docs.append({"text": text, "source": filename})
     return docs
+
+
+def _iter_uploaded_files(inputs: dict[str, Any]) -> list[dict[str, str]]:
+    """inputs.files から {filename, content, media_type} を列挙する。"""
+    out: list[dict[str, str]] = []
+    for entry in inputs.get("files") or []:
+        for f in entry.get("files", []):
+            content_b64 = f.get("content", "")
+            if not content_b64:
+                continue
+            out.append(
+                {
+                    "filename": f.get("filename", "uploaded"),
+                    "content": content_b64,
+                    "media_type": f.get("media_type") or f.get("type") or "",
+                }
+            )
+    return out
 
 
 # フロントの出典アコーディオン用。画像 base64(content) と区別する。
@@ -591,8 +700,16 @@ def _parse_tags(value: Any) -> list[str]:
     return out
 
 
-# 検索(search)ロールで許可する操作。管理系(一覧/登録/削除/URL/全消去)は禁止。
-_SEARCH_ROLE_ACTIONS = {"ask"}
+def _resolve_assign_tags(inputs: dict[str, Any]) -> list[str]:
+    """登録・付け替え用タグ（checkbox + テキスト）を合流する。"""
+    assign = _parse_tags(inputs.get("new_tags")) or []
+    for t in _parse_tags(inputs.get("tags")):
+        if t not in assign:
+            assign.append(t)
+    for t in _parse_tags(inputs.get("reg_tags")):
+        if t not in assign:
+            assign.append(t)
+    return assign
 
 
 @app.post("/invoke")
@@ -624,47 +741,170 @@ async def invoke(
     tags = _parse_tags(inputs.get("tags"))
     is_admin = _is_admin(x_user_groups)
 
-    # rag_role=search の検索専用アプリでは、管理系アクションを API 経由でも実行不可にする
-    # （/schema だけでなく /invoke でもロールを強制し、検索/管理の分離を担保）
     try:
         cfg = json.loads(x_app_config) if x_app_config else {}
-        role = (cfg.get("rag_role") or "").strip()
+        role = (cfg.get("rag_role") or "manage").strip()
     except (json.JSONDecodeError, TypeError):
-        role = ""
-    if role == "search" and action not in _SEARCH_ROLE_ACTIONS:
-        return {"outputs": "この操作は「ナレッジ管理」アプリから実行してください（検索アプリでは利用できません）。"}
+        role = "manage"
 
-    # ---- タグ一覧 ----
+    allowed = rag_schema.ROLE_ACTIONS.get(role) or rag_schema.ROLE_ACTIONS["manage"]
+    if action not in allowed:
+        return {
+            "outputs": (
+                f"この操作（{action}）は現在のアプリ（role={role}）では実行できません。"
+                "タグ管理／ドキュメント登録／ドキュメント管理／ナレッジ検索を使い分けてください。"
+            )
+        }
+
+    # ---- タグ操作 ----
+    if action == "create_tag":
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジのタグ作成はシステム管理者のみ実行できます。"}
+        try:
+            name = tagstore.create_tag(scope, (inputs.get("new_tag") or "").strip())
+        except ValueError as e:
+            return {"outputs": str(e)}
+        return {"outputs": f"タグ「{name}」を作成しました。"}
+
     if action == "list_tags":
-        rows = await vectorstore.list_tags(scope)
-        if not rows:
-            return {"outputs": "タグはまだありません（ドキュメント登録時に付与できます）。"}
-        lines = "\n".join(f"- `{r['tag']}`（{r['chunks']} チャンク）" for r in rows)
-        return {"outputs": f"## タグ一覧（このチーム）\n\n{lines}"}
+        reg = {r["tag"]: r for r in tagstore.list_tags(scope)}
+        used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(scope)}
+        all_names = sorted(set(reg) | set(used))
+        if not all_names:
+            return {"outputs": "タグはまだありません。「タグ管理」で新規作成するか、登録時に付与してください。"}
+        lines = []
+        for name in all_names:
+            ch = used.get(name, 0)
+            empty = "（空・未使用）" if ch == 0 else f"（{ch} チャンク）"
+            lines.append(f"- `{name}` {empty}")
+        return {"outputs": "## タグ一覧\n\n" + "\n".join(lines)}
 
-    # ---- ドキュメント登録（タグ付け）----
+    if action == "rename_tag":
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジのタグ変更はシステム管理者のみ実行できます。"}
+        old = (inputs.get("tag") or "").strip()
+        new = (inputs.get("rename_to") or "").strip()
+        try:
+            tagstore.rename_tag(scope, old, new)
+        except ValueError as e:
+            return {"outputs": str(e)}
+        n_vec = await vectorstore.rename_tag_in_payloads(scope, old, new)
+        n_doc = docstore.rename_tag(scope, old, new)
+        n_url = urlstore.rename_tag(scope, old, new)
+        return {
+            "outputs": (
+                f"タグ「{old}」を「{new}」に変更しました"
+                f"（ベクトル {n_vec} / 構造化 {n_doc} / URL {n_url}）。"
+            )
+        }
+
+    if action == "delete_tag":
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジのタグ削除はシステム管理者のみ実行できます。"}
+        name = (inputs.get("tag") or "").strip()
+        used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(scope)}
+        if used.get(name, 0) > 0:
+            return {
+                "outputs": (
+                    f"タグ「{name}」はドキュメントに付与されているため削除できません。"
+                    "先に「ドキュメント管理」でタグ付け替えしてください。"
+                )
+            }
+        try:
+            tagstore.delete_tag(scope, name)
+        except ValueError as e:
+            return {"outputs": str(e)}
+        return {"outputs": f"タグ「{name}」を削除しました。"}
+
+    # ---- ドキュメント登録（簡易）: 全文 + ベクトル（ツリーなし）----
     if action == "add_docs":
-        # 永続登録。一般利用者=自チーム, 共有=管理者。
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
-        assign = _parse_tags(inputs.get("new_tags")) or tags
-        docs = _extract_uploaded_texts(inputs)
-        if not docs:
+        assign = _resolve_assign_tags(inputs)
+        if assign:
+            tagstore.ensure_tags(scope, assign)
+        files = _iter_uploaded_files(inputs)
+        if not files:
             return {"outputs": "登録するドキュメントを添付してください。"}
-        added = await ingest_documents(docs, scope, assign)
-        tag_note = f"（タグ: {', '.join(assign)}）" if assign else "（タグなし）"
-        names = "、".join(d["source"] for d in docs)
-        return {"outputs": f"ナレッジに登録しました{tag_note}（{added} チャンク）。\n\n- {names}"}
+        lines: list[str] = []
+        total_chunks = 0
+        for f in files:
+            try:
+                info = await tree_ingest.ingest_fulltext_file(
+                    scope=scope,
+                    filename=f["filename"],
+                    media_type=f.get("media_type") or "",
+                    content_b64=f["content"],
+                    tags=assign,
+                    also_vector=True,
+                )
+            except DocExtractError as e:
+                return {"outputs": f"ドキュメント登録（簡易）に失敗しました: {e}"}
+            except Exception as e:  # noqa: BLE001
+                return {"outputs": f"ドキュメント登録（簡易）でエラーが発生しました: {e}"}
+            total_chunks += int(info.get("vector_chunks") or 0)
+            lines.append(
+                f"- {info['source']}（doc_id=`{info['doc_id']}`, "
+                f"{info['page_count']}ページ / {info['char_count']}文字 / "
+                f"ベクトル {info['vector_chunks']}チャンク）"
+            )
+        tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
+        return {
+            "outputs": (
+                f"ナレッジに登録しました（簡易・全文＋ベクトル）"
+                f"（{tag_note} / 合計 {total_chunks} チャンク）。\n\n"
+                + "\n".join(lines)
+            )
+        }
 
-    # ---- URL 取り込み（6-(26)）----
+    # ---- ドキュメント登録（標準）: ツリー索引 + ベクトル併用 ----
+    if action == "add_tree_docs":
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
+        assign = _resolve_assign_tags(inputs)
+        if assign:
+            tagstore.ensure_tags(scope, assign)
+        files = _iter_uploaded_files(inputs)
+        if not files:
+            return {"outputs": "登録するドキュメントを添付してください。"}
+        lines: list[str] = []
+        for f in files:
+            try:
+                info = await tree_ingest.ingest_structured_file(
+                    scope=scope,
+                    filename=f["filename"],
+                    media_type=f.get("media_type") or "",
+                    content_b64=f["content"],
+                    tags=assign,
+                    also_vector=True,
+                )
+            except DocExtractError as e:
+                return {"outputs": f"ドキュメント登録（標準）に失敗しました: {e}"}
+            except Exception as e:  # noqa: BLE001
+                return {"outputs": f"ドキュメント登録（標準）でエラーが発生しました: {e}"}
+            lines.append(
+                f"- {info['source']}（doc_id=`{info['doc_id']}`, "
+                f"{info['page_count']}ページ / {info['node_count']}ノード / "
+                f"ベクトル {info['vector_chunks']}チャンク）"
+            )
+        tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
+        return {
+            "outputs": (
+                f"ナレッジに登録しました（標準・ツリー＋ベクトル）"
+                f"（{tag_note}）。\n\n" + "\n".join(lines)
+            )
+        }
+
+    # ---- URL 取り込み（ドキュメントの一種）----
     if action == "add_url":
-        if not is_admin:
-            return {"outputs": "URL の取り込みはシステム管理者のみ実行できます。"}
-        # 取り込む URL は new_url（動的フォーム）。無ければ url を使用（後方互換）。
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジへの URL 登録はシステム管理者のみ実行できます。"}
         url = (inputs.get("new_url") or inputs.get("url") or "").strip()
         if not url.startswith("http://") and not url.startswith("https://"):
             return {"outputs": "http(s):// で始まる URL を指定してください。"}
-        assign = _parse_tags(inputs.get("new_tags")) or tags
+        assign = _resolve_assign_tags(inputs)
+        if assign:
+            tagstore.ensure_tags(scope, assign)
         try:
             added, content_hash, title = await ingest_url(scope, url, assign)
         except httpx.HTTPError as e:
@@ -675,10 +915,10 @@ async def invoke(
             return {"outputs": f"URL から本文を抽出できませんでした: {url}"}
         urlstore.add_url(scope, url, assign, title)
         urlstore.mark_fetched(scope, url, content_hash, title)
-        tag_note = f"（タグ: {', '.join(assign)}）" if assign else ""
+        tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
         return {
             "outputs": (
-                f"URL を取り込み、自動更新の対象に登録しました{tag_note}。\n\n"
+                f"URL を登録しました（{tag_note}）。\n\n"
                 f"- {title or url}\n- {added} チャンク登録"
             )
         }
@@ -689,56 +929,157 @@ async def invoke(
             return {"outputs": "登録済みの URL はありません。"}
         lines = "\n".join(
             f"- {r.get('title') or r['url']}（{r['url']}"
-            + (f" / タグ {', '.join(r['tags'])}" if r.get("tags") else "")
+            + (f" / タグ {', '.join(r['tags'])}" if r.get("tags") else " / タグなし")
             + "）"
             for r in rows
         )
-        return {"outputs": f"## 登録済み URL（このチーム）\n\n{lines}"}
+        return {"outputs": f"## 登録済み URL\n\n{lines}"}
 
     if action == "delete_url":
-        if not is_admin:
-            return {"outputs": "URL の削除はシステム管理者のみ実行できます。"}
-        url = (inputs.get("url") or "").strip()
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジの URL 削除はシステム管理者のみ実行できます。"}
+        url = (inputs.get("url") or inputs.get("document") or "").strip()
         if not url:
             return {"outputs": "削除する URL を指定してください。"}
         await vectorstore.delete_by_source(url, scope)
+        try:
+            docstore.delete_by_source(scope, url)
+        except Exception as e:  # noqa: BLE001
+            print(f"[rag-app] delete_url: 構造化索引の削除に失敗: {e}")
         urlstore.delete_url(scope, url)
-        return {"outputs": f"URL「{url}」をナレッジと自動更新対象から削除しました。"}
+        return {"outputs": f"URL「{url}」をナレッジから削除しました。"}
 
     if action == "refresh_urls":
         if not is_admin:
             return {"outputs": "URL の再取り込みはシステム管理者のみ実行できます。"}
-        # このチーム(scope)の登録 URL のみ再クロールする（他チームには影響しない）。
         await _refresh_urls(urlstore.scope_urls(scope))
         return {"outputs": "このチームの登録済み URL を再取り込みしました（変更分のみ更新）。"}
 
-    # ---- 管理操作: ドキュメント一覧 / ドキュメント削除 / 全消去（スコープ＋任意タグ絞り込み）----
+    # ---- ドキュメント管理 ----
     if action == "list_sources":
-        srcs = await vectorstore.list_sources(scope, tags or None)
-        where = f"タグ {', '.join(tags)}" if tags else "このチーム"
-        if not srcs:
-            return {"outputs": f"{where}のナレッジは空です。"}
-        lines = "\n".join(f"- {s['source']}（{s['chunks']} チャンク）" for s in srcs)
-        return {"outputs": f"## 登録済みドキュメント（{where}）\n\n{lines}"}
+        filter_tags = _parse_tags(inputs.get("filter_tags"))
+        want_untagged = "__untagged__" in filter_tags
+        real_filters = [t for t in filter_tags if t != "__untagged__"]
+        srcs = await vectorstore.list_sources(
+            scope, real_filters or None
+        )
+        tree_docs = docstore.list_docs(scope, real_filters or None)
+        urls = urlstore.list_urls(scope)
 
-    if action == "delete_source":
-        # ドキュメント削除: 自チームは利用者可、共有は管理者のみ。
+        def _match_tags(doc_tags: list[str]) -> bool:
+            if not filter_tags:
+                return True
+            if want_untagged and not doc_tags:
+                return True
+            if real_filters and any(t in doc_tags for t in real_filters):
+                return True
+            return False
+
+        srcs = [s for s in srcs if _match_tags(s.get("tags") or [])]
+        tree_docs = [d for d in tree_docs if _match_tags(d.get("tags") or [])]
+        url_rows = [u for u in urls if _match_tags(u.get("tags") or [])]
+
+        if not srcs and not tree_docs and not url_rows:
+            return {
+                "outputs": (
+                    "該当するドキュメントはありません。\n\n"
+                    "> 「ドキュメント登録」アプリから資料を追加してください。"
+                )
+            }
+
+        # タグ別にグループ化
+        by_tag: dict[str, list[str]] = {}
+        untagged_lines: list[str] = []
+
+        def _add(tag_list: list[str], line: str) -> None:
+            if not tag_list:
+                untagged_lines.append(line)
+                return
+            for t in tag_list:
+                by_tag.setdefault(t, []).append(line)
+
+        for s in srcs:
+            kind = "URL" if str(s["source"]).startswith("http") else "ファイル"
+            line = (
+                f"- **{s['source']}** （{kind} / {s['chunks']}チャンク / "
+                f"タグ: {', '.join(s.get('tags') or []) or 'なし'}）"
+            )
+            _add(s.get("tags") or [], line)
+        for d in tree_docs:
+            if any(s["source"] == d["source"] for s in srcs):
+                continue
+            line = (
+                f"- **{d['source']}** （構造化 / {d['page_count']}ページ / "
+                f"タグ: {', '.join(d.get('tags') or []) or 'なし'}）"
+            )
+            _add(d.get("tags") or [], line)
+        for u in url_rows:
+            if any(s["source"] == u["url"] for s in srcs):
+                continue
+            line = (
+                f"- **{u.get('title') or u['url']}** （URL / {u['url']} / "
+                f"タグ: {', '.join(u.get('tags') or []) or 'なし'}）"
+            )
+            _add(u.get("tags") or [], line)
+
+        parts = ["## ドキュメント一覧\n"]
+        for t in sorted(by_tag):
+            parts.append(f"### タグ: `{t}`\n\n" + "\n".join(by_tag[t]))
+        if untagged_lines:
+            parts.append(
+                "### タグなし（検索対象外）\n\n" + "\n".join(untagged_lines)
+            )
+        return {"outputs": "\n\n".join(parts)}
+
+    if action == "retag_source":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのドキュメント削除はシステム管理者のみ実行できます。"}
-        # 削除対象は document（動的フォームの選択）。無ければ source（後方互換）。
+            return {"outputs": "共有ナレッジのタグ付け替えはシステム管理者のみ実行できます。"}
         source = (inputs.get("document") or inputs.get("source") or "").strip()
         if not source:
-            return {"outputs": "削除するドキュメントを指定してください（「ドキュメント一覧」で確認できます）。"}
+            return {"outputs": "対象ドキュメントを指定してください。"}
+        assign = _resolve_assign_tags(inputs)
+        if not assign:
+            return {"outputs": "付け替えるタグを1つ以上指定してください。"}
+        tagstore.ensure_tags(scope, assign)
+        await vectorstore.set_tags_by_source(scope, source, assign)
+        docstore.set_tags(scope, source, assign)
+        if source.startswith("http://") or source.startswith("https://"):
+            urlstore.set_tags(scope, source, assign)
+        return {
+            "outputs": (
+                f"「{source}」のタグを更新しました: {', '.join(assign)}"
+            )
+        }
+
+    if action == "delete_source":
+        if not _can_manage(scope, is_admin):
+            return {"outputs": "共有ナレッジのドキュメント削除はシステム管理者のみ実行できます。"}
+        source = (inputs.get("document") or inputs.get("source") or "").strip()
+        if not source:
+            return {"outputs": "削除するドキュメントを指定してください。"}
         await vectorstore.delete_by_source(source, scope)
+        try:
+            docstore.delete_by_source(scope, source)
+        except Exception as e:  # noqa: BLE001
+            print(f"[rag-app] delete_source: 構造化索引の削除に失敗: {e}")
+        if source.startswith("http://") or source.startswith("https://"):
+            urlstore.delete_url(scope, source)
         return {"outputs": f"ドキュメント「{source}」をナレッジから削除しました。"}
 
     if action == "clear":
         if not is_admin:
             return {"outputs": "この操作はシステム管理者のみ実行できます。"}
         await vectorstore.clear(scope)
-        # URL 登録も消す。残すと自動更新スケジューラが再クロールして復活してしまう。
         removed = urlstore.delete_scope(scope)
-        note = f"（URL登録 {removed} 件も解除）" if removed else ""
+        try:
+            tree_removed = docstore.delete_scope(scope)
+        except Exception:  # noqa: BLE001
+            tree_removed = 0
+        try:
+            tag_removed = tagstore.delete_scope(scope)
+        except Exception:  # noqa: BLE001
+            tag_removed = 0
+        note = f"（URL {removed} / 構造化 {tree_removed} / タグ {tag_removed}）"
         return {"outputs": f"このチームのナレッジを全消去しました{note}。"}
 
     # ---- 通常の質問応答 ----
@@ -747,11 +1088,16 @@ async def invoke(
         return {"outputs": "質問が空です。質問を入力してください。"}
 
     store_mode = (inputs.get("store_mode") or "ephemeral").strip()
+    # 互換のため入力があれば尊重。未指定／auto は候補文書に応じて自動選択。
+    retrieval_mode = (inputs.get("retrieval_mode") or "auto").strip().lower()
+    if retrieval_mode not in ("auto", "full", "vector", "tree", "hybrid"):
+        retrieval_mode = "auto"
     # 永続登録は管理権限が要る（共有ナレッジは管理者のみ）。権限が無ければ一時利用に降格。
     if store_mode == "permanent" and not _can_manage(scope, is_admin):
         store_mode = "ephemeral"
     uploaded = _extract_uploaded_texts(inputs)
 
+    result_nodes: dict[str, Any] = {}
     try:
         if uploaded and store_mode == "ephemeral":
             # 一時利用: Qdrant に保存せず、添付ドキュメントのみから回答
@@ -768,8 +1114,16 @@ async def invoke(
         # 永続: 添付があればこのチームのスコープへ取り込み（重複排除）、その後検索
         if uploaded:
             await ingest_documents(uploaded, scope, tags)
-        qvec = await embeddings.embed(question, is_query=True)
-        hits = await vectorstore.search(qvec, top_k, scope, tags or None)
+        result_nodes = await retrieve.retrieve(
+            question,
+            scope,
+            mode=retrieval_mode,
+            top_k=top_k,
+            tags=tags or None,
+            doc_id=(inputs.get("doc_id") or "").strip() or None,
+            source=(inputs.get("source") or "").strip() or None,
+        )
+        hits = retrieve.nodes_to_hits(result_nodes.get("nodes") or [])
     except Exception as e:  # noqa: BLE001
         return {"outputs": f"検索中にエラーが発生しました: {e}"}
 
@@ -777,12 +1131,19 @@ async def invoke(
         return {
             "outputs": (
                 "ナレッジに該当する情報が見つかりませんでした。"
-                "ドキュメントを添付するか、知識を登録してください。"
+                "タグ付きで登録された資料があるか確認してください"
+                "（タグ未付与の資料は検索対象外です）。"
             )
         }
 
     result = await _answer_with_hits(question, hits)
+    resolved = result_nodes.get("resolved_mode") or retrieval_mode
     return {
         **result,
-        "_meta": {"generated_at": datetime.now(timezone.utc).isoformat()},
+        "_meta": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "retrieval_mode": resolved,
+            "requested_mode": retrieval_mode,
+            "trace": result_nodes.get("trace"),
+        },
     }

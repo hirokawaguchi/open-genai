@@ -11,9 +11,21 @@ from __future__ import annotations
 import base64
 import io
 import os
+from typing import Any
 
-# 抽出テキストの最大長（コンテキスト肥大を防ぐ）
+# 抽出テキストの最大長（コンテキスト肥大を防ぐ）。ベクトル RAG / チャット添付向け。
+# 構造化索引では使わず、extract_doc_pages() を用いること。
 MAX_DOC_CHARS = int(os.environ.get("MAX_DOC_CHARS", "30000"))
+
+# 構造化取込のハード上限（黙って切らずエラーにする）
+MAX_DOC_PAGES = int(os.environ.get("MAX_DOC_PAGES", "200"))
+MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", str(20 * 1024 * 1024)))
+# 非 PDF を合成ページに分割するときの目安文字数
+SYNTHETIC_PAGE_CHARS = int(os.environ.get("SYNTHETIC_PAGE_CHARS", "3000"))
+
+
+class DocExtractError(Exception):
+    """構造化取込で上限超過など、黙って切り捨てできない失敗。"""
 
 # UI の accept などに使える対応拡張子
 SUPPORTED_DOC_EXTS = (
@@ -98,3 +110,109 @@ def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
     if len(text) > MAX_DOC_CHARS:
         text = text[:MAX_DOC_CHARS] + "\n…(以下省略)"
     return text
+
+
+def _split_synthetic_pages(text: str) -> list[dict[str, Any]]:
+    """非 PDF 向けに全文を保持したまま合成ページへ分割する。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    size = max(1, SYNTHETIC_PAGE_CHARS)
+    pages: list[dict[str, Any]] = []
+    start = 0
+    page_no = 1
+    while start < len(text):
+        pages.append({"page": page_no, "text": text[start : start + size]})
+        start += size
+        page_no += 1
+    return pages
+
+
+def text_to_pages(text: str) -> list[dict[str, Any]]:
+    """プレーンテキストを合成ページへ分割する（URL／簡易登録の全文保存用）。"""
+    return _split_synthetic_pages(text)
+
+
+def extract_doc_pages(name: str, media_type: str, b64: str) -> list[dict[str, Any]]:
+    """構造化索引向けにページ単位で全文抽出する（MAX_DOC_CHARS は適用しない）。
+
+    戻り値: [{"page": 1, "text": "..."}, ...]（page は 1 始まり）
+    上限超過時は DocExtractError。対応外形式は空リスト。
+    """
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    mt = media_type or ""
+    try:
+        raw = b64_to_bytes(b64)
+    except Exception as e:  # noqa: BLE001
+        raise DocExtractError(f"base64 の復号に失敗しました: {e}") from e
+
+    if len(raw) > MAX_DOC_BYTES:
+        raise DocExtractError(
+            f"ファイルサイズが上限（{MAX_DOC_BYTES} bytes）を超えています"
+        )
+
+    try:
+        if ext == "pdf" or mt == "application/pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(raw))
+            if len(reader.pages) > MAX_DOC_PAGES:
+                raise DocExtractError(
+                    f"ページ数が上限（{MAX_DOC_PAGES}）を超えています"
+                    f"（{len(reader.pages)} ページ）"
+                )
+            pages: list[dict[str, Any]] = []
+            for i, page in enumerate(reader.pages, start=1):
+                pages.append({"page": i, "text": (page.extract_text() or "").strip()})
+            if not any(p["text"] for p in pages):
+                raise DocExtractError(
+                    f"添付ファイル {name} からテキストを抽出できませんでした"
+                )
+            return pages
+
+        # 非 PDF は MAX_DOC_CHARS を通さず全文抽出し、合成ページに分割する
+        if ext == "docx" or "wordprocessingml" in mt:
+            import docx
+
+            d = docx.Document(io.BytesIO(raw))
+            text = "\n".join(p.text for p in d.paragraphs).strip()
+        elif ext == "xlsx" or "spreadsheetml" in mt:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            lines: list[str] = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    lines.append("\t".join("" if c is None else str(c) for c in row))
+            text = "\n".join(lines).strip()
+        elif ext in (
+            "txt",
+            "md",
+            "csv",
+            "tsv",
+            "html",
+            "htm",
+            "json",
+            "log",
+        ) or mt.startswith("text/"):
+            text = raw.decode("utf-8", "ignore").strip()
+        else:
+            return []
+
+        if not text:
+            raise DocExtractError(
+                f"添付ファイル {name} からテキストを抽出できませんでした"
+            )
+        pages = _split_synthetic_pages(text)
+        if len(pages) > MAX_DOC_PAGES:
+            raise DocExtractError(
+                f"合成ページ数が上限（{MAX_DOC_PAGES}）を超えています"
+                f"（{len(pages)} ページ相当）"
+            )
+        return pages
+    except DocExtractError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise DocExtractError(
+            f"添付ファイル {name} のテキスト抽出に失敗しました: {e}"
+        ) from e

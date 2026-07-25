@@ -166,3 +166,43 @@ def all_urls() -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM url_sources").fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def set_tags(scope: str, url: str, tags: list[str]) -> bool:
+    import json
+
+    now = _now()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE url_sources SET tags = ?, updatedDate = ? WHERE scope = ? AND url = ?",
+            (json.dumps(tags or [], ensure_ascii=False), now, scope, url),
+        )
+        return (cur.rowcount or 0) > 0
+
+
+def rename_tag(scope: str, old: str, new: str) -> int:
+    import json
+
+    n = 0
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT url, tags FROM url_sources WHERE scope = ?", (scope,)
+        ).fetchall()
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                tags = []
+            if old not in tags:
+                continue
+            nxt = [new if t == old else t for t in tags]
+            seen: list[str] = []
+            for t in nxt:
+                if t not in seen:
+                    seen.append(t)
+            conn.execute(
+                "UPDATE url_sources SET tags = ?, updatedDate = ? WHERE scope = ? AND url = ?",
+                (json.dumps(seen, ensure_ascii=False), _now(), scope, r["url"]),
+            )
+            n += 1
+    return n
