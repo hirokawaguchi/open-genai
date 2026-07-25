@@ -8,7 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SHARED = ROOT / "shared"
 BACKEND = ROOT / "backend"
 
-for path in (SHARED, BACKEND):
+# ROOT: `from shared.mynumber`
+# SHARED: `import docextract` / `import ssrfguard`
+# BACKEND: `from app import ngwords`
+for path in (ROOT, SHARED, BACKEND):
     text = str(path)
     if text not in sys.path:
         sys.path.insert(0, text)

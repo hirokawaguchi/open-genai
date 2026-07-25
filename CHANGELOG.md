@@ -11,6 +11,7 @@
 | [v0.3.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.0) | `daac82e` 以降 | 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信 |
 | [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
 | [v0.3.2](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.2) | `1a9eb42` 以降 | 出典表示・ローカルDify成果物取得・Enter送信など |
+| [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | （本リリース） | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -26,6 +27,46 @@
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.4.0] - 2026-07-25
+
+### 構造化 RAG と検索モード自動選択
+
+- 規程・マニュアル向けのツリー索引（`ingest_tree` / PageIndex 系）と共通 `POST /retrieve` を追加
+- `mode=auto` で候補に応じて `full` / `hybrid` / `vector` / `tree` を自動選択
+- 簡易・URL 登録でも全文を保持。タグ未付与は検索対象外
+- ナレッジ UI を検索／タグ／登録／管理に分割し、タグ中心の運用に整理
+
+### ナレッジ検索 MCP と機械向け API
+
+- `knowledge-mcp`（Streamable HTTP `:8002/mcp`）を追加。`knowledge_list_tags` / `knowledge_list_docs` / `knowledge_search` で `rag-app` をラップ
+- `rag-app` に機械向け `GET /knowledge/tags` を追加し、`GET /knowledge/docs` も API キーのみで利用可能に
+- `knowledge_search` / `/retrieve` で `source`・`doc_id` による資料内検索を全 mode に通す（`auto` 時は構造化なら tree、なければ vector）
+- 出典アコーディオン表示名に節タイトル・ページ範囲を付与（例: `[2] 規程.pdf / 第3章 / p.10-12`）
+
+### Dify 連携（事例 DSL・出典抽出）
+
+- HTTP 固定 WF（根拠付き Q&A）: [`OpenGENAI-KnowledgeAgent.yml`](dify-app/dsl/OpenGENAI-KnowledgeAgent.yml)
+- Agent + MCP chatflow: [`OpenGENAI-KnowledgeAgent.chatflow.yml`](dify-app/dsl/OpenGENAI-KnowledgeAgent.chatflow.yml)
+- 応用例（議事録スタンス）: [`OpenGENAI-MinutesStance.yml`](dify-app/dsl/OpenGENAI-MinutesStance.yml)
+- `dify-app` が Agent の `agent_log` / ツール応答から `citation_artifacts` を拾い、回答本文の `[n]` に合わせて出典を絞り込み
+
+### ドキュメント
+
+- 公開ガイド: [`docs/knowledge-api.md`](docs/knowledge-api.md) / [`docs/knowledge-mcp.md`](docs/knowledge-mcp.md) / [`docs/dify-knowledge.md`](docs/dify-knowledge.md)
+- README の API／Dify 詳細を上記へ移し、リンク中心に短縮
+
+### 個人番号（マイナンバー）検査
+
+- `shared/mynumber.py` と禁止語ルールの `check_mynumber` を追加（検査数字一致のみブロック）
+- 旧設定の `\d{12}` 単純一致はマイナンバー検査へ委譲。UUID（teamId 等）は誤検知しないよう除外
+
+### テスト
+
+- 出典抽出・MCP ヘルパ・マイナンバー・retrieve の `source` 正規化などの回帰テストを追加
+- `scripts/run-regression-tests.sh` で venv の pytest を明示し、`conftest` の import パスを修正
 
 ---
 
@@ -180,7 +221,8 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.2.1...v0.3.0

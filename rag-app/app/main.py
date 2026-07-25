@@ -431,6 +431,71 @@ def _auth_scoped(
     return (x_scope or DEFAULT_SCOPE).strip(), None
 
 
+def _auth_read(
+    x_api_key: str | None,
+    x_user_id: str | None,
+    x_user_groups: str | None,
+    x_scope: str | None,
+    x_user_ts: str | None,
+    x_user_sig: str | None,
+    x_user_tags: str | None,
+    *,
+    scope_query: str | None = None,
+) -> tuple[str | None, JSONResponse | None]:
+    """読み取り用認証。署名ありは検証、無しは機械クライアント（APIキー＋scope）。"""
+    err = _check_key(x_api_key)
+    if err:
+        return None, err
+    if (x_user_sig or "").strip():
+        return _auth_scoped(
+            x_api_key,
+            x_user_id,
+            x_user_groups,
+            x_scope,
+            x_user_ts,
+            x_user_sig,
+            x_user_tags,
+        )
+    scope = (scope_query or x_scope or DEFAULT_SCOPE).strip()
+    return scope, None
+
+
+@app.get("/knowledge/tags")
+async def api_list_tags(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    scope: str | None = None,
+) -> Any:
+    """スコープ内タグ一覧（レジストリ＋使用中チャンク数）。
+
+    機械クライアント（Dify / MCP）: API キーのみ。scope はクエリまたは x-scope。
+    """
+    resolved, err = _auth_read(
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        scope_query=scope,
+    )
+    if err:
+        return err
+    reg = {r["tag"]: r for r in tagstore.list_tags(resolved)}  # type: ignore[arg-type]
+    used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(resolved)}  # type: ignore[arg-type]
+    names = sorted(set(reg) | set(used))
+    tags_out = [
+        {"tag": name, "chunks": int(used.get(name, 0))} for name in names
+    ]
+    return {"scope": resolved, "tags": tags_out}
+
+
 @app.get("/knowledge/docs")
 async def api_list_docs(
     x_api_key: str | None = Header(default=None),
@@ -441,14 +506,26 @@ async def api_list_docs(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
     tags: str | None = None,
+    scope: str | None = None,
 ) -> Any:
-    scope, err = _auth_scoped(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    """文書一覧。機械クライアントは API キーのみ（scope クエリまたは x-scope）。"""
+    resolved, err = _auth_read(
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        scope_query=scope,
     )
     if err:
         return err
     tag_list = _parse_tags(tags) if tags else None
-    return {"documents": docstore.list_docs(scope, tag_list)}  # type: ignore[arg-type]
+    return {
+        "scope": resolved,
+        "documents": docstore.list_docs(resolved, tag_list),  # type: ignore[arg-type]
+    }
 
 
 @app.get("/knowledge/docs/{doc_id}/toc")
@@ -512,13 +589,39 @@ async def api_retrieve(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
 ) -> Any:
-    """共通 Retrieval API。mode=auto|full|vector|tree|hybrid。"""
-    scope, err = _auth_scoped(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
-    )
+    """共通 Retrieval API。mode=auto|full|vector|tree|hybrid。
+
+    認証:
+    - backend 経由: API キー + 内部署名（x-user-*）
+    - Dify 等の機械クライアント: API キーのみ（署名ヘッダなし）。
+      scope は JSON body.scope または x-scope（未指定時は既定スコープ）
+    """
+    err = _check_key(x_api_key)
     if err:
         return err
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    if (x_user_sig or "").strip():
+        scope, auth_err = _auth_scoped(
+            x_api_key,
+            x_user_id,
+            x_user_groups,
+            x_scope,
+            x_user_ts,
+            x_user_sig,
+            x_user_tags,
+        )
+        if auth_err:
+            return auth_err
+    else:
+        # 機械クライアント: 署名なしでも API キーがあれば許可
+        scope = (body.get("scope") or x_scope or DEFAULT_SCOPE).strip()
+
     question = (body.get("question") or body.get("query") or "").strip()
     if not question:
         return JSONResponse(status_code=400, content={"error": "question required"})

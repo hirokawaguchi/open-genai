@@ -37,5 +37,8 @@ deletion-report-*.txt
 # --- その他 ---
 **/.DS_Store
 
-# --- 検討ドキュメント ---
-/docs/
+# --- 検討ドキュメント（公開ガイドのみ追跡） ---
+/docs/*
+!/docs/knowledge-api.md
+!/docs/knowledge-mcp.md
+!/docs/dify-knowledge.md

@@ -164,10 +164,30 @@ services:
       - URL_FETCH_ALLOWED_HOSTS=${URL_FETCH_ALLOWED_HOSTS:-}
     volumes:
       - rag_app_data:/data
+    # Dify 等の外部コンテナから host.docker.internal:8001 で Retrieval API を叩けるように公開
+    ports:
+      - "${RAG_APP_PORT:-8001}:8001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - qdrant
+    restart: unless-stopped
+
+  # ナレッジ検索 MCP（Dify Agent 等向け Streamable HTTP）
+  # エンドポイント: http://host.docker.internal:8002/mcp
+  knowledge-mcp:
+    build: ./knowledge-mcp
+    container_name: open-genai-knowledge-mcp
+    environment:
+      - RAG_BASE_URL=${RAG_BASE_URL:-http://rag-app:8001}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - RAG_DEFAULT_SCOPE=${RAG_DEFAULT_SCOPE:-00000000-0000-0000-0000-000000000000}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+    ports:
+      - "${KNOWLEDGE_MCP_PORT:-8002}:8002"
+    depends_on:
+      - rag-app
     restart: unless-stopped
 
   # ベクトルデータベース

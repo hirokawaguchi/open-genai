@@ -92,14 +92,21 @@ def test_docstore_fulltext_kind(docstore) -> None:
 def test_decide_retrieval_mode() -> None:
     # retrieve.py は相対 import があるため、判定ロジックだけを複製せず
     # モジュールをパッケージ経由で読む。失敗時はスキップ相当にしないで明示 fail。
+    # conftest が backend を path に入れるため、app は backend.app と衝突しうる。
+    # rag-app を最前列にし、backend の app が既に載っていれば取り除く。
     import importlib
     import sys
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    rag_app = root / "rag-app"
-    if str(rag_app) not in sys.path:
-        sys.path.insert(0, str(rag_app))
+    rag_app = str(root / "rag-app")
+    backend = str(root / "backend")
+    sys.path = [p for p in sys.path if p != backend]
+    if rag_app in sys.path:
+        sys.path.remove(rag_app)
+    sys.path.insert(0, rag_app)
+    sys.modules.pop("app", None)
+    sys.modules.pop("app.retrieve", None)
     retrieve = importlib.import_module("app.retrieve")
 
     small = [{"index_kind": "fulltext", "char_count": 100, "tags": ["a"]}]
@@ -129,6 +136,55 @@ def test_decide_retrieval_mode() -> None:
         budget=1000,
     )
     assert mode == "vector"
+
+
+def test_resolve_source_filter_normalizes(docstore) -> None:
+    import importlib
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    rag_app = str(root / "rag-app")
+    backend = str(root / "backend")
+    sys.path = [p for p in sys.path if p != backend]
+    if rag_app in sys.path:
+        sys.path.remove(rag_app)
+    sys.path.insert(0, rag_app)
+    sys.modules.pop("app", None)
+    sys.modules.pop("app.retrieve", None)
+    sys.modules.pop("app.docstore", None)
+
+    retrieve = importlib.import_module("app.retrieve")
+    # retrieve が参照する docstore をテスト用 DB に差し替え
+    retrieve.docstore = docstore
+
+    scope = "scope-a"
+    doc_id = docstore.upsert_document(
+        scope=scope,
+        source="policy.md",
+        pages=[{"page": 1, "text": "本文"}],
+        nodes=[
+            {
+                "node_id": "n1",
+                "title": "条",
+                "summary": "",
+                "page_start": 1,
+                "page_end": 1,
+                "parent_id": None,
+                "sort_order": 0,
+            }
+        ],
+        tags=["規程"],
+        index_kind="tree",
+    )
+    did, src, doc = retrieve._resolve_source_filter(scope, None, "policy.md")
+    assert did == doc_id
+    assert src == "policy.md"
+    assert doc is not None
+
+    did2, src2, _ = retrieve._resolve_source_filter(scope, doc_id, None)
+    assert did2 == doc_id
+    assert src2 == "policy.md"
 
 
 def test_docstore_replace_same_source(docstore) -> None:

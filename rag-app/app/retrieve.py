@@ -263,31 +263,45 @@ async def retrieve_vector(
     scope: str,
     top_k: int,
     tags: list[str] | None = None,
+    *,
+    source: str | None = None,
 ) -> dict[str, Any]:
     qvec = await embeddings.embed(question, is_query=True)
     # タグ未付与ドキュメントは RAG 対象外
     hits = await vectorstore.search(
-        qvec, top_k, scope, tags or None, require_tags=True
+        qvec,
+        top_k,
+        scope,
+        tags or None,
+        require_tags=True,
+        source=(source or "").strip() or None,
     )
     nodes = []
     for h in hits:
         payload = h.get("payload") or {}
+        src = payload.get("source") or "unknown"
         nodes.append(
             {
                 "id": h.get("id"),
-                "title": payload.get("source") or "chunk",
+                "title": payload.get("title") or src or "chunk",
                 "text": payload.get("text") or "",
-                "source": payload.get("source") or "unknown",
-                "doc_id": None,
-                "page_start": None,
-                "page_end": None,
+                "source": src,
+                "doc_id": payload.get("doc_id"),
+                "page_start": payload.get("page_start") or payload.get("page"),
+                "page_end": payload.get("page_end") or payload.get("page"),
                 "score": h.get("score"),
                 "mode": "vector",
             }
         )
     return {
         "nodes": nodes,
-        "trace": [{"mode": "vector", "hit_count": len(nodes)}],
+        "trace": [
+            {
+                "mode": "vector",
+                "hit_count": len(nodes),
+                "source": (source or "").strip() or None,
+            }
+        ],
     }
 
 
@@ -359,8 +373,49 @@ async def retrieve_hybrid(
     scope: str,
     top_k: int,
     tags: list[str] | None = None,
+    *,
+    doc_id: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """ベクトルで文書候補 → 構造化ツリーで節特定。ツリーが無い文書はベクトルチャンクを使う。"""
+    # 資料指定時はその文書だけを辿る（タグ内の他文書を混ぜない）
+    if doc_id or source:
+        docs: list[dict[str, Any]] = []
+        if doc_id:
+            d = docstore.get_doc(doc_id, scope)
+            if d and not d.get("truncated") and (d.get("tags") or []):
+                docs = [d]
+        elif source:
+            d = docstore.get_doc_by_source(scope, source)
+            if d and not d.get("truncated") and (d.get("tags") or []):
+                docs = [d]
+        if docs and _is_structured(docs[0]):
+            t_nodes, t_trace = await _tree_nav_doc(question, docs[0], top_k)
+            for n in t_nodes:
+                n["mode"] = "hybrid"
+            return {
+                "nodes": t_nodes[:top_k],
+                "trace": [
+                    {
+                        "mode": "hybrid",
+                        "scoped": True,
+                        "doc_id": docs[0].get("doc_id"),
+                        "source": docs[0].get("source"),
+                    },
+                    *t_trace,
+                ],
+            }
+        src = (docs[0].get("source") if docs else None) or source
+        vec = await retrieve_vector(
+            question, scope, top_k, tags, source=(src or "").strip() or None
+        )
+        for n in vec.get("nodes") or []:
+            n["mode"] = "hybrid"
+        return {
+            **vec,
+            "trace": [{"mode": "hybrid", "scoped": True, "source": src}, *(vec.get("trace") or [])],
+        }
+
     # 広めにベクトル候補を取る
     vec = await retrieve_vector(question, scope, max(top_k * 3, 8), tags)
     sources: list[str] = []
@@ -374,8 +429,8 @@ async def retrieve_hybrid(
         {"mode": "hybrid", "vector_sources": sources, "vector_trace": vec.get("trace")}
     ]
 
-    for source in sources:
-        doc = docstore.get_doc_by_source(scope, source)
+    for src_name in sources:
+        doc = docstore.get_doc_by_source(scope, src_name)
         if (
             doc
             and not doc.get("truncated")
@@ -392,10 +447,10 @@ async def retrieve_hybrid(
         else:
             # 構造化索引が無い文書はベクトルヒットを採用
             for n in vec["nodes"]:
-                if n.get("source") == source:
+                if n.get("source") == src_name:
                     n = {**n, "mode": "hybrid"}
                     nodes.append(n)
-                    if len([x for x in nodes if x.get("source") == source]) >= 2:
+                    if len([x for x in nodes if x.get("source") == src_name]) >= 2:
                         break
 
     if not nodes:
@@ -407,9 +462,16 @@ async def retrieve_hybrid(
 async def retrieve_full(
     scope: str,
     tags: list[str] | None = None,
+    *,
+    doc_id: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """タグ付き候補文書の全文をコンテキストとして返す。"""
     docs = _tagged_docs(scope, tags)
+    if doc_id:
+        docs = [d for d in docs if d.get("doc_id") == doc_id]
+    elif source:
+        docs = [d for d in docs if d.get("source") == source]
     nodes: list[dict[str, Any]] = []
     for d in docs:
         pages = docstore.get_all_pages(d["doc_id"])
@@ -443,6 +505,24 @@ async def retrieve_full(
     }
 
 
+def _resolve_source_filter(
+    scope: str, doc_id: str | None, source: str | None
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    """doc_id / source を正規化し、対象文書（あれば）を返す。"""
+    did = (doc_id or "").strip() or None
+    src = (source or "").strip() or None
+    doc: dict[str, Any] | None = None
+    if did:
+        doc = docstore.get_doc(did, scope)
+        if doc and not src:
+            src = (doc.get("source") or "").strip() or None
+    elif src:
+        doc = docstore.get_doc_by_source(scope, src)
+        if doc and not did:
+            did = doc.get("doc_id")
+    return did, src, doc
+
+
 async def retrieve(
     question: str,
     scope: str,
@@ -455,19 +535,36 @@ async def retrieve(
 ) -> dict[str, Any]:
     mode = (mode or "auto").strip().lower()
     chosen_meta: dict[str, Any] | None = None
+    did, src, scoped_doc = _resolve_source_filter(scope, doc_id, source)
+
     if mode == "auto":
-        mode, chosen_meta = await resolve_retrieval_mode(scope, tags)
+        if scoped_doc or src or did:
+            # 資料指定時: 構造化なら tree（節・ページ）、なければ vector（該当チャンク）
+            if scoped_doc and _is_structured(scoped_doc) and not scoped_doc.get("truncated"):
+                mode = "tree"
+            else:
+                mode = "vector"
+            chosen_meta = {
+                "reason": "source_scoped",
+                "doc_id": did,
+                "source": src,
+                "resolved_mode": mode,
+            }
+        else:
+            mode, chosen_meta = await resolve_retrieval_mode(scope, tags)
 
     if mode == "full":
-        result = await retrieve_full(scope, tags)
+        result = await retrieve_full(scope, tags, doc_id=did, source=src)
     elif mode == "tree":
         result = await retrieve_tree(
-            question, scope, top_k, tags, doc_id=doc_id, source=source
+            question, scope, top_k, tags, doc_id=did, source=src
         )
     elif mode == "hybrid":
-        result = await retrieve_hybrid(question, scope, top_k, tags)
+        result = await retrieve_hybrid(
+            question, scope, top_k, tags, doc_id=did, source=src
+        )
     else:
-        result = await retrieve_vector(question, scope, top_k, tags)
+        result = await retrieve_vector(question, scope, top_k, tags, source=src)
 
     if chosen_meta is not None:
         result = {
