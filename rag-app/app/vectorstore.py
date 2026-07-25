@@ -64,22 +64,32 @@ def _scope_filter(
     scope: str,
     extra: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
+    *,
+    require_tags: bool = False,
 ) -> dict[str, Any]:
     """scope(teamId 等)でナレッジを分離するための Qdrant フィルタを作る。
 
     tags 指定時は、その**いずれか**のタグを持つドキュメントに限定する（OR）。
-    payload.tags は配列（keyword）で、match.any で「いずれか一致」を表現する。
+    require_tags=True かつ tags 未指定のときはタグ未付与を除外する。
     """
     must: list[dict[str, Any]] = [{"key": "scope", "match": {"value": scope}}]
     if tags:
         must.append({"key": "tags", "match": {"any": list(tags)}})
     if extra:
         must.extend(extra)
-    return {"must": must}
+    filt: dict[str, Any] = {"must": must}
+    if require_tags and not tags:
+        filt["must_not"] = [{"is_empty": {"key": "tags"}}]
+    return filt
 
 
 async def search(
-    vector: list[float], limit: int, scope: str, tags: list[str] | None = None
+    vector: list[float],
+    limit: int,
+    scope: str,
+    tags: list[str] | None = None,
+    *,
+    require_tags: bool = True,
 ) -> list[dict[str, Any]]:
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
@@ -88,7 +98,7 @@ async def search(
                 "vector": vector,
                 "limit": limit,
                 "with_payload": True,
-                "filter": _scope_filter(scope, tags=tags),
+                "filter": _scope_filter(scope, tags=tags, require_tags=require_tags),
             },
         )
         res.raise_for_status()
@@ -182,11 +192,20 @@ async def _scroll(scope: str, with_payload: list[str], tags: list[str] | None = 
 async def list_sources(scope: str, tags: list[str] | None = None) -> list[dict[str, Any]]:
     """指定スコープ(＋任意でタグ絞り込み)のドキュメント(source)と各チャンク数を返す。"""
     counts: dict[str, int] = {}
-    async for payload in _scroll(scope, ["source"], tags=tags):
+    tag_map: dict[str, set[str]] = {}
+    async for payload in _scroll(scope, ["source", "tags"], tags=tags):
         src = payload.get("source", "unknown")
         counts[src] = counts.get(src, 0) + 1
+        tag_map.setdefault(src, set())
+        for t in payload.get("tags") or []:
+            if t:
+                tag_map[src].add(str(t))
     return [
-        {"source": s, "chunks": c}
+        {
+            "source": s,
+            "chunks": c,
+            "tags": sorted(tag_map.get(s) or []),
+        }
         for s, c in sorted(counts.items(), key=lambda x: x[0])
     ]
 
@@ -202,3 +221,62 @@ async def list_tags(scope: str) -> list[dict[str, Any]]:
         {"tag": t, "chunks": c}
         for t, c in sorted(counts.items(), key=lambda x: x[0])
     ]
+
+
+async def set_tags_by_source(scope: str, source: str, tags: list[str]) -> None:
+    """指定ドキュメントの全チャンクの tags を置き換える。"""
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            f"{QDRANT_URL}/collections/{COLLECTION}/points/payload?wait=true",
+            json={
+                "payload": {"tags": list(tags)},
+                "filter": _scope_filter(
+                    scope, [{"key": "source", "match": {"value": source}}]
+                ),
+            },
+        )
+        res.raise_for_status()
+
+
+async def rename_tag_in_payloads(scope: str, old: str, new: str) -> int:
+    """スコープ内のチャンク payload.tags で old→new に置換する。"""
+    updated = 0
+    offset: Any = None
+    async with httpx.AsyncClient(timeout=60) as client:
+        while True:
+            body: dict[str, Any] = {
+                "limit": 128,
+                "with_payload": ["tags", "source"],
+                "with_vector": False,
+                "filter": _scope_filter(scope, tags=[old]),
+            }
+            if offset is not None:
+                body["offset"] = offset
+            res = await client.post(
+                f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll", json=body
+            )
+            if res.status_code != 200:
+                break
+            result = res.json().get("result", {})
+            points = result.get("points") or []
+            for p in points:
+                pid = p.get("id")
+                payload = p.get("payload") or {}
+                cur = [str(t) for t in (payload.get("tags") or [])]
+                if old not in cur:
+                    continue
+                nxt = [new if t == old else t for t in cur]
+                # 重複除去（順序維持）
+                seen: list[str] = []
+                for t in nxt:
+                    if t not in seen:
+                        seen.append(t)
+                await client.post(
+                    f"{QDRANT_URL}/collections/{COLLECTION}/points/payload?wait=true",
+                    json={"payload": {"tags": seen}, "points": [pid]},
+                )
+                updated += 1
+            offset = result.get("next_page_offset")
+            if offset is None:
+                break
+    return updated
