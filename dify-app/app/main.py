@@ -214,6 +214,7 @@ _MIME_EXT = {
     "text/plain": ".txt",
     "text/csv": ".csv",
     "text/markdown": ".md",
+    "text/html": ".html",
     "application/json": ".json",
     "application/zip": ".zip",
     "image/png": ".png",

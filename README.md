@@ -631,6 +631,7 @@ SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 | ファイル | 内容 |
 | --- | --- |
 | [`dify-app/dsl/File Output Test.yml`](dify-app/dsl/File Output Test.yml) | 公開 URL から PDF を取得し `result_file` として返すワークフロー |
+| [`dify-app/dsl/MultiFileGenerator.yml`](dify-app/dsl/MultiFileGenerator.yml) | 複数文書から `markdown` / `html` / `text` / `json` / `docx` / `pptx` を生成。`html` は単一自己完結（デジタル庁デザインシステム風）。署名 URL またはローカルでブラウザ表示可能 |
 
 **手順:**
 
