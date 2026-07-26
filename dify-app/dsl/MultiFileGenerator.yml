@@ -1,8 +1,8 @@
 app:
   description: |
     複数ドキュメントと指示から新規ファイルを生成するワークフロー。
-    必要に応じて Tavily で Web 検索し、markdown / text / json / docx / pptx で出力する。
-    依存: File Tools, Markdown Exporter, Tavily, Azure OpenAI。Tavily は認証（APIキー）設定が必要。
+    必要に応じて Tavily で Web 検索し、markdown / html / text / json / docx / pptx で出力する。
+    html は単一自己完結ファイル（デジタル庁デザインシステム風）。依存: File Tools, Markdown Exporter, Tavily, Azure OpenAI。Tavily は認証（APIキー）設定が必要。
   icon: 📎
   icon_background: '#E4FBCC'
   icon_type: emoji
@@ -366,6 +366,7 @@ workflow:
           label: 出力形式
           options:
           - markdown
+          - html
           - text
           - json
           - docx
@@ -421,7 +422,7 @@ workflow:
                   parts.append(f"### ファイル {i + 1}\n\n{body if body else '(空のファイル)'}")
               context = "\n\n---\n\n".join(parts) if parts else "(入力ファイルなし)"
               fmt = (output_format or "markdown").strip().lower() or "markdown"
-              if fmt not in ("markdown", "text", "json", "docx", "pptx"):
+              if fmt not in ("markdown", "html", "text", "json", "docx", "pptx"):
                   fmt = "markdown"
               name = (output_filename or "").strip() or "generated"
               return {
@@ -797,6 +798,16 @@ workflow:
             - text: プレーンテキスト
             - json: 有効な JSON のみ
             - pptx: Pandoc スライド形式。各スライドを --- で区切る。1枚目はタイトル、以降は箇条書き中心。1スライドあたり要点は多くしすぎない
+            - html: 単一の自己完結 HTML のみ（<!DOCTYPE html> から終了タグまで）。以下を厳守する。
+              - 外部リソース禁止（stylesheet / script / font / 画像の http(s) URL・CDN・Web フォント読込なし）
+              - <script> 禁止。本文要素に style= 属性を付けない
+              - 分離: 装飾は head 内の <style> のみ。構造は header / main / section / nav 等のセマンティック HTML。コンテンツは本文テキストのみ
+              - 体裁はデジタル庁デザインシステム / digital.go.jp に寄せる（完全準拠ではなくトーン）。読みやすさ・コントラスト・余白を優先
+              - :root に CSS 変数（プライマリ青系、背景白〜ごく薄いグレー、本文ほぼ黒、リンク青、ボーダー薄灰）
+              - font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif
+              - 1カラム・本文最大幅を抑える。長い資料は nav 目次＋各 section に id。ヘッダーはシンプルなプライマリ色の帯＋タイトル
+              - 避ける: 派手な LP、ダークモード既定、紫グラデ、グロー、カード多用、丸ピル装飾の羅列
+              - コンテンツは参照資料に基づく。装飾用のダミー文を入れない
         - id: mfg-gen-user
           role: user
           text: |
@@ -845,6 +856,7 @@ workflow:
               fmt = (output_format or "markdown").strip().lower() or "markdown"
               ext_map = {
                   "markdown": ".md",
+                  "html": ".html",
                   "text": ".txt",
                   "json": ".json",
                   "docx": ".docx",
@@ -852,6 +864,7 @@ workflow:
               }
               mime_map = {
                   "markdown": "text/markdown",
+                  "html": "text/html",
                   "text": "text/plain",
                   "json": "application/json",
                   "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1047,7 +1060,7 @@ workflow:
       type: custom
       width: 244
     - data:
-        desc: markdown / text / json をファイル保存
+        desc: markdown / html / text / json をファイル保存
         is_team_authorization: true
         paramSchemas: []
         params:

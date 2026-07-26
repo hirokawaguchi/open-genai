@@ -28,6 +28,11 @@
 
 ## [Unreleased]
 
+### Dify MultiFileGenerator: 単一 HTML 成果物
+
+- [`MultiFileGenerator.yml`](dify-app/dsl/MultiFileGenerator.yml) の出力形式に `html` を追加（単一自己完結・デジタル庁デザインシステム風の体裁）
+- `dify-app` の MIME→拡張子補正に `text/html` を追加
+
 ---
 
 ## [0.4.0] - 2026-07-25
