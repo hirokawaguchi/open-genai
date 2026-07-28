@@ -9,10 +9,13 @@ type Props = ComponentProps<'dialog'> & {
   isShowTeamManagementMenu: boolean;
   onClickSignout: () => void;
   onClose: () => void;
+  /** ログイン中の表示名（ユーザ名）。未取得時は「アカウント」 */
+  userDisplayName?: string;
 };
 
 export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
-  const { isShowTeamManagementMenu, onClickSignout, onClose, ...rest } = props;
+  const { isShowTeamManagementMenu, onClickSignout, onClose, userDisplayName, ...rest } = props;
+  const accountLabel = userDisplayName?.trim() || 'アカウント';
 
   return (
     <dialog
@@ -49,10 +52,15 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
             <Divider />
             <div>
               <MobileMenuSection
-                label='アカウント'
+                label={accountLabel}
                 icon={(isOpen) => <AccountIcon className='shrink-0' isFilled={isOpen} />}
               >
                 <ul>
+                  {userDisplayName?.trim() && (
+                    <li className='px-4 py-2 text-dns-14N-130 text-solid-gray-600'>
+                      ログイン中: <span className='font-bold text-solid-gray-800'>{userDisplayName}</span>
+                    </li>
+                  )}
                   {isShowTeamManagementMenu && (
                     <li>
                       <MobileMenuItemLink label='チーム管理' to='/teams' />
