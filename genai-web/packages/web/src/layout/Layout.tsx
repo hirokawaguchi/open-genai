@@ -20,7 +20,7 @@ export const Layout = () => {
     <div id='layoutRoot' className='flex min-h-dvh w-screen flex-col'>
       <Header className='sticky top-0 z-10' isLandingPage={pathname === '/'} />
       <div className={`flex flex-1 ${sidebar ? 'md:flex-row' : 'flex-col'}`}>
-        {sidebar && <SideNav className='sticky top-(--header-height) self-start max-h-[calc(100dvh-var(--header-height))] overflow-y-auto' />}
+        {sidebar && <SideNav />}
         <div className='flex min-w-0 flex-1 flex-col'>
           <main id='mainContents' className='flex-1'>
             <Outlet />

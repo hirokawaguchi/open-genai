@@ -38,69 +38,74 @@ export const SideNav = (props: Props) => {
   const { pinnedItems } = partitionPinnedApps(filteredTeams, pins);
 
   return (
-    <nav
-      aria-label='サイドナビゲーション'
-      className={`hidden md:flex w-60 shrink-0 flex-col gap-6 border-r border-solid-gray-420 bg-white px-3 py-6 ${className ?? ''}`}
+    // 外側で行高さいっぱいに伸ばして境界線をフッターまで通す。リンク群だけ sticky。
+    <aside
+      className={`hidden md:flex w-60 shrink-0 flex-col self-stretch border-r border-solid-gray-420 bg-white ${className ?? ''}`}
     >
-      <div>
-        <h2 className='mb-2 px-3 text-dns-14B-130 text-solid-gray-600'>おすすめ</h2>
-        <ul className='flex flex-col gap-0.5'>
-          {recommended.map((item) => {
-            const active = isActivePath(pathname, item.to);
-            return (
-              <li key={item.to}>
-                <Link
-                  to={item.to}
-                  state={item.state}
-                  aria-current={active ? 'page' : undefined}
-                  className={navLinkClass(active)}
-                  title={item.description}
-                >
-                  {item.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
-      {pinnedItems.length > 0 && (
+      <nav
+        aria-label='サイドナビゲーション'
+        className='sticky top-(--header-height) flex max-h-[calc(100dvh-var(--header-height))] flex-col gap-6 overflow-y-auto px-3 py-6'
+      >
         <div>
-          <h2 className='mb-2 px-3 text-dns-14B-130 text-solid-gray-600'>ピン留め</h2>
+          <h2 className='mb-2 px-3 text-dns-14B-130 text-solid-gray-600'>おすすめ</h2>
           <ul className='flex flex-col gap-0.5'>
-            {pinnedItems.map((item) => {
-              const href = pinnedAppHref(item);
-              const active = isActivePath(pathname, href);
+            {recommended.map((item) => {
+              const active = isActivePath(pathname, item.to);
               return (
-                <li key={`pin-${item.teamIdKey}-${item.app.value}`}>
+                <li key={item.to}>
                   <Link
-                    to={href}
+                    to={item.to}
+                    state={item.state}
                     aria-current={active ? 'page' : undefined}
                     className={navLinkClass(active)}
-                    title={item.app.description || item.teamName}
+                    title={item.description}
                   >
-                    <span className='block truncate'>{item.app.label}</span>
+                    {item.label}
                   </Link>
                 </li>
               );
             })}
           </ul>
         </div>
-      )}
 
-      <div>
-        <ul className='flex flex-col gap-0.5'>
-          <li>
-            <Link
-              to={ALL_APPS_NAV_ITEM.to}
-              aria-current={isActivePath(pathname, ALL_APPS_NAV_ITEM.to) ? 'page' : undefined}
-              className={navLinkClass(isActivePath(pathname, ALL_APPS_NAV_ITEM.to))}
-            >
-              {ALL_APPS_NAV_ITEM.label}
-            </Link>
-          </li>
-        </ul>
-      </div>
-    </nav>
+        {pinnedItems.length > 0 && (
+          <div>
+            <h2 className='mb-2 px-3 text-dns-14B-130 text-solid-gray-600'>ピン留め</h2>
+            <ul className='flex flex-col gap-0.5'>
+              {pinnedItems.map((item) => {
+                const href = pinnedAppHref(item);
+                const active = isActivePath(pathname, href);
+                return (
+                  <li key={`pin-${item.teamIdKey}-${item.app.value}`}>
+                    <Link
+                      to={href}
+                      aria-current={active ? 'page' : undefined}
+                      className={navLinkClass(active)}
+                      title={item.app.description || item.teamName}
+                    >
+                      <span className='block truncate'>{item.app.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        <div>
+          <ul className='flex flex-col gap-0.5'>
+            <li>
+              <Link
+                to={ALL_APPS_NAV_ITEM.to}
+                aria-current={isActivePath(pathname, ALL_APPS_NAV_ITEM.to) ? 'page' : undefined}
+                className={navLinkClass(isActivePath(pathname, ALL_APPS_NAV_ITEM.to))}
+              >
+                {ALL_APPS_NAV_ITEM.label}
+              </Link>
+            </li>
+          </ul>
+        </div>
+      </nav>
+    </aside>
   );
 };
