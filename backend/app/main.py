@@ -1043,11 +1043,19 @@ async def _prepare_saml_request(request: Request) -> dict[str, Any]:
     if request.method == "POST":
         raw = await request.form()
         form = {k: v for k, v in raw.items()}
-    host = request.headers.get("host", "localhost:8000")
-    server_port = host.split(":")[1] if ":" in host else (
-        "443" if request.url.scheme == "https" else "80"
-    )
+    # リバースプロキシ配下では request.url.scheme が http のままになるため、
+    # X-Forwarded-* を優先して Recipient 検証用の公開 URL を組み立てる。
     forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get(
+        "host", "localhost:8000"
+    )
+    forwarded_port = request.headers.get("x-forwarded-port")
+    if forwarded_port:
+        server_port = forwarded_port
+    elif ":" in host:
+        server_port = host.split(":", 1)[1]
+    else:
+        server_port = "443" if forwarded_proto == "https" else "80"
     return {
         "https": "on" if forwarded_proto == "https" else "off",
         "http_host": host,
