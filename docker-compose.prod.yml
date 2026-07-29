@@ -48,6 +48,8 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      # チャットタイトル生成方式（heuristic=LLM不使用が既定 / llm）
+      - TITLE_MODE=${TITLE_MODE:-heuristic}
       # 複数 OpenAI 互換プロバイダ併用（JSON）。未設定なら OPENAI_* 単一。
       - LLM_PROVIDERS=${LLM_PROVIDERS:-}
       # LLM_PROVIDERS の api_key_env から参照されるプロバイダ別キー
