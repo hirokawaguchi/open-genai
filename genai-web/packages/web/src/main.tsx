@@ -6,7 +6,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { BrowserRouter } from 'react-router';
 import { OnlineStatusProvider } from '@/components/OnlineStatusProvider';
 import { GlobalErrorFallback } from '@/components/ui/GlobalErrorFallback';
-import { captureTokenFromUrl, isAuthenticated, login } from '@/local/localAuth';
+import { captureTokenFromUrl, clearToken, isAuthenticated, login } from '@/local/localAuth';
 
 // ACS からのリダイレクトで付与された #token= を取り込む（描画前に実行）
 captureTokenFromUrl();
@@ -17,6 +17,10 @@ captureTokenFromUrl();
 const AuthGate = ({ children }: { children: ReactNode }) => {
   const path = window.location.pathname;
   if (path === '/signed-out' || path === '/auth-error') {
+    // 認証エラー到達時は壊れたトークンを残さない（セッションを永続化しない）
+    if (path === '/auth-error') {
+      clearToken();
+    }
     return <>{children}</>;
   }
   if (!isAuthenticated()) {

@@ -1113,6 +1113,8 @@ async def auth_acs(request: Request) -> Response:
         audit.record(
             request, action="auth.login", status=401, output_text=f"SAML検証例外: {reason}"
         )
+        # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
+        auth.reset_settings_cache()
         return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
 
     errors = saml_auth.get_errors()
@@ -1122,6 +1124,8 @@ async def auth_acs(request: Request) -> Response:
         audit.record(
             request, action="auth.login", status=401, output_text=f"SAML検証失敗: {reason}"
         )
+        # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
+        auth.reset_settings_cache()
         return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
 
     attrs = saml_auth.get_attributes()
