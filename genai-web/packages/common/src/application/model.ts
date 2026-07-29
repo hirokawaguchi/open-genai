@@ -498,6 +498,48 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     displayName: 'Nova Sonic',
   },
 
+  // ==== Open GENAI: さくら AI Engine ====
+  // https://manual.sakura.ad.jp/cloud/ai-engine/02-howto.html
+  // modelId は API の model 名と一致させる（OPENAI_BASE_URL=https://api.ai.sakura.ad.jp/v1）。
+  'gpt-oss-120b': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'gpt-oss-120b（さくら AI Engine）',
+  },
+  'preview/gemma-4-31B-it': {
+    // マルチモーダル。画像 + ドキュメント添付に対応。
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemma 4 31B IT（さくら・画像対応）',
+  },
+
+  // ==== Open GENAI: 他の OpenAI 互換プロバイダ（LLM_PROVIDERS で併用）====
+  // OpenAI
+  'gpt-4o': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'GPT-4o（OpenAI）',
+  },
+  'gpt-4o-mini': {
+    flags: { ...MODEL_FEATURE.TEXT_DOC_IMAGE, ...MODEL_FEATURE.LIGHT },
+    displayName: 'GPT-4o mini（OpenAI）',
+  },
+  // Google Gemini（OpenAI 互換エンドポイント）
+  'gemini-2.5-flash': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemini 2.5 Flash（Google）',
+  },
+  'gemini-2.5-pro': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemini 2.5 Pro（Google）',
+  },
+  // Azure OpenAI（modelId はデプロイ名に一致させる）
+  'gpt-4.1': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'GPT-4.1（Azure）',
+  },
+  'gpt-4o-azure': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'GPT-4o（Azure）',
+  },
+
   // ==== Open GENAI: ローカル LLM (Ollama) ====
   // modelId は Ollama のモデル名と一致させる。バックエンドはこの id を
   // そのまま Ollama の model として利用する。
@@ -530,6 +572,21 @@ export const modelMetadata: Record<string, ModelMetadata> = {
   'gpt-oss:20b': {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'gpt-oss 20B (ローカル)',
+  },
+
+  // ==== Open GENAI: ホスト Ollama（Cloud モデル含む）====
+  // modelId は `ollama list` の NAME と一致させる（さくら gpt-oss-120b とは別 ID）。
+  'gpt-oss:120b-cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'gpt-oss 120B（Ollama Cloud）',
+  },
+  'gemma4:cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemma 4（Ollama Cloud・画像対応）',
+  },
+  'glm-5.2:cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'GLM 5.2（Ollama Cloud）',
   },
 };
 
