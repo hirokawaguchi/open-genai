@@ -72,9 +72,17 @@ def _scope_filter(
     tags 指定時は、その**いずれか**のタグを持つドキュメントに限定する（OR）。
     require_tags=True かつ tags 未指定のときはタグ未付与を除外する。
     """
+    from . import textnorm
+
     must: list[dict[str, Any]] = [{"key": "scope", "match": {"value": scope}}]
     if tags:
-        must.append({"key": "tags", "match": {"any": list(tags)}})
+        # NFD/NFC 混在に備え、正規化形＋生値の両方でマッチさせる
+        tag_any: list[str] = []
+        for t in tags:
+            for form in (t, textnorm.normalize_tag(t)):
+                if form and form not in tag_any:
+                    tag_any.append(form)
+        must.append({"key": "tags", "match": {"any": tag_any}})
     if extra:
         must.extend(extra)
     filt: dict[str, Any] = {"must": must}

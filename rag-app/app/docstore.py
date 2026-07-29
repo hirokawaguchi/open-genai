@@ -92,13 +92,19 @@ def _now() -> str:
 
 
 def _tags_json(tags: list[str] | None) -> str:
-    return json.dumps(tags or [], ensure_ascii=False)
+    from . import textnorm
+
+    return json.dumps(textnorm.normalize_tags(tags), ensure_ascii=False)
 
 
 def _parse_tags(raw: str | None) -> list[str]:
+    from . import textnorm
+
     try:
         v = json.loads(raw or "[]")
-        return [str(t) for t in v] if isinstance(v, list) else []
+        if isinstance(v, list):
+            return textnorm.normalize_tags(str(t) for t in v)
+        return []
     except (json.JSONDecodeError, TypeError):
         return []
 
@@ -231,12 +237,17 @@ def list_docs(scope: str, tags: list[str] | None = None) -> list[dict[str, Any]]
             """,
             (scope,),
         ).fetchall()
+    from . import textnorm
+
     out: list[dict[str, Any]] = []
-    tag_set = set(tags or [])
+    tag_set = set(textnorm.normalize_tags(tags))
     for r in rows:
         d = _normalize_doc_row(r)
-        if tag_set and not tag_set.intersection(d["tags"]):
+        doc_tags = set(textnorm.normalize_tags(d.get("tags") or []))
+        if tag_set and not tag_set.intersection(doc_tags):
             continue
+        # 応答も NFC に揃える（LLM がコピーしても照合できる）
+        d["tags"] = sorted(doc_tags) if doc_tags else []
         out.append(d)
     return out
 
@@ -376,15 +387,13 @@ def delete_scope(scope: str) -> int:
 
 
 def set_tags(scope: str, source: str, tags: list[str]) -> bool:
-    import json
-
     doc = get_doc_by_source(scope, source)
     if not doc:
         return False
     with _connect() as conn:
         conn.execute(
             "UPDATE docs SET tags = ?, updated_at = ? WHERE doc_id = ?",
-            (json.dumps(tags or [], ensure_ascii=False), _now(), doc["doc_id"]),
+            (_tags_json(tags), _now(), doc["doc_id"]),
         )
     return True
 
