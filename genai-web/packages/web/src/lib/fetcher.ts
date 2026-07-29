@@ -1,4 +1,21 @@
-import { getIdToken } from '@/local/localAuth';
+import { clearToken, getIdToken, getToken, login } from '@/local/localAuth';
+
+// 401（認証切れ/不正トークン）を受けたら、壊れたトークンを破棄して
+// 素直にログイン画面へ戻す。多重リダイレクトを避けるためのガード付き。
+let redirectingToLogin = false;
+const handleUnauthorized = (): void => {
+  const path = window.location.pathname;
+  if (path === '/auth-error' || path === '/signed-out') {
+    return;
+  }
+  // トークンを持っていた（＝認証済みのつもりだった）場合のみ再ログインへ誘導
+  if (redirectingToLogin || !getToken()) {
+    return;
+  }
+  redirectingToLogin = true;
+  clearToken();
+  login();
+};
 
 export class ApiError extends Error {
   readonly status: number;
@@ -83,6 +100,9 @@ const createApiClient = (baseURL: string) => {
     });
 
     if (!res.ok) {
+      if (res.status === 401) {
+        handleUnauthorized();
+      }
       const errorData = await parseResponseBody<unknown>(res);
       throw new ApiError(res.status, errorData);
     }
@@ -104,6 +124,9 @@ const createApiClient = (baseURL: string) => {
     });
 
     if (!res.ok) {
+      if (res.status === 401) {
+        handleUnauthorized();
+      }
       const errorData = await parseResponseBody<unknown>(res);
       throw new ApiError(res.status, errorData);
     }
