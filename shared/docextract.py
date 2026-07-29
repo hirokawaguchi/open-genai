@@ -56,6 +56,80 @@ def b64_to_bytes(data: str) -> bytes:
     return base64.b64decode(strip_base64_prefix(data))
 
 
+def _docx_extract_text(raw: bytes) -> str:
+    """docx から本文段落・表・ヘッダー/フッターを本文順に抽出する。
+
+    python-docx の `document.paragraphs` は本文段落しか返さないため、表
+    （テーブル）やテキストボックスに内容を持つ「様式」テンプレでは抽出漏れが
+    起きる。ここでは本文ブロックを段落/表の順に走査し、表はセル単位（ネスト表も
+    再帰）で拾う。ヘッダー/フッターも補足し、段落・表で何も取れないときのみ
+    テキストボックス等を w:t 走査でフォールバック回収する。
+    """
+    import docx
+    from docx.document import Document as _DocumentClass
+    from docx.oxml.ns import qn
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table, _Cell
+    from docx.text.paragraph import Paragraph
+
+    d = docx.Document(io.BytesIO(raw))
+
+    def iter_block_items(parent: Any):
+        if isinstance(parent, _DocumentClass):
+            parent_elm = parent.element.body
+        elif isinstance(parent, _Cell):
+            parent_elm = parent._tc
+        else:
+            return
+        for child in parent_elm.iterchildren():
+            if isinstance(child, CT_P):
+                yield Paragraph(child, parent)
+            elif isinstance(child, CT_Tbl):
+                yield Table(child, parent)
+
+    def block_lines(container: Any) -> list[str]:
+        lines: list[str] = []
+        for block in iter_block_items(container):
+            if isinstance(block, Paragraph):
+                if block.text and block.text.strip():
+                    lines.append(block.text)
+            else:  # Table
+                for row in block.rows:
+                    cells: list[str] = []
+                    prev: str | None = None
+                    for cell in row.cells:
+                        # 横結合セルは同一セルが繰り返されるため直前と同じ内容は畳む
+                        val = " ".join(block_lines(cell)).strip()
+                        if val and val != prev:
+                            cells.append(val)
+                        prev = val
+                    line = "\t".join(cells)
+                    if line.strip():
+                        lines.append(line)
+        return lines
+
+    lines = block_lines(d)
+
+    # ヘッダー / フッター（様式ではラベルが入ることがある）
+    for section in d.sections:
+        for hf in (section.header, section.footer):
+            try:
+                for p in hf.paragraphs:
+                    if p.text and p.text.strip():
+                        lines.append(p.text)
+            except Exception:  # noqa: BLE001
+                pass
+
+    text = "\n".join(lines).strip()
+
+    # 段落・表で何も取れない場合はテキストボックス等を w:t 走査でフォールバック
+    if not text:
+        parts = [t.text for t in d.element.iter(qn("w:t")) if t.text]
+        text = "".join(parts).strip()
+    return text
+
+
 def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
     """添付ドキュメント(PDF/Word/Excel/テキスト)からテキストを抽出する。
 
@@ -75,10 +149,7 @@ def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
             reader = PdfReader(io.BytesIO(raw))
             text = "\n".join((p.extract_text() or "") for p in reader.pages)
         elif ext == "docx" or "wordprocessingml" in mt:
-            import docx
-
-            d = docx.Document(io.BytesIO(raw))
-            text = "\n".join(p.text for p in d.paragraphs)
+            text = _docx_extract_text(raw)
         elif ext == "xlsx" or "spreadsheetml" in mt:
             import openpyxl
 
@@ -172,10 +243,7 @@ def extract_doc_pages(name: str, media_type: str, b64: str) -> list[dict[str, An
 
         # 非 PDF は MAX_DOC_CHARS を通さず全文抽出し、合成ページに分割する
         if ext == "docx" or "wordprocessingml" in mt:
-            import docx
-
-            d = docx.Document(io.BytesIO(raw))
-            text = "\n".join(p.text for p in d.paragraphs).strip()
+            text = _docx_extract_text(raw).strip()
         elif ext == "xlsx" or "spreadsheetml" in mt:
             import openpyxl
 
