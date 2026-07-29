@@ -895,8 +895,38 @@ async def _run_chat(
     return (answer, new_conv_id, out_files, citations)
 
 
-# 源内フォームには出さず、invoke 時に自動注入する Dify 入力変数
+# 源内フォームには出さず、invoke 時に自動注入する Dify 入力変数（常時）
 _HIDDEN_FORM_VARS = frozenset({"top_k", "scope", "rag_scope"})
+
+
+def _cfg_hide_inputs(cfg: dict[str, Any]) -> set[str]:
+    """config.hide_inputs / hidden_inputs で追加指定された非表示変数。"""
+    hidden = set(_HIDDEN_FORM_VARS)
+    for key in ("hide_inputs", "hidden_inputs"):
+        raw = cfg.get(key)
+        if isinstance(raw, str) and raw.strip():
+            hidden.add(raw.strip())
+        elif isinstance(raw, (list, tuple)):
+            for item in raw:
+                if item is not None and str(item).strip():
+                    hidden.add(str(item).strip())
+    return hidden
+
+
+def _cfg_default_inputs(cfg: dict[str, Any]) -> dict[str, str]:
+    """config.default_inputs と個別キー(default_depth 等)から既定値辞書を作る。"""
+    out: dict[str, str] = {}
+    raw = cfg.get("default_inputs")
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if k is None or v is None or v == "":
+                continue
+            out[str(k)] = str(v)
+    if "depth" not in out and cfg.get("default_depth") not in (None, ""):
+        out["depth"] = str(cfg.get("default_depth"))
+    if "top_k" not in out and cfg.get("default_top_k") not in (None, ""):
+        out["top_k"] = str(cfg.get("default_top_k"))
+    return out
 
 
 def _inject_hidden_inputs(
@@ -905,7 +935,7 @@ def _inject_hidden_inputs(
     scope: str | None,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """非表示項目へ適切な値を入れる（チーム scope・参照件数）。"""
+    """非表示項目へ適切な値を入れる（チーム scope・参照件数・hide_inputs の既定値）。"""
     out = dict(inputs)
     team_scope = (scope or "").strip()
     if team_scope:
@@ -916,13 +946,24 @@ def _inject_hidden_inputs(
             out["scope"] = default_scope
     if not str(out.get("top_k") or "").strip():
         out["top_k"] = str(cfg.get("default_top_k") or "8")
+
+    defaults = _cfg_default_inputs(cfg)
+    # hide_inputs に depth があり既定未指定なら 3（DeepResearch 等）
+    if "depth" in _cfg_hide_inputs(cfg) and "depth" not in defaults:
+        defaults["depth"] = "3"
+    for key, value in defaults.items():
+        if not str(out.get(key) or "").strip():
+            out[key] = value
     return out
 
 
 # ---------------------------------------------------------------------------
 # Dify の入力スキーマ(/parameters) を 源内のフォーム定義(placeholder) に変換
 # ---------------------------------------------------------------------------
-def _convert_user_input_form(form: list[Any]) -> dict[str, Any]:
+def _convert_user_input_form(
+    form: list[Any],
+    cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Dify の user_input_form を 源内 の placeholder(uiJson) 形式へ変換する。
 
     Dify のコンポーネント型 → 源内の type:
@@ -930,7 +971,14 @@ def _convert_user_input_form(form: list[Any]) -> dict[str, Any]:
       select -> select(items), file / file-list -> file
 
     top_k / scope は源内では非表示（実行時に自動注入）。
+    config.hide_inputs に列挙した変数は type=hidden + 既定値で渡し、画面には出さない。
     """
+    cfg = cfg or {}
+    hidden = _cfg_hide_inputs(cfg)
+    defaults = _cfg_default_inputs(cfg)
+    if "depth" in hidden and "depth" not in defaults:
+        defaults["depth"] = "3"
+
     ui: dict[str, Any] = {}
     for item in form or []:
         if not isinstance(item, dict):
@@ -941,7 +989,16 @@ def _convert_user_input_form(form: list[Any]) -> dict[str, Any]:
             variable = spec.get("variable")
             if not variable:
                 continue
+            # 常時非表示（scope 等）はスキーマから除外し、invoke 側で注入
             if variable in _HIDDEN_FORM_VARS:
+                continue
+            if variable in hidden:
+                default = defaults.get(variable)
+                if default in (None, ""):
+                    default = spec.get("default")
+                if default in (None, ""):
+                    continue
+                ui[variable] = {"type": "hidden", "default_value": str(default)}
                 continue
             field: dict[str, Any] = {
                 "title": spec.get("label") or variable,
@@ -1003,7 +1060,7 @@ async def schema(
         form = res.json().get("user_input_form", [])
     except (httpx.HTTPError, ValueError):
         return {"placeholder": {}}
-    return {"placeholder": _convert_user_input_form(form)}
+    return {"placeholder": _convert_user_input_form(form, cfg=cfg)}
 
 
 @app.post("/invoke")
