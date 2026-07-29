@@ -182,8 +182,13 @@ services:
     restart: unless-stopped
 
   # 日本語埋め込み（sentence-transformers / ruri-v3-310m, CPU）。rag-app の embeddings 専用。
-  # TEI(CPU/ORT) は ruri（ModernBERT-Ja, ONNX 非提供）を配信できないため OpenAI 互換サイドカーで代替。
+  # 旧 TEI(CPU/ORT) は ruri（ModernBERT-Ja, ONNX 非提供）を配信できないため、この
+  # OpenAI 互換サイドカーで代替している。
+  # profiles により起動を任意化: 有効化しない限り起動しない（EMBED_BASE_URL を
+  # 外部の埋め込みエンドポイントへ向ける運用では不要）。COMPOSE_PROFILES=embed か
+  # `--profile embed` で有効化する。
   embed:
+    profiles: ["embed"]
     build:
       context: ./embed-app
       dockerfile: Dockerfile
@@ -227,9 +232,10 @@ services:
       - rag_app_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # embed は profiles で任意起動のため depends_on にしない（埋め込みは起動時では
+    # なく呼び出し時にのみ必要。embed 無効時は EMBED_BASE_URL を外部へ向ける）。
     depends_on:
       - qdrant
-      - embed
     restart: unless-stopped
 
   # ナレッジ検索 MCP（Dify Agent 向け）。外部公開が必要なら ports を追加する。

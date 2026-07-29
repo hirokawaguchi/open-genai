@@ -17,7 +17,7 @@ OPENAI_BASE_URL = (
     os.environ.get("OPENAI_BASE_URL") or f"{OLLAMA_BASE_URL.rstrip('/')}/v1"
 ).rstrip("/")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "ollama"
-# 埋め込みは EMBED_BASE_URL（TEI 等）へ分離可能。未設定なら OPENAI_BASE_URL を使う。
+# 埋め込みは EMBED_BASE_URL（embed サイドカー等の OpenAI 互換）へ分離可能。未設定なら OPENAI_BASE_URL を使う。
 EMBED_BASE_URL = (os.environ.get("EMBED_BASE_URL") or OPENAI_BASE_URL).rstrip("/")
 EMBED_API_KEY = os.environ.get("EMBED_API_KEY") or OPENAI_API_KEY
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")

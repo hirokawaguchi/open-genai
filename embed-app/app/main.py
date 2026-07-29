@@ -1,7 +1,8 @@
 """OpenAI 互換の埋め込みサイドカー（sentence-transformers）。
 
-TEI(CPU/ORT) は ruri-v3 系（ModernBERT-Ja, ONNX 非提供）を CPU で配信できないため、
-sentence-transformers で同等の埋め込みを OpenAI 互換 API として提供する。
+HF Text Embeddings Inference (TEI, CPU/ORT) は ruri-v3 系（ModernBERT-Ja, ONNX
+非提供）を CPU で配信できないため、その代替として sentence-transformers で同等の
+埋め込みを OpenAI 互換 API として提供する。
 
 - POST /v1/embeddings  { "model": ..., "input": str | [str, ...] }
     -> { "object": "list", "data": [{"object":"embedding","index":i,"embedding":[...]}],
