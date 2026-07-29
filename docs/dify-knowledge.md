@@ -77,9 +77,15 @@ curl -s -X POST http://127.0.0.1:8001/retrieve \
 {"dify_base_url":"http://host.docker.internal:8088/v1","dify_app_type":"workflow","response_field":"report"}
 ```
 
+DeepResearch のように `depth` をユーザに触らせず既定のまま使う場合:
+
+```json
+{"dify_base_url":"http://host.docker.internal:8088/v1","dify_app_type":"workflow","response_field":"report","hide_inputs":["depth"],"default_inputs":{"depth":"3"}}
+```
+
 - endpoint: `http://dify-app:8004/invoke`
 - APIキー: Dify のワークフロー用 `app-...`
-- データ形式: 空のまま（自動フォーム）でも可
+- データ形式: 空のまま（自動フォーム）でも可。`hide_inputs` の変数は画面に出さず既定値を送る
 
 フロー出力:
 
