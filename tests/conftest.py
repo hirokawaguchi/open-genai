@@ -20,6 +20,11 @@ for path in (ROOT, SHARED, BACKEND):
 def load_service_module(relative_path: str):
     """サービス配下の app/*.py を import パス衝突なく読み込む。"""
     path = ROOT / relative_path
+    # 同一ディレクトリの兄弟モジュール（例: rag-app/app/textnorm.py）を
+    # パッケージなしのフォールバック import で解決できるようにする。
+    parent = str(path.parent)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
     module_name = f"testmod_{path.parent.parent.name.replace('-', '_')}_{path.stem}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:

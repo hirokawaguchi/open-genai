@@ -13,6 +13,11 @@ import time
 import uuid
 from typing import Any
 
+try:  # パッケージとして読み込まれた場合（本番アプリ）
+    from . import textnorm
+except ImportError:  # 単体モジュールとして読み込まれた場合（テスト）
+    import textnorm
+
 DB_PATH = os.environ.get(
     "RAG_META_DB_PATH", os.environ.get("FOLDERS_DB_PATH", "/data/rag_meta.db")
 )
@@ -92,14 +97,10 @@ def _now() -> str:
 
 
 def _tags_json(tags: list[str] | None) -> str:
-    from . import textnorm
-
     return json.dumps(textnorm.normalize_tags(tags), ensure_ascii=False)
 
 
 def _parse_tags(raw: str | None) -> list[str]:
-    from . import textnorm
-
     try:
         v = json.loads(raw or "[]")
         if isinstance(v, list):
@@ -237,8 +238,6 @@ def list_docs(scope: str, tags: list[str] | None = None) -> list[dict[str, Any]]
             """,
             (scope,),
         ).fetchall()
-    from . import textnorm
-
     out: list[dict[str, Any]] = []
     tag_set = set(textnorm.normalize_tags(tags))
     for r in rows:
