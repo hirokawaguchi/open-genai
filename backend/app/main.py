@@ -294,20 +294,15 @@ AUDIT_SEED: dict[str, Any] = {
 
 # 利用者一括管理(User Management) AI アプリ（管理者限定）
 _USERMGMT_FORM = (
-    '{'
-    '"operation":{"type":"select","title":"操作",'
-    '"desc":"まずドライランで内容を確認し、問題なければ適用してください。",'
-    '"items":[{"title":"ドライラン（変更しない）","value":"dry_run"},'
-    '{"title":"適用（Keycloakに反映）","value":"apply",'
-    '"confirm":"CSVの内容をKeycloakに反映します（利用者の作成・更新・削除を含む）。'
-    '削除は元に戻せません。ドライランで確認済みですか？"}],'
-    '"default_value":"dry_run"},'
-    '"files":{"type":"file","title":"CSVファイル",'
-    '"desc":"見出し: action,username,email,firstName,lastName,name,password,groups,enabled",'
-    '"accept":".csv,.txt","multiple":false},'
-    '"csv_text":{"type":"textarea","title":"CSV（貼り付け・任意）",'
-    '"desc":"ファイルの代わりにCSVを直接貼り付けても可。"}'
-    '}'
+    "{\"operation\":{\"type\":\"select\",\"title\":\"操作\",\"desc\":\"一覧表示、または CSV のドライラン／適用。まずドライランで内容を確認してく"
+    "ださい。\",\"items\":[{\"title\":\"ユーザ一覧（表示のみ）\",\"value\":\"list\"},{\"title\":\"ドライラン（変更しない）\",\"value\":\"dry"
+    "_run\"},{\"title\":\"適用（Keycloakに反映）\",\"value\":\"apply\",\"confirm\":\"CSVの内容をKeycloakに反映します（利用者の作成・"
+    "更新・削除を含む）。削除は元に戻せません。ドライランで確認済みですか？\"}],\"default_value\":\"list\"},\"search\":{\"type\":\"text\",\"ti"
+    "tle\":\"検索（一覧用・任意）\",\"desc\":\"ユーザ一覧時のみ有効。username / email / 氏名の部分一致。\"},\"limit\":{\"type\":\"number"
+    "\",\"title\":\"表示件数（一覧用）\",\"default_value\":200,\"min\":1,\"max\":1000},\"files\":{\"type\":\"file\",\"titl"
+    "e\":\"CSVファイル\",\"desc\":\"見出し: action,username,email,firstName,lastName,name,password,groups,en"
+    "abled（一覧表示時は不要）\",\"accept\":\".csv,.txt\",\"multiple\":false},\"csv_text\":{\"type\":\"textarea\",\"tit"
+    "le\":\"CSV（貼り付け・任意）\",\"desc\":\"ファイルの代わりにCSVを直接貼り付けても可（一覧表示時は不要）。\"}}"
 )
 USERMGMT_SEED: dict[str, Any] = {
     "exAppId": "usermgmt",
@@ -317,28 +312,8 @@ USERMGMT_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": _USERMGMT_FORM,
-    "description": "CSV で利用者アカウントを一括登録/更新/削除します（システム管理者のみ）。",
-    "howToUse": (
-        "## このアプリでできること（管理者）\n\n"
-        "CSV を使って利用者アカウント（Keycloak）を一括で作成・更新・削除します。\n\n"
-        "## CSV の準備\n\n"
-        "1行目に見出し、2行目以降に利用者を記載します。見出し例:\n\n"
-        "```\naction,username,email,name,password,groups,enabled\n"
-        "upsert,yamada,yamada@example.com,山田太郎,Passw0rd!,UserGroup,true\n```\n\n"
-        "- **action**: `create`（新規）/`update`（更新）/`delete`（削除）/`upsert`（無ければ作成・あれば更新／既定）。\n"
-        "- **username**: 必須。ログインID。\n"
-        "- **email / name**: メールアドレス・氏名。\n"
-        "- **password**: 新規作成時の初期パスワード（更新時は変更したい場合のみ）。\n"
-        "- **groups**: 権限グループ（例 `SystemAdminGroup`＝システム管理者）。`;` か `,` 区切り。\n"
-        "- **enabled**: 有効/無効（`true`/`false`）。\n\n"
-        "## 操作手順\n\n"
-        "1. CSV ファイルを添付するか、「CSV（貼り付け）」に直接貼り付けます。\n"
-        "2. 「操作」で「ドライラン」を選んで実行し、**対象と操作内容を必ず確認**します（この時点では変更されません）。\n"
-        "3. 問題なければ「操作」を「適用」にして実行します（確認ダイアログが表示されます）。\n\n"
-        "## 注意\n\n"
-        "- 「適用」は作成・更新・**削除**を伴い、削除は元に戻せません。必ずドライランで確認してください。\n"
-        "- パスワード列を含む CSV の保管・共有には十分注意してください。"
-    ),
+    "description": "利用者一覧の表示、および CSV による一括登録/更新/削除（システム管理者のみ）。",
+    "howToUse": "## このアプリでできること（管理者）\n\nKeycloak 上の利用者アカウントを一覧表示し、CSV で一括作成・更新・削除できます。\n\n## ユーザ一覧\n\n1. 「操作」で「ユーザ一覧（表示のみ）」を選びます（既定）。\n2. 必要なら「検索」と「表示件数」を指定して「実行」します。\n3. username / email / 氏名 / 所属グループ / 有効状態が一覧表示されます（変更はされません）。\n\n## CSV の準備\n\n1行目に見出し、2行目以降に利用者を記載します。見出し例:\n\n```\naction,username,email,name,password,groups,enabled\nupsert,yamada,yamada@example.com,山田太郎,Passw0rd!,UserGroup,true\n```\n\n- **action**: `create`（新規）/`update`（更新）/`delete`（削除）/`upsert`（無ければ作成・あれば更新／既定）。\n- **username**: 必須。ログインID。\n- **email / name**: メールアドレス・氏名。\n- **password**: 新規作成時の初期パスワード（更新時は変更したい場合のみ）。\n- **groups**: 権限グループ（例 `SystemAdminGroup`＝システム管理者）。`;` か `,` 区切り。\n- **enabled**: 有効/無効（`true`/`false`）。\n\n## CSV 操作手順\n\n1. CSV ファイルを添付するか、「CSV（貼り付け）」に直接貼り付けます。\n2. 「操作」で「ドライラン」を選んで実行し、**対象と操作内容を必ず確認**します（この時点では変更されません）。\n3. 問題なければ「操作」を「適用」にして実行します（確認ダイアログが表示されます）。\n\n## 注意\n\n- 「適用」は作成・更新・**削除**を伴い、削除は元に戻せません。必ずドライランで確認してください。\n- パスワード列を含む CSV の保管・共有には十分注意してください。",
     "copyable": False,
     "status": "published",
 }

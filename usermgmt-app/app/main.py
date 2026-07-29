@@ -6,7 +6,8 @@
 
 - 利用者アカウントは Keycloak(realm) で管理するため、Keycloak Admin REST API を叩く。
 - exApp 同期プロトコル:
-    リクエスト: { "inputs": { "operation": "dry_run|apply", "csv_text": "...",
+    リクエスト: { "inputs": { "operation": "list|dry_run|apply", "csv_text": "...",
+                              "search": "...",
                               "files": [ {files:[{filename,content(base64)}]} ] } }
     レスポンス: { "outputs": "<Markdown の処理レポート>" }
 - 管理者判定: backend が付与する `x-user-groups` に SystemAdminGroup が必要。
@@ -109,6 +110,110 @@ async def _find_user(client: httpx.AsyncClient, token: str, username: str) -> di
     return users[0] if users else None
 
 
+def _md_cell(value: Any) -> str:
+    """Markdown 表セル用にパイプ・改行を無害化する。"""
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", "").strip()
+
+
+async def _user_groups(
+    client: httpx.AsyncClient, token: str, user_id: str
+) -> list[str]:
+    res = await client.get(
+        f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users/{user_id}/groups",
+        headers=_auth_headers(token),
+    )
+    res.raise_for_status()
+    names: list[str] = []
+    for g in res.json() or []:
+        name = (g.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+async def _list_users(inputs: dict[str, Any]) -> str:
+    """Keycloak の利用者一覧を Markdown 表で返す（読み取り専用）。"""
+    search = (inputs.get("search") or "").strip()
+    try:
+        limit = int(inputs.get("limit") or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 1000))
+
+    page_size = 100
+    users: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            token = await _admin_token(client)
+            first = 0
+            while len(users) < limit:
+                params: dict[str, Any] = {
+                    "first": first,
+                    "max": min(page_size, limit - len(users)),
+                }
+                if search:
+                    params["search"] = search
+                res = await client.get(
+                    f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users",
+                    params=params,
+                    headers=_auth_headers(token),
+                )
+                res.raise_for_status()
+                batch = res.json() or []
+                if not batch:
+                    break
+                users.extend(batch)
+                if len(batch) < params["max"]:
+                    break
+                first += len(batch)
+
+            rows: list[tuple[str, ...]] = []
+            for u in users:
+                uid = u.get("id") or ""
+                groups = await _user_groups(client, token, uid) if uid else []
+                name = " ".join(
+                    x
+                    for x in [
+                        (u.get("lastName") or "").strip(),
+                        (u.get("firstName") or "").strip(),
+                    ]
+                    if x
+                )
+                rows.append(
+                    (
+                        _md_cell(u.get("username")),
+                        _md_cell(u.get("email")),
+                        _md_cell(name),
+                        _md_cell(",".join(groups) if groups else "-"),
+                        "有効" if u.get("enabled", True) else "無効",
+                        _md_cell(uid[:8] + "…" if len(uid) > 8 else uid),
+                    )
+                )
+    except Exception as e:  # noqa: BLE001
+        return f"[Keycloak への接続/認証に失敗しました] {e}"
+
+    title = "## 利用者一覧"
+    if search:
+        title += f"（検索: `{_md_cell(search)}`）"
+    lines = [
+        title,
+        "",
+        f"件数: **{len(rows)}**" + ("（上限に達しています）" if len(rows) >= limit else ""),
+        "",
+        "| # | username | email | 氏名 | groups | 状態 | id |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if not rows:
+        lines.append("| - | （該当なし） |  |  |  |  |  |")
+    else:
+        for i, cols in enumerate(rows, 1):
+            lines.append(f"| {i} | " + " | ".join(cols) + " |")
+    lines.append("")
+    lines.append("> 読み取り専用です。作成・更新・削除は CSV のドライラン／適用を使ってください。")
+    return "\n".join(lines)
+
+
 async def _group_id(client: httpx.AsyncClient, token: str, name: str) -> str | None:
     res = await client.get(
         f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/groups",
@@ -148,6 +253,10 @@ async def _apply_groups(
 
 
 async def _process(inputs: dict[str, Any]) -> str:
+    operation = (inputs.get("operation") or "list").strip().lower()
+    if operation == "list":
+        return await _list_users(inputs)
+
     csv_text = _extract_csv(inputs)
     if not csv_text:
         return "CSV が指定されていません（`csv_text` に貼り付けるか、CSV ファイルを添付してください）。"
@@ -157,7 +266,7 @@ async def _process(inputs: dict[str, Any]) -> str:
         return "CSV から有効な行を読み取れませんでした。見出し行（username 等）を確認してください。"
 
     plans = plan_rows(rows)
-    apply = (inputs.get("operation") or "dry_run").strip().lower() == "apply"
+    apply = operation == "apply"
 
     lines = [
         f"## 利用者一括管理 {'（適用）' if apply else '（ドライラン：変更なし）'}",
