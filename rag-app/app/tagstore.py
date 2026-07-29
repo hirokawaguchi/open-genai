@@ -46,11 +46,9 @@ def _now() -> str:
 
 def ensure_tags(scope: str, tags: list[str]) -> list[str]:
     """タグをレジストリに登録（既存は無視）。正規化済みタグ一覧を返す。"""
-    cleaned: list[str] = []
-    for t in tags or []:
-        name = (t or "").strip()
-        if name and name not in cleaned:
-            cleaned.append(name)
+    from . import textnorm
+
+    cleaned = textnorm.normalize_tags(tags)
     if not cleaned:
         return []
     now = _now()
@@ -68,7 +66,9 @@ def ensure_tags(scope: str, tags: list[str]) -> list[str]:
 
 
 def create_tag(scope: str, tag: str) -> str:
-    name = (tag or "").strip()
+    from . import textnorm
+
+    name = textnorm.normalize_tag(tag)
     if not name:
         raise ValueError("タグ名が空です")
     ensure_tags(scope, [name])
@@ -85,8 +85,10 @@ def list_tags(scope: str) -> list[dict[str, Any]]:
 
 
 def rename_tag(scope: str, old: str, new: str) -> None:
-    old_n = (old or "").strip()
-    new_n = (new or "").strip()
+    from . import textnorm
+
+    old_n = textnorm.normalize_tag(old)
+    new_n = textnorm.normalize_tag(new)
     if not old_n or not new_n:
         raise ValueError("タグ名が空です")
     if old_n == new_n:

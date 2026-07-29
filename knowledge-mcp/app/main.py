@@ -46,11 +46,21 @@ def _resolve_scope(scope: str | None) -> str:
 
 
 def _parse_tags(tags: str | list[str] | None) -> list[str]:
+    import unicodedata
+
+    def _norm(t: str) -> str:
+        return unicodedata.normalize("NFC", str(t)).strip()
+
     if tags is None:
         return []
     if isinstance(tags, list):
-        return [str(t).strip() for t in tags if str(t).strip()]
-    s = str(tags).strip()
+        out: list[str] = []
+        for t in tags:
+            n = _norm(t)
+            if n and n not in out:
+                out.append(n)
+        return out
+    s = _norm(tags)
     if not s:
         return []
     # JSON 配列文字列にも対応
@@ -58,12 +68,17 @@ def _parse_tags(tags: str | list[str] | None) -> list[str]:
         try:
             data = json.loads(s)
             if isinstance(data, list):
-                return [str(t).strip() for t in data if str(t).strip()]
+                return _parse_tags(data)
         except json.JSONDecodeError:
             pass
     for sep in (",", "|", "、", ";"):
         if sep in s:
-            return [p.strip() for p in s.split(sep) if p.strip()]
+            out = []
+            for p in s.split(sep):
+                n = _norm(p)
+                if n and n not in out:
+                    out.append(n)
+            return out
     return [s]
 
 

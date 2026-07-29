@@ -239,6 +239,73 @@ async def _migrate_tags_into_registry() -> None:
         print(f"[rag-app] ベクトル/構造化タグ移行警告: {e}")
 
 
+async def _migrate_tag_unicode_nfc() -> None:
+    """タグ名を Unicode NFC に揃える（LLM が NFC で渡しても照合できるようにする）。"""
+    from . import textnorm
+
+    renamed = 0
+    # 1) タグレジストリ
+    try:
+        with tagstore._connect() as conn:  # noqa: SLF001 - 移行専用
+            rows = list(conn.execute("SELECT scope, tag FROM tags"))
+            for scope, tag in rows:
+                nfc = textnorm.normalize_tag(tag)
+                if not nfc or nfc == tag:
+                    continue
+                exists = conn.execute(
+                    "SELECT 1 FROM tags WHERE scope = ? AND tag = ?",
+                    (scope, nfc),
+                ).fetchone()
+                if exists:
+                    conn.execute(
+                        "DELETE FROM tags WHERE scope = ? AND tag = ?",
+                        (scope, tag),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE tags SET tag = ? WHERE scope = ? AND tag = ?",
+                        (nfc, scope, tag),
+                    )
+                renamed += 1
+                try:
+                    await vectorstore.rename_tag_in_payloads(scope, tag, nfc)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[rag-app] Qdrant タグ NFC 移行警告 ({scope}/{tag}): {e}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] タグレジストリ NFC 移行警告: {e}")
+
+    # 2) 構造化 docs.tags JSON
+    try:
+        import json
+
+        with docstore._connect() as conn:  # noqa: SLF001 - 移行専用
+            rows = list(conn.execute("SELECT doc_id, tags FROM docs"))
+            for doc_id, raw in rows:
+                try:
+                    cur = json.loads(raw or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(cur, list):
+                    continue
+                nxt = textnorm.normalize_tags(str(t) for t in cur)
+                if nxt == [str(t).strip() for t in cur if str(t).strip()] and all(
+                    textnorm.normalize_tag(str(t)) == str(t).strip() for t in cur if str(t).strip()
+                ):
+                    continue
+                if json.dumps(nxt, ensure_ascii=False) == (raw or "[]"):
+                    continue
+                conn.execute(
+                    "UPDATE docs SET tags = ? WHERE doc_id = ?",
+                    (json.dumps(nxt, ensure_ascii=False), doc_id),
+                )
+                renamed += 1
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] docs タグ NFC 移行警告: {e}")
+
+    if renamed:
+        print(f"[rag-app] タグ Unicode NFC 移行: {renamed} 件更新")
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await vectorstore.ensure_collection()
@@ -259,6 +326,10 @@ async def _startup() -> None:
         await _migrate_tags_into_registry()
     except Exception as e:  # noqa: BLE001
         print(f"[rag-app] タグ移行をスキップ: {e}")
+    try:
+        await _migrate_tag_unicode_nfc()
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] タグ NFC 移行をスキップ: {e}")
     # 旧 rag-manage(ADMIN_TEAM scope) → 共有ナレッジ(COMMON) への一度きり移行
     try:
         moved = await vectorstore.reassign_scope(LEGACY_ADMIN_SCOPE, DEFAULT_SCOPE)
@@ -280,8 +351,10 @@ async def _startup() -> None:
         asyncio.create_task(_url_refresh_loop())
     except Exception as e:  # noqa: BLE001
         print(f"[rag-app] URL 自動更新スケジューラ起動をスキップ: {e}")
+    # RAG_SEED_SAMPLES=false で起動時のサンプル自動投入を無効化できる（本番想定）。
+    seed_samples = os.environ.get("RAG_SEED_SAMPLES", "true").lower() != "false"
     try:
-        if await vectorstore.count() == 0:
+        if seed_samples and await vectorstore.count() == 0:
             # サンプルは共通スコープにタグ付きで投入（タグなしは検索対象外のため）
             tagstore.ensure_tags(DEFAULT_SCOPE, ["サンプル"])
             await ingest_documents(SAMPLE_DOCS, DEFAULT_SCOPE, ["サンプル"])
@@ -487,8 +560,19 @@ async def api_list_tags(
     )
     if err:
         return err
-    reg = {r["tag"]: r for r in tagstore.list_tags(resolved)}  # type: ignore[arg-type]
-    used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(resolved)}  # type: ignore[arg-type]
+    from . import textnorm
+
+    reg = {
+        textnorm.normalize_tag(r["tag"]): r
+        for r in tagstore.list_tags(resolved)  # type: ignore[arg-type]
+        if textnorm.normalize_tag(r["tag"])
+    }
+    used: dict[str, int] = {}
+    for r in await vectorstore.list_tags(resolved):  # type: ignore[arg-type]
+        name = textnorm.normalize_tag(r["tag"])
+        if not name:
+            continue
+        used[name] = used.get(name, 0) + int(r.get("chunks") or 0)
     names = sorted(set(reg) | set(used))
     tags_out = [
         {"tag": name, "chunks": int(used.get(name, 0))} for name in names
@@ -786,8 +870,10 @@ def _parse_tags(value: Any) -> list[str]:
     """タグ入力を正規化する。
 
     動的フォームの複数選択は配列で届く。手入力は ';' か ',' 区切り文字列。
-    重複を除いて順序を保持する。
+    Unicode NFC + strip、重複を除いて順序を保持する。
     """
+    from . import textnorm
+
     raw: list[str] = []
     if value is None:
         return []
@@ -795,12 +881,7 @@ def _parse_tags(value: Any) -> list[str]:
         raw = [str(v) for v in value]
     else:
         raw = str(value).replace(";", ",").split(",")
-    out: list[str] = []
-    for chunk in raw:
-        t = chunk.strip()
-        if t and t not in out:
-            out.append(t)
-    return out
+    return textnorm.normalize_tags(raw)
 
 
 def _resolve_assign_tags(inputs: dict[str, Any]) -> list[str]:
