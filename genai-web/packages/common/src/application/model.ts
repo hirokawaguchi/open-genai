@@ -573,6 +573,21 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'gpt-oss 20B (ローカル)',
   },
+
+  // ==== Open GENAI: ホスト Ollama（Cloud モデル含む）====
+  // modelId は `ollama list` の NAME と一致させる（さくら gpt-oss-120b とは別 ID）。
+  'gpt-oss:120b-cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'gpt-oss 120B（Ollama Cloud）',
+  },
+  'gemma4:cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemma 4（Ollama Cloud・画像対応）',
+  },
+  'glm-5.2:cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'GLM 5.2（Ollama Cloud）',
+  },
 };
 
 export const BEDROCK_TEXT_MODELS = Object.keys(modelMetadata).filter(
