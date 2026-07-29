@@ -11,6 +11,11 @@ import sqlite3
 import time
 from typing import Any
 
+try:  # パッケージとして読み込まれた場合（本番アプリ）
+    from . import textnorm
+except ImportError:  # 単体モジュールとして読み込まれた場合（テスト）
+    import textnorm
+
 DB_PATH = os.environ.get(
     "RAG_META_DB_PATH", os.environ.get("FOLDERS_DB_PATH", "/data/rag_meta.db")
 )
@@ -46,8 +51,6 @@ def _now() -> str:
 
 def ensure_tags(scope: str, tags: list[str]) -> list[str]:
     """タグをレジストリに登録（既存は無視）。正規化済みタグ一覧を返す。"""
-    from . import textnorm
-
     cleaned = textnorm.normalize_tags(tags)
     if not cleaned:
         return []
@@ -66,8 +69,6 @@ def ensure_tags(scope: str, tags: list[str]) -> list[str]:
 
 
 def create_tag(scope: str, tag: str) -> str:
-    from . import textnorm
-
     name = textnorm.normalize_tag(tag)
     if not name:
         raise ValueError("タグ名が空です")
@@ -85,8 +86,6 @@ def list_tags(scope: str) -> list[dict[str, Any]]:
 
 
 def rename_tag(scope: str, old: str, new: str) -> None:
-    from . import textnorm
-
     old_n = textnorm.normalize_tag(old)
     new_n = textnorm.normalize_tag(new)
     if not old_n or not new_n:
