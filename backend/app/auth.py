@@ -101,6 +101,9 @@ def get_saml_settings() -> dict[str, Any]:
             "requestedAuthnContext": False,
             # InResponseTo を保存しないため未要求応答を許可
             "rejectUnsolicitedResponsesWithInResponseTo": False,
+            # Keycloak の role_list は Role 属性を Name 重複で送ることがある。
+            # アプリ認可は groups マッパーを使うため、重複 Attribute を許容する。
+            "allowRepeatAttributeName": True,
         },
     }
     _settings_cache = settings
