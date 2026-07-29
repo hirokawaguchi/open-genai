@@ -1,4 +1,5 @@
 import type { RouteObject } from 'react-router';
+import { Navigate } from 'react-router';
 import { ChatPage } from '@/features/chat/ChatPage';
 import { ChatHistoryPage } from '@/features/chat-history/ChatHistoryPage';
 import { ExAppPage } from '@/features/exapp/ExAppPage';
@@ -17,8 +18,8 @@ import { TeamMembersPage } from '@/features/team-members/TeamMembersPage';
 import { TeamCreatePage } from '@/features/teams/create/TeamCreatePage';
 import { TeamEditPage } from '@/features/teams/edit/TeamEditPage';
 import { TeamsPage } from '@/features/teams/TeamsPage';
-import { TranscribePage } from '@/features/transcribe/TranscribePage';
 import { TranslatePage } from '@/features/translate/TranslatePage';
+import { WHISPER_EXAPP_PATH } from '@/layout/navItems';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -62,7 +63,8 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'chat/:chatId', element: <ChatPage /> },
     { path: 'history', element: <ChatHistoryPage /> },
     ...optionalUseCaseRoutes.flatMap((routes) => routes ?? []),
-    { path: 'transcribe', element: <TranscribePage /> },
+    // 源内 /transcribe は Amazon Transcribe 前提。Open GENAI は Whisper exApp へ誘導する。
+    { path: 'transcribe', element: <Navigate to={WHISPER_EXAPP_PATH} replace /> },
     { path: 'teams', element: <TeamsPage /> },
     { path: 'teams/create', element: <TeamCreatePage /> },
     { path: 'teams/:teamId/edit', element: <TeamEditPage /> },

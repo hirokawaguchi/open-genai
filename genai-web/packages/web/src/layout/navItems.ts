@@ -1,7 +1,11 @@
 import { useMemo } from 'react';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
+
+/** Open GENAI の文字起こしは Amazon Transcribe ではなく Whisper exApp */
+export const WHISPER_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/whisper`;
 
 export type NavLinkItem = {
   label: string;
@@ -56,7 +60,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
 
     items.push({
       label: '文字起こし',
-      to: '/transcribe',
+      to: WHISPER_EXAPP_PATH,
       description: '音声ファイルから文字起こし',
     });
 
