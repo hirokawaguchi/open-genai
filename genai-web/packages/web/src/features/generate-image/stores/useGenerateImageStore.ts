@@ -79,8 +79,9 @@ const createInitialState = (): GenerateImageState => ({
   resolutionPresets: getResolutionPresets(''),
   stylePreset: '',
   seed: [0, ...new Array(MAX_SAMPLE - 1).fill(-1)],
-  step: 50,
-  cfgScale: 7,
+  // FastSD / LCM 向け既定（Bedrock 時代の 50/7 だと派手・破綻しやすい）
+  step: 4,
+  cfgScale: 1,
   imageStrength: 0.35,
   controlStrength: 0.7,
   controlMode: 'CANNY_EDGE',
