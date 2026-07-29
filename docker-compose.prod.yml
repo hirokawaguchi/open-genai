@@ -48,6 +48,13 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      # 複数 OpenAI 互換プロバイダ併用（JSON）。未設定なら OPENAI_* 単一。
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      # LLM_PROVIDERS の api_key_env から参照されるプロバイダ別キー
+      - SAKURA_API_KEY=${SAKURA_API_KEY:-}
+      - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - DB_PATH=/data/open-genai.db
       # 監査ログ / チャット履歴分離
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
