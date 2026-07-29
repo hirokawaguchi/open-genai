@@ -157,6 +157,8 @@ services:
         VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
         # header | sidebar（.env.prod の VITE_APP_NAV_LAYOUT で上書き可）
         VITE_APP_NAV_LAYOUT: ${VITE_APP_NAV_LAYOUT:-header}
+        # フロントに出すモデル一覧（.env.prod の VITE_APP_MODEL_IDS で上書き可）
+        VITE_APP_MODEL_IDS: ${VITE_APP_MODEL_IDS:-["gpt-oss-120b","preview/gemma-4-31B-it"]}
     container_name: open-genai-web
     expose:
       - "80"

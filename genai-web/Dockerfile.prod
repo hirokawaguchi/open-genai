@@ -13,13 +13,15 @@ RUN npm install
 
 COPY . .
 
-# ビルド時に埋め込む公開エンドポイント / ナビ配置（compose の build.args で上書き可）
+# ビルド時に埋め込む公開エンドポイント / ナビ配置 / モデル一覧（compose の build.args で上書き可）
 ARG VITE_APP_API_ENDPOINT=/api
 ARG VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
 ARG VITE_APP_NAV_LAYOUT=header
+ARG VITE_APP_MODEL_IDS=["gpt-oss-120b","preview/gemma-4-31B-it"]
 ENV VITE_APP_API_ENDPOINT=${VITE_APP_API_ENDPOINT} \
     VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=${VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT} \
-    VITE_APP_NAV_LAYOUT=${VITE_APP_NAV_LAYOUT}
+    VITE_APP_NAV_LAYOUT=${VITE_APP_NAV_LAYOUT} \
+    VITE_APP_MODEL_IDS=${VITE_APP_MODEL_IDS}
 
 RUN npm run web:build
 
