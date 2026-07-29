@@ -181,6 +181,21 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  # 日本語埋め込み（sentence-transformers / ruri-v3-310m, CPU）。rag-app の embeddings 専用。
+  # TEI(CPU/ORT) は ruri（ModernBERT-Ja, ONNX 非提供）を配信できないため OpenAI 互換サイドカーで代替。
+  embed:
+    build:
+      context: ./embed-app
+      dockerfile: Dockerfile
+    container_name: open-genai-embed
+    environment:
+      - EMBED_MODEL=${EMBED_MODEL:-cl-nagoya/ruri-v3-310m}
+    volumes:
+      - embed_data:/data
+    expose:
+      - "80"
+    restart: unless-stopped
+
   rag-app:
     build:
       context: .
@@ -191,9 +206,18 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - QDRANT_URL=http://qdrant:6333
-      - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-open_genai_rag_ruri_v3_310m}
+      # 埋め込みは embed サイドカーへ分離。未設定時は OPENAI_BASE_URL にフォールバック。
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-http://embed:80/v1}
+      - EMBED_API_KEY=${EMBED_API_KEY:--}
+      - EMBED_MODEL=${EMBED_MODEL:-cl-nagoya/ruri-v3-310m}
+      - EMBED_DIM=${EMBED_DIM:-768}
+      - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX:-検索クエリ: }"
+      - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX:-検索文書: }"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # 起動時のサンプル自動投入（false で無効）
+      - RAG_SEED_SAMPLES=${RAG_SEED_SAMPLES:-true}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       - RAG_META_DB_PATH=/data/rag_meta.db
       - URL_REFRESH_INTERVAL=${URL_REFRESH_INTERVAL:-86400}
@@ -205,6 +229,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - qdrant
+      - embed
     restart: unless-stopped
 
   # ナレッジ検索 MCP（Dify Agent 向け）。外部公開が必要なら ports を追加する。
@@ -333,6 +358,7 @@ volumes:
   web_pkg_types_node_modules:
   web_pkg_cdk_node_modules:
   qdrant_data:
+  embed_data:
   keycloak_data:
   whisper_cache:
   dify_app_data:

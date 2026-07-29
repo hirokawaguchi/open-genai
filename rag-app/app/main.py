@@ -280,8 +280,10 @@ async def _startup() -> None:
         asyncio.create_task(_url_refresh_loop())
     except Exception as e:  # noqa: BLE001
         print(f"[rag-app] URL 自動更新スケジューラ起動をスキップ: {e}")
+    # RAG_SEED_SAMPLES=false で起動時のサンプル自動投入を無効化できる（本番想定）。
+    seed_samples = os.environ.get("RAG_SEED_SAMPLES", "true").lower() != "false"
     try:
-        if await vectorstore.count() == 0:
+        if seed_samples and await vectorstore.count() == 0:
             # サンプルは共通スコープにタグ付きで投入（タグなしは検索対象外のため）
             tagstore.ensure_tags(DEFAULT_SCOPE, ["サンプル"])
             await ingest_documents(SAMPLE_DOCS, DEFAULT_SCOPE, ["サンプル"])
