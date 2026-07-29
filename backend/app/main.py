@@ -36,11 +36,26 @@ from fastapi.responses import (
 
 from shared import ssrfguard
 
-from . import audit, auth, image_gen, intauth, llm, ngwords, objstore, policy, storage, teams_store
+from . import (
+    audit,
+    auth,
+    image_gen,
+    intauth,
+    llm,
+    ngwords,
+    objstore,
+    policy,
+    storage,
+    teams_store,
+    titlegen,
+)
 
 # ファイル添付の保存先と、ブラウザから見たバックエンドの公開 URL
 FILES_DIR = os.environ.get("FILES_DIR", "/data/files")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000")
+
+# チャットタイトル生成方式: "heuristic"（既定・LLM 不使用）/ "llm"
+TITLE_MODE = os.environ.get("TITLE_MODE", "heuristic").strip().lower()
 
 # リバースプロキシが /api を除去して転送する場合の公開 API パス prefix（SAML Recipient 検証用）
 PUBLIC_API_PATH_PREFIX = os.environ.get("PUBLIC_API_PATH_PREFIX", "/api").rstrip("/")
@@ -1359,29 +1374,26 @@ async def predict(request: Request) -> Response:
     return JSONResponse(content=text)
 
 
-def _clean_title(text: str) -> str:
-    if not text or not text.strip():
-        return ""
-    # <output> 等の XML/HTML タグを除去
-    cleaned = re.sub(r"<[^>]+>", "", text)
-    # 1 行目だけ採用し、前後の引用符・空白を除去
-    first_line = cleaned.strip().splitlines()[0] if cleaned.strip() else ""
-    first_line = first_line.strip().strip('"').strip("'").strip("「」").strip()
-    return first_line[:50]
-
-
 @app.post("/predict/title")
 async def predict_title(request: Request) -> str:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
     body = await request.json()
-    # 許可外モデルではタイトル生成もしない（空タイトルを返す）
-    if _model_denied(claims, body.get("model")):
-        return ""
     prompt = body.get("prompt", "")
-    messages = [{"role": "user", "content": prompt}]
-    raw = await llm.chat_once(messages, body.get("model"))
-    title = _clean_title(raw)
+
+    if TITLE_MODE == "llm":
+        # 許可外モデルではタイトル生成もしない（空タイトルを返す）
+        if _model_denied(claims, body.get("model")):
+            return ""
+        messages = [{"role": "user", "content": prompt}]
+        raw = await llm.chat_once(messages, body.get("model"))
+        title = titlegen.clean_title(raw)
+        # LLM が拒否・空応答のときはユーザー発話から題名を復元する
+        if not title:
+            title = titlegen.fallback_title_from_prompt(prompt)
+    else:
+        # 既定: LLM を使わずユーザー発話から決定的に題名を作る
+        title = titlegen.fallback_title_from_prompt(prompt)
 
     # クラウド版同様、生成したタイトルをサーバ側でチャットに保存する
     # （所有者のチャットのみ。update_title が所有者一致を強制する）
