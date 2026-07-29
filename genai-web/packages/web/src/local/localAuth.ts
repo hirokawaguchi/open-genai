@@ -54,6 +54,11 @@ export const captureTokenFromUrl = (): void => {
 
 export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 
+/** localStorage の JWT を破棄する（認証エラー時に壊れたセッションを残さない） */
+export const clearToken = (): void => {
+  localStorage.removeItem(TOKEN_KEY);
+};
+
 export const isAuthenticated = (): boolean => {
   const token = getToken();
   if (!token) {
@@ -75,7 +80,7 @@ export const login = (): void => {
 export const signOut = (): void => {
   // SLO(Keycloak セッション終了) のため、破棄前のトークンを backend に渡す
   const token = getToken();
-  localStorage.removeItem(TOKEN_KEY);
+  clearToken();
   const query = token ? `?token=${encodeURIComponent(token)}` : '';
   window.location.href = `${API_ENDPOINT}/auth/logout${query}`;
 };
