@@ -1392,7 +1392,46 @@ def _clean_title(text: str) -> str:
     # 1 行目だけ採用し、前後の引用符・空白を除去
     first_line = cleaned.strip().splitlines()[0] if cleaned.strip() else ""
     first_line = first_line.strip().strip('"').strip("'").strip("「」").strip()
-    return first_line[:50]
+    first_line = first_line[:50]
+    if not first_line or _TITLE_REFUSAL_RE.search(first_line):
+        return ""
+    return first_line
+
+
+def _fallback_title_from_prompt(prompt: str) -> str:
+    """タイトル LLM が拒否したとき、ユーザー発話から短い題名を作る。"""
+    if not prompt:
+        return "無題"
+    m = re.search(
+        r"<user-messages>\s*([\s\S]*?)\s*</user-messages>", prompt, re.IGNORECASE
+    )
+    raw = (m.group(1) if m else "").strip()
+    if not raw:
+        m2 = re.search(
+            r"<conversation>\s*([\s\S]*?)\s*</conversation>", prompt, re.IGNORECASE
+        )
+        raw = (m2.group(1) if m2 else prompt).strip()
+    # JSON 会話ダンプから最初の user content を拾う
+    if raw.startswith("[") or '"role"' in raw[:80]:
+        try:
+            import json as _json
+
+            data = _json.loads(raw if raw.startswith("[") else prompt)
+            if isinstance(data, list):
+                for item in data:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("role") == "user"
+                        and isinstance(item.get("content"), str)
+                    ):
+                        raw = item["content"].strip()
+                        break
+        except Exception:
+            pass
+    raw = re.sub(r"\s+", " ", raw).strip()
+    if not raw:
+        return "無題"
+    return raw[:30]
 
 
 @app.post("/predict/title")
@@ -1407,6 +1446,8 @@ async def predict_title(request: Request) -> str:
     messages = [{"role": "user", "content": prompt}]
     raw = await llm.chat_once(messages, body.get("model"))
     title = _clean_title(raw)
+    if not title:
+        title = _fallback_title_from_prompt(prompt)
 
     # クラウド版同様、生成したタイトルをサーバ側でチャットに保存する
     # （所有者のチャットのみ。update_title が所有者一致を強制する）
