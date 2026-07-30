@@ -27,96 +27,59 @@ import { AuthErrorPage } from './pages/AuthErrorPage';
 import { SignedOutPage } from './pages/SignedOutPage';
 
 export const createRoutes = (): RouteObject[] => {
+  const optionalUseCaseRoutes: Array<RouteObject[] | null> = [
+    isUseCaseEnabled('generate')
+      ? [
+          { path: 'generate', element: <GenerateTextPage /> },
+          { path: 'generate/:chatId', element: <GenerateTextPage /> },
+        ]
+      : null,
+    isUseCaseEnabled('translate')
+      ? [
+          { path: 'translate', element: <TranslatePage /> },
+          { path: 'translate/:chatId', element: <TranslatePage /> },
+        ]
+      : null,
+    isUseCaseEnabled('image')
+      ? [
+          { path: 'image', element: <GenerateImagePage /> },
+          { path: 'image/:chatId', element: <GenerateImagePage /> },
+        ]
+      : null,
+    isUseCaseEnabled('diagram')
+      ? [
+          { path: 'diagram', element: <GenerateDiagramPage /> },
+          { path: 'diagram/:chatId', element: <GenerateDiagramPage /> },
+        ]
+      : null,
+  ];
+
+  const children: RouteObject[] = [
+    { index: true, element: <LandingPage /> },
+    { path: 'apps', element: <ExAppsPage /> },
+    { path: 'apps/:teamId/:exAppId', element: <ExAppPage /> },
+    { path: 'chat', element: <ChatPage /> },
+    { path: 'chat/:chatId', element: <ChatPage /> },
+    { path: 'history', element: <ChatHistoryPage /> },
+    ...optionalUseCaseRoutes.flatMap((routes) => routes ?? []),
+    { path: 'transcribe', element: <TranscribePage /> },
+    { path: 'teams', element: <TeamsPage /> },
+    { path: 'teams/create', element: <TeamCreatePage /> },
+    { path: 'teams/:teamId/edit', element: <TeamEditPage /> },
+    { path: 'teams/:teamId/members', element: <TeamMembersPage /> },
+    { path: 'teams/:teamId/members/create', element: <TeamMemberCreatePage /> },
+    { path: 'teams/:teamId/members/:userId/edit', element: <TeamMemberEditPage /> },
+    { path: 'teams/:teamId/apps', element: <TeamAppsPage /> },
+    { path: 'teams/:teamId/apps/create', element: <TeamAppCreatePage /> },
+    { path: 'teams/:teamId/apps/:appId/edit', element: <TeamAppEditPage /> },
+    { path: 'teams/:teamId/apps/:appId/copy', element: <TeamAppCopyPage /> },
+    { path: 'docs/api-request-data-format', element: <ApiRequestDataFormatPage /> },
+    { path: '*', element: <NotFound /> },
+  ];
+
   return [
-    {
-      path: '/signed-out',
-      element: <SignedOutPage />,
-    },
-    {
-      path: '/auth-error',
-      element: <AuthErrorPage />,
-    },
-    {
-      path: '/',
-      element: <Layout />,
-      children: [
-        { index: true, element: <LandingPage /> },
-        {
-          path: 'apps',
-          element: <ExAppsPage />,
-        },
-        { path: 'apps/:teamId/:exAppId', element: <ExAppPage /> },
-        {
-          path: 'chat',
-          element: <ChatPage />,
-        },
-        {
-          path: 'chat/:chatId',
-          element: <ChatPage />,
-        },
-        { path: 'history', element: <ChatHistoryPage /> },
-        isUseCaseEnabled('generate')
-          ? [
-              { path: 'generate', element: <GenerateTextPage /> },
-              { path: 'generate/:chatId', element: <GenerateTextPage /> },
-            ]
-          : null,
-        isUseCaseEnabled('translate')
-          ? [
-              { path: 'translate', element: <TranslatePage /> },
-              { path: 'translate/:chatId', element: <TranslatePage /> },
-            ]
-          : null,
-        isUseCaseEnabled('image')
-          ? [
-              { path: 'image', element: <GenerateImagePage /> },
-              { path: 'image/:chatId', element: <GenerateImagePage /> },
-            ]
-          : null,
-        isUseCaseEnabled('diagram')
-          ? [
-              { path: 'diagram', element: <GenerateDiagramPage /> },
-              { path: 'diagram/:chatId', element: <GenerateDiagramPage /> },
-            ]
-          : null,
-        { path: 'transcribe', element: <TranscribePage /> },
-        { path: 'teams', element: <TeamsPage /> },
-        { path: 'teams/create', element: <TeamCreatePage /> },
-        {
-          path: 'teams/:teamId/edit',
-          element: <TeamEditPage />,
-        },
-        {
-          path: 'teams/:teamId/members',
-          element: <TeamMembersPage />,
-        },
-        {
-          path: 'teams/:teamId/members/create',
-          element: <TeamMemberCreatePage />,
-        },
-        {
-          path: 'teams/:teamId/members/:userId/edit',
-          element: <TeamMemberEditPage />,
-        },
-        {
-          path: 'teams/:teamId/apps',
-          element: <TeamAppsPage />,
-        },
-        {
-          path: 'teams/:teamId/apps/create',
-          element: <TeamAppCreatePage />,
-        },
-        {
-          path: 'teams/:teamId/apps/:appId/edit',
-          element: <TeamAppEditPage />,
-        },
-        {
-          path: 'teams/:teamId/apps/:appId/copy',
-          element: <TeamAppCopyPage />,
-        },
-        { path: 'docs/api-request-data-format', element: <ApiRequestDataFormatPage /> },
-        { path: '*', element: <NotFound /> },
-      ].flatMap((r) => (Array.isArray(r) ? r : r ? [r] : [])),
-    },
-  ].flatMap((r) => (Array.isArray(r) ? r : r ? [r] : []));
+    { path: '/signed-out', element: <SignedOutPage /> },
+    { path: '/auth-error', element: <AuthErrorPage /> },
+    { path: '/', element: <Layout />, children },
+  ];
 };

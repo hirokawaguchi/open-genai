@@ -45,7 +45,8 @@ export async function ensureImagePersistTarget(params: {
     ],
   });
 
-  const recorded = messages.find((m) => m.messageId === messageId) ?? messages.at(-1);
+  const recorded =
+    messages.find((m) => m.messageId === messageId) ?? messages[messages.length - 1];
   if (!recorded?.messageId) {
     return null;
   }
