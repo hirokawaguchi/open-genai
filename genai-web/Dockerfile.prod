@@ -1,0 +1,29 @@
+# Open GENAI: 本番向け静的ビルドを nginx で配信する
+FROM node:22.22.2-bookworm-slim AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY packages/web/package.json packages/web/package.json
+COPY packages/cdk/package.json packages/cdk/package.json
+COPY packages/common/package.json packages/common/package.json
+COPY packages/types/package.json packages/types/package.json
+
+RUN npm install
+
+COPY . .
+
+# ビルド時に埋め込む公開エンドポイント（compose の build.args で上書き可）
+ARG VITE_APP_API_ENDPOINT=/api
+ARG VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
+ENV VITE_APP_API_ENDPOINT=${VITE_APP_API_ENDPOINT} \
+    VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=${VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT}
+
+RUN npm run web:build
+
+FROM nginx:1.27-alpine
+
+COPY --from=build /app/packages/web/dist /usr/share/nginx/html
+COPY packages/web/nginx.spa.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

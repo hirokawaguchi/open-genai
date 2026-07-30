@@ -160,23 +160,13 @@ services:
   web:
     build:
       context: ./genai-web
-      dockerfile: Dockerfile.local
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_APP_API_ENDPOINT: /api
+        VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
     container_name: open-genai-web
     expose:
-      - "5173"
-    environment:
-      - VITE_USE_POLLING=true
-      - VITE_APP_API_ENDPOINT=/api
-      - VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
-      # proxy 経由の公開ホスト名を Vite に許可させる（例: genai.example.lg.jp）
-      - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
-    volumes:
-      - ./genai-web:/app
-      - web_node_modules:/app/node_modules
-      - web_pkg_web_node_modules:/app/packages/web/node_modules
-      - web_pkg_common_node_modules:/app/packages/common/node_modules
-      - web_pkg_types_node_modules:/app/packages/types/node_modules
-      - web_pkg_cdk_node_modules:/app/packages/cdk/node_modules
+      - "80"
     depends_on:
       - backend
     restart: unless-stopped
@@ -336,11 +326,6 @@ services:
 
 volumes:
   backend_data:
-  web_node_modules:
-  web_pkg_web_node_modules:
-  web_pkg_common_node_modules:
-  web_pkg_types_node_modules:
-  web_pkg_cdk_node_modules:
   qdrant_data:
   keycloak_data:
   whisper_cache:
