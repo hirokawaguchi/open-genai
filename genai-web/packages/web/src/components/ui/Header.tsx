@@ -22,6 +22,11 @@ export const Header = (props: Props) => {
   const { data } = useAuth();
   const groups =
     (data?.tokens?.accessToken.payload['cognito:groups'] as unknown as string[] | undefined) ?? [];
+  const userDisplayName =
+    (data?.tokens?.accessToken.payload['username'] as string | undefined) ||
+    (data?.tokens?.idToken.payload['cognito:username'] as string | undefined) ||
+    (data?.tokens?.idToken.payload['email'] as string | undefined) ||
+    '';
 
   const { cache } = useSWRConfig();
 
@@ -58,6 +63,7 @@ export const Header = (props: Props) => {
         <div className='hidden ml-auto md:flex h-full'>
           <AccountMenu
             onClickSignout={onClickSignout}
+            userDisplayName={userDisplayName}
             isShowTeamManagementMenu={
               groups.includes('SystemAdminGroup') || groups.includes('TeamAdminGroup')
             }
@@ -77,6 +83,7 @@ export const Header = (props: Props) => {
           ref={mobileMenuRef}
           onClose={() => mobileMenuRef.current?.close()}
           onClickSignout={onClickSignout}
+          userDisplayName={userDisplayName}
           isShowTeamManagementMenu={
             groups.includes('SystemAdminGroup') || groups.includes('TeamAdminGroup')
           }
