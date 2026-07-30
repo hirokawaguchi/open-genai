@@ -85,10 +85,10 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
 | `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md)） |
-| `docker-compose.yml` | proxy + web / backend / … をまとめて起動（HTTP :80 のみ公開） |
-| `docker-compose.prod.yml` | 本番 TLS 構成（proxy :80/:443 のみ公開） |
-| `docker-compose.verify.yml` | 本番スタックの HTTP 検証用オーバーライド（自己署名不要） |
-| `proxy/` | nginx リバースプロキシ設定（`nginx.http.conf` / `nginx.conf`）。成果物ファイル（SeaweedFS）用の別経路は README「成果物ファイル」節を参照 |
+| `docker-compose.yml` | **開発用**。proxy + web(Vite dev server) / backend / … をまとめて起動（HTTP :80 のみ公開、コード変更は無ビルドで即時反映） |
+| `docker-compose.prod.yml` | **本番 TLS 構成**（proxy :80/:443 のみ公開。web は静的ビルド `genai-web/Dockerfile.prod` を nginx で配信） |
+| `docker-compose.verify.yml` | 本番スタックを HTTP で検証／閉域運用するオーバーライド（自己署名不要。web は本番同様の静的ビルド） |
+| `proxy/` | nginx リバースプロキシ設定（開発=`nginx.http.conf` / 本番TLS=`nginx.conf` / 本番HTTP検証=`nginx.verify.conf`）。成果物ファイル（SeaweedFS）用の別経路は README「成果物ファイル」節を参照 |
 
 ## オリジナル源内からの改修内容（クラウド依存 → オープンアーキテクチャ）
 
@@ -256,6 +256,91 @@ docker compose up --build
 - http://localhost:8333/ をブラウザで開くと XML の `AccessDenied` が表示されること（SeaweedFS S3 API の正常応答。**開発時のみホスト公開**。本番は `S3_PUBLIC_ENDPOINT` 経由のリバースプロキシのみ公開）
 - （Dify 連携）[`dify-app/dsl/File Output Test.yml`](dify-app/dsl/File Output Test.yml) をデプロイし、源内 AI アプリから実行して成果物リンクが表示されること
 - http://localhost/kc/ の **Administration Console** に `.env` の `KEYCLOAK_ADMIN` でログインでき、realm **`open-genai`** の Users / Groups が表示されること（利用者アカウント管理用。源内ログイン画面とは別）
+
+## 本番デプロイ
+
+開発環境（`docker compose up`）と本番環境では、**フロントエンド（源内 Web）の配信方式**が異なります。ここでは本番デプロイの前提・初回手順・変更反映の運用をまとめます。
+
+### 開発と本番の違い（配信方式）
+
+| 項目 | 開発（`docker-compose.yml`） | 本番（`docker-compose.prod.yml`） |
+| --- | --- | --- |
+| web の配信 | **Vite dev server**（`Dockerfile.local`, :5173）をバインドマウントで起動 | **静的ビルド**（`Dockerfile.prod` で `npm run web:build` → nginx が `dist` を :80 配信） |
+| フロント変更の反映 | ソース保存で**即時反映**（無ビルド・HMR） | **web イメージの再ビルドが必要**（静的バンドルにビルド時取り込み） |
+| 公開 | proxy が HTTP :80 | proxy が TLS :443 終端（`proxy/nginx.conf`） |
+| API 参照 | `VITE_APP_*` を実行時 env で注入 | `VITE_APP_*` を **build.args でビルド時に埋め込み** |
+
+> backend / 各 exApp（Python）はどちらもイメージ内のコードで動くため、変更時はイメージ再ビルド＋再作成が必要です（下記「変更の反映」参照）。開発で Python 側を即時反映したい場合は各サービスにバインドマウント等を追加してください（既定は web のみ即時反映）。
+
+### 前提
+
+- `.env.prod` を用意（`cp .env.prod.example .env.prod` して編集）。**最低限**、次は本番用に必ず変更します。
+  - `PUBLIC_URL`（例: `https://genai.example.lg.jp`。末尾スラッシュ無し）
+  - `APP_JWT_SECRET` / `INTERNAL_SIGNING_SECRET`（十分長い乱数。例: `openssl rand -hex 32`）
+  - `KEYCLOAK_ADMIN_PASSWORD`（**初回起動前**に設定。詳細は[認証節の「運用開始時」](#運用開始時本番閉域-パスワード変更)）
+  - `S3_*`（`S3_PUBLIC_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` 等。詳細は[成果物ファイル節](#成果物ファイルseaweedfs-再ホスト)）
+- TLS 証明書を `proxy/certs/{fullchain.pem,privkey.pem}` に配置（`docker-compose.prod.yml` が `/etc/nginx/certs` にマウント。詳細は [`proxy/certs/README.md`](proxy/certs/README.md)）。
+- Keycloak の SAML クライアント（SP）登録を `PUBLIC_URL` に合わせる（初回 import 前に `keycloak/import/realm-open-genai.json` を編集、または admin コンソールで更新。詳細は[SAML 節](#源内側の設定変更時に必要な作業)）。
+
+### 初回デプロイ（本番 TLS）
+
+```bash
+# 1. 設定と証明書を用意
+cp .env.prod.example .env.prod        # PUBLIC_URL・各シークレット等を編集
+#    proxy/certs/fullchain.pem, privkey.pem を配置
+
+# 2. ビルドして起動（web は静的ビルドされる）
+docker compose -f docker-compose.prod.yml --env-file .env.prod up --build -d
+
+# 3. 状態確認
+docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+```
+
+- 公開 URL（`PUBLIC_URL`）でログイン画面（Keycloak）に遷移すること
+- 初回はフロントのビルドに数分かかります
+- 起動後、初期ユーザー（`admin`/`user`）の無効化・パスワード変更を必ず実施（[運用開始時](#運用開始時本番閉域-パスワード変更)）
+
+### 変更の反映（再デプロイ）
+
+本番はビルド済みイメージで動くため、変更箇所に応じて対象サービスを**再ビルド＋再作成**します。
+
+| 変更した箇所 | 反映コマンド（`-f docker-compose.prod.yml --env-file .env.prod` を付与） |
+| --- | --- |
+| **フロント**（`genai-web/**`。プロンプト・画面・ルーティング等） | `docker compose ... up -d --build web` |
+| **backend**（`backend/**`） | `docker compose ... up -d --build backend` |
+| **各 exApp**（`rag-app/` 等） | `docker compose ... up -d --build <service>` |
+| **proxy 設定**（`proxy/nginx.conf`） | `docker compose ... restart proxy`（設定はマウントのため再起動のみ） |
+| **`.env.prod` の値**（LLM 接続・S3 公開先・`TITLE_MODE` 等） | 対象サービスを `up -d`（再作成で env 再読込。フロント埋め込み値は再ビルド） |
+
+```bash
+# 例: フロントのプロンプト/画面を変更 → web を再ビルドして差し替え
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build web
+```
+
+> **注意:** フロントの見た目・文言・プロンプトの変更は、`web` を再ビルドしない限り本番へ反映されません（静的バンドルにビルド時取り込みのため）。開発環境では即時反映されるので、この差に注意してください。
+
+### 閉域・HTTP のみで運用/検証する場合
+
+TLS 終端や自己署名証明書が使えず、ポート 80 のみで公開する環境（閉域検証など）向けに、本番スタックを HTTP で動かすオーバーライドを用意しています。web は本番同様の**静的ビルド**を使い、proxy だけを HTTP・静的上流用の `proxy/nginx.verify.conf` に差し替えます。
+
+```bash
+cp .env.prod.example .env.prod
+#   PUBLIC_URL=http://localhost（またはホスト名）, PROXY_HTTP_PORT=80 等に編集
+docker compose -f docker-compose.prod.yml -f docker-compose.verify.yml \
+  --env-file .env.prod up --build -d
+```
+
+- `PUBLIC_URL` は `http://` で始めること（証明書は不要）
+- ポート 80 が使用中なら `.env.prod` の `PROXY_HTTP_PORT=8080` 等に変更し、`PUBLIC_URL` も合わせる
+
+### 前段にゲートウェイ/別リバースプロキシがある場合（SAML 注意）
+
+`PUBLIC_URL` が SAML の SP EntityID / ACS / SLS と Keycloak の公開ホスト（`KC_HOSTNAME`）の**単一の正**になります。前段に別ホスト名のゲートウェイを置く場合は、次のいずれかにしてください。
+
+- **公開ホストを 1 つに統一**: 利用者に見せるホスト名を `PUBLIC_URL` に設定し、ゲートウェイは `/`・`/api`・`/kc` すべてを **Host ヘッダを保持**して転送する。Keycloak の SAML クライアント（ACS/EntityID）もそのホストで登録する。
+- backend は `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-Port` から公開 URL を組み立てるため、前段プロキシはこれらを正しく付与すること（本リポジトリの `proxy/nginx.conf` は TLS 終端時に `https` / `$host` / `443` を送出）。
+
+> 複数の公開ホストで同時に SAML を成立させることは、現状の単一 `PUBLIC_URL` 前提ではできません（EntityID/ACS が固定のため）。
 
 ## ファイル添付（画像 / ドキュメント）
 
