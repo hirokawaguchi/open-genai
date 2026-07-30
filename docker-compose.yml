@@ -80,8 +80,18 @@ services:
       # Dify 連携「AI アプリ」プロキシの endpoint（アプリ登録時の endpoint に使う）
       - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
       # 源内 Web「画像を生成」ページ (/image/generate) 用 SD サーバ
-      - SD_API_URL=${SD_API_URL:-http://host.docker.internal:7860}
+      # SD_BACKEND: a1111（既定・GPU 自前運用）| fastsd（CPU-only, FastSD を外部起動）
+      - SD_BACKEND=${SD_BACKEND:-a1111}
+      # 未設定なら a1111=:7860 / fastsd=:8000 が既定。明示すればそれを優先。
+      - SD_API_URL=${SD_API_URL:-}
       - SD_TIMEOUT=${SD_TIMEOUT:-600}
+      # FastSD 用モデル設定（SD_BACKEND=fastsd のときのみ有効）
+      - SD_FASTSD_USE_OPENVINO=${SD_FASTSD_USE_OPENVINO:-false}
+      - SD_FASTSD_USE_LCM_LORA=${SD_FASTSD_USE_LCM_LORA:-false}
+      - SD_FASTSD_USE_TINY_AUTO_ENCODER=${SD_FASTSD_USE_TINY_AUTO_ENCODER:-false}
+      - SD_FASTSD_USE_SAFETY_CHECKER=${SD_FASTSD_USE_SAFETY_CHECKER:-false}
+      - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
+      - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- SAML 認証 (backend = SAML SP) ---
       - APP_JWT_SECRET=${APP_JWT_SECRET:-change-me-open-genai-secret}
       # proxy 経由の公開 URL（末尾スラッシュ無し。PROXY_HTTP_PORT 変更時は合わせる）

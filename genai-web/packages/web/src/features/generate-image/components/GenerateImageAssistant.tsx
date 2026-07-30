@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PiLightbulbFilamentBold, PiWarningFill } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
+import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Ul } from '@/components/ui/dads/Ul';
 import { useGenerateImageStore } from '@/features/generate-image/stores/useGenerateImageStore';
@@ -175,12 +176,14 @@ export const GenerateImageAssistant = (props: Props) => {
           <p className='mb-6'>
             ※生成された画像の利用にあたっては、各ユーザーによってその利用が適切かどうかご判断ください。
           </p>
-          <div className='rounded-16 border border-solid-gray-536 bg-solid-gray-50 px-8 py-6 text-solid-gray-800 xl:px-10 xl:py-6'>
-            <h2 className='mb-6 flex items-center text-std-18B-160'>
-              <PiLightbulbFilamentBold className='mr-2 size-6' />
-              ヒント
-            </h2>
-            <Ul className='pl-6! space-y-1'>
+          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-solid-gray-800'>
+            <DisclosureSummary>
+              <span className='flex items-center text-std-16B-150'>
+                <PiLightbulbFilamentBold className='mr-2 size-5 flex-none' />
+                ヒント（クリックで開閉）
+              </span>
+            </DisclosureSummary>
+            <Ul className='mt-3 pl-6! space-y-1'>
               <li>
                 具体的かつ詳細な指示を出すようにしましょう。
                 形容詞や副詞を使って、正確に表現することが重要です。
@@ -199,7 +202,7 @@ export const GenerateImageAssistant = (props: Props) => {
                 プロンプトで意図した画像が生成できない場合は、初期画像の設定やパラメータの変更を試してみましょう。
               </li>
             </Ul>
-          </div>
+          </Disclosure>
         </div>
       ) : (
         <div className='mt-4 flex flex-col gap-4' ref={scrollableContainer}>

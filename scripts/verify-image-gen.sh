@@ -2,17 +2,24 @@
 # 画像生成パイプラインの動作検証（mock SD または実 SD サーバ前提）
 set -euo pipefail
 
-SD_URL="${SD_API_URL:-http://localhost:7860}"
+SD_BACKEND="${SD_BACKEND:-a1111}"
+if [ "$SD_BACKEND" = "fastsd" ]; then
+  SD_URL="${SD_API_URL:-http://localhost:8000}"
+  HEALTH_PATH="/api/models"
+else
+  SD_URL="${SD_API_URL:-http://localhost:7860}"
+  HEALTH_PATH="/sdapi/v1/sd-models"
+fi
 FAIL=0
 
 pass() { echo "  OK  $*"; }
 fail() { echo "  NG  $*"; FAIL=1; }
 
-echo "=== 1. SD サーバ (${SD_URL}) ==="
-if curl -sf "${SD_URL}/sdapi/v1/sd-models" >/dev/null; then
-  pass "sd-models"
+echo "=== 1. SD サーバ (backend=${SD_BACKEND}, ${SD_URL}${HEALTH_PATH}) ==="
+if curl -sf "${SD_URL}${HEALTH_PATH}" >/dev/null; then
+  pass "health"
 else
-  fail "sd-models に到達できません。mock: python3 scripts/mock-sd-server.py"
+  fail "到達できません。mock: python3 scripts/mock-sd-server.py --port ${SD_URL##*:}"
 fi
 
 echo
