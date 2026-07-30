@@ -25,6 +25,10 @@ interface ImportMetaEnv {
   readonly VITE_APP_TOP_CHAT_SYSTEM_PROMPT_TITLE: string;
   /** ナビ配置: header（既定）| sidebar */
   readonly VITE_APP_NAV_LAYOUT: string;
+  /** 画像生成の初期ステップ数（既定 50。FastSD/LCM 向けは 4 など） */
+  readonly VITE_APP_IMAGE_DEFAULT_STEP: string;
+  /** 画像生成の初期 CFG スケール（既定 7。FastSD/LCM 向けは 1 など） */
+  readonly VITE_APP_IMAGE_DEFAULT_CFG: string;
 }
 
 interface ImportMeta {
