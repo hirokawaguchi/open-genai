@@ -4,6 +4,7 @@ import { HamburgerIcon, HamburgerMenuButton } from '@/components/ui/dads/Hamburg
 import { GlobalMenuLink } from '@/components/ui/GlobalMenuLink';
 import { Logo } from '@/components/ui/Logo';
 import { MobileMenu } from '@/components/ui/mobile-menu/MobileMenu';
+import { isSidebarNavLayout } from '@/constants/navLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useMobileMenuHandler } from '@/layout/hooks/useMobileMenuHandler';
 import { signOut as localSignOut } from '@/local/localAuth';
@@ -16,6 +17,7 @@ type Props = {
 export const Header = (props: Props) => {
   const { className, isLandingPage } = props;
   const { mobileMenuRef } = useMobileMenuHandler();
+  const sidebar = isSidebarNavLayout();
 
   const { data } = useAuth();
   const groups =
@@ -38,18 +40,20 @@ export const Header = (props: Props) => {
     >
       <div className='flex justify-start items-center gap-2 mx-auto w-full h-full px-6 max-w-(--page-width) lg:gap-6 lg:px-8'>
         <Logo isLandingPage={isLandingPage} />
-        <nav className='hidden md:block'>
-          <ul className='flex items-center gap-1.5'>
-            <li>
-              <GlobalMenuLink to='/chat' state={{ shouldReset: true }}>
-                チャット
-              </GlobalMenuLink>
-            </li>
-            <li>
-              <GlobalMenuLink to='/apps'>AIアプリ</GlobalMenuLink>
-            </li>
-          </ul>
-        </nav>
+        {!sidebar && (
+          <nav className='hidden md:block'>
+            <ul className='flex items-center gap-1.5'>
+              <li>
+                <GlobalMenuLink to='/chat' state={{ shouldReset: true }}>
+                  チャット
+                </GlobalMenuLink>
+              </li>
+              <li>
+                <GlobalMenuLink to='/apps'>AIアプリ</GlobalMenuLink>
+              </li>
+            </ul>
+          </nav>
+        )}
 
         <div className='hidden ml-auto md:flex h-full'>
           <AccountMenu

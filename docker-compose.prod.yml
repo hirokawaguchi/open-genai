@@ -164,6 +164,8 @@ services:
       args:
         VITE_APP_API_ENDPOINT: /api
         VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
+        # header | sidebar（.env.prod の VITE_APP_NAV_LAYOUT で上書き可）
+        VITE_APP_NAV_LAYOUT: ${VITE_APP_NAV_LAYOUT:-header}
     container_name: open-genai-web
     expose:
       - "80"
