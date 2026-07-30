@@ -15,6 +15,16 @@ type Resolution = {
   label: string;
 };
 
+// 画像生成の初期 step / cfgScale はビルド時 env で切り替える。
+// 既定は 50 / 7（標準的な A1111/SDXL 向け）。CPU-only の FastSD/LCM を使うビルドでは
+// VITE_APP_IMAGE_DEFAULT_STEP=4 / VITE_APP_IMAGE_DEFAULT_CFG=1 を指定する。
+const positiveNumberEnv = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const DEFAULT_STEP = positiveNumberEnv(import.meta.env.VITE_APP_IMAGE_DEFAULT_STEP, 50);
+const DEFAULT_CFG_SCALE = positiveNumberEnv(import.meta.env.VITE_APP_IMAGE_DEFAULT_CFG, 7);
+
 type ImageResult = {
   base64: string;
   error: boolean;
@@ -79,8 +89,8 @@ const createInitialState = (): GenerateImageState => ({
   resolutionPresets: getResolutionPresets(''),
   stylePreset: '',
   seed: [0, ...new Array(MAX_SAMPLE - 1).fill(-1)],
-  step: 50,
-  cfgScale: 7,
+  step: DEFAULT_STEP,
+  cfgScale: DEFAULT_CFG_SCALE,
   imageStrength: 0.35,
   controlStrength: 0.7,
   controlMode: 'CANNY_EDGE',

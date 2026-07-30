@@ -634,12 +634,25 @@ Open GENAI では **機能ごとに入口を分けています**（どちらも�
 
 ### 画像生成（源内 Web `/image` + Stable Diffusion）
 
-- **AUTOMATIC1111 互換 SD サーバ**（`/sdapi/v1/txt2img`）がホストで起動している必要があります。
-  - **macOS**: Docker は GPU(Metal) を使えないため、SD 本体は**ホスト**で動かします。[AUTOMATIC1111 stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui) 等を `--api` 付きで `:7860` に起動してください。
-  - **Linux + NVIDIA GPU（DGX Spark 等）**: SD を**コンテナでも GPU 実行**できます。`SD_API_URL` をそのコンテナのアドレスに設定してください。
-- 接続先は `.env` の `SD_API_URL`（既定: ホストの `http://host.docker.internal:7860`）で変更できます。
-- 検証用モック: `python3 scripts/mock-sd-server.py`（実 SD 不要でパイプライン確認）。
-- 動作確認: `bash scripts/verify-image-gen.sh`
+`backend` の `/image/generate` が画像生成サーバへプロキシします。バックエンドは `.env` の
+**`SD_BACKEND`** で切り替えます（既定 `a1111`）。画像生成サーバ本体はいずれも**アプリ外で運用**します
+（RAG 埋め込みと同様、環境に応じて差し替える方針）。
+
+| `SD_BACKEND` | 用途 | サーバ | 既定接続先 | 初期 step/cfg 目安 |
+| --- | --- | --- | --- | --- |
+| `a1111`（既定） | **GPU** で自前運用 | AUTOMATIC1111 互換（`/sdapi/v1/txt2img`） | `http://host.docker.internal:7860` | 50 / 7 |
+| `fastsd` | **CPU-only** 環境 | [FastSD CPU](https://github.com/rupeshs/fastsdcpu)（LCM, `/api/generate`） | `http://host.docker.internal:8000` | 4 / 1 |
+
+- **`a1111`（GPU 自前運用）**
+  - macOS は Docker から GPU(Metal) を使えないため SD 本体は**ホスト**で。[AUTOMATIC1111 stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui) 等を `--api` 付きで `:7860` に起動。
+  - Linux + NVIDIA GPU は SD を**コンテナで GPU 実行**しても可。`SD_API_URL` をそのアドレスに設定。
+- **`fastsd`（CPU-only）**
+  - FastSD CPU は A1111 非互換の独自 API（`POST /api/generate`）で、backend 側に専用アダプタを実装済み。
+  - FastSD 本体を外部で起動: `python src/app.py --api`（既定 `:8000`）。`.env` に `SD_BACKEND=fastsd` と、必要なら `SD_API_URL` を設定。
+  - モデル/高速化は env で指定: `SD_FASTSD_USE_OPENVINO` / `SD_FASTSD_USE_LCM_LORA` / `SD_FASTSD_USE_TINY_AUTO_ENCODER` / `SD_FASTSD_USE_SAFETY_CHECKER` / `SD_FASTSD_MODEL_ID` / `SD_FASTSD_OPENVINO_MODEL_ID`（未指定は FastSD 既定）。
+- **初期 step/cfg** はフロントにビルド時埋め込み（`VITE_APP_IMAGE_DEFAULT_STEP` / `VITE_APP_IMAGE_DEFAULT_CFG`。既定 50/7）。FastSD/LCM を使う本番ビルドは **4/1** を指定（`.env.prod` に設定して `web` を再ビルド）。開発は `genai-web/packages/web/.env` で指定。
+- 検証用モック: `python3 scripts/mock-sd-server.py`（a1111=:7860）/ `--port 8000`（fastsd）。両バックエンドのエンドポイントに対応。
+- 動作確認: `bash scripts/verify-image-gen.sh`（`SD_BACKEND` を見て疎通先を切り替え）
 
 ### AI アプリの表示（ヘルスチェック）
 

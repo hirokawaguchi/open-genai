@@ -94,6 +94,19 @@ services:
       - ARTIFACT_DELIVERY_MODE=${ARTIFACT_DELIVERY_MODE:-carrier}
       - ARTIFACT_CARRIER_FORMAT=${ARTIFACT_CARRIER_FORMAT:-txt}
       - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
+      # 源内 Web「画像を生成」(/image/generate) 用 SD サーバ
+      # SD_BACKEND: a1111（既定・GPU 自前運用）| fastsd（CPU-only, FastSD を外部起動）
+      - SD_BACKEND=${SD_BACKEND:-a1111}
+      # 未設定なら a1111=:7860 / fastsd=:8000 が既定。明示すればそれを優先。
+      - SD_API_URL=${SD_API_URL:-}
+      - SD_TIMEOUT=${SD_TIMEOUT:-600}
+      # FastSD 用モデル設定（SD_BACKEND=fastsd のときのみ有効）
+      - SD_FASTSD_USE_OPENVINO=${SD_FASTSD_USE_OPENVINO:-false}
+      - SD_FASTSD_USE_LCM_LORA=${SD_FASTSD_USE_LCM_LORA:-false}
+      - SD_FASTSD_USE_TINY_AUTO_ENCODER=${SD_FASTSD_USE_TINY_AUTO_ENCODER:-false}
+      - SD_FASTSD_USE_SAFETY_CHECKER=${SD_FASTSD_USE_SAFETY_CHECKER:-false}
+      - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
+      - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api
       - FRONTEND_URL=${PUBLIC_URL}
@@ -166,6 +179,9 @@ services:
         VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
         # header | sidebar（.env.prod の VITE_APP_NAV_LAYOUT で上書き可）
         VITE_APP_NAV_LAYOUT: ${VITE_APP_NAV_LAYOUT:-header}
+        # 画像生成の初期 step/cfg（既定 50/7。FastSD/LCM を使うビルドでは 4/1 を指定）
+        VITE_APP_IMAGE_DEFAULT_STEP: ${VITE_APP_IMAGE_DEFAULT_STEP:-50}
+        VITE_APP_IMAGE_DEFAULT_CFG: ${VITE_APP_IMAGE_DEFAULT_CFG:-7}
     container_name: open-genai-web
     expose:
       - "80"
