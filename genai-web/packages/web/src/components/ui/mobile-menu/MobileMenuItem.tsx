@@ -8,6 +8,7 @@ type MobileMenuItemLinkProps = {
   className?: string;
   label: string;
   to: string;
+  state?: unknown;
   disableParentAriaCurrent?: boolean;
 };
 
@@ -18,7 +19,7 @@ type MobileMenuItemButtonProps = {
 };
 
 export const MobileMenuItemLink = (props: MobileMenuItemLinkProps) => {
-  const { className, label, to, disableParentAriaCurrent } = props;
+  const { className, label, to, state, disableParentAriaCurrent } = props;
   const location = useLocation();
 
   const ariaCurrentValue = useCallback(() => {
@@ -29,13 +30,14 @@ export const MobileMenuItemLink = (props: MobileMenuItemLinkProps) => {
       return 'true';
     }
     return undefined;
-  }, [location.pathname]);
+  }, [location.pathname, to, disableParentAriaCurrent]);
 
   return (
     <Link
       className={`${baseClassName} ${className ?? ''}`}
       aria-current={ariaCurrentValue()}
       to={to}
+      state={state}
     >
       <div className='flex w-full items-center justify-between'>
         <span>{label}</span>
