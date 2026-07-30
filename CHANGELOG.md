@@ -11,7 +11,8 @@
 | [v0.3.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.0) | `daac82e` 以降 | 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信 |
 | [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
 | [v0.3.2](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.2) | `1a9eb42` 以降 | 出典表示・ローカルDify成果物取得・Enter送信など |
-| [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | （本リリース） | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
+| [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | `96f3484` | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
+| [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | （本リリース） | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -26,12 +27,42 @@
 
 ---
 
-## [Unreleased]
+## [0.5.0] - 2026-07-30
 
-### Dify MultiFileGenerator: 単一 HTML 成果物
+別環境での実運用で見つかった修正・改善をまとめて反映。**本番デプロイの整備**、
+**推論/埋め込み/画像の各モデルを環境に応じて差し替えられる自由度**、**SAML・認証の堅牢化**が主軸。
+既定値は従来挙動を維持しており、開発・検証・既存本番への影響はない。
 
-- [`MultiFileGenerator.yml`](dify-app/dsl/MultiFileGenerator.yml) の出力形式に `html` を追加（単一自己完結・デジタル庁デザインシステム風の体裁）
-- `dify-app` の MIME→拡張子補正に `text/html` を追加
+### 本番配信 / デプロイ
+
+- 本番 web を Vite dev server から**静的ビルド配信（`Dockerfile.prod` + nginx）**に変更し、dev/prod の差異を compose で吸収（#18）
+- 閉域・HTTP 検証（`docker-compose.verify.yml` / `proxy/nginx.verify.conf`）を静的ビルドに整合
+- 本番デプロイ手順（初回 TLS 展開・変更反映・閉域検証・前段ゲートウェイ時の SAML 注意）を README に整備（#19）
+
+### モデル差し替えの自由度（推論 / 埋め込み / 画像）
+
+- 複数の OpenAI 互換 LLM プロバイダを `modelId` ごとに振り分ける `LLM_PROVIDERS`（Azure/OpenAI/Gemini/Ollama 等。`auth_header`/`api-version` 対応）（#7）
+- RAG 埋め込みモデルを env で差し替え可能化（`EMBED_BASE_URL`/`EMBED_MODEL`/`EMBED_DIM`/`QDRANT_COLLECTION`/prefix）。ローカル日本語埋め込み（ruri-v3 等）向けに OpenAI 互換 `embed` サイドカーを `profiles: ["embed"]` でオプトイン追加。既定は現行 mxbai 互換を維持（#21）
+- 画像生成に `SD_BACKEND=a1111|fastsd` を追加。CPU-only 環境向けに FastSD CPU（LCM）アダプタを実装（既定は現行 A1111）。初期 step/cfg を `VITE_APP_IMAGE_DEFAULT_STEP`/`_CFG` でビルド時に切替（#22）
+
+### SAML / 認証の堅牢化
+
+- SAML ACS のプロキシヘッダ（`X-Forwarded-Proto`/`Host`/`Port`）対応で TLS 終端配下でも ACS/EntityID を正しく構築。Keycloak の重複属性を許容（#16）
+- 認証エラー時に localStorage の壊れた JWT を残さず、`/auth-error` からログインへ戻す導線と 401 の自己回復を追加（#17）
+
+### UI / UX
+
+- ナビ配置を `VITE_APP_NAV_LAYOUT=header|sidebar` で選択可能に（サイドバー: おすすめ / ピン留め / 全AIアプリ）（#20）
+- ヘッダーのアカウント表示をログイン中ユーザ名（なければ email）に変更（デスクトップ/モバイル両対応）（#23）
+- チャットタイトル生成を `TITLE_MODE=heuristic|llm` で切替可能に（既定は非 LLM のヒューリスティック。拒否文がタイトル化される問題を回避）（#15）
+
+### RAG / AI アプリ / 修正
+
+- 管理者向け利用者一覧表示（#10）
+- Dify 連携アプリで `hide_inputs` / `default_inputs` による入力の非表示・既定注入（#13）
+- RAG タグ名の Unicode NFC 正規化（表記ゆれ防止）（#14）
+- .docx 添付の表（テーブル）テキスト抽出に対応（#9）
+- Dify MultiFileGenerator の出力形式に単一 HTML（自己完結・デジタル庁デザインシステム風）を追加。`dify-app` の MIME→拡張子補正に `text/html` を追加
 
 ---
 
