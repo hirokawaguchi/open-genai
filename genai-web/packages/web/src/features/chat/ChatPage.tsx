@@ -42,7 +42,7 @@ export const ChatPage = () => {
     setHasSent,
   } = useChatStore();
 
-  const { pathname, search, state } = useLocation();
+  const { search, state } = useLocation();
   const { usecase, chatId } = useUsecasePath();
   const navigate = useNavigate();
   const { scrollTopAnchorRef, scrollBottomAnchorRef } = useScreen({
