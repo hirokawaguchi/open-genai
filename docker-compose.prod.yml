@@ -182,6 +182,25 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  # 埋め込み配信サイドカー（sentence-transformers / CPU）。任意の埋め込みモデルを
+  # OpenAI 互換 API で配信する汎用コンテナ。既定 (mxbai を Ollama で配信) では不要のため
+  # profiles で任意起動: `COMPOSE_PROFILES=embed` または `--profile embed` の時のみ起動する。
+  # Ollama 等が配信できない埋め込みモデル（例: ruri-v3=ModernBERT-Ja, ONNX 非提供）を
+  # 使う場合に有効化し、rag-app の EMBED_BASE_URL をこのサービスへ向ける。
+  embed:
+    profiles: ["embed"]
+    build:
+      context: ./embed-app
+      dockerfile: Dockerfile
+    container_name: open-genai-embed
+    environment:
+      - EMBED_MODEL=${EMBED_MODEL:-cl-nagoya/ruri-v3-310m}
+    volumes:
+      - embed_data:/data
+    expose:
+      - "80"
+    restart: unless-stopped
+
   rag-app:
     build:
       context: .
@@ -192,9 +211,22 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - QDRANT_URL=http://qdrant:6333
+      # 埋め込みモデルは差し替え可能。既定は Ollama 上の mxbai-embed-large(1024 次元)。
+      # モデルを変えると次元が変わるため QDRANT_COLLECTION を分け、再インデックスが必要。
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-open_genai_rag}
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
+      - EMBED_DIM=${EMBED_DIM:-1024}
+      # 埋め込みだけ別エンドポイント(embed サイドカー等)へ分離する場合に設定。
+      # 未設定(空)なら OPENAI_BASE_URL / OPENAI_API_KEY にフォールバック（従来挙動）。
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-}
+      - EMBED_API_KEY=${EMBED_API_KEY:-}
+      # 検索クエリ/文書の prefix はモデル依存。既定は mxbai 互換（クエリのみ英語 prefix）。
+      - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
+      - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      # 起動時のサンプル自動投入。false で無効（本番でサンプル不要なら false）。
+      - RAG_SEED_SAMPLES=${RAG_SEED_SAMPLES:-true}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       - RAG_META_DB_PATH=/data/rag_meta.db
       - URL_REFRESH_INTERVAL=${URL_REFRESH_INTERVAL:-86400}
@@ -204,6 +236,7 @@ services:
       - rag_app_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # embed は profiles で任意起動のため depends_on にしない（埋め込みは呼び出し時のみ必要）。
     depends_on:
       - qdrant
     restart: unless-stopped
@@ -329,6 +362,7 @@ services:
 volumes:
   backend_data:
   qdrant_data:
+  embed_data:
   keycloak_data:
   whisper_cache:
   dify_app_data:
