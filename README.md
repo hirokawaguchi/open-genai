@@ -342,6 +342,51 @@ docker compose -f docker-compose.prod.yml -f docker-compose.verify.yml \
 
 > 複数の公開ホストで同時に SAML を成立させることは、現状の単一 `PUBLIC_URL` 前提ではできません（EntityID/ACS が固定のため）。
 
+### 埋め込みモデルの差し替え / ローカル日本語埋め込み（`embed` サイドカー）
+
+RAG の埋め込みモデルは推論モデルと同様に**差し替え可能**です。既定は Ollama 上の
+`mxbai-embed-large`（1024 次元）で、開発・検証・既定の本番はこのままで動きます（追加設定不要）。
+挙動はすべて `rag-app` の環境変数で制御され、コードは単一パスのままです。
+
+| 環境変数 | 既定 | 役割 |
+| --- | --- | --- |
+| `EMBED_MODEL` | `mxbai-embed-large` | 埋め込みモデル名 |
+| `EMBED_DIM` | `1024` | ベクトル次元（Qdrant コレクション作成時に使用） |
+| `QDRANT_COLLECTION` | `open_genai_rag` | 保存先コレクション |
+| `EMBED_BASE_URL` | 空（=`OPENAI_BASE_URL` にフォールバック） | 埋め込みだけ別の OpenAI 互換エンドポイントへ分離する場合に設定 |
+| `EMBED_API_KEY` | 空（=`OPENAI_API_KEY`） | 上記エンドポイントの API キー |
+| `EMBED_QUERY_PREFIX` / `EMBED_DOC_PREFIX` | mxbai 互換（クエリのみ英語 prefix・文書なし） | モデル依存の検索クエリ/文書 prefix |
+
+> **重要（再インデックス）:** 埋め込みモデルを変えると**ベクトル次元と意味空間が変わります**。
+> Qdrant のコレクションは次元固定のため、既存コレクションへ別モデルのベクトルを混在させられません。
+> モデルを変更する場合は `QDRANT_COLLECTION` を別名にし、`EMBED_DIM` を合わせたうえで**全件を再インデックス**してください。
+
+#### ローカル日本語埋め込み（`ruri-v3` 等）を使う場合
+
+Ollama や TEI(CPU/ORT) が配信できない埋め込みモデル（例: `cl-nagoya/ruri-v3-310m` は
+ModernBERT-Ja・ONNX 非提供）は、同梱の汎用サイドカー `embed`（`sentence-transformers`／CPU）で配信できます。
+このサイドカーは Compose の `profiles: ["embed"]` により**任意起動**で、既定では起動しません。
+本番で日本語埋め込みが必要な場合にのみ有効化します。
+
+```bash
+# .env.prod に以下を設定（.env.prod.example の「ruri-v3-310m を使う場合」の例を参照）
+#   COMPOSE_PROFILES=embed
+#   EMBED_BASE_URL=http://embed:80/v1
+#   EMBED_API_KEY=-
+#   EMBED_MODEL=cl-nagoya/ruri-v3-310m
+#   EMBED_DIM=768
+#   QDRANT_COLLECTION=open_genai_rag_ruri_v3_310m   # 768 次元の別コレクション
+#   EMBED_QUERY_PREFIX=検索クエリ: 
+#   EMBED_DOC_PREFIX=検索文書: 
+
+# embed サイドカーを含めて起動（COMPOSE_PROFILES=embed を .env.prod に入れれば --profile 省略可）
+docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed up -d --build embed rag-app
+```
+
+- `embed` を起動しない運用では `EMBED_BASE_URL` を外部の埋め込み API に向けても構いません（サイドカー不要）。
+- 開発・検証環境では `embed` は不要です（`docker-compose.yml` / `docker-compose.verify.yml` は既定 mxbai のまま）。
+- 初回起動時にモデルを HuggingFace から取得し `embed_data` ボリュームへキャッシュします（数百 MB〜。閉域では事前取得が必要）。
+
 ## ファイル添付（画像 / ドキュメント）
 
 チャットでは画像とドキュメントを添付できます（モデルの対応機能フラグに応じて添付ボタンが出ます）。
