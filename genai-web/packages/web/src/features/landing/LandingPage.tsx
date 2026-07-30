@@ -8,13 +8,12 @@ import { Card } from '@/features/landing/components/Card';
 import { TOP_CHAT_SYSTEM_PROMPT } from '@/features/landing/constants';
 import { RecommendedGovAI } from '@/features/landing/types';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { useRecommendedNavItems } from '@/layout/navItems';
 import { PinnedAppsSection } from '@/open-genai/app-pins/PinnedAppsSection';
-import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
-import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { LandingForm } from './components/LandingForm';
 
 export const LandingPage = () => {
-  const imageAvailable = useImageAvailable();
+  const recommendedNavItems = useRecommendedNavItems();
   // 各環境のGovAIの情報を取得
   const recommendedGovAI: RecommendedGovAI[] = (() => {
     try {
@@ -53,56 +52,16 @@ export const LandingPage = () => {
                 </li>
               ))
             ) : (
-              <>
-                <li>
+              recommendedNavItems.map((item) => (
+                <li key={item.to}>
                   <Card
-                    title='チャット'
+                    title={item.label}
                     className='h-full'
-                    to='/chat'
-                    description='着想や整理のための壁打ち'
+                    to={item.to}
+                    description={item.description ?? ''}
                   />
                 </li>
-                {isUseCaseEnabled('generate') && (
-                  <li>
-                    <Card
-                      title='文章を生成'
-                      className='h-full'
-                      to='/generate'
-                      description='手元の情報をもとに文章を作成'
-                    />
-                  </li>
-                )}
-                {isUseCaseEnabled('translate') && (
-                  <li>
-                    <Card
-                      title='翻訳'
-                      className='h-full'
-                      to='/translate'
-                      description='手元の文章を他の言語に翻訳'
-                    />
-                  </li>
-                )}
-                {isUseCaseEnabled('image') && imageAvailable && (
-                  <li>
-                    <Card
-                      title='画像を生成'
-                      className='h-full'
-                      to='/image'
-                      description='プロンプトから資料用の挿絵やイメージ案を作成'
-                    />
-                  </li>
-                )}
-                {isUseCaseEnabled('diagram') && (
-                  <li>
-                    <Card
-                      title='ダイアグラムを生成'
-                      className='h-full'
-                      to='/diagram'
-                      description='テキストからフローチャートやマインドマップを作成'
-                    />
-                  </li>
-                )}
-              </>
+              ))
             )}
           </ul>
         </div>
