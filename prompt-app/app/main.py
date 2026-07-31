@@ -134,6 +134,43 @@ def _template_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     return [{"title": f"{t['title']}（{_kind(t)}）", "value": t["id"]} for t in items]
 
 
+def _template_public(t: dict[str, Any], user_id: str, is_admin: bool) -> dict[str, Any]:
+    """専用ページ(REST)向けのテンプレート表現。UI 表示に必要な情報を含める。"""
+    return {
+        "id": t["id"],
+        "title": t["title"],
+        "body": t["body"],
+        "target": t.get("target", "content"),
+        "kind": _kind(t),
+        "isStandard": bool(t["isStandard"]),
+        "variables": catalog.template_variables(t["body"]),
+        "canDelete": catalog.can_delete(t, user_id, is_admin),
+    }
+
+
+def _verify_ctx(request: Request) -> tuple[JSONResponse | None, dict[str, Any]]:
+    """API キー・内部署名を検証し、利用者コンテキストを返す（専用ページ REST 用）。"""
+    h = request.headers
+    err = _check_key(h.get("x-api-key"))
+    if err:
+        return err, {}
+    if not intauth.verify(
+        h.get("x-user-id"),
+        h.get("x-user-groups"),
+        h.get("x-scope"),
+        h.get("x-user-ts"),
+        h.get("x-user-sig"),
+        h.get("x-user-tags"),
+    ):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"}), {}
+    return None, {
+        "user_id": (h.get("x-user-id") or "").strip(),
+        "team_ids": _team_ids(h.get("x-user-tags")),
+        "team_names": _team_name_map(h.get("x-user-teams")),
+        "is_admin": _is_admin(h.get("x-user-groups")),
+    }
+
+
 def _build_form_schema(
     user_id: str,
     team_ids: list[str],
@@ -347,6 +384,132 @@ async def resolve(
         selected_body=selected_body,
     )
     return {"placeholder": ui}
+
+
+# ---------------------------------------------------------------------------
+# 構造化 REST（源内 専用ページ /prompts 用）
+#
+# 汎用 exApp フォームでは縦並び select しか使えず操作が直感的でないため、源内側に
+# 専用ページを設ける。テンプレートの一覧・作成・削除・変数置換を JSON で提供する。
+# 認可・内部署名は /schema・/invoke と同一。従来の /schema・/resolve・/invoke は
+# 後方互換のため維持する。
+# ---------------------------------------------------------------------------
+@app.get("/templates")
+async def list_templates_api(request: Request) -> Any:
+    err, ctx = _verify_ctx(request)
+    if err:
+        return err
+    items = catalog.list_visible(ctx["user_id"], ctx["team_ids"], ctx["is_admin"])
+    return {
+        "templates": [_template_public(t, ctx["user_id"], ctx["is_admin"]) for t in items],
+        "canCreateStandard": ctx["is_admin"],
+        "teams": [
+            {"id": tid, "name": ctx["team_names"].get(tid, tid)} for tid in ctx["team_ids"]
+        ],
+    }
+
+
+@app.post("/templates")
+async def create_template_api(request: Request) -> Any:
+    err, ctx = _verify_ctx(request)
+    if err:
+        return err
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    tbody = (body.get("body") or "").strip()
+    if not title or not tbody:
+        return JSONResponse(
+            status_code=400, content={"error": "タイトルと本文を入力してください。"}
+        )
+    share = (body.get("share") or "personal").strip().lower()
+    target = (body.get("target") or "content").strip().lower()
+    is_standard = False
+    shared_teams: list[str] = []
+    if share == "standard":
+        if not ctx["is_admin"]:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "標準テンプレートの作成はシステム管理者のみ可能です。"},
+            )
+        is_standard = True
+    elif share == "public":
+        shared_teams = ["public"]
+    elif share == "team":
+        team = (body.get("share_team") or "").strip()
+        if not team:
+            return JSONResponse(
+                status_code=400, content={"error": "共有先チームを指定してください。"}
+            )
+        # 自分が所属していないチームへは共有できない（管理者は例外）
+        if not ctx["is_admin"] and team not in set(ctx["team_ids"]):
+            label = ctx["team_names"].get(team, team)
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": (
+                        f"チーム「{label}」に所属していないため共有できません"
+                        "（所属チーム、または個人／全体公開を選択してください）。"
+                    )
+                },
+            )
+        shared_teams = [team]
+    tid = catalog.create_template(
+        title=title,
+        body=tbody,
+        owner_user=ctx["user_id"],
+        target=target,
+        shared_groups=shared_teams,
+        is_standard=is_standard,
+    )
+    t = catalog.get_template(tid)
+    return {"template": _template_public(t, ctx["user_id"], ctx["is_admin"])}
+
+
+@app.delete("/templates/{template_id}")
+async def delete_template_api(template_id: str, request: Request) -> Any:
+    err, ctx = _verify_ctx(request)
+    if err:
+        return err
+    t = catalog.get_template(template_id)
+    if not t:
+        return JSONResponse(
+            status_code=404, content={"error": "指定 ID のテンプレートが見つかりません。"}
+        )
+    if not catalog.can_delete(t, ctx["user_id"], ctx["is_admin"]):
+        return JSONResponse(
+            status_code=403, content={"error": "このテンプレートを削除する権限がありません。"}
+        )
+    catalog.delete_template(template_id)
+    return {"status": "ok"}
+
+
+@app.post("/templates/{template_id}/render")
+async def render_template_api(template_id: str, request: Request) -> Any:
+    err, ctx = _verify_ctx(request)
+    if err:
+        return err
+    t = catalog.get_template(template_id)
+    if not t:
+        return JSONResponse(
+            status_code=404, content={"error": "指定 ID のテンプレートが見つかりません。"}
+        )
+    visible_ids = {
+        x["id"] for x in catalog.list_visible(ctx["user_id"], ctx["team_ids"], ctx["is_admin"])
+    }
+    if template_id not in visible_ids:
+        return JSONResponse(
+            status_code=403, content={"error": "このテンプレートを利用する権限がありません。"}
+        )
+    body = await request.json()
+    raw_vars = body.get("variables") or {}
+    variables: dict[str, str] = {}
+    for k, v in raw_vars.items():
+        if isinstance(v, bool):
+            variables[str(k)] = "true" if v else "false"
+        elif isinstance(v, (str, int, float)):
+            variables[str(k)] = str(v)
+    filled, missing = catalog.substitute(t["body"], variables)
+    return {"filled": filled, "missing": missing, "target": t.get("target", "content")}
 
 
 def _render_list(items: list[dict[str, Any]]) -> str:

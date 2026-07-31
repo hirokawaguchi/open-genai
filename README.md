@@ -152,6 +152,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 - 改修: `packages/web/vite.config.ts` — コンテナ実行向けに `host`/ポーリング監視を設定
 - 改修: `src/features/exapps/hooks/useGenUApps.ts` — クラウド依存の組み込み「文字起こし」をメニューから除外（ローカル Whisper の AI アプリで代替）
 - 追加: AI アプリ ピン留め（利用者ごと・カテゴリ横断・上限8件）— トップページに「ピン留め」セクションを表示。`open-genai/` 拡張 + `LandingPage`/`ExAppList`/`ExAppListCard` の最小パッチ（[`OPENGENAI_PATCHES.md`](genai-web/OPENGENAI_PATCHES.md) 参照）
+- 追加: プロンプトテンプレート専用ページ（`/prompts`）— 汎用 exApp フォームに代えて、一覧の検索・区分バッジ・変数入力＋ライブプレビュー・「チャットで開く」を 1 画面で操作。`open-genai/prompt-templates/` + `prompt-app` 構造化 REST + backend `/prompts/*` プロキシ。旧 `/apps/:teamId/prompt` は `/prompts` へリダイレクト（[`OPENGENAI_PATCHES.md`](genai-web/OPENGENAI_PATCHES.md) 参照）
 - 改修: `src/features/team-apps/utils/endpointUrl.ts` — AI アプリのエンドポイント URL 検証を `http` も許可（ローカルのコンテナ間通信 `http://dify-app:8004/invoke` 等のため。従来は `https` 必須）
 - 改修: `src/features/teams/components/DialogDeleteTeam.tsx` — チーム削除時に知識ベースも消える旨の警告を追加
 - 改修: 翻訳/ダイアグラム画面の説明文をローカル実態に合わせて修正
