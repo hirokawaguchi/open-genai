@@ -132,64 +132,79 @@ async def _user_groups(
     return names
 
 
-async def _list_users(inputs: dict[str, Any]) -> str:
-    """Keycloak の利用者一覧を Markdown 表で返す（読み取り専用）。"""
-    search = (inputs.get("search") or "").strip()
+def _coerce_limit(value: Any, default: int = 200) -> int:
     try:
-        limit = int(inputs.get("limit") or 200)
+        limit = int(value or default)
     except (TypeError, ValueError):
-        limit = 200
-    limit = max(1, min(limit, 1000))
+        limit = default
+    return max(1, min(limit, 1000))
 
+
+async def _collect_users(search: str, limit: int) -> tuple[list[dict[str, Any]], bool]:
+    """Keycloak から利用者を集めて構造化リストで返す。
+
+    戻り値: (利用者リスト, 上限に達したか)。各要素は
+    {id, username, email, name, groups[], enabled} を持つ。専用ページ(REST)と
+    従来の Markdown 一覧(/invoke) の共通ソースとして使う。
+    """
+    limit = _coerce_limit(limit)
     page_size = 100
+    raw: list[dict[str, Any]] = []
     users: list[dict[str, Any]] = []
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            token = await _admin_token(client)
-            first = 0
-            while len(users) < limit:
-                params: dict[str, Any] = {
-                    "first": first,
-                    "max": min(page_size, limit - len(users)),
-                }
-                if search:
-                    params["search"] = search
-                res = await client.get(
-                    f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users",
-                    params=params,
-                    headers=_auth_headers(token),
-                )
-                res.raise_for_status()
-                batch = res.json() or []
-                if not batch:
-                    break
-                users.extend(batch)
-                if len(batch) < params["max"]:
-                    break
-                first += len(batch)
+    async with httpx.AsyncClient(timeout=60) as client:
+        token = await _admin_token(client)
+        first = 0
+        while len(raw) < limit:
+            params: dict[str, Any] = {
+                "first": first,
+                "max": min(page_size, limit - len(raw)),
+            }
+            if search:
+                params["search"] = search
+            res = await client.get(
+                f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users",
+                params=params,
+                headers=_auth_headers(token),
+            )
+            res.raise_for_status()
+            batch = res.json() or []
+            if not batch:
+                break
+            raw.extend(batch)
+            if len(batch) < params["max"]:
+                break
+            first += len(batch)
 
-            rows: list[tuple[str, ...]] = []
-            for u in users:
-                uid = u.get("id") or ""
-                groups = await _user_groups(client, token, uid) if uid else []
-                name = " ".join(
-                    x
-                    for x in [
-                        (u.get("lastName") or "").strip(),
-                        (u.get("firstName") or "").strip(),
-                    ]
-                    if x
-                )
-                rows.append(
-                    (
-                        _md_cell(u.get("username")),
-                        _md_cell(u.get("email")),
-                        _md_cell(name),
-                        _md_cell(",".join(groups) if groups else "-"),
-                        "有効" if u.get("enabled", True) else "無効",
-                        _md_cell(uid[:8] + "…" if len(uid) > 8 else uid),
-                    )
-                )
+        for u in raw:
+            uid = u.get("id") or ""
+            groups = await _user_groups(client, token, uid) if uid else []
+            name = " ".join(
+                x
+                for x in [
+                    (u.get("lastName") or "").strip(),
+                    (u.get("firstName") or "").strip(),
+                ]
+                if x
+            )
+            users.append(
+                {
+                    "id": uid,
+                    "username": u.get("username") or "",
+                    "email": u.get("email") or "",
+                    "name": name,
+                    "groups": groups,
+                    "enabled": bool(u.get("enabled", True)),
+                }
+            )
+    return users, len(users) >= limit
+
+
+async def _list_users(inputs: dict[str, Any]) -> str:
+    """Keycloak の利用者一覧を Markdown 表で返す（読み取り専用・/invoke 後方互換）。"""
+    search = (inputs.get("search") or "").strip()
+    limit = _coerce_limit(inputs.get("limit"))
+    try:
+        users, limit_reached = await _collect_users(search, limit)
     except Exception as e:  # noqa: BLE001
         return f"[Keycloak への接続/認証に失敗しました] {e}"
 
@@ -199,16 +214,30 @@ async def _list_users(inputs: dict[str, Any]) -> str:
     lines = [
         title,
         "",
-        f"件数: **{len(rows)}**" + ("（上限に達しています）" if len(rows) >= limit else ""),
+        f"件数: **{len(users)}**" + ("（上限に達しています）" if limit_reached else ""),
         "",
         "| # | username | email | 氏名 | groups | 状態 | id |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    if not rows:
+    if not users:
         lines.append("| - | （該当なし） |  |  |  |  |  |")
     else:
-        for i, cols in enumerate(rows, 1):
-            lines.append(f"| {i} | " + " | ".join(cols) + " |")
+        for i, u in enumerate(users, 1):
+            uid = u["id"]
+            lines.append(
+                f"| {i} | "
+                + " | ".join(
+                    [
+                        _md_cell(u["username"]),
+                        _md_cell(u["email"]),
+                        _md_cell(u["name"]),
+                        _md_cell(",".join(u["groups"]) if u["groups"] else "-"),
+                        "有効" if u["enabled"] else "無効",
+                        _md_cell(uid[:8] + "…" if len(uid) > 8 else uid),
+                    ]
+                )
+                + " |"
+            )
     lines.append("")
     lines.append("> 読み取り専用です。作成・更新・削除は CSV のドライラン／適用を使ってください。")
     return "\n".join(lines)
@@ -286,26 +315,43 @@ async def _process(inputs: dict[str, Any]) -> str:
 
     # apply: Keycloak へ反映
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            token = await _admin_token(client)
-            for i, p in enumerate(plans, 1):
-                username = p["username"]
-                action = p["action"]
-                if p["error"]:
-                    lines.append(f"| {i} | {username} | {action} | スキップ | {p['error']} |")
-                    continue
-                try:
-                    existing = await _find_user(client, token, username)
-                    result, note = await _apply_one(client, token, p, existing)
-                except httpx.HTTPStatusError as e:
-                    result, note = "エラー", f"HTTP {e.response.status_code}"
-                except Exception as e:  # noqa: BLE001
-                    result, note = "エラー", str(e)
-                lines.append(f"| {i} | {username} | {action} | {result} | {note} |")
+        results = await _apply_plans(plans)
     except Exception as e:  # noqa: BLE001
         return f"[Keycloak への接続/認証に失敗しました] {e}"
-
+    for i, r in enumerate(results, 1):
+        lines.append(
+            f"| {i} | {r['username']} | {r['action']} | {r['result']} | {r['note']} |"
+        )
     return "\n".join(lines)
+
+
+async def _apply_plans(plans: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """計画を Keycloak へ反映し、行ごとの結果を構造化して返す。
+
+    Markdown レポート(/invoke) と REST(/users/apply) の共通ソース。
+    """
+    results: list[dict[str, str]] = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        token = await _admin_token(client)
+        for p in plans:
+            username = p["username"]
+            action = p["action"]
+            if p["error"]:
+                results.append(
+                    {"username": username, "action": action, "result": "スキップ", "note": p["error"]}
+                )
+                continue
+            try:
+                existing = await _find_user(client, token, username)
+                result, note = await _apply_one(client, token, p, existing)
+            except httpx.HTTPStatusError as e:
+                result, note = "エラー", f"HTTP {e.response.status_code}"
+            except Exception as e:  # noqa: BLE001
+                result, note = "エラー", str(e)
+            results.append(
+                {"username": username, "action": action, "result": result, "note": note}
+            )
+    return results
 
 
 async def _apply_one(
@@ -355,6 +401,114 @@ async def _apply_one(
     created = await _find_user(client, token, plan["username"])
     notes = await _apply_groups(client, token, created["id"], groups) if created else ["作成後IDの取得に失敗"]
     return "作成", "; ".join(notes)
+
+
+# ---------------------------------------------------------------------------
+# 専用ページ(REST) 用エンドポイント
+#
+# 源内の汎用 exApp フォーム（Markdown 出力）では一覧・ドライラン・適用の往復が
+# 直感的でないため、backend 経由の専用ページ(/admin/users)から叩く構造化 REST を提供する。
+# 認証は /invoke と同じ（api-key + 内部署名 + SystemAdminGroup）。
+# ---------------------------------------------------------------------------
+def _verify_admin(request: Request) -> JSONResponse | None:
+    h = request.headers
+    err = _check_key(h.get("x-api-key"))
+    if err:
+        return err
+    if not intauth.verify(
+        h.get("x-user-id"),
+        h.get("x-user-groups"),
+        h.get("x-scope"),
+        h.get("x-user-ts"),
+        h.get("x-user-sig"),
+        h.get("x-user-tags"),
+    ):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
+    if not _is_admin(h.get("x-user-groups")):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "この機能はシステム管理者のみが利用できます（SystemAdminGroup 所属が必要です）"},
+        )
+    return None
+
+
+def _plans_from_body(body: dict[str, Any]) -> tuple[JSONResponse | None, list[dict[str, Any]]]:
+    csv_text = (body.get("csv_text") or "").strip()
+    if not csv_text:
+        return (
+            JSONResponse(status_code=400, content={"error": "CSV が指定されていません（csv_text が空です）"}),
+            [],
+        )
+    rows = parse_csv(csv_text)
+    if not rows:
+        return (
+            JSONResponse(
+                status_code=400,
+                content={"error": "CSV から有効な行を読み取れませんでした。見出し行（username 等）を確認してください。"},
+            ),
+            [],
+        )
+    return None, plan_rows(rows)
+
+
+def _plan_public(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "username": p["username"],
+            "action": p["action"],
+            "groups": p["groups"],
+            "error": p["error"],
+        }
+        for p in plans
+    ]
+
+
+@app.get("/users")
+async def list_users_api(request: Request) -> Any:
+    err = _verify_admin(request)
+    if err:
+        return err
+    qp = request.query_params
+    search = (qp.get("search") or "").strip()
+    limit = _coerce_limit(qp.get("limit"))
+    try:
+        users, limit_reached = await _collect_users(search, limit)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
+    return {"users": users, "count": len(users), "limitReached": limit_reached}
+
+
+@app.post("/users/plan")
+async def plan_users_api(request: Request) -> Any:
+    err = _verify_admin(request)
+    if err:
+        return err
+    body = await request.json()
+    perr, plans = _plans_from_body(body)
+    if perr:
+        return perr
+    rows = _plan_public(plans)
+    return {"rows": rows, "count": len(rows)}
+
+
+@app.post("/users/apply")
+async def apply_users_api(request: Request) -> Any:
+    err = _verify_admin(request)
+    if err:
+        return err
+    body = await request.json()
+    perr, plans = _plans_from_body(body)
+    if perr:
+        return perr
+    try:
+        results = await _apply_plans(plans)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
+    return {"results": results, "count": len(results)}
 
 
 @app.post("/invoke")

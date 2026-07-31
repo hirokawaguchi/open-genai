@@ -33,6 +33,34 @@
 **推論/埋め込み/画像の各モデルを環境に応じて差し替えられる自由度**、**SAML・認証の堅牢化**が主軸。
 既定値は従来挙動を維持しており、開発・検証・既存本番への影響はない。
 
+### モデル利用制御・入力制限 専用ページ（管理者限定・管理系の第三弾）
+
+- モデル利用制御を専用ページ（`/admin/model-policy`）へ移行。制御の有効/無効、全ユーザー共通の許可モデル、チーム別の追加許可を、利用可能モデルのチェックボックスで直感的に設定できる（一覧にないモデルIDの追加も可能）
+- 入力制限（禁止ワード・機密情報）を専用ページ（`/admin/ngword`）へ移行。有効/無効・大文字小文字の区別・マイナンバー検査のトグル、禁止ワード・正規表現パターンの編集をフォームで行える（正規表現はクライアントでも検証、保存時に確認ダイアログ）
+- 設定保存型のため、読み取りは backend が読み取り専用で直接参照し、書き込みのみ単一ライターの `modelpolicy-app`（`POST /policy`）／`ngword-app`（`POST /rules`）へプロキシ（`backend` は `GET/POST /admin/model-policy`・`GET/POST /admin/ngword` で管理者権限を検証）
+- 旧 exApp 画面（`/apps/:teamId/modelpolicy`・`/apps/:teamId/ngword`）は各専用ページへリダイレクト。`/schema`・`/invoke` は後方互換で維持
+
+### 利用者一括管理 専用ページ（管理者限定・管理系の第二弾）
+
+- 管理者向けの利用者一括管理を汎用 exApp フォームから専用ページ（`/admin/users`）へ移行。「利用者一覧（検索・件数指定）」と「CSV一括処理（ドライラン → 確認ダイアログ → 適用）」をタブで操作でき、ドライラン結果・適用結果を表で確認できる
+- 更新系のため `usermgmt-app` に構造化 REST（`GET /users`、`POST /users/plan`、`POST /users/apply`）を追加。`backend` は `/admin/users`(/plan,/apply) として管理者権限を検証（403）のうえ HMAC 署名付きでプロキシ
+- CSV はファイル読み込み／貼り付けの両対応。password 列を含むため取り扱い注意を明記
+- 旧 exApp 画面（`/apps/:teamId/usermgmt`）は `/admin/users` へリダイレクト。`/invoke`（Markdown 出力）は後方互換で維持
+
+### 監査ログ専用ページ（管理者限定・管理系の第一弾）
+
+- 管理者向けの監査ログ参照を汎用 exApp フォームから専用ページ（`/admin/audit`）へ移行。ユーザーID・アクション種別・キーワード・期間（JST）・表示件数での絞り込み、テーブル表示（日時は JST 表示）、ページング、行ごとの入力/出力全文表示、JSONL エクスポートを 1 画面で操作できる
+- backend の既存 API（`GET /admin/audit-logs`(/export)、`_is_system_admin` で 403 ガード）をそのまま利用。マイクロサービスや backend プロキシの追加は不要
+- 入力・出力の全文はプレーンテキスト（`<pre>`）で表示し、React 既定エスケープで XSS を防止
+- 旧 exApp 画面（`/apps/:teamId/audit`）は `/admin/audit` へリダイレクト。旧 `audit-app` は無改修で維持
+
+### プロンプトテンプレート専用ページ
+
+- 汎用 exApp フォームの縦並び select をやめ、プロンプトテンプレートを専用ページ（`/prompts`）に。一覧の検索・区分バッジ（標準／共有／個人）、変数入力とライブプレビュー、「チャットで開く」までを 1 画面で操作できる
+- `prompt-app` に構造化 REST（`/templates` 一覧・作成・削除、`/templates/{id}/render`）を追加。`backend` は `/prompts/*` として HMAC 署名付きでプロキシ
+- チャットへは `navigate('/chat', { state })` で流し込むため、長文でも URL 長制限を受けない
+- 旧 exApp 画面（`/apps/:teamId/prompt`）は `/prompts` へリダイレクト。`/schema`・`/resolve`・`/invoke` は後方互換で維持
+
 ### 本番配信 / デプロイ
 
 - 本番 web を Vite dev server から**静的ビルド配信（`Dockerfile.prod` + nginx）**に変更し、dev/prod の差異を compose で吸収（#18）
