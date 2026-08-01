@@ -27,6 +27,19 @@
 
 ---
 
+## [Unreleased]
+
+### ナレッジ管理 専用ページ化
+
+汎用 exApp フォームの制約を解消するため、**タグ管理・ドキュメント登録・ドキュメント管理**を
+専用ページ `/knowledge` に統合。先頭のスコープセレクタで「共有ナレッジ（共通）」と
+「所属チーム」を切り替えて操作できる（ナレッジ検索は従来の `rag` exApp を維持）。
+
+- rag-app: 構造化 REST を追加（タグ CRUD／登録（ファイル base64・URL）／削除・タグ付け替え／URL 再取得／全消去）。既存 `/invoke` の action と書込ロジックを関数抽出して共用
+- backend: `/knowledge/*` 認可付きプロキシと `GET /knowledge/scopes` を追加。共有スコープの書込は管理者のみ、チームスコープはメンバー（`refresh`/`clear` は管理者）
+- genai-web: 専用ページ（`open-genai/knowledge/`）・ルート追加・旧管理 exApp（`rag-tags`/`rag-register`/`rag-maintain`）から `/knowledge` へのリダイレクト・ナビ導線
+- 後方互換: 既存 `/schema` `/invoke` はそのまま維持（各チームの管理系 RAG exApp は引き続き動作）
+
 ## [0.5.0] - 2026-07-30
 
 別環境での実運用で見つかった修正・改善をまとめて反映。**本番デプロイの整備**、

@@ -896,6 +896,143 @@ def _resolve_assign_tags(inputs: dict[str, Any]) -> list[str]:
     return assign
 
 
+# ---------------------------------------------------------------------------
+# ナレッジ書込ロジック（/invoke の action と構造化 REST /knowledge/* で共用）
+# 例外は ValueError（入力不正）/ KnowledgeError（業務エラー）で表す。
+# 権限（_can_manage / is_admin）とスコープ束縛は呼び出し側で担保する。
+# ---------------------------------------------------------------------------
+class KnowledgeError(Exception):
+    """ナレッジ操作の業務エラー（HTTP 400 相当）。"""
+
+
+async def _kb_create_tag(scope: str, name: str) -> str:
+    return tagstore.create_tag(scope, (name or "").strip())
+
+
+async def _kb_rename_tag(scope: str, old: str, new: str) -> dict[str, Any]:
+    old = (old or "").strip()
+    new = (new or "").strip()
+    tagstore.rename_tag(scope, old, new)
+    n_vec = await vectorstore.rename_tag_in_payloads(scope, old, new)
+    n_doc = docstore.rename_tag(scope, old, new)
+    n_url = urlstore.rename_tag(scope, old, new)
+    return {"tag": new, "old": old, "vector": n_vec, "docs": n_doc, "urls": n_url}
+
+
+async def _kb_delete_tag(scope: str, name: str) -> None:
+    name = (name or "").strip()
+    used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(scope)}
+    if used.get(name, 0) > 0:
+        raise KnowledgeError(
+            f"タグ「{name}」はドキュメントに付与されているため削除できません。"
+            "先にタグ付け替えしてください。"
+        )
+    tagstore.delete_tag(scope, name)
+
+
+async def _kb_register_files(
+    scope: str, files: list[dict[str, str]], tags: list[str], mode: str
+) -> list[dict[str, Any]]:
+    """ファイル群を取り込む。mode='tree'（構造化）/'fulltext'（簡易・全文）。"""
+    if tags:
+        tagstore.ensure_tags(scope, tags)
+    results: list[dict[str, Any]] = []
+    for f in files:
+        filename = f.get("filename") or "uploaded"
+        media_type = f.get("media_type") or f.get("type") or ""
+        content_b64 = f.get("content") or ""
+        if mode == "fulltext":
+            info = await tree_ingest.ingest_fulltext_file(
+                scope=scope,
+                filename=filename,
+                media_type=media_type,
+                content_b64=content_b64,
+                tags=tags,
+                also_vector=True,
+            )
+        else:
+            info = await tree_ingest.ingest_structured_file(
+                scope=scope,
+                filename=filename,
+                media_type=media_type,
+                content_b64=content_b64,
+                tags=tags,
+                also_vector=True,
+            )
+        results.append(info)
+    return results
+
+
+async def _kb_register_url(scope: str, url: str, tags: list[str]) -> dict[str, Any]:
+    url = (url or "").strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise KnowledgeError("http(s):// で始まる URL を指定してください。")
+    if tags:
+        tagstore.ensure_tags(scope, tags)
+    added, content_hash, title = await ingest_url(scope, url, tags)
+    if added == 0 and not content_hash:
+        raise KnowledgeError(f"URL から本文を抽出できませんでした: {url}")
+    urlstore.add_url(scope, url, tags, title)
+    urlstore.mark_fetched(scope, url, content_hash, title)
+    return {"url": url, "title": title, "added_chunks": added}
+
+
+async def _kb_delete_source(scope: str, source: str) -> None:
+    source = (source or "").strip()
+    if not source:
+        raise KnowledgeError("削除するドキュメントを指定してください。")
+    await vectorstore.delete_by_source(source, scope)
+    try:
+        docstore.delete_by_source(scope, source)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] delete_source: 構造化索引の削除に失敗: {e}")
+    if source.startswith("http://") or source.startswith("https://"):
+        urlstore.delete_url(scope, source)
+
+
+async def _kb_retag_source(scope: str, source: str, tags: list[str]) -> None:
+    source = (source or "").strip()
+    if not source:
+        raise KnowledgeError("対象ドキュメントを指定してください。")
+    if not tags:
+        raise KnowledgeError("付け替えるタグを1つ以上指定してください。")
+    tagstore.ensure_tags(scope, tags)
+    await vectorstore.set_tags_by_source(scope, source, tags)
+    docstore.set_tags(scope, source, tags)
+    if source.startswith("http://") or source.startswith("https://"):
+        urlstore.set_tags(scope, source, tags)
+
+
+async def _kb_delete_url(scope: str, url: str) -> None:
+    url = (url or "").strip()
+    if not url:
+        raise KnowledgeError("削除する URL を指定してください。")
+    await vectorstore.delete_by_source(url, scope)
+    try:
+        docstore.delete_by_source(scope, url)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] delete_url: 構造化索引の削除に失敗: {e}")
+    urlstore.delete_url(scope, url)
+
+
+async def _kb_refresh_urls(scope: str) -> None:
+    await _refresh_urls(urlstore.scope_urls(scope))
+
+
+async def _kb_clear(scope: str) -> dict[str, int]:
+    await vectorstore.clear(scope)
+    removed = urlstore.delete_scope(scope)
+    try:
+        tree_removed = docstore.delete_scope(scope)
+    except Exception:  # noqa: BLE001
+        tree_removed = 0
+    try:
+        tag_removed = tagstore.delete_scope(scope)
+    except Exception:  # noqa: BLE001
+        tag_removed = 0
+    return {"urls": removed, "docs": tree_removed, "tags": tag_removed}
+
+
 @app.post("/invoke")
 async def invoke(
     request: Request,
@@ -945,8 +1082,8 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジのタグ作成はシステム管理者のみ実行できます。"}
         try:
-            name = tagstore.create_tag(scope, (inputs.get("new_tag") or "").strip())
-        except ValueError as e:
+            name = await _kb_create_tag(scope, inputs.get("new_tag") or "")
+        except (ValueError, KnowledgeError) as e:
             return {"outputs": str(e)}
         return {"outputs": f"タグ「{name}」を作成しました。"}
 
@@ -967,18 +1104,14 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジのタグ変更はシステム管理者のみ実行できます。"}
         old = (inputs.get("tag") or "").strip()
-        new = (inputs.get("rename_to") or "").strip()
         try:
-            tagstore.rename_tag(scope, old, new)
-        except ValueError as e:
+            r = await _kb_rename_tag(scope, old, inputs.get("rename_to") or "")
+        except (ValueError, KnowledgeError) as e:
             return {"outputs": str(e)}
-        n_vec = await vectorstore.rename_tag_in_payloads(scope, old, new)
-        n_doc = docstore.rename_tag(scope, old, new)
-        n_url = urlstore.rename_tag(scope, old, new)
         return {
             "outputs": (
-                f"タグ「{old}」を「{new}」に変更しました"
-                f"（ベクトル {n_vec} / 構造化 {n_doc} / URL {n_url}）。"
+                f"タグ「{r['old']}」を「{r['tag']}」に変更しました"
+                f"（ベクトル {r['vector']} / 構造化 {r['docs']} / URL {r['urls']}）。"
             )
         }
 
@@ -986,17 +1119,9 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジのタグ削除はシステム管理者のみ実行できます。"}
         name = (inputs.get("tag") or "").strip()
-        used = {r["tag"]: r["chunks"] for r in await vectorstore.list_tags(scope)}
-        if used.get(name, 0) > 0:
-            return {
-                "outputs": (
-                    f"タグ「{name}」はドキュメントに付与されているため削除できません。"
-                    "先に「ドキュメント管理」でタグ付け替えしてください。"
-                )
-            }
         try:
-            tagstore.delete_tag(scope, name)
-        except ValueError as e:
+            await _kb_delete_tag(scope, name)
+        except (ValueError, KnowledgeError) as e:
             return {"outputs": str(e)}
         return {"outputs": f"タグ「{name}」を削除しました。"}
 
@@ -1005,33 +1130,22 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
         assign = _resolve_assign_tags(inputs)
-        if assign:
-            tagstore.ensure_tags(scope, assign)
         files = _iter_uploaded_files(inputs)
         if not files:
             return {"outputs": "登録するドキュメントを添付してください。"}
-        lines: list[str] = []
-        total_chunks = 0
-        for f in files:
-            try:
-                info = await tree_ingest.ingest_fulltext_file(
-                    scope=scope,
-                    filename=f["filename"],
-                    media_type=f.get("media_type") or "",
-                    content_b64=f["content"],
-                    tags=assign,
-                    also_vector=True,
-                )
-            except DocExtractError as e:
-                return {"outputs": f"ドキュメント登録（簡易）に失敗しました: {e}"}
-            except Exception as e:  # noqa: BLE001
-                return {"outputs": f"ドキュメント登録（簡易）でエラーが発生しました: {e}"}
-            total_chunks += int(info.get("vector_chunks") or 0)
-            lines.append(
-                f"- {info['source']}（doc_id=`{info['doc_id']}`, "
-                f"{info['page_count']}ページ / {info['char_count']}文字 / "
-                f"ベクトル {info['vector_chunks']}チャンク）"
-            )
+        try:
+            infos = await _kb_register_files(scope, files, assign, "fulltext")
+        except DocExtractError as e:
+            return {"outputs": f"ドキュメント登録（簡易）に失敗しました: {e}"}
+        except Exception as e:  # noqa: BLE001
+            return {"outputs": f"ドキュメント登録（簡易）でエラーが発生しました: {e}"}
+        total_chunks = sum(int(i.get("vector_chunks") or 0) for i in infos)
+        lines = [
+            f"- {info['source']}（doc_id=`{info['doc_id']}`, "
+            f"{info['page_count']}ページ / {info['char_count']}文字 / "
+            f"ベクトル {info['vector_chunks']}チャンク）"
+            for info in infos
+        ]
         tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
         return {
             "outputs": (
@@ -1046,31 +1160,21 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
         assign = _resolve_assign_tags(inputs)
-        if assign:
-            tagstore.ensure_tags(scope, assign)
         files = _iter_uploaded_files(inputs)
         if not files:
             return {"outputs": "登録するドキュメントを添付してください。"}
-        lines: list[str] = []
-        for f in files:
-            try:
-                info = await tree_ingest.ingest_structured_file(
-                    scope=scope,
-                    filename=f["filename"],
-                    media_type=f.get("media_type") or "",
-                    content_b64=f["content"],
-                    tags=assign,
-                    also_vector=True,
-                )
-            except DocExtractError as e:
-                return {"outputs": f"ドキュメント登録（標準）に失敗しました: {e}"}
-            except Exception as e:  # noqa: BLE001
-                return {"outputs": f"ドキュメント登録（標準）でエラーが発生しました: {e}"}
-            lines.append(
-                f"- {info['source']}（doc_id=`{info['doc_id']}`, "
-                f"{info['page_count']}ページ / {info['node_count']}ノード / "
-                f"ベクトル {info['vector_chunks']}チャンク）"
-            )
+        try:
+            infos = await _kb_register_files(scope, files, assign, "tree")
+        except DocExtractError as e:
+            return {"outputs": f"ドキュメント登録（標準）に失敗しました: {e}"}
+        except Exception as e:  # noqa: BLE001
+            return {"outputs": f"ドキュメント登録（標準）でエラーが発生しました: {e}"}
+        lines = [
+            f"- {info['source']}（doc_id=`{info['doc_id']}`, "
+            f"{info['page_count']}ページ / {info['node_count']}ノード / "
+            f"ベクトル {info['vector_chunks']}チャンク）"
+            for info in infos
+        ]
         tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
         return {
             "outputs": (
@@ -1084,26 +1188,20 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジへの URL 登録はシステム管理者のみ実行できます。"}
         url = (inputs.get("new_url") or inputs.get("url") or "").strip()
-        if not url.startswith("http://") and not url.startswith("https://"):
-            return {"outputs": "http(s):// で始まる URL を指定してください。"}
         assign = _resolve_assign_tags(inputs)
-        if assign:
-            tagstore.ensure_tags(scope, assign)
         try:
-            added, content_hash, title = await ingest_url(scope, url, assign)
+            r = await _kb_register_url(scope, url, assign)
+        except KnowledgeError as e:
+            return {"outputs": str(e)}
         except httpx.HTTPError as e:
             return {"outputs": f"URL の取得に失敗しました: {e}"}
         except Exception as e:  # noqa: BLE001
             return {"outputs": f"URL の取り込みでエラーが発生しました: {e}"}
-        if added == 0 and not content_hash:
-            return {"outputs": f"URL から本文を抽出できませんでした: {url}"}
-        urlstore.add_url(scope, url, assign, title)
-        urlstore.mark_fetched(scope, url, content_hash, title)
         tag_note = f"タグ: {', '.join(assign)}" if assign else "タグなし（検索対象外）"
         return {
             "outputs": (
                 f"URL を登録しました（{tag_note}）。\n\n"
-                f"- {title or url}\n- {added} チャンク登録"
+                f"- {r['title'] or r['url']}\n- {r['added_chunks']} チャンク登録"
             )
         }
 
@@ -1123,20 +1221,16 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジの URL 削除はシステム管理者のみ実行できます。"}
         url = (inputs.get("url") or inputs.get("document") or "").strip()
-        if not url:
-            return {"outputs": "削除する URL を指定してください。"}
-        await vectorstore.delete_by_source(url, scope)
         try:
-            docstore.delete_by_source(scope, url)
-        except Exception as e:  # noqa: BLE001
-            print(f"[rag-app] delete_url: 構造化索引の削除に失敗: {e}")
-        urlstore.delete_url(scope, url)
+            await _kb_delete_url(scope, url)
+        except KnowledgeError as e:
+            return {"outputs": str(e)}
         return {"outputs": f"URL「{url}」をナレッジから削除しました。"}
 
     if action == "refresh_urls":
         if not is_admin:
             return {"outputs": "URL の再取り込みはシステム管理者のみ実行できます。"}
-        await _refresh_urls(urlstore.scope_urls(scope))
+        await _kb_refresh_urls(scope)
         return {"outputs": "このチームの登録済み URL を再取り込みしました（変更分のみ更新）。"}
 
     # ---- ドキュメント管理 ----
@@ -1219,16 +1313,11 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジのタグ付け替えはシステム管理者のみ実行できます。"}
         source = (inputs.get("document") or inputs.get("source") or "").strip()
-        if not source:
-            return {"outputs": "対象ドキュメントを指定してください。"}
         assign = _resolve_assign_tags(inputs)
-        if not assign:
-            return {"outputs": "付け替えるタグを1つ以上指定してください。"}
-        tagstore.ensure_tags(scope, assign)
-        await vectorstore.set_tags_by_source(scope, source, assign)
-        docstore.set_tags(scope, source, assign)
-        if source.startswith("http://") or source.startswith("https://"):
-            urlstore.set_tags(scope, source, assign)
+        try:
+            await _kb_retag_source(scope, source, assign)
+        except KnowledgeError as e:
+            return {"outputs": str(e)}
         return {
             "outputs": (
                 f"「{source}」のタグを更新しました: {', '.join(assign)}"
@@ -1239,31 +1328,17 @@ async def invoke(
         if not _can_manage(scope, is_admin):
             return {"outputs": "共有ナレッジのドキュメント削除はシステム管理者のみ実行できます。"}
         source = (inputs.get("document") or inputs.get("source") or "").strip()
-        if not source:
-            return {"outputs": "削除するドキュメントを指定してください。"}
-        await vectorstore.delete_by_source(source, scope)
         try:
-            docstore.delete_by_source(scope, source)
-        except Exception as e:  # noqa: BLE001
-            print(f"[rag-app] delete_source: 構造化索引の削除に失敗: {e}")
-        if source.startswith("http://") or source.startswith("https://"):
-            urlstore.delete_url(scope, source)
+            await _kb_delete_source(scope, source)
+        except KnowledgeError as e:
+            return {"outputs": str(e)}
         return {"outputs": f"ドキュメント「{source}」をナレッジから削除しました。"}
 
     if action == "clear":
         if not is_admin:
             return {"outputs": "この操作はシステム管理者のみ実行できます。"}
-        await vectorstore.clear(scope)
-        removed = urlstore.delete_scope(scope)
-        try:
-            tree_removed = docstore.delete_scope(scope)
-        except Exception:  # noqa: BLE001
-            tree_removed = 0
-        try:
-            tag_removed = tagstore.delete_scope(scope)
-        except Exception:  # noqa: BLE001
-            tag_removed = 0
-        note = f"（URL {removed} / 構造化 {tree_removed} / タグ {tag_removed}）"
+        r = await _kb_clear(scope)
+        note = f"（URL {r['urls']} / 構造化 {r['docs']} / タグ {r['tags']}）"
         return {"outputs": f"このチームのナレッジを全消去しました{note}。"}
 
     # ---- 通常の質問応答 ----
@@ -1331,3 +1406,309 @@ async def invoke(
             "trace": result_nodes.get("trace"),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# 構造化 REST（専用ページ /knowledge 用）。すべて backend の署名付きプロキシ経由。
+# 認証: API キー + 内部署名（x-user-*）。権限: 共有(common)書込は管理者のみ、
+# チームスコープはメンバー（backend が membership を保証）。書込は _kb_* を共用。
+# ---------------------------------------------------------------------------
+_FORBIDDEN_MANAGE = {"error": "共有ナレッジの管理はシステム管理者のみ実行できます。"}
+_FORBIDDEN_ADMIN = {"error": "この操作はシステム管理者のみ実行できます。"}
+
+
+async def _kb_rest_auth(
+    request: Request,
+    x_api_key: str | None,
+    x_user_id: str | None,
+    x_user_groups: str | None,
+    x_scope: str | None,
+    x_user_ts: str | None,
+    x_user_sig: str | None,
+    x_user_tags: str | None,
+) -> tuple[str, bool, dict[str, Any], JSONResponse | None]:
+    """署名検証して (scope, is_admin, body, error) を返す。"""
+    scope, err = _auth_scoped(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return "", False, {}, err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    return scope or DEFAULT_SCOPE, _is_admin(x_user_groups), body, None
+
+
+@app.post("/knowledge/tags")
+async def api_create_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    try:
+        name = await _kb_create_tag(scope, body.get("tag") or body.get("new_tag") or "")
+    except (ValueError, KnowledgeError) as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "tag": name, "scope": scope}
+
+
+@app.post("/knowledge/tags/rename")
+async def api_rename_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    try:
+        r = await _kb_rename_tag(scope, body.get("tag") or "", body.get("rename_to") or "")
+    except (ValueError, KnowledgeError) as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, **r}
+
+
+@app.post("/knowledge/tags/delete")
+async def api_delete_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    name = (body.get("tag") or "").strip()
+    try:
+        await _kb_delete_tag(scope, name)
+    except (ValueError, KnowledgeError) as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "tag": name}
+
+
+@app.post("/knowledge/register")
+async def api_register(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    """ファイル登録。body: {mode: tree|fulltext, tags: [...], files: [{filename, content, media_type}]}"""
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    mode = (body.get("mode") or "tree").strip().lower()
+    if mode not in ("tree", "fulltext"):
+        mode = "tree"
+    tags = _parse_tags(body.get("tags"))
+    files = [
+        {
+            "filename": f.get("filename") or "uploaded",
+            "content": f.get("content") or "",
+            "media_type": f.get("media_type") or f.get("type") or "",
+        }
+        for f in (body.get("files") or [])
+        if f.get("content")
+    ]
+    if not files:
+        return JSONResponse(status_code=400, content={"error": "登録するファイルを添付してください。"})
+    try:
+        infos = await _kb_register_files(scope, files, tags, mode)
+    except DocExtractError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "mode": mode, "documents": infos}
+
+
+@app.post("/knowledge/urls")
+async def api_register_url(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    tags = _parse_tags(body.get("tags"))
+    try:
+        r = await _kb_register_url(scope, body.get("url") or "", tags)
+    except KnowledgeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except httpx.HTTPError as e:
+        return JSONResponse(status_code=400, content={"error": f"URL の取得に失敗しました: {e}"})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"ok": True, "scope": scope, **r}
+
+
+@app.post("/knowledge/urls/delete")
+async def api_delete_url(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    url = (body.get("url") or "").strip()
+    try:
+        await _kb_delete_url(scope, url)
+    except KnowledgeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "url": url}
+
+
+@app.post("/knowledge/urls/refresh")
+async def api_refresh_urls(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, _body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not is_admin:
+        return JSONResponse(status_code=403, content=_FORBIDDEN_ADMIN)
+    await _kb_refresh_urls(scope)
+    return {"ok": True, "scope": scope}
+
+
+@app.post("/knowledge/docs/delete")
+async def api_delete_doc(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    source = (body.get("source") or body.get("document") or "").strip()
+    try:
+        await _kb_delete_source(scope, source)
+    except KnowledgeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "source": source}
+
+
+@app.post("/knowledge/docs/retag")
+async def api_retag_doc(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    source = (body.get("source") or body.get("document") or "").strip()
+    tags = _parse_tags(body.get("tags"))
+    try:
+        await _kb_retag_source(scope, source, tags)
+    except KnowledgeError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "source": source, "tags": tags}
+
+
+@app.post("/knowledge/clear")
+async def api_clear(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, _body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not is_admin:
+        return JSONResponse(status_code=403, content=_FORBIDDEN_ADMIN)
+    r = await _kb_clear(scope)
+    return {"ok": True, "scope": scope, **r}
