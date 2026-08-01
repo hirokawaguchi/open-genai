@@ -144,76 +144,16 @@ RAG_SEED: dict[str, Any] = {
         "すべて構造化済みならハイブリッド、非構造化を含む場合はベクトルを自動選択します。\n"
         "- **参照件数**: 多いほど広く探します（1〜10。全文モードでは文書単位）。\n\n"
         "## こんなときは\n\n"
-        "- ヒットしない: タグ付きで登録されているか、「ドキュメント登録」を確認。\n"
-        "- 資料の追加: 「ドキュメント登録」／分類は「タグ管理」。\n"
-        "- 一覧・削除・付け替え: 「ドキュメント管理」。\n"
+        "- ヒットしない: タグ付きで登録されているか、「ナレッジ管理」で確認。\n"
+        "- 資料の追加・分類・一覧・削除・タグ付け替え: アカウントメニューの"
+        "**「ナレッジ管理」**（専用ページ）で行います。\n"
     ),
     "copyable": False,
     "status": "published",
 }
 
-# 共有ナレッジ管理系（管理者限定）。teamId=COMMON、ADMIN_ONLY_EXAPP_IDS で制限。
-RAG_TAGS_SEED: dict[str, Any] = {
-    "exAppId": "rag-tags",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "タグ管理（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "tags"}',
-    "placeholder": "",
-    "description": "共有ナレッジのタグ（分類）を作成・一覧・改名・削除します（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "ナレッジの分類単位は**タグ**です（ナレッジ実体は作りません）。\n\n"
-        "- **新規作成**: 先にタグを作ってから資料を登録できます。\n"
-        "- **一覧 / 名称変更 / 削除**: 未使用タグのみ削除できます"
-        "（付与中のタグは「ドキュメント管理」で付け替えてから）。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
-
-RAG_REGISTER_SEED: dict[str, Any] = {
-    "exAppId": "rag-register",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "ドキュメント登録（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "register"}',
-    "placeholder": "",
-    "description": "共有ナレッジへファイル／URL を登録します（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "登録の種類を選び、必要ならタグを付けて実行します"
-        "（タグは任意。未付与の資料は登録できますが検索対象外です）。\n\n"
-        "- **ファイル（標準）**: 規程・マニュアル・議事録向け（ツリー＋ベクトル）。\n"
-        "- **ファイル（簡易）**: 短めの資料向け（全文＋ベクトル。ツリーなし）。\n"
-        "- **URL**: Web ページを取り込み（全文＋ベクトル／自動更新対象）。\n\n"
-        "タグはテキスト入力でも既存選択でも可。未登録名はその場で作成されます。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
-
-RAG_MAINTAIN_SEED: dict[str, Any] = {
-    "exAppId": "rag-maintain",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "ドキュメント管理（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "maintain"}',
-    "placeholder": "",
-    "description": "共有ナレッジの一覧・削除・タグ付け替えを行います（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "- **一覧**: タグ別に資料を確認（タグなしは検索対象外として表示）。\n"
-        "- **削除**: 対象を選んで削除。\n"
-        "- **タグ付け替え**: 既存資料のタグを置き換え。\n"
-        "- **全消去**: 破壊的操作（管理者のみ・確認あり）。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
+# 注: 共有ナレッジのタグ管理・ドキュメント登録・ドキュメント管理は、汎用 exApp を廃止し
+# 専用ページ /knowledge に統合済み（旧 rag-tags / rag-register / rag-maintain）。
 
 
 # 文字起こし(Whisper) AI アプリ
@@ -410,9 +350,6 @@ PROMPT_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-_RAG_ROLES = ("search", "tags", "register", "maintain")
-
-
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
         "exAppName": f"{team_name}のナレッジ検索",
@@ -427,48 +364,6 @@ def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     }
 
 
-def _team_rag_tags_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のタグ管理",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "tags"}',
-        "placeholder": "",
-        "description": f"「{team_name}」のタグ（分類）を作成・管理します。",
-        "howToUse": RAG_TAGS_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
-def _team_rag_register_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のドキュメント登録",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "register"}',
-        "placeholder": "",
-        "description": f"「{team_name}」へファイル／URL を登録します。",
-        "howToUse": RAG_REGISTER_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
-def _team_rag_maintain_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のドキュメント管理",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "maintain"}',
-        "placeholder": "",
-        "description": f"「{team_name}」の一覧・削除・タグ付け替えです。",
-        "howToUse": RAG_MAINTAIN_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
 def _rag_role_of(app: dict[str, Any]) -> str | None:
     try:
         cfg = json.loads(app.get("config") or "{}")
@@ -477,18 +372,12 @@ def _rag_role_of(app: dict[str, Any]) -> str | None:
     return cfg.get("rag_role")
 
 
-def _team_rag_app_for_role(role: str, team_name: str) -> dict[str, Any]:
-    if role == "search":
-        return _team_rag_search_app(team_name)
-    if role == "tags":
-        return _team_rag_tags_app(team_name)
-    if role == "register":
-        return _team_rag_register_app(team_name)
-    return _team_rag_maintain_app(team_name)
+def _ensure_team_rag_search() -> None:
+    """各チームに「ナレッジ検索」を1つだけ用意する（冪等）。
 
-
-def _ensure_team_rag_split() -> None:
-    """既存チームの RAG アプリを search/tags/register/maintain に分割・最新化する（冪等）。"""
+    タグ管理・ドキュメント登録・ドキュメント管理は専用ページ /knowledge に統合したため、
+    チームに残る旧管理系 RAG アプリ（tags/register/maintain・旧 manage 等）は削除する。
+    """
     for team in teams_store.list_teams():
         team_id = team["teamId"]
         if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
@@ -502,46 +391,27 @@ def _ensure_team_rag_split() -> None:
         if not apps:
             continue
 
-        by_role: dict[str, list[dict[str, Any]]] = {r: [] for r in _RAG_ROLES}
-        legacy: list[dict[str, Any]] = []
-        for a in apps:
-            role = _rag_role_of(a)
-            if role in by_role:
-                by_role[role].append(a)
-            else:
-                legacy.append(a)
+        search_apps = [a for a in apps if _rag_role_of(a) == "search"]
+        others = [a for a in apps if _rag_role_of(a) != "search"]
 
-        # 既存ロールは定義を最新化（先頭1件を残し重複削除）
-        for role, rows in by_role.items():
-            if not rows:
-                continue
+        if search_apps:
+            # 検索アプリを最新化し、重複・管理系（tags/register/maintain/旧 manage）は削除
             teams_store.update_exapp(
-                team_id, rows[0]["exAppId"], _team_rag_app_for_role(role, tname)
+                team_id, search_apps[0]["exAppId"], _team_rag_search_app(tname)
             )
-            for extra in rows[1:]:
+            for extra in search_apps[1:] + others:
                 teams_store.delete_exapp(team_id, extra["exAppId"])
-
-        # 旧 manage 等は不足ロールへ転用、余りは削除
-        for a in legacy:
-            missing = next((r for r in _RAG_ROLES if not by_role[r]), None)
-            if missing:
-                teams_store.update_exapp(
-                    team_id, a["exAppId"], _team_rag_app_for_role(missing, tname)
-                )
-                by_role[missing] = [a]
-            else:
-                teams_store.delete_exapp(team_id, a["exAppId"])
-
-        for role in _RAG_ROLES:
-            if not by_role[role]:
-                teams_store.create_exapp(team_id, _team_rag_app_for_role(role, tname))
+        else:
+            # 検索アプリが無ければ 1件を検索へ転用し、残りは削除
+            teams_store.update_exapp(
+                team_id, others[0]["exAppId"], _team_rag_search_app(tname)
+            )
+            for extra in others[1:]:
+                teams_store.delete_exapp(team_id, extra["exAppId"])
 
 
 EXAPP_SEEDS = [
     RAG_SEED,
-    RAG_TAGS_SEED,
-    RAG_REGISTER_SEED,
-    RAG_MAINTAIN_SEED,
     WHISPER_SEED,
     AUDIT_SEED,
     USERMGMT_SEED,
@@ -550,8 +420,15 @@ EXAPP_SEEDS = [
     PROMPT_SEED,
 ]
 
-# 源内 Web の汎用ページに統合したため exApp 登録を廃止した ID
-RETIRED_SEED_EXAPP_IDS = ["sd", "rag-manage"]
+# 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
+# ナレッジのタグ管理・登録・管理は専用ページ /knowledge に統合済み（検索 rag は維持）。
+RETIRED_SEED_EXAPP_IDS = [
+    "sd",
+    "rag-manage",
+    "rag-tags",
+    "rag-register",
+    "rag-maintain",
+]
 
 
 def _now_iso() -> str:
@@ -979,11 +856,12 @@ def _startup() -> None:
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
         teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
-    # 既存チームの RAG アプリを「検索」「管理」に分割・最新化（冪等）。
+    # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。
+    # 管理は専用ページ /knowledge に統合済み。
     try:
-        _ensure_team_rag_split()
+        _ensure_team_rag_search()
     except Exception as e:  # noqa: BLE001
-        print(f"[startup] チーム RAG の分割・最新化に失敗: {e}")
+        print(f"[startup] チーム RAG の整理に失敗: {e}")
     audit.start()
     objstore.start_retention_scheduler()
     os.makedirs(FILES_DIR, exist_ok=True)
@@ -2412,11 +2290,9 @@ async def create_team(request: Request) -> JSONResponse:
             status_code=400, content={"error": "teamName と teamAdminEmail は必須です"}
         )
     team = teams_store.create_team(team_name, admin_email)
-    # 新規チームに search/tags/register/maintain を自動登録
-    for role in _RAG_ROLES:
-        teams_store.create_exapp(
-            team["teamId"], _team_rag_app_for_role(role, team_name)
-        )
+    # 新規チームには「ナレッジ検索」のみ自動登録。
+    # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
+    teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
     return JSONResponse(content=team)
 
 

@@ -38,7 +38,8 @@
 - rag-app: 構造化 REST を追加（タグ CRUD／登録（ファイル base64・URL）／削除・タグ付け替え／URL 再取得／全消去）。既存 `/invoke` の action と書込ロジックを関数抽出して共用
 - backend: `/knowledge/*` 認可付きプロキシと `GET /knowledge/scopes` を追加。共有スコープの書込は管理者のみ、チームスコープはメンバー（`refresh`/`clear` は管理者）
 - genai-web: 専用ページ（`open-genai/knowledge/`）・ルート追加・旧管理 exApp（`rag-tags`/`rag-register`/`rag-maintain`）から `/knowledge` へのリダイレクト・ナビ導線
-- 後方互換: 既存 `/schema` `/invoke` はそのまま維持（各チームの管理系 RAG exApp は引き続き動作）
+- 旧管理系 exApp の廃止: 共通の `rag-tags`/`rag-register`/`rag-maintain` と各チームの「タグ管理／ドキュメント登録／ドキュメント管理」を **メニュー（AI アプリ一覧）から除去**。起動時に既存レコードを削除し、シード・新規チーム自動登録の対象からも外した（**ナレッジ検索 `rag` は維持**）。新規デプロイでも最初から表示されない
+- 後方互換: 既存 `/schema` `/invoke`（`rag_role` 分岐）は残置のため、万一の旧ピン留め URL もルートで `/knowledge` へ誘導
 
 ## [0.5.0] - 2026-07-30
 
