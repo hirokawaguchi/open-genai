@@ -8,6 +8,7 @@ import { GenerateDiagramPage } from '@/features/generate-diagram/GenerateDiagram
 import { GenerateImagePage } from '@/features/generate-image/GenerateImagePage';
 import { GenerateTextPage } from '@/features/generate-text/GenerateTextPage';
 import { LandingPage } from '@/features/landing/LandingPage';
+import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
 import { TeamAppCopyPage } from '@/features/team-apps/copy/TeamAppCopyPage';
 import { TeamAppCreatePage } from '@/features/team-apps/create/TeamAppCreatePage';
 import { TeamAppEditPage } from '@/features/team-apps/edit/TeamAppEditPage';
@@ -63,6 +64,12 @@ export const createRoutes = (): RouteObject[] => {
   const children: RouteObject[] = [
     { index: true, element: <LandingPage /> },
     { path: 'apps', element: <ExAppsPage /> },
+    // ナレッジ管理 専用ページ。旧 exApp（タグ/登録/管理）は /knowledge へ集約しリダイレクト。
+    // ナレッジ検索（rag）は従来どおり汎用 exApp を維持する。
+    { path: 'knowledge', element: <KnowledgePage /> },
+    { path: 'apps/:teamId/rag-tags', element: <Navigate to='/knowledge' replace /> },
+    { path: 'apps/:teamId/rag-register', element: <Navigate to='/knowledge' replace /> },
+    { path: 'apps/:teamId/rag-maintain', element: <Navigate to='/knowledge' replace /> },
     // プロンプトテンプレートは専用ページへ。旧 exApp URL（/apps/:teamId/prompt）は
     // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
     { path: 'prompts', element: <PromptTemplatesPage /> },

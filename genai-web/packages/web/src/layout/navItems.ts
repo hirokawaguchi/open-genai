@@ -7,6 +7,12 @@ import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 /** Open GENAI の文字起こしは Amazon Transcribe ではなく Whisper exApp */
 export const WHISPER_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/whisper`;
 
+/** ナレッジ管理 専用ページ。タグ/登録/管理の各 exApp を集約する。 */
+export const KNOWLEDGE_PATH = '/knowledge';
+
+/** ナレッジ管理 専用ページへ集約する（＝リダイレクトする）旧 exApp ID。検索(rag)は除く。 */
+const KNOWLEDGE_EXAPP_IDS = new Set(['rag-tags', 'rag-register', 'rag-maintain']);
+
 /** プロンプトテンプレートは汎用 exApp フォームではなく専用ページで提供する */
 export const PROMPT_TEMPLATES_PATH = '/prompts';
 
@@ -100,6 +106,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       description: '標準／共有テンプレートを選んでチャットへ',
     });
 
+    items.push({
+      label: 'ナレッジ管理',
+      to: KNOWLEDGE_PATH,
+      description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
+    });
+
     return items;
   }, [imageAvailable]);
 };
@@ -110,6 +122,10 @@ export const ALL_APPS_NAV_ITEM: NavLinkItem = {
 };
 
 export const pinnedAppHref = (item: PinnedAppItem): string => {
+  // タグ管理/ドキュメント登録/ドキュメント管理の各 exApp は専用ページへ集約
+  if (!item.app.isDefault && KNOWLEDGE_EXAPP_IDS.has(item.app.value)) {
+    return KNOWLEDGE_PATH;
+  }
   // プロンプトテンプレートは専用ページへ振り替える（汎用 exApp URL を使わない）
   if (item.app.value === PROMPT_EXAPP_ID) {
     return PROMPT_TEMPLATES_PATH;

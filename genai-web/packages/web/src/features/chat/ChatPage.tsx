@@ -6,7 +6,6 @@ import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { APP_TITLE } from '@/constants';
-import { ChatHints } from '@/features/chat/components/ChatHints';
 import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
 import { ChatInput } from '@/features/chat/components/ChatInput';
 import { ChatMessage } from '@/features/chat/components/ChatMessage';
@@ -202,6 +201,7 @@ export const ChatPage = () => {
             <ChatStickyHeader
               title={title}
               currentSystemContext={currentSystemContext}
+              showHints={isEmpty && !loadingMessages}
               onOpenNotificationDialog={() => setIsNotificationDialogOpen(true)}
               onOpenSystemContextDialog={() => setShowSystemContextDialog(true)}
               onOpenPromptListDialog={() => setShowPromptListDialog(true)}
@@ -213,12 +213,6 @@ export const ChatPage = () => {
               {loadingMessages && (
                 <div className='relative grid min-h-[50vh] w-full place-content-center'>
                   <ProgressIndicator isLarge={true} label='読み込み中...' />
-                </div>
-              )}
-
-              {isEmpty && !loadingMessages && (
-                <div className='w-full py-4'>
-                  <ChatHints />
                 </div>
               )}
 

@@ -29,6 +29,18 @@
 
 ## [Unreleased]
 
+### ナレッジ管理 専用ページ化
+
+汎用 exApp フォームの制約を解消するため、**タグ管理・ドキュメント登録・ドキュメント管理**を
+専用ページ `/knowledge` に統合。先頭のスコープセレクタで「共有ナレッジ（共通）」と
+「所属チーム」を切り替えて操作できる（ナレッジ検索は従来の `rag` exApp を維持）。
+
+- rag-app: 構造化 REST を追加（タグ CRUD／登録（ファイル base64・URL）／削除・タグ付け替え／URL 再取得／全消去）。既存 `/invoke` の action と書込ロジックを関数抽出して共用
+- backend: `/knowledge/*` 認可付きプロキシと `GET /knowledge/scopes` を追加。共有スコープの書込は管理者のみ、チームスコープはメンバー（`refresh`/`clear` は管理者）
+- genai-web: 専用ページ（`open-genai/knowledge/`）・ルート追加・旧管理 exApp（`rag-tags`/`rag-register`/`rag-maintain`）から `/knowledge` へのリダイレクト・ナビ導線
+- 旧管理系 exApp の廃止: 共通の `rag-tags`/`rag-register`/`rag-maintain` と各チームの「タグ管理／ドキュメント登録／ドキュメント管理」を **メニュー（AI アプリ一覧）から除去**。起動時に既知ロール（`tags`/`register`/`maintain`/旧 `manage`）のレコードのみ削除し、シード・新規チーム自動登録の対象からも外した（**ナレッジ検索 `rag` は維持**。独自 RAG exApp は削除しない）
+- 後方互換: 既存 `/schema` `/invoke`（`rag_role` 分岐）は残置のため、万一の旧ピン留め URL もルートで `/knowledge` へ誘導
+
 ### セキュリティ / ドキュメント
 
 - ナレッジ検索 MCP（`knowledge-mcp` `:8002/mcp`）が**無認証**で `scope`(teamId) を任意指定でき、到達できれば全チームのナレッジを読める点を明文化。dev `docker-compose.yml` に公開バインドを制御する `KNOWLEDGE_MCP_BIND`（既定 `0.0.0.0` で従来挙動）を追加し、`.env.example`・README・[docs/knowledge-mcp.md](docs/knowledge-mcp.md) に公開範囲の絞り方（loopback/gateway バインド・FW・認証付きリバプロ）を追記。挙動の既定値は不変で、既存環境への影響はない

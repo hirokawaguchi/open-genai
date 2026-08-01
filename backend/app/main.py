@@ -144,76 +144,16 @@ RAG_SEED: dict[str, Any] = {
         "すべて構造化済みならハイブリッド、非構造化を含む場合はベクトルを自動選択します。\n"
         "- **参照件数**: 多いほど広く探します（1〜10。全文モードでは文書単位）。\n\n"
         "## こんなときは\n\n"
-        "- ヒットしない: タグ付きで登録されているか、「ドキュメント登録」を確認。\n"
-        "- 資料の追加: 「ドキュメント登録」／分類は「タグ管理」。\n"
-        "- 一覧・削除・付け替え: 「ドキュメント管理」。\n"
+        "- ヒットしない: タグ付きで登録されているか、「ナレッジ管理」で確認。\n"
+        "- 資料の追加・分類・一覧・削除・タグ付け替え: アカウントメニューの"
+        "**「ナレッジ管理」**（専用ページ）で行います。\n"
     ),
     "copyable": False,
     "status": "published",
 }
 
-# 共有ナレッジ管理系（管理者限定）。teamId=COMMON、ADMIN_ONLY_EXAPP_IDS で制限。
-RAG_TAGS_SEED: dict[str, Any] = {
-    "exAppId": "rag-tags",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "タグ管理（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "tags"}',
-    "placeholder": "",
-    "description": "共有ナレッジのタグ（分類）を作成・一覧・改名・削除します（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "ナレッジの分類単位は**タグ**です（ナレッジ実体は作りません）。\n\n"
-        "- **新規作成**: 先にタグを作ってから資料を登録できます。\n"
-        "- **一覧 / 名称変更 / 削除**: 未使用タグのみ削除できます"
-        "（付与中のタグは「ドキュメント管理」で付け替えてから）。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
-
-RAG_REGISTER_SEED: dict[str, Any] = {
-    "exAppId": "rag-register",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "ドキュメント登録（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "register"}',
-    "placeholder": "",
-    "description": "共有ナレッジへファイル／URL を登録します（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "登録の種類を選び、必要ならタグを付けて実行します"
-        "（タグは任意。未付与の資料は登録できますが検索対象外です）。\n\n"
-        "- **ファイル（標準）**: 規程・マニュアル・議事録向け（ツリー＋ベクトル）。\n"
-        "- **ファイル（簡易）**: 短めの資料向け（全文＋ベクトル。ツリーなし）。\n"
-        "- **URL**: Web ページを取り込み（全文＋ベクトル／自動更新対象）。\n\n"
-        "タグはテキスト入力でも既存選択でも可。未登録名はその場で作成されます。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
-
-RAG_MAINTAIN_SEED: dict[str, Any] = {
-    "exAppId": "rag-maintain",
-    "teamId": COMMON_TEAM_ID,
-    "exAppName": "ドキュメント管理（管理者）",
-    "endpoint": RAG_APP_URL,
-    "apiKey": RAG_API_KEY,
-    "config": '{"dynamic_schema": true, "rag_role": "maintain"}',
-    "placeholder": "",
-    "description": "共有ナレッジの一覧・削除・タグ付け替えを行います（システム管理者のみ）。",
-    "howToUse": (
-        "## 使い方\n\n"
-        "- **一覧**: タグ別に資料を確認（タグなしは検索対象外として表示）。\n"
-        "- **削除**: 対象を選んで削除。\n"
-        "- **タグ付け替え**: 既存資料のタグを置き換え。\n"
-        "- **全消去**: 破壊的操作（管理者のみ・確認あり）。\n"
-    ),
-    "copyable": False,
-    "status": "published",
-}
+# 注: 共有ナレッジのタグ管理・ドキュメント登録・ドキュメント管理は、汎用 exApp を廃止し
+# 専用ページ /knowledge に統合済み（旧 rag-tags / rag-register / rag-maintain）。
 
 
 # 文字起こし(Whisper) AI アプリ
@@ -410,9 +350,6 @@ PROMPT_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-_RAG_ROLES = ("search", "tags", "register", "maintain")
-
-
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
         "exAppName": f"{team_name}のナレッジ検索",
@@ -427,48 +364,6 @@ def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     }
 
 
-def _team_rag_tags_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のタグ管理",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "tags"}',
-        "placeholder": "",
-        "description": f"「{team_name}」のタグ（分類）を作成・管理します。",
-        "howToUse": RAG_TAGS_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
-def _team_rag_register_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のドキュメント登録",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "register"}',
-        "placeholder": "",
-        "description": f"「{team_name}」へファイル／URL を登録します。",
-        "howToUse": RAG_REGISTER_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
-def _team_rag_maintain_app(team_name: str) -> dict[str, Any]:
-    return {
-        "exAppName": f"{team_name}のドキュメント管理",
-        "endpoint": RAG_APP_URL,
-        "apiKey": RAG_API_KEY,
-        "config": '{"dynamic_schema": true, "rag_role": "maintain"}',
-        "placeholder": "",
-        "description": f"「{team_name}」の一覧・削除・タグ付け替えです。",
-        "howToUse": RAG_MAINTAIN_SEED["howToUse"],
-        "copyable": False,
-        "status": "published",
-    }
-
-
 def _rag_role_of(app: dict[str, Any]) -> str | None:
     try:
         cfg = json.loads(app.get("config") or "{}")
@@ -477,18 +372,18 @@ def _rag_role_of(app: dict[str, Any]) -> str | None:
     return cfg.get("rag_role")
 
 
-def _team_rag_app_for_role(role: str, team_name: str) -> dict[str, Any]:
-    if role == "search":
-        return _team_rag_search_app(team_name)
-    if role == "tags":
-        return _team_rag_tags_app(team_name)
-    if role == "register":
-        return _team_rag_register_app(team_name)
-    return _team_rag_maintain_app(team_name)
+# 専用ページ /knowledge へ統合したため削除する旧管理系 RAG ロール。
+# 独自 exApp（未知ロール・rag_role なし）は誤削除しない。
+_RETIRED_RAG_ROLES = frozenset({"tags", "register", "maintain", "manage"})
 
 
-def _ensure_team_rag_split() -> None:
-    """既存チームの RAG アプリを search/tags/register/maintain に分割・最新化する（冪等）。"""
+def _ensure_team_rag_search() -> None:
+    """各チームに「ナレッジ検索」を1つだけ用意する（冪等）。
+
+    タグ管理・ドキュメント登録・ドキュメント管理は専用ページ /knowledge に統合したため、
+    既知の旧管理系ロール（tags/register/maintain/旧 manage）のみ削除する。
+    同じ RAG endpoint を指す独自 exApp は残す。
+    """
     for team in teams_store.list_teams():
         team_id = team["teamId"]
         if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
@@ -499,49 +394,27 @@ def _ensure_team_rag_split() -> None:
             for a in teams_store.list_team_exapps(team_id)
             if a.get("endpoint") == RAG_APP_URL
         ]
-        if not apps:
-            continue
 
-        by_role: dict[str, list[dict[str, Any]]] = {r: [] for r in _RAG_ROLES}
-        legacy: list[dict[str, Any]] = []
-        for a in apps:
-            role = _rag_role_of(a)
-            if role in by_role:
-                by_role[role].append(a)
-            else:
-                legacy.append(a)
+        search_apps = [a for a in apps if _rag_role_of(a) == "search"]
+        retired = [a for a in apps if _rag_role_of(a) in _RETIRED_RAG_ROLES]
 
-        # 既存ロールは定義を最新化（先頭1件を残し重複削除）
-        for role, rows in by_role.items():
-            if not rows:
-                continue
+        if search_apps:
+            # 検索アプリを最新化し、重複のみ削除
             teams_store.update_exapp(
-                team_id, rows[0]["exAppId"], _team_rag_app_for_role(role, tname)
+                team_id, search_apps[0]["exAppId"], _team_rag_search_app(tname)
             )
-            for extra in rows[1:]:
+            for extra in search_apps[1:]:
                 teams_store.delete_exapp(team_id, extra["exAppId"])
+        else:
+            # 検索が無ければ新規作成（独自/旧管理アプリを転用しない）
+            teams_store.create_exapp(team_id, _team_rag_search_app(tname))
 
-        # 旧 manage 等は不足ロールへ転用、余りは削除
-        for a in legacy:
-            missing = next((r for r in _RAG_ROLES if not by_role[r]), None)
-            if missing:
-                teams_store.update_exapp(
-                    team_id, a["exAppId"], _team_rag_app_for_role(missing, tname)
-                )
-                by_role[missing] = [a]
-            else:
-                teams_store.delete_exapp(team_id, a["exAppId"])
-
-        for role in _RAG_ROLES:
-            if not by_role[role]:
-                teams_store.create_exapp(team_id, _team_rag_app_for_role(role, tname))
+        for a in retired:
+            teams_store.delete_exapp(team_id, a["exAppId"])
 
 
 EXAPP_SEEDS = [
     RAG_SEED,
-    RAG_TAGS_SEED,
-    RAG_REGISTER_SEED,
-    RAG_MAINTAIN_SEED,
     WHISPER_SEED,
     AUDIT_SEED,
     USERMGMT_SEED,
@@ -550,8 +423,15 @@ EXAPP_SEEDS = [
     PROMPT_SEED,
 ]
 
-# 源内 Web の汎用ページに統合したため exApp 登録を廃止した ID
-RETIRED_SEED_EXAPP_IDS = ["sd", "rag-manage"]
+# 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
+# ナレッジのタグ管理・登録・管理は専用ページ /knowledge に統合済み（検索 rag は維持）。
+RETIRED_SEED_EXAPP_IDS = [
+    "sd",
+    "rag-manage",
+    "rag-tags",
+    "rag-register",
+    "rag-maintain",
+]
 
 
 def _now_iso() -> str:
@@ -979,11 +859,12 @@ def _startup() -> None:
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
         teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
-    # 既存チームの RAG アプリを「検索」「管理」に分割・最新化（冪等）。
+    # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。
+    # 管理は専用ページ /knowledge に統合済み。
     try:
-        _ensure_team_rag_split()
+        _ensure_team_rag_search()
     except Exception as e:  # noqa: BLE001
-        print(f"[startup] チーム RAG の分割・最新化に失敗: {e}")
+        print(f"[startup] チーム RAG の整理に失敗: {e}")
     audit.start()
     objstore.start_retention_scheduler()
     os.makedirs(FILES_DIR, exist_ok=True)
@@ -1728,6 +1609,264 @@ async def export_audit_logs(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# ナレッジ管理 専用ページ（/knowledge）用プロキシ
+# rag-app の構造化 REST へ、セッション認証 + スコープ別認可のうえプロキシする。
+# 認可: 共有(common)スコープの書込は管理者のみ、チームスコープはメンバー(or 管理者)。
+# refresh/clear は共有/チームとも管理者のみ（rag-app 側と整合）。
+# ---------------------------------------------------------------------------
+def _rag_base() -> str:
+    return RAG_APP_URL.rsplit("/invoke", 1)[0]
+
+
+def _knowledge_headers(claims: dict[str, Any], scope: str) -> dict[str, str]:
+    user_id = _user_id(claims)
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    return {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": scope,
+        **intauth.signed_headers(user_id, groups_str, scope, team_ids),
+        "Content-Type": "application/json",
+    }
+
+
+def _knowledge_authz(
+    claims: dict[str, Any], scope: str, *, write: bool = False, admin_only: bool = False
+) -> JSONResponse | None:
+    """スコープ別の認可。None なら許可、JSONResponse ならエラー。"""
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    scope = (scope or "").strip()
+    if not scope:
+        return JSONResponse(status_code=400, content={"error": "scope（teamId）が必要です"})
+    is_admin = _is_system_admin(claims)
+    if scope == COMMON_TEAM_ID:
+        # 共有ナレッジ: 読取は全認証ユーザー、書込・管理操作は管理者のみ
+        if (write or admin_only) and not is_admin:
+            return _forbidden("共有ナレッジの管理には管理者権限が必要です")
+        return None
+    # チームスコープ: メンバー(or 管理者)。refresh/clear 等は管理者のみ
+    if not is_admin and not teams_store.is_team_member(scope, user_id):
+        return _forbidden("このチームのナレッジを操作する権限がありません")
+    if admin_only and not is_admin:
+        return _forbidden("この操作には管理者権限が必要です")
+    return None
+
+
+async def _knowledge_get(
+    path: str, claims: dict[str, Any], scope: str, params: dict[str, str] | None = None
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(
+                f"{_rag_base()}{path}",
+                params=params or {},
+                headers=_knowledge_headers(claims, scope),
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"ナレッジサービスに接続できませんでした: {e}"}
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = {"error": "invalid response"}
+    return JSONResponse(status_code=res.status_code, content=data)
+
+
+async def _knowledge_post(
+    path: str, claims: dict[str, Any], scope: str, json_body: dict[str, Any]
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            res = await client.post(
+                f"{_rag_base()}{path}",
+                json=json_body,
+                headers=_knowledge_headers(claims, scope),
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"ナレッジサービスに接続できませんでした: {e}"}
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = {"error": "invalid response"}
+    return JSONResponse(status_code=res.status_code, content=data)
+
+
+@app.get("/knowledge/scopes")
+async def knowledge_scopes(request: Request) -> JSONResponse:
+    """操作可能なスコープ一覧（共有 + 所属チーム）。canManage で書込可否を示す。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    is_admin = _is_system_admin(claims)
+    scopes: list[dict[str, Any]] = [
+        {
+            "scope": COMMON_TEAM_ID,
+            "name": "共有ナレッジ（共通）",
+            "kind": "common",
+            "canManage": is_admin,
+        }
+    ]
+    for t in _member_teams(user_id):
+        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        scopes.append(
+            {
+                "scope": t["teamId"],
+                "name": t.get("teamName") or t["teamId"],
+                "kind": "team",
+                "canManage": True,
+            }
+        )
+    return JSONResponse(content={"scopes": scopes, "isSystemAdmin": is_admin})
+
+
+@app.get("/knowledge/tags")
+async def knowledge_list_tags(request: Request, scope: str = Query(default="")) -> JSONResponse:
+    claims = _claims_from_request(request)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    return await _knowledge_get("/knowledge/tags", claims, scope, {"scope": scope})
+
+
+@app.get("/knowledge/docs")
+async def knowledge_list_docs(
+    request: Request, scope: str = Query(default=""), tags: str = Query(default="")
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    params = {"scope": scope}
+    if tags:
+        params["tags"] = tags
+    return await _knowledge_get("/knowledge/docs", claims, scope, params)
+
+
+def _knowledge_scope_from_body(body: dict[str, Any]) -> str:
+    return (body.get("scope") or "").strip()
+
+
+@app.post("/knowledge/tags")
+async def knowledge_create_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags", claims, scope, body)
+
+
+@app.post("/knowledge/tags/rename")
+async def knowledge_rename_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags/rename", claims, scope, body)
+
+
+@app.post("/knowledge/tags/delete")
+async def knowledge_delete_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags/delete", claims, scope, body)
+
+
+@app.post("/knowledge/register")
+async def knowledge_register(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/register", claims, scope, body)
+
+
+@app.post("/knowledge/urls")
+async def knowledge_add_url(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls", claims, scope, body)
+
+
+@app.post("/knowledge/urls/delete")
+async def knowledge_delete_url(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls/delete", claims, scope, body)
+
+
+@app.post("/knowledge/urls/refresh")
+async def knowledge_refresh_urls(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, admin_only=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls/refresh", claims, scope, body)
+
+
+@app.post("/knowledge/docs/delete")
+async def knowledge_delete_doc(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/docs/delete", claims, scope, body)
+
+
+@app.post("/knowledge/docs/retag")
+async def knowledge_retag_doc(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/docs/retag", claims, scope, body)
+
+
+@app.post("/knowledge/clear")
+async def knowledge_clear(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, admin_only=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/clear", claims, scope, body)
+
+
+# ---------------------------------------------------------------------------
 # ファイル添付（クラウド版は S3 署名付き URL。ローカルではバックエンドに保存）
 # ---------------------------------------------------------------------------
 def _safe_path(key: str) -> str:
@@ -2455,11 +2594,9 @@ async def create_team(request: Request) -> JSONResponse:
             status_code=400, content={"error": "teamName と teamAdminEmail は必須です"}
         )
     team = teams_store.create_team(team_name, admin_email)
-    # 新規チームに search/tags/register/maintain を自動登録
-    for role in _RAG_ROLES:
-        teams_store.create_exapp(
-            team["teamId"], _team_rag_app_for_role(role, team_name)
-        )
+    # 新規チームには「ナレッジ検索」のみ自動登録。
+    # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
+    teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
     return JSONResponse(content=team)
 
 
