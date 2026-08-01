@@ -220,6 +220,56 @@ async def schema(
     return {"placeholder": _build_schema(_read_rules())}
 
 
+# ---------------------------------------------------------------------------
+# 専用ページ(REST) 用エンドポイント（書き込み）
+#
+# 源内の汎用 exApp フォームでは操作が直感的でないため、backend 経由の専用ページ
+# (/admin/ngword) から叩く構造化 REST を提供する。読み取りは backend が読み取り専用で
+# 直接参照するため、ここでは書き込み(POST)のみを提供する。
+# 認証は /invoke と同じ（api-key + 内部署名 + SystemAdminGroup）。
+# ---------------------------------------------------------------------------
+def _verify_admin(request: Request) -> JSONResponse | None:
+    h = request.headers
+    err = _check_key(h.get("x-api-key"))
+    if err:
+        return err
+    if not intauth.verify(
+        h.get("x-user-id"),
+        h.get("x-user-groups"),
+        h.get("x-scope"),
+        h.get("x-user-ts"),
+        h.get("x-user-sig"),
+        h.get("x-user-tags"),
+    ):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
+    if not _is_admin(h.get("x-user-groups")):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "この機能はシステム管理者のみが利用できます（SystemAdminGroup 所属が必要です）"},
+        )
+    return None
+
+
+@app.post("/rules")
+async def set_rules_api(request: Request) -> Any:
+    """構造化ルール（{rules:{enabled,case_sensitive,check_mynumber,words,patterns}}）を検証して保存する。"""
+    err = _verify_admin(request)
+    if err:
+        return err
+    body = await request.json()
+    raw = body.get("rules")
+    if raw is None:
+        return JSONResponse(status_code=400, content={"error": "rules が指定されていません"})
+    rules, verr = parse_and_validate(json.dumps(raw, ensure_ascii=False))
+    if verr:
+        return JSONResponse(status_code=400, content={"error": verr})
+    try:
+        _write_rules(rules)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": f"ルールの保存に失敗しました: {e}"})
+    return {"rules": rules}
+
+
 @app.post("/invoke")
 async def invoke(
     request: Request,
