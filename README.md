@@ -758,6 +758,13 @@ ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai,host.docker.internal
 SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 ```
 
+> **⚠️ セキュリティ（ナレッジ MCP の公開範囲）:** `knowledge-mcp`（`:8002/mcp`）は
+> **無認証**で、`scope`(teamId) を呼び出し側が任意指定できるため、到達できる者は
+> 全チームのナレッジを読めます。外部到達可能なホストでは `.env` の
+> `KNOWLEDGE_MCP_BIND`（既定 `0.0.0.0`）を `127.0.0.1`／gateway IP に絞る、
+> ファイアウォールで遮断する、認証付きリバースプロキシ越しにのみ公開する、の
+> いずれかで必ず保護してください（詳細: [docs/knowledge-mcp.md](docs/knowledge-mcp.md) の「セキュリティ / 公開範囲」）。
+
 源内登録の例（workflow / chat）:
 
 ```json
