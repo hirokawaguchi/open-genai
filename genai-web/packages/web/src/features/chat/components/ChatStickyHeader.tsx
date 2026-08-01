@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { ChatHints } from '@/features/chat/components/ChatHints';
 import { ChatNotificationDialogButton } from '@/features/chat/components/ChatNotificationDialogButton';
 import { ModelSelector } from '@/features/chat/components/ModelSelector';
 import { SystemPrompt } from '@/features/chat/components/SystemPrompt';
@@ -7,6 +8,8 @@ import { useStickyHeader } from '@/features/chat/hooks/useStickyHeader';
 type Props = {
   title: string;
   currentSystemContext: string;
+  /** 使い方アコーディオンをモデル選択の直下に表示する（新規/空チャット時） */
+  showHints?: boolean;
   onOpenNotificationDialog: () => void;
   onOpenSystemContextDialog: () => void;
   onOpenPromptListDialog: () => void;
@@ -16,6 +19,7 @@ export const ChatStickyHeader = (props: Props) => {
   const {
     title,
     currentSystemContext,
+    showHints = false,
     onOpenNotificationDialog,
     onOpenSystemContextDialog,
     onOpenPromptListDialog,
@@ -46,6 +50,7 @@ export const ChatStickyHeader = (props: Props) => {
             </div>
             <ChatNotificationDialogButton className='shrink-0' onClick={onOpenNotificationDialog} />
           </div>
+          {showHints && <ChatHints />}
           <SystemPrompt
             currentSystemContext={currentSystemContext}
             setShowSystemContextDialog={onOpenSystemContextDialog}

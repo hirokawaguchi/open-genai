@@ -115,6 +115,22 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `modelpolicy-app/app/main.py` | 構造化 REST（`POST /policy` 書き込み）。`/schema`・`/invoke` も後方互換で維持（読取は backend が直接参照） |
 | `ngword-app/app/main.py` | 構造化 REST（`POST /rules` 書き込み）。`/schema`・`/invoke` も後方互換で維持（読取は backend が直接参照） |
 
+### ナレッジ管理 専用ページ（Open GENAI 拡張）
+
+汎用 exApp フォームの制約を避け、**タグ管理・ドキュメント登録・ドキュメント管理**を
+`/knowledge` の 1 画面に統合。先頭のスコープセレクタで「共有ナレッジ（共通）」と
+「所属チーム」を切り替える。ナレッジ検索は従来どおり `rag` exApp を維持。
+
+| パス | 内容 |
+|------|------|
+| `packages/web/src/open-genai/knowledge/` | 専用ページ（`KnowledgePage` / `TagsSection` / `RegisterSection` / `DocsSection` / `TagPicker` / `Notice`）と SWR フック（`useKnowledge.ts`）・型（`types.ts`） |
+| `packages/web/src/routes.tsx` | `/knowledge` ルート追加。`apps/:teamId/rag-tags` `rag-register` `rag-maintain` を `/knowledge` へリダイレクト |
+| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替 |
+| `packages/web/src/layout/navItems.ts` | 「ナレッジ管理」を `useRecommendedNavItems`（おすすめ）に追加。ナレッジは全チーム共通の専用ページに統合されたため、独立/管理者メニューではなく「おすすめ」に配置（旧管理 exApp カード廃止に伴う入口の置換）。SideNav / MobileMenu(sidebar) / LandingPage の「おすすめ」に自動反映 |
+| `rag-app/app/main.py` | 構造化 REST（`/knowledge/tags` 系・`/register`・`/urls` 系・`/docs/delete`・`/docs/retag`・`/clear`）。既存 `/invoke` action と書込ロジックを共用（`_kb_*`） |
+| `backend/app/main.py` | `/knowledge/*` 認可付きプロキシ（`_proxy` 相当の `_knowledge_get/_knowledge_post`）。共有=管理者のみ書込、チーム=メンバー、`refresh/clear`=管理者。`GET /knowledge/scopes` |
+| `backend/app/main.py`（旧 exApp 廃止） | 共通 `rag-tags`/`rag-register`/`rag-maintain` を `EXAPP_SEEDS` から除外し `RETIRED_SEED_EXAPP_IDS` へ追加（起動時削除）。各チームは `_ensure_team_rag_search()` で「ナレッジ検索」1 つに整理し旧管理系を削除。`create_team` も検索のみ自動登録（管理は `/knowledge`） |
+
 ## 後方互換
 
 - `pinControl` 未指定時、`ExAppListCard` は従来どおり（源内単体でも動作）
