@@ -105,6 +105,14 @@ def _load() -> tuple[dict[str, Any], list[re.Pattern[str]]]:
     return _cache["rules"], _cache["compiled"]
 
 
+def get_rules() -> dict[str, Any]:
+    """現在のルールを返す（管理画面の表示用・都度読取）。
+
+    書き込みは ngword-app（単一ライター）が担うため、ここでは常に最新を読み取る。
+    """
+    return _read_rules()
+
+
 def check(text: str) -> tuple[bool, str | None]:
     """text が禁止語/機密パターンに該当するか。(blocked, 理由メッセージ)。"""
     if not text:
