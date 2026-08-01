@@ -7,6 +7,12 @@ import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 /** Open GENAI の文字起こしは Amazon Transcribe ではなく Whisper exApp */
 export const WHISPER_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/whisper`;
 
+/** ナレッジ管理 専用ページ。タグ/登録/管理の各 exApp を集約する。 */
+export const KNOWLEDGE_PATH = '/knowledge';
+
+/** ナレッジ管理 専用ページへ集約する（＝リダイレクトする）旧 exApp ID。検索(rag)は除く。 */
+const KNOWLEDGE_EXAPP_IDS = new Set(['rag-tags', 'rag-register', 'rag-maintain']);
+
 export type NavLinkItem = {
   label: string;
   to: string;
@@ -73,5 +79,10 @@ export const ALL_APPS_NAV_ITEM: NavLinkItem = {
   to: '/apps',
 };
 
-export const pinnedAppHref = (item: PinnedAppItem): string =>
-  item.app.isDefault ? `/${item.app.value}` : `/apps/${item.teamIdKey}/${item.app.value}`;
+export const pinnedAppHref = (item: PinnedAppItem): string => {
+  // タグ管理/ドキュメント登録/ドキュメント管理の各 exApp は専用ページへ集約
+  if (!item.app.isDefault && KNOWLEDGE_EXAPP_IDS.has(item.app.value)) {
+    return KNOWLEDGE_PATH;
+  }
+  return item.app.isDefault ? `/${item.app.value}` : `/apps/${item.teamIdKey}/${item.app.value}`;
+};

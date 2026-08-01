@@ -1617,6 +1617,264 @@ async def export_audit_logs(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# ナレッジ管理 専用ページ（/knowledge）用プロキシ
+# rag-app の構造化 REST へ、セッション認証 + スコープ別認可のうえプロキシする。
+# 認可: 共有(common)スコープの書込は管理者のみ、チームスコープはメンバー(or 管理者)。
+# refresh/clear は共有/チームとも管理者のみ（rag-app 側と整合）。
+# ---------------------------------------------------------------------------
+def _rag_base() -> str:
+    return RAG_APP_URL.rsplit("/invoke", 1)[0]
+
+
+def _knowledge_headers(claims: dict[str, Any], scope: str) -> dict[str, str]:
+    user_id = _user_id(claims)
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    return {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": scope,
+        **intauth.signed_headers(user_id, groups_str, scope, team_ids),
+        "Content-Type": "application/json",
+    }
+
+
+def _knowledge_authz(
+    claims: dict[str, Any], scope: str, *, write: bool = False, admin_only: bool = False
+) -> JSONResponse | None:
+    """スコープ別の認可。None なら許可、JSONResponse ならエラー。"""
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    scope = (scope or "").strip()
+    if not scope:
+        return JSONResponse(status_code=400, content={"error": "scope（teamId）が必要です"})
+    is_admin = _is_system_admin(claims)
+    if scope == COMMON_TEAM_ID:
+        # 共有ナレッジ: 読取は全認証ユーザー、書込・管理操作は管理者のみ
+        if (write or admin_only) and not is_admin:
+            return _forbidden("共有ナレッジの管理には管理者権限が必要です")
+        return None
+    # チームスコープ: メンバー(or 管理者)。refresh/clear 等は管理者のみ
+    if not is_admin and not teams_store.is_team_member(scope, user_id):
+        return _forbidden("このチームのナレッジを操作する権限がありません")
+    if admin_only and not is_admin:
+        return _forbidden("この操作には管理者権限が必要です")
+    return None
+
+
+async def _knowledge_get(
+    path: str, claims: dict[str, Any], scope: str, params: dict[str, str] | None = None
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(
+                f"{_rag_base()}{path}",
+                params=params or {},
+                headers=_knowledge_headers(claims, scope),
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"ナレッジサービスに接続できませんでした: {e}"}
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = {"error": "invalid response"}
+    return JSONResponse(status_code=res.status_code, content=data)
+
+
+async def _knowledge_post(
+    path: str, claims: dict[str, Any], scope: str, json_body: dict[str, Any]
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            res = await client.post(
+                f"{_rag_base()}{path}",
+                json=json_body,
+                headers=_knowledge_headers(claims, scope),
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"ナレッジサービスに接続できませんでした: {e}"}
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = {"error": "invalid response"}
+    return JSONResponse(status_code=res.status_code, content=data)
+
+
+@app.get("/knowledge/scopes")
+async def knowledge_scopes(request: Request) -> JSONResponse:
+    """操作可能なスコープ一覧（共有 + 所属チーム）。canManage で書込可否を示す。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    is_admin = _is_system_admin(claims)
+    scopes: list[dict[str, Any]] = [
+        {
+            "scope": COMMON_TEAM_ID,
+            "name": "共有ナレッジ（共通）",
+            "kind": "common",
+            "canManage": is_admin,
+        }
+    ]
+    for t in _member_teams(user_id):
+        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        scopes.append(
+            {
+                "scope": t["teamId"],
+                "name": t.get("teamName") or t["teamId"],
+                "kind": "team",
+                "canManage": True,
+            }
+        )
+    return JSONResponse(content={"scopes": scopes, "isSystemAdmin": is_admin})
+
+
+@app.get("/knowledge/tags")
+async def knowledge_list_tags(request: Request, scope: str = Query(default="")) -> JSONResponse:
+    claims = _claims_from_request(request)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    return await _knowledge_get("/knowledge/tags", claims, scope, {"scope": scope})
+
+
+@app.get("/knowledge/docs")
+async def knowledge_list_docs(
+    request: Request, scope: str = Query(default=""), tags: str = Query(default="")
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    params = {"scope": scope}
+    if tags:
+        params["tags"] = tags
+    return await _knowledge_get("/knowledge/docs", claims, scope, params)
+
+
+def _knowledge_scope_from_body(body: dict[str, Any]) -> str:
+    return (body.get("scope") or "").strip()
+
+
+@app.post("/knowledge/tags")
+async def knowledge_create_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags", claims, scope, body)
+
+
+@app.post("/knowledge/tags/rename")
+async def knowledge_rename_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags/rename", claims, scope, body)
+
+
+@app.post("/knowledge/tags/delete")
+async def knowledge_delete_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags/delete", claims, scope, body)
+
+
+@app.post("/knowledge/register")
+async def knowledge_register(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/register", claims, scope, body)
+
+
+@app.post("/knowledge/urls")
+async def knowledge_add_url(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls", claims, scope, body)
+
+
+@app.post("/knowledge/urls/delete")
+async def knowledge_delete_url(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls/delete", claims, scope, body)
+
+
+@app.post("/knowledge/urls/refresh")
+async def knowledge_refresh_urls(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, admin_only=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/urls/refresh", claims, scope, body)
+
+
+@app.post("/knowledge/docs/delete")
+async def knowledge_delete_doc(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/docs/delete", claims, scope, body)
+
+
+@app.post("/knowledge/docs/retag")
+async def knowledge_retag_doc(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/docs/retag", claims, scope, body)
+
+
+@app.post("/knowledge/clear")
+async def knowledge_clear(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, admin_only=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/clear", claims, scope, body)
+
+
+# ---------------------------------------------------------------------------
 # ファイル添付（クラウド版は S3 署名付き URL。ローカルではバックエンドに保存）
 # ---------------------------------------------------------------------------
 def _safe_path(key: str) -> str:

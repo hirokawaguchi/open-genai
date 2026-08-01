@@ -49,6 +49,36 @@ Dify や他サービスから **節／チャンク単位で取り出す**とき�
 | `POST` | `/knowledge/docs/{doc_id}/nodes` | 指定節の本文（body: `{"node_ids":[...]}`） |
 | `POST` | `/retrieve` | 共通 Retrieval |
 | `POST` | `/invoke` | 源内 exApp 用 Q&A |
+| `POST` | `/knowledge/tags` | タグ作成（専用ページ用） |
+| `POST` | `/knowledge/tags/rename` | タグ名変更 |
+| `POST` | `/knowledge/tags/delete` | タグ削除（未使用のみ） |
+| `POST` | `/knowledge/register` | ファイル登録（`mode=tree\|fulltext`、`files=base64`） |
+| `POST` | `/knowledge/urls` | URL 登録 |
+| `POST` | `/knowledge/urls/delete` | URL 削除 |
+| `POST` | `/knowledge/urls/refresh` | URL 再取得（管理者） |
+| `POST` | `/knowledge/docs/delete` | 文書削除（body: `{"source": ...}`） |
+| `POST` | `/knowledge/docs/retag` | 文書のタグ付け替え |
+| `POST` | `/knowledge/clear` | スコープ内の全消去（管理者） |
+
+## ナレッジ管理 REST（専用ページ用・書込）
+
+専用ページ `/knowledge` はこれらの書込 REST を使います。すべて **backend の認可付きプロキシ
+（`/knowledge/*`）経由**で呼ばれ、rag-app 側は **API キー ＋ 内部署名**を要求します（機械クライアントの
+署名なし直叩きは書込不可）。スコープ（`x-scope`）は署名対象で、改ざんできません。
+
+認可（backend 側）:
+
+| 操作 | 共有ナレッジ（common） | チームスコープ |
+| --- | --- | --- |
+| 読取（`GET /knowledge/tags`・`/docs`） | 全認証ユーザー | メンバー or 管理者 |
+| 書込（タグ CRUD・登録・削除・retag・URL） | **システム管理者のみ** | メンバー or 管理者 |
+| `urls/refresh`・`clear` | システム管理者のみ | **システム管理者のみ** |
+
+- rag-app 側でも `_can_manage(scope, is_admin)`（共有は管理者のみ／チームはメンバー可）で二重にゲートします。
+- `POST /knowledge/register` の `files` は `[{ "filename", "content"(base64), "media_type" }]`、`mode` は
+  `tree`（構造化）/ `fulltext`（全文）。対応拡張子は `.pdf,.docx,.xlsx,.txt,.md,.csv,.html,.json`。
+- 削除・タグ付け替えのキーは **`source`**（ファイル名 or URL）です。
+- `GET /knowledge/scopes`（backend）: 操作可能なスコープ一覧（共有 + 所属チーム、`canManage` 付き）を返します。
 
 ## `POST /retrieve`
 
