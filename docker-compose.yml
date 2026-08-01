@@ -195,7 +195,12 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8002
     ports:
-      - "${KNOWLEDGE_MCP_PORT:-8002}:8002"
+      # 注意: knowledge-mcp は無認証で、scope(teamId) は呼び出し側が任意指定できる。
+      # つまり :8002/mcp へ到達できれば全チームのナレッジを読み出せる。
+      # ホスト公開は Dify から host.docker.internal:8002 で利用するためのもの。
+      # 外部到達可能なホストでは KNOWLEDGE_MCP_BIND=127.0.0.1 等で絞るか、
+      # ファイアウォール／認証付きリバースプロキシで必ず保護すること。
+      - "${KNOWLEDGE_MCP_BIND:-0.0.0.0}:${KNOWLEDGE_MCP_PORT:-8002}:8002"
     depends_on:
       - rag-app
     restart: unless-stopped

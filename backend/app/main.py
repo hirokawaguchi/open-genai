@@ -372,11 +372,17 @@ def _rag_role_of(app: dict[str, Any]) -> str | None:
     return cfg.get("rag_role")
 
 
+# 専用ページ /knowledge へ統合したため削除する旧管理系 RAG ロール。
+# 独自 exApp（未知ロール・rag_role なし）は誤削除しない。
+_RETIRED_RAG_ROLES = frozenset({"tags", "register", "maintain", "manage"})
+
+
 def _ensure_team_rag_search() -> None:
     """各チームに「ナレッジ検索」を1つだけ用意する（冪等）。
 
     タグ管理・ドキュメント登録・ドキュメント管理は専用ページ /knowledge に統合したため、
-    チームに残る旧管理系 RAG アプリ（tags/register/maintain・旧 manage 等）は削除する。
+    既知の旧管理系ロール（tags/register/maintain/旧 manage）のみ削除する。
+    同じ RAG endpoint を指す独自 exApp は残す。
     """
     for team in teams_store.list_teams():
         team_id = team["teamId"]
@@ -388,26 +394,23 @@ def _ensure_team_rag_search() -> None:
             for a in teams_store.list_team_exapps(team_id)
             if a.get("endpoint") == RAG_APP_URL
         ]
-        if not apps:
-            continue
 
         search_apps = [a for a in apps if _rag_role_of(a) == "search"]
-        others = [a for a in apps if _rag_role_of(a) != "search"]
+        retired = [a for a in apps if _rag_role_of(a) in _RETIRED_RAG_ROLES]
 
         if search_apps:
-            # 検索アプリを最新化し、重複・管理系（tags/register/maintain/旧 manage）は削除
+            # 検索アプリを最新化し、重複のみ削除
             teams_store.update_exapp(
                 team_id, search_apps[0]["exAppId"], _team_rag_search_app(tname)
             )
-            for extra in search_apps[1:] + others:
+            for extra in search_apps[1:]:
                 teams_store.delete_exapp(team_id, extra["exAppId"])
         else:
-            # 検索アプリが無ければ 1件を検索へ転用し、残りは削除
-            teams_store.update_exapp(
-                team_id, others[0]["exAppId"], _team_rag_search_app(tname)
-            )
-            for extra in others[1:]:
-                teams_store.delete_exapp(team_id, extra["exAppId"])
+            # 検索が無ければ新規作成（独自/旧管理アプリを転用しない）
+            teams_store.create_exapp(team_id, _team_rag_search_app(tname))
+
+        for a in retired:
+            teams_store.delete_exapp(team_id, a["exAppId"])
 
 
 EXAPP_SEEDS = [
@@ -1463,16 +1466,127 @@ async def list_allowed_models(request: Request) -> JSONResponse:
     return JSONResponse(content={"unrestricted": False, "models": sorted(allowed)})
 
 
+# ---------------------------------------------------------------------------
+# 管理者限定サービス（modelpolicy / ngword）への書き込みプロキシ共通ヘルパ
+#
+# 読み取りは backend が読み取り専用で直接参照する。書き込みは各サービスが単一ライター
+# のため、管理者権限を検証（403）のうえ内部署名を付けて転送する。
+# ---------------------------------------------------------------------------
+def _admin_app_url(base_url: str, path: str) -> str:
+    if base_url.endswith("/invoke"):
+        base = base_url[: -len("/invoke")]
+    else:
+        base = base_url.rstrip("/")
+    return base + path
+
+
+def _admin_app_headers(
+    request: Request, forbid_msg: str
+) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden(forbid_msg), {}
+    user_id = _user_id(claims)
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": ADMIN_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, ADMIN_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_admin_app(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None,
+    label: str,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"{label}に接続できませんでした: {e}"}
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": f"{label}から不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+def _admin_teams_list() -> list[dict[str, str]]:
+    """設定対象チーム(id+name)の一覧。固定チーム(共通/管理者ツール)は除外。"""
+    try:
+        teams = [
+            t
+            for t in teams_store.list_teams()
+            if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+        ]
+    except Exception:  # noqa: BLE001
+        teams = []
+    return [{"id": t["teamId"], "name": t["teamName"]} for t in teams]
+
+
 @app.get("/admin/model-policy")
 async def get_model_policy(request: Request) -> JSONResponse:
-    """モデル利用ポリシーの現在値を返す（システム管理者限定・参照のみ）。
+    """モデル利用ポリシーの現在値＋設定に必要な選択肢を返す（システム管理者限定）。
 
-    設定変更は管理者限定 exApp「モデル利用制御」（modelpolicy-app）から行う。
+    書き込みは管理者限定サービス（modelpolicy-app）が担う。backend は読み取り専用で
+    ポリシーを参照し、専用ページ用に利用可能モデルID一覧と設定対象チームも併せて返す。
     """
     claims = _claims_from_request(request)
     if not _is_system_admin(claims):
         return _forbidden("モデル利用ポリシーの閲覧には管理者権限が必要です")
-    return JSONResponse(content=policy.get_policy())
+    return JSONResponse(
+        content={
+            "policy": policy.get_policy(),
+            "availableModels": await _available_models_cached(),
+            "teams": _admin_teams_list(),
+        }
+    )
+
+
+@app.post("/admin/model-policy")
+async def set_model_policy(request: Request) -> JSONResponse:
+    """モデル利用ポリシーを保存する（単一ライターの modelpolicy-app へプロキシ）。"""
+    err, headers = _admin_app_headers(request, "モデル利用ポリシーの変更には管理者権限が必要です")
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_admin_app(
+        "POST", _admin_app_url(MODELPOLICY_APP_URL, "/policy"), headers, body, "モデル利用制御サービス"
+    )
+
+
+@app.get("/admin/ngword")
+async def get_ngword_rules(request: Request) -> JSONResponse:
+    """入力制限ルールの現在値を返す（システム管理者限定・参照のみ）。"""
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("入力制限ルールの閲覧には管理者権限が必要です")
+    return JSONResponse(content={"rules": ngwords.get_rules()})
+
+
+@app.post("/admin/ngword")
+async def set_ngword_rules(request: Request) -> JSONResponse:
+    """入力制限ルールを保存する（単一ライターの ngword-app へプロキシ）。"""
+    err, headers = _admin_app_headers(request, "入力制限ルールの変更には管理者権限が必要です")
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_admin_app(
+        "POST", _admin_app_url(NGWORD_APP_URL, "/rules"), headers, body, "入力制限サービス"
+    )
 
 
 @app.get("/admin/audit-logs/export")
@@ -2145,6 +2259,196 @@ async def resolve_exapp_schema(request: Request) -> JSONResponse:
         return JSONResponse(content=res.json())
     except httpx.HTTPError:
         return JSONResponse(content={"placeholder": {}})
+
+
+# ---------------------------------------------------------------------------
+# プロンプトテンプレート専用ページ(/prompts) 用プロキシ
+#
+# 源内の汎用 exApp フォームでは操作が直感的でないため、専用ページを設ける。
+# 認証済み利用者の JWT を検証し、prompt-app の構造化 REST へ HMAC 署名付きで転送する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定（プロンプトは全ユーザー利用可）。
+# ---------------------------------------------------------------------------
+def _prompt_app_url(path: str) -> str:
+    if PROMPT_APP_URL.endswith("/invoke"):
+        base = PROMPT_APP_URL[: -len("/invoke")]
+    else:
+        base = PROMPT_APP_URL.rstrip("/")
+    return base + path
+
+
+def _prompt_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_prompt(
+    method: str, url: str, headers: dict[str, str], json_body: Any | None = None
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"プロンプトテンプレートサービスに接続できませんでした: {e}"},
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "プロンプトテンプレートサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/prompts/templates")
+async def list_prompt_templates(request: Request) -> JSONResponse:
+    err, headers = _prompt_headers(request)
+    if err:
+        return err
+    return await _proxy_prompt("GET", _prompt_app_url("/templates"), headers)
+
+
+@app.post("/prompts/templates")
+async def create_prompt_template(request: Request) -> JSONResponse:
+    err, headers = _prompt_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_prompt("POST", _prompt_app_url("/templates"), headers, body)
+
+
+@app.delete("/prompts/templates/{template_id}")
+async def delete_prompt_template(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _prompt_headers(request)
+    if err:
+        return err
+    return await _proxy_prompt(
+        "DELETE", _prompt_app_url(f"/templates/{template_id}"), headers
+    )
+
+
+@app.post("/prompts/templates/{template_id}/render")
+async def render_prompt_template(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _prompt_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_prompt(
+        "POST", _prompt_app_url(f"/templates/{template_id}/render"), headers, body
+    )
+
+
+# ---------------------------------------------------------------------------
+# 利用者一括管理 専用ページ(/admin/users) 用プロキシ（管理者限定）
+#
+# 汎用 exApp フォーム（Markdown 出力）では一覧・ドライラン・適用の往復がしづらいため、
+# 専用ページから叩く構造化 REST を usermgmt-app へ転送する。backend 側で管理者権限を
+# 検証（403）し、内部署名を付けて転送する。スコープは管理者専用チーム(ADMIN_TEAM_ID)。
+# ---------------------------------------------------------------------------
+def _usermgmt_app_url(path: str) -> str:
+    if USERMGMT_APP_URL.endswith("/invoke"):
+        base = USERMGMT_APP_URL[: -len("/invoke")]
+    else:
+        base = USERMGMT_APP_URL.rstrip("/")
+    return base + path
+
+
+def _usermgmt_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("利用者一括管理には管理者権限が必要です"), {}
+    user_id = _user_id(claims)
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": ADMIN_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, ADMIN_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_usermgmt(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    params: dict[str, Any] | None = None,
+) -> JSONResponse:
+    try:
+        # 適用は Keycloak への多数の書き込みを伴うため長めのタイムアウト。
+        async with httpx.AsyncClient(timeout=180) as client:
+            res = await client.request(
+                method, url, headers=headers, json=json_body, params=params
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"利用者管理サービスに接続できませんでした: {e}"},
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "利用者管理サービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/admin/users")
+async def list_admin_users(request: Request) -> JSONResponse:
+    err, headers = _usermgmt_headers(request)
+    if err:
+        return err
+    qp = request.query_params
+    params = {
+        "search": qp.get("search") or "",
+        "limit": qp.get("limit") or "200",
+    }
+    return await _proxy_usermgmt(
+        "GET", _usermgmt_app_url("/users"), headers, params=params
+    )
+
+
+@app.post("/admin/users/plan")
+async def plan_admin_users(request: Request) -> JSONResponse:
+    err, headers = _usermgmt_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_usermgmt(
+        "POST", _usermgmt_app_url("/users/plan"), headers, body
+    )
+
+
+@app.post("/admin/users/apply")
+async def apply_admin_users(request: Request) -> JSONResponse:
+    err, headers = _usermgmt_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_usermgmt(
+        "POST", _usermgmt_app_url("/users/apply"), headers, body
+    )
 
 
 @app.get("/me/teams")

@@ -13,6 +13,36 @@ export const KNOWLEDGE_PATH = '/knowledge';
 /** ナレッジ管理 専用ページへ集約する（＝リダイレクトする）旧 exApp ID。検索(rag)は除く。 */
 const KNOWLEDGE_EXAPP_IDS = new Set(['rag-tags', 'rag-register', 'rag-maintain']);
 
+/** プロンプトテンプレートは汎用 exApp フォームではなく専用ページで提供する */
+export const PROMPT_TEMPLATES_PATH = '/prompts';
+
+/** プロンプトテンプレート exApp の識別子（専用ページへ振り替える対象） */
+export const PROMPT_EXAPP_ID = 'prompt';
+
+/** 監査ログは管理者限定の専用ページで提供する */
+export const AUDIT_ADMIN_PATH = '/admin/audit';
+
+/** 監査ログ exApp の識別子（専用ページへ振り替える対象） */
+export const AUDIT_EXAPP_ID = 'audit';
+
+/** 利用者一括管理は管理者限定の専用ページで提供する */
+export const USERMGMT_ADMIN_PATH = '/admin/users';
+
+/** 利用者一括管理 exApp の識別子（専用ページへ振り替える対象） */
+export const USERMGMT_EXAPP_ID = 'usermgmt';
+
+/** モデル利用制御は管理者限定の専用ページで提供する */
+export const MODELPOLICY_ADMIN_PATH = '/admin/model-policy';
+
+/** モデル利用制御 exApp の識別子（専用ページへ振り替える対象） */
+export const MODELPOLICY_EXAPP_ID = 'modelpolicy';
+
+/** 入力制限（禁止ワード）は管理者限定の専用ページで提供する */
+export const NGWORD_ADMIN_PATH = '/admin/ngword';
+
+/** 入力制限 exApp の識別子（専用ページへ振り替える対象） */
+export const NGWORD_EXAPP_ID = 'ngword';
+
 export type NavLinkItem = {
   label: string;
   to: string;
@@ -71,6 +101,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     items.push({
+      label: 'プロンプトテンプレート',
+      to: PROMPT_TEMPLATES_PATH,
+      description: '標準／共有テンプレートを選んでチャットへ',
+    });
+
+    items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
       description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
@@ -89,6 +125,26 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // タグ管理/ドキュメント登録/ドキュメント管理の各 exApp は専用ページへ集約
   if (!item.app.isDefault && KNOWLEDGE_EXAPP_IDS.has(item.app.value)) {
     return KNOWLEDGE_PATH;
+  }
+  // プロンプトテンプレートは専用ページへ振り替える（汎用 exApp URL を使わない）
+  if (item.app.value === PROMPT_EXAPP_ID) {
+    return PROMPT_TEMPLATES_PATH;
+  }
+  // 監査ログは管理者限定の専用ページへ振り替える
+  if (item.app.value === AUDIT_EXAPP_ID) {
+    return AUDIT_ADMIN_PATH;
+  }
+  // 利用者一括管理も管理者限定の専用ページへ振り替える
+  if (item.app.value === USERMGMT_EXAPP_ID) {
+    return USERMGMT_ADMIN_PATH;
+  }
+  // モデル利用制御も管理者限定の専用ページへ振り替える
+  if (item.app.value === MODELPOLICY_EXAPP_ID) {
+    return MODELPOLICY_ADMIN_PATH;
+  }
+  // 入力制限（禁止ワード）も管理者限定の専用ページへ振り替える
+  if (item.app.value === NGWORD_EXAPP_ID) {
+    return NGWORD_ADMIN_PATH;
   }
   return item.app.isDefault ? `/${item.app.value}` : `/apps/${item.teamIdKey}/${item.app.value}`;
 };
