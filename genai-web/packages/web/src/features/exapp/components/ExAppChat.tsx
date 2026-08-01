@@ -40,6 +40,11 @@ export const ExAppChat = ({ exApp }: Props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // 初期表示（会話が空）では自動スクロールしない。開いた直後に入力欄（最下部）へ
+    // 飛んでページが上に流れるのを防ぐ。会話が始まってから最新メッセージを追う。
+    if (messages.length === 0) {
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 

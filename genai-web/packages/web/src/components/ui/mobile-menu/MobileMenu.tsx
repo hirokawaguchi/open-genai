@@ -128,9 +128,6 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
                     </li>
                   )}
                   <li>
-                    <MobileMenuItemLink label='ナレッジ管理' to='/knowledge' />
-                  </li>
-                  <li>
                     <MobileMenuItemLink label='利用履歴' to='/history' />
                   </li>
                   <li>

@@ -70,6 +70,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       description: '音声ファイルから文字起こし',
     });
 
+    items.push({
+      label: 'ナレッジ管理',
+      to: KNOWLEDGE_PATH,
+      description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
+    });
+
     return items;
   }, [imageAvailable]);
 };
