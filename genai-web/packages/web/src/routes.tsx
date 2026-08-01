@@ -20,6 +20,11 @@ import { TeamEditPage } from '@/features/teams/edit/TeamEditPage';
 import { TeamsPage } from '@/features/teams/TeamsPage';
 import { TranslatePage } from '@/features/translate/TranslatePage';
 import { WHISPER_EXAPP_PATH } from '@/layout/navItems';
+import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
+import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
+import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
+import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
+import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -58,6 +63,23 @@ export const createRoutes = (): RouteObject[] => {
   const children: RouteObject[] = [
     { index: true, element: <LandingPage /> },
     { path: 'apps', element: <ExAppsPage /> },
+    // プロンプトテンプレートは専用ページへ。旧 exApp URL（/apps/:teamId/prompt）は
+    // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
+    { path: 'prompts', element: <PromptTemplatesPage /> },
+    { path: 'apps/:teamId/prompt', element: <Navigate to='/prompts' replace /> },
+    // 監査ログは管理者限定の専用ページへ。旧 exApp URL（/apps/:teamId/audit）は
+    // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
+    { path: 'admin/audit', element: <AuditLogsPage /> },
+    { path: 'apps/:teamId/audit', element: <Navigate to='/admin/audit' replace /> },
+    // 利用者一括管理も管理者限定の専用ページへ。旧 exApp URL（/apps/:teamId/usermgmt）は
+    // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
+    { path: 'admin/users', element: <UserMgmtPage /> },
+    { path: 'apps/:teamId/usermgmt', element: <Navigate to='/admin/users' replace /> },
+    // モデル利用制御・入力制限も管理者限定の専用ページへ。旧 exApp URL はリダイレクトする。
+    { path: 'admin/model-policy', element: <ModelPolicyPage /> },
+    { path: 'apps/:teamId/modelpolicy', element: <Navigate to='/admin/model-policy' replace /> },
+    { path: 'admin/ngword', element: <NgWordPage /> },
+    { path: 'apps/:teamId/ngword', element: <Navigate to='/admin/ngword' replace /> },
     { path: 'apps/:teamId/:exAppId', element: <ExAppPage /> },
     { path: 'chat', element: <ChatPage /> },
     { path: 'chat/:chatId', element: <ChatPage /> },
