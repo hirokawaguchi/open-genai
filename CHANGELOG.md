@@ -27,6 +27,14 @@
 
 ---
 
+## [Unreleased]
+
+### セキュリティ / ドキュメント
+
+- ナレッジ検索 MCP（`knowledge-mcp` `:8002/mcp`）が**無認証**で `scope`(teamId) を任意指定でき、到達できれば全チームのナレッジを読める点を明文化。dev `docker-compose.yml` に公開バインドを制御する `KNOWLEDGE_MCP_BIND`（既定 `0.0.0.0` で従来挙動）を追加し、`.env.example`・README・[docs/knowledge-mcp.md](docs/knowledge-mcp.md) に公開範囲の絞り方（loopback/gateway バインド・FW・認証付きリバプロ）を追記。挙動の既定値は不変で、既存環境への影響はない
+
+---
+
 ## [0.5.0] - 2026-07-30
 
 別環境での実運用で見つかった修正・改善をまとめて反映。**本番デプロイの整備**、
