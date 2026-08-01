@@ -57,6 +57,8 @@ services:
       - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      # Ollama Cloud 等を LLM_PROVIDERS の api_key_env=OLLAMA_API_KEY で使う場合に受け渡す
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
       - DB_PATH=/data/open-genai.db
       # 監査ログ / チャット履歴分離
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
