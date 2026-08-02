@@ -712,6 +712,51 @@ async def _detect_file_input(base: str, api_key: str) -> tuple[str | None, bool]
     return None, False
 
 
+def _config_flag(cfg: dict[str, Any], key: str) -> bool | None:
+    """config の真偽フラグを解釈する。未設定は None（bool / 文字列表記の両対応）。"""
+    if key not in cfg:
+        return None
+    val = cfg.get(key)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+    return None
+
+
+def _file_attach_supported(params: dict[str, Any], cfg: dict[str, Any]) -> bool:
+    """このアプリがファイル添付を受け付けられるかを判定する。
+
+    優先順:
+      1. config.file_attach が明示指定されていればそれに従う（false は強制 OFF）
+      2. config.file_var が設定されていれば True
+      3. Dify /parameters の user_input_form に file / file-list があれば True
+      4. Dify /parameters の file_upload.enabled が True なら True（sys.files 経路）
+    それ以外・判定不能は False（fail-closed）。
+    """
+    explicit = _config_flag(cfg, "file_attach")
+    if explicit is not None:
+        return explicit
+    if cfg.get("file_var"):
+        return True
+    if not isinstance(params, dict):
+        return False
+    for item in params.get("user_input_form", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for spec in item.values():
+            if isinstance(spec, dict) and spec.get("type") in ("file", "file-list"):
+                return True
+    file_upload = params.get("file_upload")
+    if isinstance(file_upload, dict) and file_upload.get("enabled") is True:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Dify 呼び出し（streaming で受信して集約）
 # ---------------------------------------------------------------------------
@@ -1044,11 +1089,18 @@ async def schema(
     x_api_key: str | None = Header(default=None),
     x_app_config: str | None = Header(default=None),
 ) -> Any:
-    """Dify の /parameters を取得し、源内のフォーム定義(placeholder) に変換して返す。"""
+    """Dify の /parameters を取得し、源内のフォーム定義(placeholder) に変換して返す。
+
+    併せて、このアプリがファイル添付を受け付けられるか（features.file_attach）を返す。
+    取得失敗時も config の明示指定（file_attach / file_var）は尊重し、それ以外は False。
+    """
     cfg = _parse_config(x_app_config)
     base = (cfg.get("dify_base_url") or DEFAULT_DIFY_BASE_URL).rstrip("/")
     if not base:
-        return {"placeholder": {}}
+        return {
+            "placeholder": {},
+            "features": {"file_attach": _file_attach_supported({}, cfg)},
+        }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             res = await client.get(
@@ -1056,11 +1108,21 @@ async def schema(
                 headers={"Authorization": f"Bearer {x_api_key or ''}"},
             )
         if res.status_code != 200:
-            return {"placeholder": {}}
-        form = res.json().get("user_input_form", [])
+            return {
+                "placeholder": {},
+                "features": {"file_attach": _file_attach_supported({}, cfg)},
+            }
+        params = res.json()
     except (httpx.HTTPError, ValueError):
-        return {"placeholder": {}}
-    return {"placeholder": _convert_user_input_form(form, cfg=cfg)}
+        return {
+            "placeholder": {},
+            "features": {"file_attach": _file_attach_supported({}, cfg)},
+        }
+    form = params.get("user_input_form", []) if isinstance(params, dict) else []
+    return {
+        "placeholder": _convert_user_input_form(form, cfg=cfg),
+        "features": {"file_attach": _file_attach_supported(params, cfg)},
+    }
 
 
 @app.post("/invoke")

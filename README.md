@@ -864,7 +864,7 @@ curl -s -w "\nHTTP %{http_code}\n" \
 
 - 会話の文脈は、源内が会話ごとに発行する `sessionId` を `dify-app` が **Dify の `conversation_id` に対応付けて保持**することで維持されます（SQLite, `dify_app_data` ボリューム）。
 - 画面の **「新しい会話」** ボタンで `sessionId` をリセットし、新しい Dify 会話を開始できます。
-- 画像 / ドキュメントの添付に対応します（`dify-app` が `/v1/files/upload` 経由で Dify に渡します）。
+- 画像 / ドキュメントの添付に対応します（`dify-app` が `/v1/files/upload` 経由で Dify に渡します）。**「ファイルを添付」ボタンは、アプリがファイルを受け付けられる場合のみ表示**されます（下記「ファイル添付」の判定条件を参照）。ファイルを使わないエージェント（例: ナレッジ検索エージェント）ではボタンは出ません。
 - チャットフロー用アプリには **チャットフローの API キー** を登録してください（ワークフローとはキーで区別）。
 
 > 補足: フォーム型アプリ（ワークフロー等）でも、placeholder に `conversation_history` キーを含めると実行結果に「会話を続ける」ボタンが出ます（疑似チャット）。チャットフローは上記の対話型 UI を使うため、この指定は不要です。
@@ -885,6 +885,17 @@ curl -s -w "\nHTTP %{http_code}\n" \
 
 - 変数の型（`file` / `file-list`）も `/v1/parameters` から判定し、単一/配列で渡します。
 - Dify 側でフローが「メッセージ添付」ではなく「入力変数(file-list)」でファイルを受け取る設計（`file_upload.enabled: false` でも入力変数は利用可）にも対応します。
+
+#### 添付ボタンの表示可否（能力検知）
+
+対話型 UI の「ファイルを添付」ボタンは、`dify-app` の `/schema` が返す `features.file_attach` が `true` のときだけ表示されます。判定は次の順で行い、いずれにも該当しない場合や `/parameters` の取得に失敗した場合は **非表示（fail-closed）** です。
+
+1. `config` の `"file_attach": true` / `false`（明示指定。`false` は他条件より優先して強制 OFF）
+2. `config` に `"file_var"` が設定されている
+3. Dify の `/v1/parameters` の `user_input_form` に `file` / `file-list` 型の入力変数がある
+4. Dify の `/v1/parameters` の `file_upload.enabled` が `true`（メッセージ添付 `sys.files` 経路）
+
+これにより、`file_upload.enabled: false` かつ file 入力変数を持たないアプリ（例: ナレッジ検索エージェント）では、押しても効かない添付ボタンが表示されなくなります。
 
 ### 成果物ファイル（SeaweedFS 再ホスト）
 
