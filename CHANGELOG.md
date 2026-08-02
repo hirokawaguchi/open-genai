@@ -29,6 +29,18 @@
 
 ## [Unreleased]
 
+### 通常チャット添付の大容量対応（その場マップリデュース）
+
+- backend: チャット添付を 30,000 文字で黙って打ち切る挙動を廃止し、`shared/docextract.py` に切り捨てなしの `extract_doc_text_full` を追加（安全弁 `MAX_CHAT_DOC_CHARS` 既定 500,000、超過は明示注記で先頭保持）
+- backend: `doc_mapreduce.py` を新設し、`chat_once`/`chat_stream` の前段でチャンク化 → 読み計画 → 抜粋 or バッチ要約を実施。しきい値 `CHAT_DOC_INLINE_CHARS`（既定 60,000）以下は全文注入、超過は圧縮して参照し「どう参照したか」を応答冒頭に明示（LLM 呼び出しは注入可能にしてテスト可能化）
+- ベクトル RAG 簡易登録など従来経路の `MAX_DOC_CHARS`（30,000）切り捨ては据え置き（影響をチャットに限定）。ナレッジ登録の構造化/ベクトル hybrid とは別物（索引を作らず 1 リクエスト内で圧縮）
+
+### Dify exApp のエラー分類と大容量処理の可視化（PR #29 残リスク緩和）
+
+- dify-app: `classify_provider_error` を HTTP status ベースに拡張。429→レート制限、413/本文の context 超過→入力過大、その他 4xx→入力不備、5xx→接続失敗と分類し、**Dify の 4xx を「接続できません」に誤変換しない**（`_run_workflow`/chat の `default_code` はフォールバックのみ）
+- dify-app（MultiFileGenerator DSL）: 270,000 文字超のサイレント切り捨てと、大容量時の区間抽出／代表要約を**黙って欠落させず可視化**。文書準備ノードで `truncated`/`kept_chars`/`coverage_note` を算出し、出力整形で表示用テキスト（`result_text`）にのみ注意文を前置（**ファイル本文 `content` は json/html を壊さないよう clean を維持**）
+- 運用注意: 更新した [dify-app/dsl/MultiFileGenerator.yml](dify-app/dsl/MultiFileGenerator.yml) を Dify へ再インポート／公開する必要がある
+
 ### ナレッジ管理 専用ページ化
 
 汎用 exApp フォームの制約を解消するため、**タグ管理・ドキュメント登録・ドキュメント管理**を

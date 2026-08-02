@@ -44,6 +44,32 @@ def test_extract_doc_text_truncates_long_content(monkeypatch: pytest.MonkeyPatch
     assert len(result) <= 10 + len("\n…(以下省略)")
 
 
+def test_extract_doc_text_full_does_not_truncate_at_30k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """チャット経路の全文抽出は MAX_DOC_CHARS(30k) で切らない。"""
+    monkeypatch.setattr(docextract, "MAX_DOC_CHARS", 10)
+    body = "あ" * 40000
+    payload = base64.b64encode(body.encode()).decode("ascii")
+    result = docextract.extract_doc_text_full("big.txt", "text/plain", payload)
+    assert result == body
+    assert "以下省略" not in result
+
+
+def test_extract_doc_text_full_hard_cap_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ハード上限超過時は黙って捨てず、明示注記を付ける。"""
+    monkeypatch.setattr(docextract, "MAX_CHAT_DOC_CHARS", 100)
+    body = "x" * 500
+    payload = base64.b64encode(body.encode()).decode("ascii")
+    result = docextract.extract_doc_text_full("big.txt", "text/plain", payload)
+    assert result is not None
+    assert result.startswith("x" * 100)
+    assert "以降を省略" in result
+    assert "big.txt" in result
+
+
 def test_extract_doc_pages_keeps_full_text(monkeypatch: pytest.MonkeyPatch) -> None:
     """構造化経路は MAX_DOC_CHARS で切り捨てない。"""
     monkeypatch.setattr(docextract, "MAX_DOC_CHARS", 10)

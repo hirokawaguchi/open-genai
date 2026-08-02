@@ -13,9 +13,13 @@ import io
 import os
 from typing import Any
 
-# 抽出テキストの最大長（コンテキスト肥大を防ぐ）。ベクトル RAG / チャット添付向け。
+# 抽出テキストの最大長（コンテキスト肥大を防ぐ）。ベクトル RAG / 簡易登録向け。
 # 構造化索引では使わず、extract_doc_pages() を用いること。
 MAX_DOC_CHARS = int(os.environ.get("MAX_DOC_CHARS", "30000"))
+
+# チャット添付の全文抽出（その場マップリデュース）用のハード上限。
+# 30k で黙って切らず、これを超えた場合のみ明示注記を付けて先頭を保持する。
+MAX_CHAT_DOC_CHARS = int(os.environ.get("MAX_CHAT_DOC_CHARS", "500000"))
 
 # 構造化取込のハード上限（黙って切らずエラーにする）
 MAX_DOC_PAGES = int(os.environ.get("MAX_DOC_PAGES", "200"))
@@ -130,17 +134,22 @@ def _docx_extract_text(raw: bytes) -> str:
     return text
 
 
-def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
-    """添付ドキュメント(PDF/Word/Excel/テキスト)からテキストを抽出する。
+def _extract_raw_text(
+    name: str, media_type: str, b64: str
+) -> tuple[str | None, str | None]:
+    """フォーマット判定して生テキストを抽出する（切り捨てなし）。
 
-    対応外（レガシー .doc/.xls 等）は None を返す。
+    戻り値 `(text, error)`:
+    - 対応外（レガシー .doc/.xls 等）・base64 復号失敗 → `(None, None)`
+    - 抽出中の例外 → `(None, "…失敗しました")`（呼び出し側でそのまま返せる文言）
+    - 成功 → `(text, None)`
     """
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
     mt = media_type or ""
     try:
         raw = b64_to_bytes(b64)
     except Exception:  # noqa: BLE001
-        return None
+        return None, None
 
     try:
         if ext == "pdf" or mt == "application/pdf":
@@ -171,15 +180,57 @@ def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
         ) or mt.startswith("text/"):
             text = raw.decode("utf-8", "ignore")
         else:
-            return None
+            return None, None
     except Exception as e:  # noqa: BLE001
-        return f"(添付ファイル {name} のテキスト抽出に失敗しました: {e})"
+        return None, f"(添付ファイル {name} のテキスト抽出に失敗しました: {e})"
 
-    text = (text or "").strip()
+    return (text or ""), None
+
+
+def extract_doc_text(name: str, media_type: str, b64: str) -> str | None:
+    """添付ドキュメント(PDF/Word/Excel/テキスト)からテキストを抽出する。
+
+    ベクトル RAG 簡易登録など従来経路向け。`MAX_DOC_CHARS` で切り捨てる。
+    対応外（レガシー .doc/.xls 等）は None を返す。
+    """
+    text, error = _extract_raw_text(name, media_type, b64)
+    if error is not None:
+        return error
+    if text is None:
+        return None
+    text = text.strip()
     if not text:
         return f"(添付ファイル {name} からテキストを抽出できませんでした)"
     if len(text) > MAX_DOC_CHARS:
         text = text[:MAX_DOC_CHARS] + "\n…(以下省略)"
+    return text
+
+
+def extract_doc_text_full(
+    name: str, media_type: str, b64: str, *, max_chars: int | None = None
+) -> str | None:
+    """チャット添付向けの全文抽出（30k のサイレント切り捨てを行わない）。
+
+    その場マップリデュースで扱うため、`MAX_DOC_CHARS` は適用しない。
+    安全弁として `MAX_CHAT_DOC_CHARS`（既定 500,000）を超えた場合のみ、
+    黙って捨てずに明示注記を付けて先頭を保持する。
+    対応外（レガシー .doc/.xls 等）は None を返す。
+    """
+    text, error = _extract_raw_text(name, media_type, b64)
+    if error is not None:
+        return error
+    if text is None:
+        return None
+    text = text.strip()
+    if not text:
+        return f"(添付ファイル {name} からテキストを抽出できませんでした)"
+    cap = MAX_CHAT_DOC_CHARS if max_chars is None else max_chars
+    if cap and cap > 0 and len(text) > cap:
+        text = (
+            text[:cap]
+            + f"\n\n…（{name} は {cap} 文字を超えたため以降を省略しました。"
+            "全文を対象にするにはナレッジ登録をご利用ください）"
+        )
     return text
 
 
