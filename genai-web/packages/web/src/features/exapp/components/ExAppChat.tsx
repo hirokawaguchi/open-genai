@@ -21,6 +21,8 @@ type ChatMessage = {
 
 type Props = {
   exApp: ExApp;
+  // アプリがファイル添付を受け付けられる場合のみ「ファイルを添付」を表示する。
+  fileAttachEnabled?: boolean;
 };
 
 // 対話型 AI アプリ（Dify チャットフロー連携）。
@@ -28,7 +30,7 @@ type Props = {
 // dify-app 側の session -> conversation_id 対応に委ねる。
 const ACCEPT = 'image/*,.pdf,.docx,.xlsx,.txt,.md,.csv,.html,.json';
 
-export const ExAppChat = ({ exApp }: Props) => {
+export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
   const { invokeExApp } = useInvokeExApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -169,7 +171,7 @@ export const ExAppChat = ({ exApp }: Props) => {
       {error && <p className='text-error-2'>{error}</p>}
 
       <div className='flex flex-col gap-2'>
-        {files.length > 0 && (
+        {fileAttachEnabled && files.length > 0 && (
           <div className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
             <span>添付: {files.map((f) => f.name).join(', ')}</span>
             <Button variant='text' size='sm' onClick={() => setFiles([])}>
@@ -191,24 +193,28 @@ export const ExAppChat = ({ exApp }: Props) => {
 
         <div className='flex items-center justify-between'>
           <div className='flex items-center gap-2'>
-            <input
-              ref={fileInputRef}
-              type='file'
-              multiple
-              accept={ACCEPT}
-              className='hidden'
-              onChange={(e) => {
-                setFiles(Array.from(e.target.files ?? []));
-                e.target.value = '';
-              }}
-            />
-            <Button
-              variant='outline'
-              size='md'
-              onClick={() => fileInputRef.current?.click()}
-            >
-              ファイルを添付
-            </Button>
+            {fileAttachEnabled && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type='file'
+                  multiple
+                  accept={ACCEPT}
+                  className='hidden'
+                  onChange={(e) => {
+                    setFiles(Array.from(e.target.files ?? []));
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  variant='outline'
+                  size='md'
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  ファイルを添付
+                </Button>
+              </>
+            )}
             <Button variant='text' size='md' onClick={startNewConversation}>
               新しい会話
             </Button>
