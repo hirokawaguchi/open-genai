@@ -20,7 +20,7 @@ import httpx
 
 from shared.docextract import extract_doc_text_full
 
-from .doc_mapreduce import condense_document
+from .doc_mapreduce import CHAT_DOC_INLINE_CHARS, condense_document
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 # OpenAI 互換のベース URL（未指定/空なら Ollama の /v1 を使う）
@@ -292,7 +292,38 @@ async def chat_stream(
     """
     model_id = _resolve_model(model)
     provider = _provider_for(model_id)
-    openai_messages, notes = await _prepare_openai_messages(messages, model)
+    # 大きい添付のマップリデュースは初回 yield まで時間がかかるため、進捗を先に流す
+    # （プロキシ/UI が無応答に見えるのを防ぐ）
+    try:
+        has_large_docs = False
+        for m in messages:
+            for name, full_text in _extract_doc_texts_full(m):
+                if len(full_text) > CHAT_DOC_INLINE_CHARS:
+                    has_large_docs = True
+                    break
+            if has_large_docs:
+                break
+        if has_large_docs:
+            yield json.dumps(
+                {
+                    "text": "※ 添付資料が大きいため、内容を整理してから回答します…\n\n",
+                },
+                ensure_ascii=False,
+            ) + "\n"
+        openai_messages, notes = await _prepare_openai_messages(messages, model)
+    except Exception as e:  # noqa: BLE001 - ストリームでユーザ向けに返す
+        yield json.dumps(
+            {
+                "text": (
+                    "添付ファイルの処理中にエラーが発生しました。"
+                    "ファイルを分割するか、指示を具体にして再度お試しください。"
+                    f"（詳細: {type(e).__name__}）"
+                ),
+                "stopReason": "error",
+            },
+            ensure_ascii=False,
+        ) + "\n"
+        return
     prefix = _notes_prefix(notes)
     if prefix:
         yield json.dumps({"text": prefix}, ensure_ascii=False) + "\n"
