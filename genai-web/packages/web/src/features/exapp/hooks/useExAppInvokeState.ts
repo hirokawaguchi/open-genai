@@ -14,9 +14,10 @@ export const useExAppInvokeState = () => {
     } catch (error: unknown) {
       store.setExAppResponse(null);
       if (isApiError(error)) {
-        const data = error.data as { outputs?: string; error?: string };
+        const data = error.data as { error?: string };
         throw new Error(
-          data?.outputs || data?.error || `リクエストに失敗しました (${error.status})`,
+          data?.error ||
+            '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
         );
       } else if (error instanceof Error) {
         throw new Error(error.message);

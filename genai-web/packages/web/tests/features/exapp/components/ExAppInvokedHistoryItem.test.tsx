@@ -104,15 +104,30 @@ describe('ExAppInvokedHistoryItem', () => {
     expect(reloadButton.tagName).toEqual('BUTTON');
   });
 
-  it('renders ERROR history item correctly', () => {
+  it('renders ERROR history item with fallback message when outputs is empty', () => {
     const { getByText, getByRole } = renderComponent({
-      history: { ...mockHistory, status: 'ERROR' },
+      history: { ...mockHistory, status: 'ERROR', outputs: '' },
     });
 
     const heading = getByRole('heading', { level: 3 });
     expect(within(heading).getByText('エラー')).toBeDefined();
 
     const message = getByText('実行中にエラーが発生しました。再度お試しください。');
+    expect(message).toBeDefined();
+    expect(message.tagName).toEqual('P');
+  });
+
+  it('renders ERROR history item with user-facing outputs message', () => {
+    const userMessage =
+      '現在リクエストが集中しています。しばらく時間をおいてから再度お試しください。';
+    const { getByText, getByRole } = renderComponent({
+      history: { ...mockHistory, status: 'ERROR', outputs: userMessage },
+    });
+
+    const heading = getByRole('heading', { level: 3 });
+    expect(within(heading).getByText('エラー')).toBeDefined();
+
+    const message = getByText(userMessage);
     expect(message).toBeDefined();
     expect(message.tagName).toEqual('P');
   });
