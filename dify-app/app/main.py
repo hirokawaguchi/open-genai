@@ -39,6 +39,12 @@ from fastapi.responses import JSONResponse
 try:
     from .errors import AppInvokeError, classify_provider_error, error_response
 except ImportError:  # pragma: no cover - 単体読み込み（pytest の file location import）
+    import sys
+    from pathlib import Path
+
+    _app_dir = str(Path(__file__).resolve().parent)
+    if _app_dir not in sys.path:
+        sys.path.insert(0, _app_dir)
     from errors import AppInvokeError, classify_provider_error, error_response
 
 logger = logging.getLogger(__name__)
