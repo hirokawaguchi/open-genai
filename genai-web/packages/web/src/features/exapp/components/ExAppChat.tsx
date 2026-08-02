@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { isApiError } from '@/lib/fetcher';
 import { submitKeyHint, isSubmitKey } from '@/utils/keyboard';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
 import { processFormFiles } from '../utils/processFormFiles';
@@ -80,8 +81,18 @@ export const ExAppChat = ({ exApp }: Props) => {
         ...prev,
         { role: 'assistant', content: res.outputs ?? '', artifacts: res.artifacts },
       ]);
-    } catch {
-      setError('応答の取得に失敗しました。時間をおいて再度お試しください。');
+    } catch (error: unknown) {
+      if (isApiError(error)) {
+        const data = error.data as { error?: string };
+        setError(
+          data?.error ||
+            '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
+        );
+      } else {
+        setError(
+          '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
+        );
+      }
     } finally {
       setIsLoading(false);
     }
