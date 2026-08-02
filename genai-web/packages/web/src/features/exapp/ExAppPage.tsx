@@ -71,13 +71,21 @@ export const ExAppPage = () => {
     placeholderEmpty &&
     (!!configObj?.dify_base_url || configObj?.dynamic_schema === true);
 
-  const { uiJson: fetchedUiJson, isLoading: isSchemaLoading } = useFetchExAppSchema(
-    teamId,
-    exAppId,
-    shouldFetchSchema,
-  );
+  // chat 型 Dify アプリは、ファイル添付の可否(features.file_attach)を判定するため
+  // /schema を取得する（フォーム生成は不要でも features のために叩く）。
+  const shouldFetchChatFeatures = !!exApp && isChatApp && !!configObj?.dify_base_url;
+
+  const {
+    uiJson: fetchedUiJson,
+    features,
+    isLoading: isSchemaLoading,
+  } = useFetchExAppSchema(teamId, exAppId, shouldFetchSchema || shouldFetchChatFeatures);
 
   const uiJson = shouldFetchSchema ? fetchedUiJson : placeholderUiJson;
+
+  // features を確定できた場合のみ添付ボタンを表示（ロード中・判定不能は非表示）。
+  const chatFileAttachEnabled =
+    shouldFetchChatFeatures && !isSchemaLoading && features?.file_attach === true;
 
   const defaultValuesJson = useMemo(() => {
     if (!uiJson) {
@@ -126,7 +134,7 @@ export const ExAppPage = () => {
               <Divider className='my-6' />
 
               {isChatApp ? (
-                <ExAppChat exApp={exApp} />
+                <ExAppChat exApp={exApp} fileAttachEnabled={chatFileAttachEnabled} />
               ) : (
                 <>
                   {shouldFetchSchema && isSchemaLoading ? (
