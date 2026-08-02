@@ -44,6 +44,36 @@ def test_chunk_document_fixed_split() -> None:
     assert [c["id"] for c in chunks] == [0, 1, 2]
 
 
+def test_chunk_document_falls_back_when_headings_explode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """目次のように見出しが大量ヒットしたら件数上限内の固定長分割へフォールバックする。"""
+    monkeypatch.setattr(dm, "CHAT_DOC_MAX_CHUNKS", 5)
+    monkeypatch.setattr(dm, "CHAT_DOC_CHUNK_SIZE", 20)
+    # 【…】行が見出し扱いされ、細切れになる入力
+    body = "\n".join(f"【見出し{i}】\n本文{i}です" for i in range(30))
+    chunks = dm.chunk_document(body)
+    assert len(chunks) <= 5
+    assert len(chunks) >= 1
+
+
+def test_summarize_full_samples_when_too_many_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dm, "CHAT_DOC_INLINE_CHARS", 20)
+    monkeypatch.setattr(dm, "CHAT_DOC_CHUNK_SIZE", 10)
+    monkeypatch.setattr(dm, "CHAT_DOC_SUMMARY_BATCH", 2)
+    monkeypatch.setattr(dm, "CHAT_DOC_MAX_SUMMARY_CHUNKS", 4)
+    body = "あ" * 100  # 10 チャンク → サンプル 4 → バッチ2で 2 回要約
+    plan = json.dumps({"coverage": "full", "chunk_ids": []})
+    llm, calls = _fake_llm(plan)
+    ctx, note = asyncio.run(dm.condense_document("big.txt", body, "全体要約", llm))
+    assert calls["plan"] == 1
+    assert calls["summary"] == 2
+    assert "代表 4 区間" in note
+    assert "区間要約" in ctx
+
+
 def test_parse_plan_partial_selects_ids() -> None:
     coverage, ids = dm.parse_plan('{"coverage":"partial","chunk_ids":[0,2,9]}', total=5)
     assert coverage == "partial"

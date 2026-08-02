@@ -27,6 +27,10 @@ CHAT_DOC_SUMMARY_BATCH = int(os.environ.get("CHAT_DOC_SUMMARY_BATCH", "8"))
 CHAT_DOC_MAX_SELECT = int(os.environ.get("CHAT_DOC_MAX_SELECT", "12"))
 # 作業コンテキストの最大文字数（最終プロンプトの肥大を防ぐ）。
 CHAT_DOC_WORKING_MAX = int(os.environ.get("CHAT_DOC_WORKING_MAX", "60000"))
+# 見出し分割が目次行などで細切れになったときの上限。超えたら固定長分割へフォールバック。
+CHAT_DOC_MAX_CHUNKS = int(os.environ.get("CHAT_DOC_MAX_CHUNKS", "60"))
+# full 要約時に実際に LLM へ渡すチャンク数の上限（均等サンプル）。
+CHAT_DOC_MAX_SUMMARY_CHUNKS = int(os.environ.get("CHAT_DOC_MAX_SUMMARY_CHUNKS", "24"))
 
 _OUTLINE_PREVIEW = 80
 _OUTLINE_MAX_CHARS = 8000
@@ -53,10 +57,51 @@ def _split_fixed(text: str, size: int) -> list[tuple[str, str]]:
     return parts
 
 
+def _chunks_from_sections(
+    sections: list[tuple[str, str]], size: int
+) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    cid = 0
+    for title, body in sections:
+        if len(body) <= int(size * 1.5):
+            chunks.append({"id": cid, "title": title, "text": body})
+            cid += 1
+        else:
+            for sub_title, part in _split_fixed(body, size):
+                chunks.append(
+                    {"id": cid, "title": f"{title}/{sub_title}", "text": part}
+                )
+                cid += 1
+    return chunks
+
+
+def _sample_chunks(
+    chunks: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """順序を保ったまま最大 limit 件へ均等サンプルし、id を振り直す。"""
+    n = len(chunks)
+    if n <= limit or limit <= 0:
+        return chunks
+    if limit == 1:
+        idxs = [0]
+    else:
+        idxs = sorted({int(i * (n - 1) / (limit - 1)) for i in range(limit)})
+    sampled = [chunks[i] for i in idxs]
+    for i, c in enumerate(sampled):
+        c = dict(c)
+        c["id"] = i
+        sampled[i] = c
+    return sampled
+
+
 def chunk_document(
     text: str, size: int | None = None
 ) -> list[dict[str, Any]]:
-    """見出し優先・長すぎる節は固定長で分割してチャンク列を返す。"""
+    """見出し優先・長すぎる節は固定長で分割してチャンク列を返す。
+
+    PDF 目次のように見出し正規表現へ大量ヒットすると数千チャンクになり得るため、
+    CHAT_DOC_MAX_CHUNKS を超える場合は固定長分割へフォールバックする。
+    """
     size = CHAT_DOC_CHUNK_SIZE if size is None else size
     lines = (text or "").split("\n")
     sections: list[tuple[str, str]] = []
@@ -81,18 +126,14 @@ def chunk_document(
     if not sections:
         sections = [("(空)", (text or "").strip() or "(空)")]
 
-    chunks: list[dict[str, Any]] = []
-    cid = 0
-    for title, body in sections:
-        if len(body) <= int(size * 1.5):
-            chunks.append({"id": cid, "title": title, "text": body})
-            cid += 1
-        else:
-            for sub_title, part in _split_fixed(body, size):
-                chunks.append(
-                    {"id": cid, "title": f"{title}/{sub_title}", "text": part}
-                )
-                cid += 1
+    chunks = _chunks_from_sections(sections, size)
+    # 目次行の誤分割などで細切れになったら固定長へ。それでも多いときは幅を広げて件数を抑える。
+    if len(chunks) > CHAT_DOC_MAX_CHUNKS:
+        adaptive = max(
+            size,
+            (len(text or "") + CHAT_DOC_MAX_CHUNKS - 1) // CHAT_DOC_MAX_CHUNKS,
+        )
+        chunks = _chunks_from_sections(_split_fixed(text, adaptive), adaptive)
     return chunks
 
 
@@ -187,10 +228,14 @@ async def summarize_full(
     *,
     cap: int | None = None,
 ) -> str:
-    """全チャンクをバッチ要約し、質問に関係する情報を落とさずまとめる。"""
+    """全チャンクをバッチ要約し、質問に関係する情報を落とさずまとめる。
+
+    チャンク数が多すぎるときは均等サンプルしてから要約し、LLM 呼び出し爆発を防ぐ。
+    """
     cap = CHAT_DOC_WORKING_MAX if cap is None else cap
+    work = _sample_chunks(chunks, CHAT_DOC_MAX_SUMMARY_CHUNKS)
     summaries: list[str] = []
-    for batch in _batches(chunks, CHAT_DOC_SUMMARY_BATCH):
+    for batch in _batches(work, CHAT_DOC_SUMMARY_BATCH):
         joined = "\n\n".join(
             f"[{c['id']} {c.get('title', '')}]\n{(c.get('text') or '').strip()}"
             for c in batch
@@ -217,7 +262,9 @@ async def summarize_full(
         try:
             s = (await llm(oai)).strip()
         except Exception:  # noqa: BLE001 - 要約失敗時は原文冒頭で代替（欠落させない）
-            s = joined[: cap // max(1, len(_batches(chunks, CHAT_DOC_SUMMARY_BATCH)))]
+            s = joined[
+                : cap // max(1, len(_batches(work, CHAT_DOC_SUMMARY_BATCH)))
+            ]
         if s:
             summaries.append(s)
     merged = "\n\n---\n\n".join(
@@ -279,8 +326,15 @@ async def condense_document(
     coverage, ids = await _plan_reading(question, outline, total, llm)
 
     if coverage == "full":
+        sampled_n = min(total, CHAT_DOC_MAX_SUMMARY_CHUNKS)
         ctx = await summarize_full(chunks, question, llm)
-        note = f"添付「{name}」は大きいため全 {total} 区間を要約して参照しました"
+        if sampled_n < total:
+            note = (
+                f"添付「{name}」は大きいため全 {total} 区間のうち"
+                f"代表 {sampled_n} 区間を要約して参照しました"
+            )
+        else:
+            note = f"添付「{name}」は大きいため全 {total} 区間を要約して参照しました"
     else:
         ctx = assemble_selected(chunks, ids)
         note = (
