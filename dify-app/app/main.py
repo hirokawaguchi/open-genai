@@ -36,7 +36,10 @@ import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
-from .errors import AppInvokeError, classify_provider_error, error_response
+try:
+    from .errors import AppInvokeError, classify_provider_error, error_response
+except ImportError:  # pragma: no cover - 単体読み込み（pytest の file location import）
+    from errors import AppInvokeError, classify_provider_error, error_response
 
 logger = logging.getLogger(__name__)
 
