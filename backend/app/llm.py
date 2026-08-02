@@ -18,7 +18,9 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from shared.docextract import extract_doc_text
+from shared.docextract import extract_doc_text_full
+
+from .doc_mapreduce import condense_document
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 # OpenAI 互換のベース URL（未指定/空なら Ollama の /v1 を使う）
@@ -158,65 +160,16 @@ def _extract_image_urls(message: dict[str, Any]) -> list[str]:
     return urls
 
 
-def _extract_doc_texts(message: dict[str, Any]) -> list[tuple[str, str]]:
-    """extraData の file 添付からテキストを抽出する（共通モジュールを利用）。"""
-    out: list[tuple[str, str]] = []
-    for extra in message.get("extraData") or []:
-        if not isinstance(extra, dict) or extra.get("type") != "file":
-            continue
-        source = extra.get("source") or {}
-        data = source.get("data")
-        if not data:
-            continue
-        name = extra.get("name", "file")
-        text = extract_doc_text(name, source.get("mediaType", ""), data)
-        if text:
-            out.append((name, text))
-    return out
-
-
-def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """UnrecordedMessage[] を OpenAI Chat Completions のメッセージへ変換する。
-
-    - 画像付き(extraData image)は OpenAI Vision 形式の content 配列に変換（gemma3 等）。
-    - ドキュメント(extraData file: PDF/Word/Excel/テキスト)はテキスト抽出して本文に注入。
-    """
-    result: list[dict[str, Any]] = []
-    for m in messages:
-        role = m.get("role", "user")
-        if role not in ("system", "user", "assistant"):
-            role = "user"
-        text = m.get("content", "") or ""
-
-        # 添付ドキュメントのテキストを本文に追記
-        doc_texts = _extract_doc_texts(m)
-        if doc_texts:
-            parts = [text] if text else []
-            for name, t in doc_texts:
-                parts.append(f"\n\n--- 添付ファイル: {name} ---\n{t}")
-            text = "".join(parts)
-
-        image_urls = _extract_image_urls(m)
-        if image_urls:
-            content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-            for url in image_urls:
-                content.append({"type": "image_url", "image_url": {"url": url}})
-            result.append({"role": role, "content": content})
-        else:
-            result.append({"role": role, "content": text})
-    return result
-
-
-async def chat_once(
-    messages: list[dict[str, Any]], model: dict[str, Any] | None
+async def _complete(
+    messages: list[dict[str, Any]], model_id: str, *, temperature: float = 0.0
 ) -> str:
-    """ストリームなしでチャット補完を取得する。"""
-    model_id = _resolve_model(model)
+    """内部利用の非ストリーム補完（添付の要約/読み計画に使う）。"""
     provider = _provider_for(model_id)
     payload = {
         "model": model_id,
-        "messages": _to_openai_messages(messages),
+        "messages": messages,
         "stream": False,
+        "temperature": temperature,
     }
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
@@ -231,6 +184,103 @@ async def chat_once(
     return (choices[0].get("message") or {}).get("content", "") or ""
 
 
+def _extract_doc_texts_full(message: dict[str, Any]) -> list[tuple[str, str]]:
+    """extraData の file 添付から全文抽出する（30k 切り捨てを行わない）。"""
+    out: list[tuple[str, str]] = []
+    for extra in message.get("extraData") or []:
+        if not isinstance(extra, dict) or extra.get("type") != "file":
+            continue
+        source = extra.get("source") or {}
+        data = source.get("data")
+        if not data:
+            continue
+        name = extra.get("name", "file")
+        text = extract_doc_text_full(name, source.get("mediaType", ""), data)
+        if text:
+            out.append((name, text))
+    return out
+
+
+async def _prepare_openai_messages(
+    messages: list[dict[str, Any]], model: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """OpenAI 形式へ変換しつつ、大きい添付はその場マップリデュースで圧縮する。
+
+    小さい添付は全文注入。大きい添付は抜粋/要約に圧縮し、どう参照したかの注記を集約する。
+    戻り値: (openai_messages, notes)
+    """
+    model_id = _resolve_model(model)
+
+    async def _llm(oai_messages: list[dict[str, Any]]) -> str:
+        return await _complete(oai_messages, model_id)
+
+    result: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for m in messages:
+        role = m.get("role", "user")
+        if role not in ("system", "user", "assistant"):
+            role = "user"
+        text = m.get("content", "") or ""
+
+        doc_texts = _extract_doc_texts_full(m)
+        if doc_texts:
+            parts = [text] if text else []
+            for name, full_text in doc_texts:
+                ctx, note = await condense_document(name, full_text, text, _llm)
+                if note:
+                    notes.append(note)
+                parts.append(f"\n\n--- 添付ファイル: {name} ---\n{ctx}")
+            text = "".join(parts)
+
+        image_urls = _extract_image_urls(m)
+        if image_urls:
+            content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+            for url in image_urls:
+                content.append({"type": "image_url", "image_url": {"url": url}})
+            result.append({"role": role, "content": content})
+        else:
+            result.append({"role": role, "content": text})
+
+    # 重複注記は畳む（同名ファイルが複数ターンに出た場合など）
+    deduped: list[str] = []
+    for n in notes:
+        if n not in deduped:
+            deduped.append(n)
+    return result, deduped
+
+
+def _notes_prefix(notes: list[str]) -> str:
+    if not notes:
+        return ""
+    return "※ " + " / ".join(notes) + "\n\n"
+
+
+async def chat_once(
+    messages: list[dict[str, Any]], model: dict[str, Any] | None
+) -> str:
+    """ストリームなしでチャット補完を取得する。"""
+    model_id = _resolve_model(model)
+    provider = _provider_for(model_id)
+    openai_messages, notes = await _prepare_openai_messages(messages, model)
+    payload = {
+        "model": model_id,
+        "messages": openai_messages,
+        "stream": False,
+    }
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        res = await client.post(
+            f"{provider.base_url}/chat/completions",
+            json=payload,
+            headers=provider.headers(),
+            params=provider.query or None,
+        )
+        res.raise_for_status()
+        data = res.json()
+    choices = data.get("choices") or [{}]
+    answer = (choices[0].get("message") or {}).get("content", "") or ""
+    return _notes_prefix(notes) + answer
+
+
 async def chat_stream(
     messages: list[dict[str, Any]], model: dict[str, Any] | None
 ) -> AsyncIterator[str]:
@@ -238,12 +288,17 @@ async def chat_stream(
 
     OpenAI 互換の SSE(`data: {...}`) を読み、各行を {"text": "..."} 形式に変換する。
     最後に stopReason を付与した行を流す。
+    大きい添付はマップリデュース完了後に本編ストリームを開始する。
     """
     model_id = _resolve_model(model)
     provider = _provider_for(model_id)
+    openai_messages, notes = await _prepare_openai_messages(messages, model)
+    prefix = _notes_prefix(notes)
+    if prefix:
+        yield json.dumps({"text": prefix}, ensure_ascii=False) + "\n"
     payload = {
         "model": model_id,
-        "messages": _to_openai_messages(messages),
+        "messages": openai_messages,
         "stream": True,
     }
     try:
