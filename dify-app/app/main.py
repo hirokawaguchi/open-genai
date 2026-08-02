@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -34,6 +35,19 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
+
+try:
+    from .errors import AppInvokeError, classify_provider_error, error_response
+except ImportError:  # pragma: no cover - 単体読み込み（pytest の file location import）
+    import sys
+    from pathlib import Path
+
+    _app_dir = str(Path(__file__).resolve().parent)
+    if _app_dir not in sys.path:
+        sys.path.insert(0, _app_dir)
+    from errors import AppInvokeError, classify_provider_error, error_response
+
+logger = logging.getLogger(__name__)
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 
@@ -757,6 +771,7 @@ def _file_attach_supported(params: dict[str, Any], cfg: dict[str, Any]) -> bool:
     return False
 
 
+
 # ---------------------------------------------------------------------------
 # Dify 呼び出し（streaming で受信して集約）
 # ---------------------------------------------------------------------------
@@ -785,10 +800,10 @@ async def _run_workflow(
         ) as res:
             if res.status_code != 200:
                 body = (await res.aread()).decode("utf-8", "replace")
-                return (
-                    f"Dify ワークフローの呼び出しに失敗しました (status: {res.status_code}).\n\n```\n{body[:1000]}\n```",
-                    [],
-                    [],
+                raise classify_provider_error(
+                    body,
+                    default_code="CONNECTION",
+                    http_status=res.status_code,
                 )
             async for line in res.aiter_lines():
                 line = line.strip()
@@ -813,7 +828,7 @@ async def _run_workflow(
                     error = obj.get("message") or data.get("message") or "unknown error"
 
     if error:
-        return (f"Dify ワークフローでエラーが発生しました: {error}", [], [])
+        raise classify_provider_error(error, default_code="WORKFLOW_ERROR")
     if final_outputs is not None:
         text = _outputs_to_text(final_outputs, response_field)
         files = _extract_dify_files(final_outputs)
@@ -866,11 +881,10 @@ async def _run_chat(
         ) as res:
             if res.status_code != 200:
                 body = (await res.aread()).decode("utf-8", "replace")
-                return (
-                    f"Dify チャットフローの呼び出しに失敗しました (status: {res.status_code}).\n\n```\n{body[:1000]}\n```",
-                    new_conv_id,
-                    [],
-                    [],
+                raise classify_provider_error(
+                    body,
+                    default_code="CONNECTION",
+                    http_status=res.status_code,
                 )
             async for line in res.aiter_lines():
                 line = line.strip()
@@ -925,12 +939,7 @@ async def _run_chat(
                     error = obj.get("message") or "unknown error"
 
     if error:
-        return (
-            f"Dify チャットフローでエラーが発生しました: {error}",
-            new_conv_id,
-            [],
-            [],
-        )
+        raise classify_provider_error(error, default_code="WORKFLOW_ERROR")
     answer = "".join(answer_parts)
     # 生成ファイルは backend で再ホストするため、参照(file_obj)を返す
     out_files = _extract_dify_files(file_objs)
@@ -1144,14 +1153,9 @@ async def invoke(
     cfg = _parse_config(x_app_config)
     base = (cfg.get("dify_base_url") or DEFAULT_DIFY_BASE_URL).rstrip("/")
     if not base:
-        return {
-            "outputs": (
-                "Dify の接続先(dify_base_url)が設定されていません。"
-                "AI アプリの「設定(config)」に "
-                '`{"dify_base_url": "https://<dify>/v1", "dify_app_type": "chat"}` '
-                "の形式で指定してください。"
-            )
-        }
+        return error_response(
+            AppInvokeError("CONNECTION", detail="dify_base_url is not configured")
+        )
 
     app_type = (cfg.get("dify_app_type") or "chat").strip().lower()
     query_fields = _normalize_field_names(cfg.get("query_field")) or ["query"]
@@ -1184,9 +1188,9 @@ async def invoke(
                     file_refs_by_key.setdefault(key, []).append(ref)
                     all_file_refs.append(ref)
         except httpx.HTTPError as e:
-            return {"outputs": f"Dify へのファイルアップロードに失敗しました: {e}"}
+            return error_response(AppInvokeError("UPLOAD_FAILED", detail=str(e)))
         except Exception as e:  # noqa: BLE001
-            return {"outputs": f"ファイルの処理に失敗しました: {e}"}
+            return error_response(AppInvokeError("UPLOAD_FAILED", detail=str(e)))
 
     try:
         # ファイル入力変数の解決（chat / workflow 共通。源内側に変数名を固定しない）:
@@ -1224,7 +1228,9 @@ async def invoke(
         # ---- チャットフロー ----
         query = str(inputs.get(query_field) or inputs.get("question") or "").strip()
         if not query:
-            return {"outputs": "メッセージ(query)が空です。入力してください。"}
+            return error_response(
+                AppInvokeError("INVALID_INPUT", detail="empty query")
+            )
         dify_inputs = _coerce_dify_input_values(
             _strip_meta(inputs, query_field, "question")
         )
@@ -1246,7 +1252,10 @@ async def invoke(
         if arts:
             resp["artifacts"] = arts
         return resp
+    except AppInvokeError as e:
+        return error_response(e)
     except httpx.HTTPError as e:
-        return {"outputs": f"Dify への接続でエラーが発生しました: {e}"}
+        return error_response(AppInvokeError("CONNECTION", detail=str(e)))
     except Exception as e:  # noqa: BLE001
-        return {"outputs": f"処理中にエラーが発生しました: {e}"}
+        logger.exception("dify-app invoke unexpected error")
+        return error_response(AppInvokeError("WORKFLOW_ERROR", detail=str(e)))

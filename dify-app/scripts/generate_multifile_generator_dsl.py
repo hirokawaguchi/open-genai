@@ -1,4 +1,627 @@
-app:
+#!/usr/bin/env python3
+"""Generate MultiFileGenerator.yml with large-document adaptive flow."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parents[1] / "dsl" / "MultiFileGenerator.yml"
+
+PREPARE_CODE = r'''
+import json
+import re
+
+MAX_INLINE = 60000
+CHUNK_SIZE = 6000
+PART_SIZE = 90000
+OUTLINE_MAX_CHARS = 8000
+OUTLINE_MAX_ITEMS = 80
+OUTLINE_PREVIEW = 60
+HEADING_RE = re.compile(
+    r"^(#{1,6}\s+\S+|第[0-9０-９一二三四五六七八九十百千]+[章節編条項]|■\s*\S+|【[^】]+】)"
+)
+
+
+def split_fixed(text: str, size: int = CHUNK_SIZE):
+    text = text or ""
+    if not text.strip():
+        return [("(空)", "")]
+    parts = []
+    i = 0
+    n = 1
+    while i < len(text):
+        parts.append((f"区間{n}", text[i : i + size]))
+        i += size
+        n += 1
+    return parts
+
+
+def split_by_headings(text: str):
+    lines = (text or "").split("\n")
+    sections = []
+    current_title = "(冒頭)"
+    current = []
+    for line in lines:
+        if HEADING_RE.match(line.strip()):
+            if current:
+                body = "\n".join(current).strip()
+                if body:
+                    sections.append((current_title, body))
+            current_title = line.strip()[:80]
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        body = "\n".join(current).strip()
+        if body:
+            sections.append((current_title, body))
+    return sections
+
+
+def chunk_body(body: str):
+    sections = split_by_headings(body)
+    if len(sections) <= 1 and len(body or "") > CHUNK_SIZE:
+        sections = split_fixed(body)
+    if not sections:
+        sections = [("(空)", "(空のファイル)")]
+    out = []
+    for title, text in sections:
+        if len(text) <= int(CHUNK_SIZE * 1.5):
+            out.append((title, text))
+        else:
+            for t, p in split_fixed(text):
+                out.append((f"{title}/{t}", p))
+    return out
+
+
+def build_outline(file_chunks):
+    lines = []
+    items = 0
+    for label, pairs in file_chunks:
+        lines.append(f"## {label}")
+        for cid, title, text in pairs:
+            if items >= OUTLINE_MAX_ITEMS:
+                total = sum(len(pairs) for _, pairs in file_chunks)
+                lines.append(f"...他 {max(total - items, 0)} チャンク略")
+                s = "\n".join(lines)
+                return s[:OUTLINE_MAX_CHARS]
+            preview = (text or "").replace("\n", " ").replace("\r", " ")[:OUTLINE_PREVIEW]
+            lines.append(f"- [{cid}] {title}: {preview}")
+            items += 1
+            s = "\n".join(lines)
+            if len(s) >= OUTLINE_MAX_CHARS:
+                return s[:OUTLINE_MAX_CHARS]
+    return "\n".join(lines) if lines else "(入力ファイルなし)"
+
+
+def split_parts(full: str):
+    full = full or ""
+    return (
+        full[0:PART_SIZE],
+        full[PART_SIZE : PART_SIZE * 2],
+        full[PART_SIZE * 2 : PART_SIZE * 3],
+    )
+
+
+def main(texts, prompt: str, output_filename: str, output_format: str) -> dict:
+    if texts is None:
+        texts = []
+    if isinstance(texts, str):
+        texts = [texts]
+    joined_parts = []
+    file_chunks = []
+    meta = []
+    cid = 0
+    for i, t in enumerate(texts):
+        body = (t or "").strip()
+        label = f"ファイル{i + 1}"
+        joined_parts.append(f"### {label}\n\n{body if body else '(空のファイル)'}")
+        pairs = []
+        for title, text in chunk_body(body):
+            pairs.append((cid, title, text))
+            meta.append(
+                {
+                    "id": cid,
+                    "file_index": i + 1,
+                    "file_label": label,
+                    "title": title,
+                    "start": 0,
+                    "length": len(text or ""),
+                }
+            )
+            cid += 1
+        file_chunks.append((label, pairs))
+    full = "\n\n---\n\n".join(joined_parts) if joined_parts else "(入力ファイルなし)"
+    char_count = len(full)
+    is_large = char_count > MAX_INLINE
+    outline = build_outline(file_chunks)
+    p1, p2, p3 = split_parts(full)
+    # 小容量時のみ全文を context_small に載せる（Dify出力上限対策）
+    context_small = full if not is_large else ""
+    fmt = (output_format or "markdown").strip().lower() or "markdown"
+    if fmt not in ("markdown", "html", "text", "json", "docx", "pptx"):
+        fmt = "markdown"
+    name = (output_filename or "").strip() or "generated"
+    return {
+        "context_small": context_small,
+        "text_part1": p1,
+        "text_part2": p2,
+        "text_part3": p3,
+        "outline": outline,
+        "chunks_meta_json": json.dumps(meta, ensure_ascii=False)[:90000],
+        "char_count": char_count,
+        "chunk_count": cid,
+        "is_large": "true" if is_large else "false",
+        "prompt": (prompt or "").strip(),
+        "filename": name,
+        "output_format": fmt,
+        "file_count": len(texts),
+    }
+'''.strip("\n")
+
+SEARCH_PARSE_CODE = r'''
+import json
+import re
+
+def main(text: str, context_small: str) -> dict:
+    s = (text or "").strip()
+    if s.startswith("```"):
+        lines = s.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    need = "false"
+    query = ""
+    try:
+        m = re.search(r"\{[\s\S]*\}", s)
+        obj = json.loads(m.group(0) if m else s)
+        raw = obj.get("need_search")
+        need = "true" if raw in (True, "true", "True", 1, "1") else "false"
+        q = obj.get("search_query")
+        query = "" if q is None else str(q).strip()
+    except Exception:
+        need = "false"
+        query = ""
+    if need == "true" and not query:
+        need = "false"
+    return {
+        "need_search": need,
+        "search_query": query,
+        "working_context": (context_small or "").strip(),
+    }
+'''.strip("\n")
+
+PLAN_PARSE_CODE = r'''
+import json
+import re
+
+def main(text: str, chunk_count) -> dict:
+    s = (text or "").strip()
+    if s.startswith("```"):
+        lines = s.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    coverage = "partial"
+    chunk_ids = []
+    need = "false"
+    query = ""
+    try:
+        m = re.search(r"\{[\s\S]*\}", s)
+        obj = json.loads(m.group(0) if m else s)
+        cov = str(obj.get("coverage") or "partial").strip().lower()
+        coverage = "full" if cov == "full" else "partial"
+        ids = obj.get("chunk_ids") or []
+        if isinstance(ids, list):
+            for x in ids:
+                try:
+                    chunk_ids.append(int(x))
+                except Exception:
+                    pass
+        raw = obj.get("need_search")
+        need = "true" if raw in (True, "true", "True", 1, "1") else "false"
+        q = obj.get("search_query")
+        query = "" if q is None else str(q).strip()
+    except Exception:
+        coverage = "partial"
+        chunk_ids = []
+        need = "false"
+        query = ""
+    if need == "true" and not query:
+        need = "false"
+    try:
+        total = int(chunk_count or 0)
+    except Exception:
+        total = 0
+    if coverage == "partial" and not chunk_ids and total > 0:
+        chunk_ids = list(range(min(12, total)))
+    if coverage == "full":
+        chunk_ids = list(range(total)) if total > 0 else []
+    chunk_ids = chunk_ids[:12] if coverage == "partial" else chunk_ids
+    return {
+        "coverage": coverage,
+        "chunk_ids_json": json.dumps(chunk_ids, ensure_ascii=False),
+        "need_search": need,
+        "search_query": query,
+    }
+'''.strip("\n")
+
+CHUNK_HELPER = r'''
+import re
+
+CHUNK_SIZE = 6000
+HEADING_RE = re.compile(
+    r"^(#{1,6}\s+\S+|第[0-9０-９一二三四五六七八九十百千]+[章節編条項]|■\s*\S+|【[^】]+】)"
+)
+
+def _split_fixed(text, size=CHUNK_SIZE):
+    text = text or ""
+    if not text.strip():
+        return [("(空)", "")]
+    parts = []
+    i = 0
+    n = 1
+    while i < len(text):
+        parts.append((f"区間{n}", text[i:i+size]))
+        i += size
+        n += 1
+    return parts
+
+def _chunk_body(body):
+    lines = (body or "").split("\n")
+    sections = []
+    current_title = "(冒頭)"
+    current = []
+    for line in lines:
+        if HEADING_RE.match(line.strip()):
+            if current:
+                b = "\n".join(current).strip()
+                if b:
+                    sections.append((current_title, b))
+            current_title = line.strip()[:80]
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        b = "\n".join(current).strip()
+        if b:
+            sections.append((current_title, b))
+    if len(sections) <= 1 and len(body or "") > CHUNK_SIZE:
+        sections = _split_fixed(body)
+    if not sections:
+        sections = [("(空)", "(空のファイル)")]
+    out = []
+    for title, text in sections:
+        if len(text) <= int(CHUNK_SIZE * 1.5):
+            out.append((title, text))
+        else:
+            for t, p in _split_fixed(text):
+                out.append((f"{title}/{t}", p))
+    return out
+
+def rebuild_chunks(text_part1, text_part2, text_part3):
+    full = (text_part1 or "") + (text_part2 or "") + (text_part3 or "")
+    # ファイル見出しで分割
+    blocks = re.split(r"\n\n---\n\n", full) if full else []
+    chunks = []
+    cid = 0
+    for bi, block in enumerate(blocks or [full]):
+        m = re.match(r"### (ファイル\d+)\n\n([\s\S]*)", block or "")
+        if m:
+            label, body = m.group(1), m.group(2)
+        else:
+            label, body = f"ファイル{bi+1}", block or ""
+        for title, text in _chunk_body(body):
+            chunks.append({"id": cid, "file_label": label, "title": title, "text": text})
+            cid += 1
+    return chunks
+'''
+
+ASSEMBLE_CODE = (CHUNK_HELPER + r'''
+import json
+
+MAX_INLINE = 60000
+
+def main(text_part1: str, text_part2: str, text_part3: str, chunk_ids_json: str, need_search: str, search_query: str) -> dict:
+    chunks = rebuild_chunks(text_part1, text_part2, text_part3)
+    try:
+        ids = json.loads(chunk_ids_json or "[]")
+    except Exception:
+        ids = []
+    by_id = {int(c["id"]): c for c in chunks}
+    parts = []
+    size = 0
+    for i in ids:
+        try:
+            cid = int(i)
+        except Exception:
+            continue
+        c = by_id.get(cid)
+        if not c:
+            continue
+        block = f"### {c.get('file_label','')} / {c.get('title','')}\n\n{(c.get('text') or '').strip()}"
+        if size and size + len(block) + 5 > MAX_INLINE:
+            break
+        parts.append(block)
+        size += len(block) + 5
+    ctx = "\n\n---\n\n".join(parts) if parts else "(選択チャンクなし)"
+    return {
+        "working_context": ctx[:90000],
+        "need_search": need_search or "false",
+        "search_query": search_query or "",
+    }
+''').strip("\n")
+
+TO_ARRAY_CODE = (CHUNK_HELPER + r'''
+MAX_CHUNKS_FOR_ITER = 15
+MAX_CHUNK_CHARS = 5000
+
+def main(text_part1: str, text_part2: str, text_part3: str, need_search: str, search_query: str) -> dict:
+    chunks = rebuild_chunks(text_part1, text_part2, text_part3)
+    if not chunks:
+        return {
+            "chunk_texts": ["(入力チャンクなし)"],
+            "need_search": need_search or "false",
+            "search_query": search_query or "",
+        }
+    # Iteration 出力上限対策: 均等サンプルで最大15チャンク
+    n = len(chunks)
+    if n <= MAX_CHUNKS_FOR_ITER:
+        chosen = chunks
+    else:
+        idxs = sorted({int(i * (n - 1) / (MAX_CHUNKS_FOR_ITER - 1)) for i in range(MAX_CHUNKS_FOR_ITER)})
+        chosen = [chunks[i] for i in idxs]
+    texts = []
+    for c in chosen:
+        body = (c.get("text") or "").strip()[:MAX_CHUNK_CHARS]
+        texts.append(f"[{c.get('file_label','')} / {c.get('title','')}]\n{body}")
+    return {
+        "chunk_texts": texts,
+        "need_search": need_search or "false",
+        "search_query": search_query or "",
+    }
+''').strip("\n")
+
+MERGE_SUMMARIES_CODE = r'''
+def main(summaries, need_search: str, search_query: str) -> dict:
+    if summaries is None:
+        summaries = []
+    if isinstance(summaries, str):
+        summaries = [summaries]
+    parts = []
+    for i, s in enumerate(summaries):
+        body = (s or "").strip()
+        if body:
+            parts.append(f"### チャンク要約 {i + 1}\n\n{body}")
+    ctx = "\n\n---\n\n".join(parts) if parts else "(要約結果なし)"
+    return {
+        "working_context": ctx,
+        "need_search": need_search or "false",
+        "search_query": search_query or "",
+    }
+'''.strip("\n")
+
+SYNC_CODE = r'''
+def main(working_context: str, need_search: str, search_query: str) -> dict:
+    return {
+        "working_context": (working_context or "").strip(),
+        "need_search": need_search or "false",
+        "search_query": search_query or "",
+    }
+'''.strip("\n")
+
+ENRICH_CODE = r'''
+def main(context: str, search_text: str, search_query: str) -> dict:
+    ctx = (context or "").strip()
+    hit = (search_text or "").strip()
+    q = (search_query or "").strip()
+    if hit:
+        enriched = (
+            f"{ctx}\n\n---\n\n## Web検索結果\n\n"
+            f"クエリ: {q}\n\n{hit}"
+        )
+    else:
+        enriched = ctx
+    return {"enriched_context": enriched}
+'''.strip("\n")
+
+SKIP_CODE = r'''
+def main(context: str) -> dict:
+    return {"enriched_context": (context or "").strip()}
+'''.strip("\n")
+
+FINALIZE_CODE = r'''
+def main(text: str, filename: str, output_format: str) -> dict:
+    content = (text or "").strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        content = "\n".join(lines).strip()
+
+    fmt = (output_format or "markdown").strip().lower() or "markdown"
+    ext_map = {
+        "markdown": ".md",
+        "html": ".html",
+        "text": ".txt",
+        "json": ".json",
+        "docx": ".docx",
+        "pptx": ".pptx",
+    }
+    mime_map = {
+        "markdown": "text/markdown",
+        "html": "text/html",
+        "text": "text/plain",
+        "json": "application/json",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+    ext = ext_map.get(fmt, ".md")
+    mime = mime_map.get(fmt, "text/markdown")
+
+    name = (filename or "generated").strip() or "generated"
+    if "." in name:
+        stem = name.rsplit(".", 1)[0] or "generated"
+    else:
+        stem = name
+    full_name = stem + ext
+    return {
+        "content": content,
+        "filename": full_name,
+        "filename_stem": stem,
+        "mime_type": mime,
+        "output_format": fmt,
+    }
+'''.strip("\n")
+
+
+def indent_block(code: str, spaces: int = 10) -> str:
+    pad = " " * spaces
+    return "\n".join(pad + line if line else "" for line in code.split("\n"))
+
+
+def edge(eid, source, target, source_type, target_type, handle="source", z=0, **extra):
+    data = {
+        "isInIteration": extra.get("isInIteration", False),
+        "isInLoop": False,
+        "sourceType": source_type,
+        "targetType": target_type,
+    }
+    if extra.get("iteration_id"):
+        data["iteration_id"] = extra["iteration_id"]
+        data["isInIteration"] = True
+    lines = [
+        "    - data:",
+        f"        isInIteration: {'true' if data['isInIteration'] else 'false'}",
+        "        isInLoop: false",
+    ]
+    if data.get("iteration_id"):
+        lines.append(f"        iteration_id: '{data['iteration_id']}'")
+    lines += [
+        f"        sourceType: {source_type}",
+        f"        targetType: {target_type}",
+        f"      id: {eid}",
+        f"      source: '{source}'" if not str(source).endswith("start") or str(source).startswith("175") else f"      source: {source}",
+    ]
+    # fix source formatting - Dify uses quoted numeric ids
+    lines[-1] = f"      source: '{source}'"
+    if str(source).endswith("start") and not str(source)[0].isdigit():
+        pass
+    # special case iteration start id without quotes issues - use as-is with quotes always
+    lines += [
+        f"      sourceHandle: '{handle}'" if handle != "source" else "      sourceHandle: source",
+        f"      target: '{target}'",
+        "      targetHandle: target",
+        "      type: custom",
+        f"      zIndex: {z}",
+    ]
+    if handle == "source":
+        # rewrite sourceHandle line
+        for i, ln in enumerate(lines):
+            if ln.startswith("      sourceHandle:"):
+                lines[i] = "      sourceHandle: source"
+    # Fix source for iteration start: 1750000000026start
+    if str(source).endswith("start"):
+        for i, ln in enumerate(lines):
+            if ln.startswith("      source:"):
+                lines[i] = f"      source: {source}"
+    return "\n".join(lines)
+
+
+def main() -> None:
+    # Rebuild edges more carefully with a helper
+    def E(eid, src, tgt, st, tt, handle="source", z=0, iter_id=None):
+        src_line = f"      source: {src}" if str(src).endswith("start") else f"      source: '{src}'"
+        sh = "source" if handle == "source" else f"'{handle}'"
+        block = f"""    - data:
+        isInIteration: {'true' if iter_id else 'false'}
+        isInLoop: false
+"""
+        if iter_id:
+            block += f"        iteration_id: '{iter_id}'\n"
+        block += f"""        sourceType: {st}
+        targetType: {tt}
+      id: {eid}
+{src_line}
+      sourceHandle: {sh}
+      target: '{tgt}'
+      targetHandle: target
+      type: custom
+      zIndex: {z}"""
+        return block
+
+    edges = [
+        E("edge-start-extract", "1750000000001", "1750000000002", "start", "document-extractor"),
+        E("edge-extract-prep", "1750000000002", "1750000000003", "document-extractor", "code"),
+        E("edge-prep-size", "1750000000003", "1750000000020", "code", "if-else"),
+        # small path
+        E("edge-size-small", "1750000000020", "1750000000004", "if-else", "llm", handle="false"),
+        E("edge-small-parse", "1750000000004", "1750000000005", "llm", "code"),
+        E("edge-small-aggctx", "1750000000005", "1750000000029", "code", "variable-aggregator"),
+        E("edge-small-aggneed", "1750000000005", "1750000000031", "code", "variable-aggregator"),
+        E("edge-small-aggquery", "1750000000005", "1750000000032", "code", "variable-aggregator"),
+        # large path
+        E("edge-size-large", "1750000000020", "1750000000021", "if-else", "llm", handle="true"),
+        E("edge-read-parse", "1750000000021", "1750000000022", "llm", "code"),
+        E("edge-parse-cov", "1750000000022", "1750000000023", "code", "if-else"),
+        E("edge-cov-partial", "1750000000023", "1750000000024", "if-else", "code", handle="false"),
+        E("edge-partial-aggctx", "1750000000024", "1750000000029", "code", "variable-aggregator"),
+        E("edge-partial-aggneed", "1750000000024", "1750000000031", "code", "variable-aggregator"),
+        E("edge-partial-aggquery", "1750000000024", "1750000000032", "code", "variable-aggregator"),
+        E("edge-cov-full", "1750000000023", "1750000000025", "if-else", "code", handle="full"),
+        E("edge-full-iter", "1750000000025", "1750000000026", "code", "iteration"),
+        E(
+            "edge-iter-start-llm",
+            "1750000000026start",
+            "1750000000027",
+            "iteration-start",
+            "llm",
+            z=1002,
+            iter_id="1750000000026",
+        ),
+        E("edge-iter-merge", "1750000000026", "1750000000028", "iteration", "code"),
+        E("edge-merge-aggctx", "1750000000028", "1750000000029", "code", "variable-aggregator"),
+        E("edge-merge-aggneed", "1750000000028", "1750000000031", "code", "variable-aggregator"),
+        E("edge-merge-aggquery", "1750000000028", "1750000000032", "code", "variable-aggregator"),
+        # sync aggregators then search
+        E("edge-ctx-sync", "1750000000029", "1750000000033", "variable-aggregator", "code"),
+        E("edge-need-sync", "1750000000031", "1750000000033", "variable-aggregator", "code"),
+        E("edge-query-sync", "1750000000032", "1750000000033", "variable-aggregator", "code"),
+        E("edge-sync-searchif", "1750000000033", "1750000000006", "code", "if-else"),
+        E("edge-if-tavily", "1750000000006", "1750000000007", "if-else", "tool", handle="true"),
+        E("edge-tavily-enrich", "1750000000007", "1750000000008", "tool", "code"),
+        E("edge-if-pass", "1750000000006", "1750000000009", "if-else", "code", handle="false"),
+        E("edge-enrich-agg", "1750000000008", "1750000000010", "code", "variable-aggregator"),
+        E("edge-pass-agg", "1750000000009", "1750000000010", "code", "variable-aggregator"),
+        E("edge-agg-gen", "1750000000010", "1750000000011", "variable-aggregator", "llm"),
+        E("edge-gen-finalize", "1750000000011", "1750000000012", "llm", "code"),
+        E("edge-finalize-format", "1750000000012", "1750000000013", "code", "if-else"),
+        E("edge-format-docx", "1750000000013", "1750000000014", "if-else", "tool", handle="case_docx"),
+        E("edge-format-pptx", "1750000000013", "1750000000015", "if-else", "tool", handle="case_pptx"),
+        E("edge-format-plain", "1750000000013", "1750000000016", "if-else", "tool", handle="false"),
+        E("edge-docx-agg", "1750000000014", "1750000000017", "tool", "variable-aggregator"),
+        E("edge-pptx-agg", "1750000000015", "1750000000017", "tool", "variable-aggregator"),
+        E("edge-plain-agg", "1750000000016", "1750000000017", "tool", "variable-aggregator"),
+        E("edge-agg-end", "1750000000017", "1750000000018", "variable-aggregator", "end"),
+    ]
+
+    # Problem: multiple edges from 0005/0024/0028 to three aggregators - Dify usually allows one outgoing edge per handle.
+    # Need a pack node that goes to a single "route" code, OR use one aggregator with multiple inputs and single path through a dummy.
+    # Better: each path ends in one code node that outputs all three fields, then ONE edge to a "fan-in" using three aggregators
+    # fed as variables - but each source can only have one outgoing edge in many graph UIs.
+    #
+    # Fix: add a code/pass node is wrong. Use variable-aggregator that collects working_context only from three paths,
+    # and have need_search/search_query also as outputs of those same three nodes - Dify variable-aggregator can list
+    # multiple sources. Each source node can connect to multiple targets in Dify workflow graphs (multiple edges from same source).
+    # DeepResearch has multiple edges from same LLM. So multiple outgoing edges OK.
+
+    yaml_doc = f"""app:
   description: |
     複数ドキュメントと指示から新規ファイルを生成するワークフロー。
     必要に応じて Tavily で Web 検索し、markdown / html / text / json / docx / pptx で出力する。
@@ -90,499 +713,7 @@ workflow:
       voice: ''
   graph:
     edges:
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: start
-        targetType: document-extractor
-      id: edge-start-extract
-      source: '1750000000001'
-      sourceHandle: source
-      target: '1750000000002'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: document-extractor
-        targetType: code
-      id: edge-extract-prep
-      source: '1750000000002'
-      sourceHandle: source
-      target: '1750000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: edge-prep-size
-      source: '1750000000003'
-      sourceHandle: source
-      target: '1750000000020'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: llm
-      id: edge-size-small
-      source: '1750000000020'
-      sourceHandle: 'false'
-      target: '1750000000004'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: edge-small-parse
-      source: '1750000000004'
-      sourceHandle: source
-      target: '1750000000005'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-small-aggctx
-      source: '1750000000005'
-      sourceHandle: source
-      target: '1750000000029'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-small-aggneed
-      source: '1750000000005'
-      sourceHandle: source
-      target: '1750000000031'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-small-aggquery
-      source: '1750000000005'
-      sourceHandle: source
-      target: '1750000000032'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: llm
-      id: edge-size-large
-      source: '1750000000020'
-      sourceHandle: 'true'
-      target: '1750000000021'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: edge-read-parse
-      source: '1750000000021'
-      sourceHandle: source
-      target: '1750000000022'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: edge-parse-cov
-      source: '1750000000022'
-      sourceHandle: source
-      target: '1750000000023'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: code
-      id: edge-cov-partial
-      source: '1750000000023'
-      sourceHandle: 'false'
-      target: '1750000000024'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-partial-aggctx
-      source: '1750000000024'
-      sourceHandle: source
-      target: '1750000000029'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-partial-aggneed
-      source: '1750000000024'
-      sourceHandle: source
-      target: '1750000000031'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-partial-aggquery
-      source: '1750000000024'
-      sourceHandle: source
-      target: '1750000000032'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: code
-      id: edge-cov-full
-      source: '1750000000023'
-      sourceHandle: 'full'
-      target: '1750000000025'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: iteration
-      id: edge-full-iter
-      source: '1750000000025'
-      sourceHandle: source
-      target: '1750000000026'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: true
-        isInLoop: false
-        iteration_id: '1750000000026'
-        sourceType: iteration-start
-        targetType: llm
-      id: edge-iter-start-llm
-      source: 1750000000026start
-      sourceHandle: source
-      target: '1750000000027'
-      targetHandle: target
-      type: custom
-      zIndex: 1002
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: iteration
-        targetType: code
-      id: edge-iter-merge
-      source: '1750000000026'
-      sourceHandle: source
-      target: '1750000000028'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-merge-aggctx
-      source: '1750000000028'
-      sourceHandle: source
-      target: '1750000000029'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-merge-aggneed
-      source: '1750000000028'
-      sourceHandle: source
-      target: '1750000000031'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-merge-aggquery
-      source: '1750000000028'
-      sourceHandle: source
-      target: '1750000000032'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: variable-aggregator
-        targetType: code
-      id: edge-ctx-sync
-      source: '1750000000029'
-      sourceHandle: source
-      target: '1750000000033'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: variable-aggregator
-        targetType: code
-      id: edge-need-sync
-      source: '1750000000031'
-      sourceHandle: source
-      target: '1750000000033'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: variable-aggregator
-        targetType: code
-      id: edge-query-sync
-      source: '1750000000032'
-      sourceHandle: source
-      target: '1750000000033'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: edge-sync-searchif
-      source: '1750000000033'
-      sourceHandle: source
-      target: '1750000000006'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: tool
-      id: edge-if-tavily
-      source: '1750000000006'
-      sourceHandle: 'true'
-      target: '1750000000007'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: tool
-        targetType: code
-      id: edge-tavily-enrich
-      source: '1750000000007'
-      sourceHandle: source
-      target: '1750000000008'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: code
-      id: edge-if-pass
-      source: '1750000000006'
-      sourceHandle: 'false'
-      target: '1750000000009'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-enrich-agg
-      source: '1750000000008'
-      sourceHandle: source
-      target: '1750000000010'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: variable-aggregator
-      id: edge-pass-agg
-      source: '1750000000009'
-      sourceHandle: source
-      target: '1750000000010'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: variable-aggregator
-        targetType: llm
-      id: edge-agg-gen
-      source: '1750000000010'
-      sourceHandle: source
-      target: '1750000000011'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: edge-gen-finalize
-      source: '1750000000011'
-      sourceHandle: source
-      target: '1750000000012'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: edge-finalize-format
-      source: '1750000000012'
-      sourceHandle: source
-      target: '1750000000013'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: tool
-      id: edge-format-docx
-      source: '1750000000013'
-      sourceHandle: 'case_docx'
-      target: '1750000000014'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: tool
-      id: edge-format-pptx
-      source: '1750000000013'
-      sourceHandle: 'case_pptx'
-      target: '1750000000015'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: if-else
-        targetType: tool
-      id: edge-format-plain
-      source: '1750000000013'
-      sourceHandle: 'false'
-      target: '1750000000016'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: tool
-        targetType: variable-aggregator
-      id: edge-docx-agg
-      source: '1750000000014'
-      sourceHandle: source
-      target: '1750000000017'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: tool
-        targetType: variable-aggregator
-      id: edge-pptx-agg
-      source: '1750000000015'
-      sourceHandle: source
-      target: '1750000000017'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: tool
-        targetType: variable-aggregator
-      id: edge-plain-agg
-      source: '1750000000016'
-      sourceHandle: source
-      target: '1750000000017'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        isInLoop: false
-        sourceType: variable-aggregator
-        targetType: end
-      id: edge-agg-end
-      source: '1750000000017'
-      sourceHandle: source
-      target: '1750000000018'
-      targetHandle: target
-      type: custom
-      zIndex: 0
+{chr(10).join(edges)}
     nodes:
     - data:
         desc: 複数ファイル・指示・出力形式を受け取る
@@ -665,155 +796,7 @@ workflow:
       width: 244
     - data:
         code: |
-          import json
-          import re
-
-          MAX_INLINE = 60000
-          CHUNK_SIZE = 6000
-          PART_SIZE = 90000
-          OUTLINE_MAX_CHARS = 8000
-          OUTLINE_MAX_ITEMS = 80
-          OUTLINE_PREVIEW = 60
-          HEADING_RE = re.compile(
-              r"^(#{1,6}\s+\S+|第[0-9０-９一二三四五六七八九十百千]+[章節編条項]|■\s*\S+|【[^】]+】)"
-          )
-
-
-          def split_fixed(text: str, size: int = CHUNK_SIZE):
-              text = text or ""
-              if not text.strip():
-                  return [("(空)", "")]
-              parts = []
-              i = 0
-              n = 1
-              while i < len(text):
-                  parts.append((f"区間{n}", text[i : i + size]))
-                  i += size
-                  n += 1
-              return parts
-
-
-          def split_by_headings(text: str):
-              lines = (text or "").split("\n")
-              sections = []
-              current_title = "(冒頭)"
-              current = []
-              for line in lines:
-                  if HEADING_RE.match(line.strip()):
-                      if current:
-                          body = "\n".join(current).strip()
-                          if body:
-                              sections.append((current_title, body))
-                      current_title = line.strip()[:80]
-                      current = [line]
-                  else:
-                      current.append(line)
-              if current:
-                  body = "\n".join(current).strip()
-                  if body:
-                      sections.append((current_title, body))
-              return sections
-
-
-          def chunk_body(body: str):
-              sections = split_by_headings(body)
-              if len(sections) <= 1 and len(body or "") > CHUNK_SIZE:
-                  sections = split_fixed(body)
-              if not sections:
-                  sections = [("(空)", "(空のファイル)")]
-              out = []
-              for title, text in sections:
-                  if len(text) <= int(CHUNK_SIZE * 1.5):
-                      out.append((title, text))
-                  else:
-                      for t, p in split_fixed(text):
-                          out.append((f"{title}/{t}", p))
-              return out
-
-
-          def build_outline(file_chunks):
-              lines = []
-              items = 0
-              for label, pairs in file_chunks:
-                  lines.append(f"## {label}")
-                  for cid, title, text in pairs:
-                      if items >= OUTLINE_MAX_ITEMS:
-                          total = sum(len(pairs) for _, pairs in file_chunks)
-                          lines.append(f"...他 {max(total - items, 0)} チャンク略")
-                          s = "\n".join(lines)
-                          return s[:OUTLINE_MAX_CHARS]
-                      preview = (text or "").replace("\n", " ").replace("\r", " ")[:OUTLINE_PREVIEW]
-                      lines.append(f"- [{cid}] {title}: {preview}")
-                      items += 1
-                      s = "\n".join(lines)
-                      if len(s) >= OUTLINE_MAX_CHARS:
-                          return s[:OUTLINE_MAX_CHARS]
-              return "\n".join(lines) if lines else "(入力ファイルなし)"
-
-
-          def split_parts(full: str):
-              full = full or ""
-              return (
-                  full[0:PART_SIZE],
-                  full[PART_SIZE : PART_SIZE * 2],
-                  full[PART_SIZE * 2 : PART_SIZE * 3],
-              )
-
-
-          def main(texts, prompt: str, output_filename: str, output_format: str) -> dict:
-              if texts is None:
-                  texts = []
-              if isinstance(texts, str):
-                  texts = [texts]
-              joined_parts = []
-              file_chunks = []
-              meta = []
-              cid = 0
-              for i, t in enumerate(texts):
-                  body = (t or "").strip()
-                  label = f"ファイル{i + 1}"
-                  joined_parts.append(f"### {label}\n\n{body if body else '(空のファイル)'}")
-                  pairs = []
-                  for title, text in chunk_body(body):
-                      pairs.append((cid, title, text))
-                      meta.append(
-                          {
-                              "id": cid,
-                              "file_index": i + 1,
-                              "file_label": label,
-                              "title": title,
-                              "start": 0,
-                              "length": len(text or ""),
-                          }
-                      )
-                      cid += 1
-                  file_chunks.append((label, pairs))
-              full = "\n\n---\n\n".join(joined_parts) if joined_parts else "(入力ファイルなし)"
-              char_count = len(full)
-              is_large = char_count > MAX_INLINE
-              outline = build_outline(file_chunks)
-              p1, p2, p3 = split_parts(full)
-              # 小容量時のみ全文を context_small に載せる（Dify出力上限対策）
-              context_small = full if not is_large else ""
-              fmt = (output_format or "markdown").strip().lower() or "markdown"
-              if fmt not in ("markdown", "html", "text", "json", "docx", "pptx"):
-                  fmt = "markdown"
-              name = (output_filename or "").strip() or "generated"
-              return {
-                  "context_small": context_small,
-                  "text_part1": p1,
-                  "text_part2": p2,
-                  "text_part3": p3,
-                  "outline": outline,
-                  "chunks_meta_json": json.dumps(meta, ensure_ascii=False)[:90000],
-                  "char_count": char_count,
-                  "chunk_count": cid,
-                  "is_large": "true" if is_large else "false",
-                  "prompt": (prompt or "").strip(),
-                  "filename": name,
-                  "output_format": fmt,
-                  "file_count": len(texts),
-              }
+{indent_block(PREPARE_CODE)}
         code_language: python3
         desc: チャンク化・短縮アウトライン・本文分割・サイズ判定
         outputs:
@@ -943,7 +926,7 @@ workflow:
 
             ## 出力（厳守）
             - JSON オブジェクトのみ。解説・コードフェンス禁止
-            - Schema: {"need_search":true|false,"search_query":"string|null"}
+            - Schema: {{"need_search":true|false,"search_query":"string|null"}}
             - need_search=true のとき search_query は短い日本語検索クエリ
             - need_search=false のとき search_query は null
         - id: mfg-plan-user
@@ -951,11 +934,11 @@ workflow:
           text: |
             ## 指示
 
-            {{#1750000000003.prompt#}}
+            {{{{#1750000000003.prompt#}}}}
 
-            ## 参照資料（{{#1750000000003.file_count#}} 件）
+            ## 参照資料（{{{{#1750000000003.file_count#}}}} 件）
 
-            {{#1750000000003.context_small#}}
+            {{{{#1750000000003.context_small#}}}}
         selected: false
         title: 検索要否判定
         type: llm
@@ -977,37 +960,7 @@ workflow:
       width: 244
     - data:
         code: |
-          import json
-          import re
-
-          def main(text: str, context_small: str) -> dict:
-              s = (text or "").strip()
-              if s.startswith("```"):
-                  lines = s.split("\n")
-                  if lines and lines[0].startswith("```"):
-                      lines = lines[1:]
-                  if lines and lines[-1].strip() == "```":
-                      lines = lines[:-1]
-                  s = "\n".join(lines).strip()
-              need = "false"
-              query = ""
-              try:
-                  m = re.search(r"\{[\s\S]*\}", s)
-                  obj = json.loads(m.group(0) if m else s)
-                  raw = obj.get("need_search")
-                  need = "true" if raw in (True, "true", "True", 1, "1") else "false"
-                  q = obj.get("search_query")
-                  query = "" if q is None else str(q).strip()
-              except Exception:
-                  need = "false"
-                  query = ""
-              if need == "true" and not query:
-                  need = "false"
-              return {
-                  "need_search": need,
-                  "search_query": query,
-                  "working_context": (context_small or "").strip(),
-              }
+{indent_block(SEARCH_PARSE_CODE)}
         code_language: python3
         desc: 小容量パスの判定パースと working_context 設定
         outputs:
@@ -1070,21 +1023,21 @@ workflow:
 
             ## 出力（厳守）
             - JSON のみ。解説・コードフェンス禁止
-            - Schema: {"coverage":"partial"|"full","chunk_ids":[0],"need_search":true|false,"search_query":"string|null","rationale":"string"}
+            - Schema: {{"coverage":"partial"|"full","chunk_ids":[0],"need_search":true|false,"search_query":"string|null","rationale":"string"}}
         - id: mfg-readplan-user
           role: user
           text: |
             ## 指示
 
-            {{#1750000000003.prompt#}}
+            {{{{#1750000000003.prompt#}}}}
 
             ## チャンク数
 
-            {{#1750000000003.chunk_count#}}
+            {{{{#1750000000003.chunk_count#}}}}
 
             ## アウトライン
 
-            {{#1750000000003.outline#}}
+            {{{{#1750000000003.outline#}}}}
         selected: false
         title: 読み計画
         type: llm
@@ -1106,60 +1059,7 @@ workflow:
       width: 244
     - data:
         code: |
-          import json
-          import re
-
-          def main(text: str, chunk_count) -> dict:
-              s = (text or "").strip()
-              if s.startswith("```"):
-                  lines = s.split("\n")
-                  if lines and lines[0].startswith("```"):
-                      lines = lines[1:]
-                  if lines and lines[-1].strip() == "```":
-                      lines = lines[:-1]
-                  s = "\n".join(lines).strip()
-              coverage = "partial"
-              chunk_ids = []
-              need = "false"
-              query = ""
-              try:
-                  m = re.search(r"\{[\s\S]*\}", s)
-                  obj = json.loads(m.group(0) if m else s)
-                  cov = str(obj.get("coverage") or "partial").strip().lower()
-                  coverage = "full" if cov == "full" else "partial"
-                  ids = obj.get("chunk_ids") or []
-                  if isinstance(ids, list):
-                      for x in ids:
-                          try:
-                              chunk_ids.append(int(x))
-                          except Exception:
-                              pass
-                  raw = obj.get("need_search")
-                  need = "true" if raw in (True, "true", "True", 1, "1") else "false"
-                  q = obj.get("search_query")
-                  query = "" if q is None else str(q).strip()
-              except Exception:
-                  coverage = "partial"
-                  chunk_ids = []
-                  need = "false"
-                  query = ""
-              if need == "true" and not query:
-                  need = "false"
-              try:
-                  total = int(chunk_count or 0)
-              except Exception:
-                  total = 0
-              if coverage == "partial" and not chunk_ids and total > 0:
-                  chunk_ids = list(range(min(12, total)))
-              if coverage == "full":
-                  chunk_ids = list(range(total)) if total > 0 else []
-              chunk_ids = chunk_ids[:12] if coverage == "partial" else chunk_ids
-              return {
-                  "coverage": coverage,
-                  "chunk_ids_json": json.dumps(chunk_ids, ensure_ascii=False),
-                  "need_search": need,
-                  "search_query": query,
-              }
+{indent_block(PLAN_PARSE_CODE)}
         code_language: python3
         desc: 読み計画 JSON をパース
         outputs:
@@ -1232,107 +1132,7 @@ workflow:
       width: 244
     - data:
         code: |
-          import re
-
-          CHUNK_SIZE = 6000
-          HEADING_RE = re.compile(
-              r"^(#{1,6}\s+\S+|第[0-9０-９一二三四五六七八九十百千]+[章節編条項]|■\s*\S+|【[^】]+】)"
-          )
-
-          def _split_fixed(text, size=CHUNK_SIZE):
-              text = text or ""
-              if not text.strip():
-                  return [("(空)", "")]
-              parts = []
-              i = 0
-              n = 1
-              while i < len(text):
-                  parts.append((f"区間{n}", text[i:i+size]))
-                  i += size
-                  n += 1
-              return parts
-
-          def _chunk_body(body):
-              lines = (body or "").split("\n")
-              sections = []
-              current_title = "(冒頭)"
-              current = []
-              for line in lines:
-                  if HEADING_RE.match(line.strip()):
-                      if current:
-                          b = "\n".join(current).strip()
-                          if b:
-                              sections.append((current_title, b))
-                      current_title = line.strip()[:80]
-                      current = [line]
-                  else:
-                      current.append(line)
-              if current:
-                  b = "\n".join(current).strip()
-                  if b:
-                      sections.append((current_title, b))
-              if len(sections) <= 1 and len(body or "") > CHUNK_SIZE:
-                  sections = _split_fixed(body)
-              if not sections:
-                  sections = [("(空)", "(空のファイル)")]
-              out = []
-              for title, text in sections:
-                  if len(text) <= int(CHUNK_SIZE * 1.5):
-                      out.append((title, text))
-                  else:
-                      for t, p in _split_fixed(text):
-                          out.append((f"{title}/{t}", p))
-              return out
-
-          def rebuild_chunks(text_part1, text_part2, text_part3):
-              full = (text_part1 or "") + (text_part2 or "") + (text_part3 or "")
-              # ファイル見出しで分割
-              blocks = re.split(r"\n\n---\n\n", full) if full else []
-              chunks = []
-              cid = 0
-              for bi, block in enumerate(blocks or [full]):
-                  m = re.match(r"### (ファイル\d+)\n\n([\s\S]*)", block or "")
-                  if m:
-                      label, body = m.group(1), m.group(2)
-                  else:
-                      label, body = f"ファイル{bi+1}", block or ""
-                  for title, text in _chunk_body(body):
-                      chunks.append({"id": cid, "file_label": label, "title": title, "text": text})
-                      cid += 1
-              return chunks
-
-          import json
-
-          MAX_INLINE = 60000
-
-          def main(text_part1: str, text_part2: str, text_part3: str, chunk_ids_json: str, need_search: str, search_query: str) -> dict:
-              chunks = rebuild_chunks(text_part1, text_part2, text_part3)
-              try:
-                  ids = json.loads(chunk_ids_json or "[]")
-              except Exception:
-                  ids = []
-              by_id = {int(c["id"]): c for c in chunks}
-              parts = []
-              size = 0
-              for i in ids:
-                  try:
-                      cid = int(i)
-                  except Exception:
-                      continue
-                  c = by_id.get(cid)
-                  if not c:
-                      continue
-                  block = f"### {c.get('file_label','')} / {c.get('title','')}\n\n{(c.get('text') or '').strip()}"
-                  if size and size + len(block) + 5 > MAX_INLINE:
-                      break
-                  parts.append(block)
-                  size += len(block) + 5
-              ctx = "\n\n---\n\n".join(parts) if parts else "(選択チャンクなし)"
-              return {
-                  "working_context": ctx[:90000],
-                  "need_search": need_search or "false",
-                  "search_query": search_query or "",
-              }
+{indent_block(ASSEMBLE_CODE)}
         code_language: python3
         desc: 選択チャンクを結合して working_context を作る
         outputs:
@@ -1388,102 +1188,7 @@ workflow:
       width: 244
     - data:
         code: |
-          import re
-
-          CHUNK_SIZE = 6000
-          HEADING_RE = re.compile(
-              r"^(#{1,6}\s+\S+|第[0-9０-９一二三四五六七八九十百千]+[章節編条項]|■\s*\S+|【[^】]+】)"
-          )
-
-          def _split_fixed(text, size=CHUNK_SIZE):
-              text = text or ""
-              if not text.strip():
-                  return [("(空)", "")]
-              parts = []
-              i = 0
-              n = 1
-              while i < len(text):
-                  parts.append((f"区間{n}", text[i:i+size]))
-                  i += size
-                  n += 1
-              return parts
-
-          def _chunk_body(body):
-              lines = (body or "").split("\n")
-              sections = []
-              current_title = "(冒頭)"
-              current = []
-              for line in lines:
-                  if HEADING_RE.match(line.strip()):
-                      if current:
-                          b = "\n".join(current).strip()
-                          if b:
-                              sections.append((current_title, b))
-                      current_title = line.strip()[:80]
-                      current = [line]
-                  else:
-                      current.append(line)
-              if current:
-                  b = "\n".join(current).strip()
-                  if b:
-                      sections.append((current_title, b))
-              if len(sections) <= 1 and len(body or "") > CHUNK_SIZE:
-                  sections = _split_fixed(body)
-              if not sections:
-                  sections = [("(空)", "(空のファイル)")]
-              out = []
-              for title, text in sections:
-                  if len(text) <= int(CHUNK_SIZE * 1.5):
-                      out.append((title, text))
-                  else:
-                      for t, p in _split_fixed(text):
-                          out.append((f"{title}/{t}", p))
-              return out
-
-          def rebuild_chunks(text_part1, text_part2, text_part3):
-              full = (text_part1 or "") + (text_part2 or "") + (text_part3 or "")
-              # ファイル見出しで分割
-              blocks = re.split(r"\n\n---\n\n", full) if full else []
-              chunks = []
-              cid = 0
-              for bi, block in enumerate(blocks or [full]):
-                  m = re.match(r"### (ファイル\d+)\n\n([\s\S]*)", block or "")
-                  if m:
-                      label, body = m.group(1), m.group(2)
-                  else:
-                      label, body = f"ファイル{bi+1}", block or ""
-                  for title, text in _chunk_body(body):
-                      chunks.append({"id": cid, "file_label": label, "title": title, "text": text})
-                      cid += 1
-              return chunks
-
-          MAX_CHUNKS_FOR_ITER = 15
-          MAX_CHUNK_CHARS = 5000
-
-          def main(text_part1: str, text_part2: str, text_part3: str, need_search: str, search_query: str) -> dict:
-              chunks = rebuild_chunks(text_part1, text_part2, text_part3)
-              if not chunks:
-                  return {
-                      "chunk_texts": ["(入力チャンクなし)"],
-                      "need_search": need_search or "false",
-                      "search_query": search_query or "",
-                  }
-              # Iteration 出力上限対策: 均等サンプルで最大15チャンク
-              n = len(chunks)
-              if n <= MAX_CHUNKS_FOR_ITER:
-                  chosen = chunks
-              else:
-                  idxs = sorted({int(i * (n - 1) / (MAX_CHUNKS_FOR_ITER - 1)) for i in range(MAX_CHUNKS_FOR_ITER)})
-                  chosen = [chunks[i] for i in idxs]
-              texts = []
-              for c in chosen:
-                  body = (c.get("text") or "").strip()[:MAX_CHUNK_CHARS]
-                  texts.append(f"[{c.get('file_label','')} / {c.get('title','')}]\n{body}")
-              return {
-                  "chunk_texts": texts,
-                  "need_search": need_search or "false",
-                  "search_query": search_query or "",
-              }
+{indent_block(TO_ARRAY_CODE)}
         code_language: python3
         desc: 全チャンクを Iteration 用配列にする
         outputs:
@@ -1612,11 +1317,11 @@ workflow:
           text: |
             ## ユーザー指示（観点）
 
-            {{#1750000000003.prompt#}}
+            {{{{#1750000000003.prompt#}}}}
 
             ## チャンク本文
 
-            {{#1750000000026.item#}}
+            {{{{#1750000000026.item#}}}}
         selected: false
         title: チャンク要約
         type: llm
@@ -1640,22 +1345,7 @@ workflow:
       zIndex: 1002
     - data:
         code: |
-          def main(summaries, need_search: str, search_query: str) -> dict:
-              if summaries is None:
-                  summaries = []
-              if isinstance(summaries, str):
-                  summaries = [summaries]
-              parts = []
-              for i, s in enumerate(summaries):
-                  body = (s or "").strip()
-                  if body:
-                      parts.append(f"### チャンク要約 {i + 1}\n\n{body}")
-              ctx = "\n\n---\n\n".join(parts) if parts else "(要約結果なし)"
-              return {
-                  "working_context": ctx,
-                  "need_search": need_search or "false",
-                  "search_query": search_query or "",
-              }
+{indent_block(MERGE_SUMMARIES_CODE)}
         code_language: python3
         desc: Iteration の要約結果を結合
         outputs:
@@ -1780,12 +1470,7 @@ workflow:
       width: 244
     - data:
         code: |
-          def main(working_context: str, need_search: str, search_query: str) -> dict:
-              return {
-                  "working_context": (working_context or "").strip(),
-                  "need_search": need_search or "false",
-                  "search_query": search_query or "",
-              }
+{indent_block(SYNC_CODE)}
         code_language: python3
         desc: 集約結果を同期して後段へ渡す
         outputs:
@@ -1880,7 +1565,7 @@ workflow:
         tool_parameters:
           query:
             type: mixed
-            value: '{{#1750000000033.search_query#}}'
+            value: '{{{{#1750000000033.search_query#}}}}'
         type: tool
       height: 200
       id: '1750000000007'
@@ -1897,18 +1582,7 @@ workflow:
       width: 244
     - data:
         code: |
-          def main(context: str, search_text: str, search_query: str) -> dict:
-              ctx = (context or "").strip()
-              hit = (search_text or "").strip()
-              q = (search_query or "").strip()
-              if hit:
-                  enriched = (
-                      f"{ctx}\n\n---\n\n## Web検索結果\n\n"
-                      f"クエリ: {q}\n\n{hit}"
-                  )
-              else:
-                  enriched = ctx
-              return {"enriched_context": enriched}
+{indent_block(ENRICH_CODE)}
         code_language: python3
         desc: 作業コンテキストに検索結果を追記
         outputs:
@@ -1946,8 +1620,7 @@ workflow:
       width: 244
     - data:
         code: |
-          def main(context: str) -> dict:
-              return {"enriched_context": (context or "").strip()}
+{indent_block(SKIP_CODE)}
         code_language: python3
         desc: 検索なしで作業コンテキストのみを渡す
         outputs:
@@ -2042,15 +1715,15 @@ workflow:
           text: |
             ## 出力形式
 
-            {{#1750000000003.output_format#}}
+            {{{{#1750000000003.output_format#}}}}
 
             ## 指示
 
-            {{#1750000000003.prompt#}}
+            {{{{#1750000000003.prompt#}}}}
 
             ## 参照資料（検索結果があれば含む）
 
-            {{#1750000000010.output#}}
+            {{{{#1750000000010.output#}}}}
         selected: false
         title: ファイル生成 LLM
         type: llm
@@ -2072,49 +1745,7 @@ workflow:
       width: 244
     - data:
         code: |
-          def main(text: str, filename: str, output_format: str) -> dict:
-              content = (text or "").strip()
-              if content.startswith("```"):
-                  lines = content.split("\n")
-                  if lines and lines[0].startswith("```"):
-                      lines = lines[1:]
-                  if lines and lines[-1].strip() == "```":
-                      lines = lines[:-1]
-                  content = "\n".join(lines).strip()
-
-              fmt = (output_format or "markdown").strip().lower() or "markdown"
-              ext_map = {
-                  "markdown": ".md",
-                  "html": ".html",
-                  "text": ".txt",
-                  "json": ".json",
-                  "docx": ".docx",
-                  "pptx": ".pptx",
-              }
-              mime_map = {
-                  "markdown": "text/markdown",
-                  "html": "text/html",
-                  "text": "text/plain",
-                  "json": "application/json",
-                  "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                  "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-              }
-              ext = ext_map.get(fmt, ".md")
-              mime = mime_map.get(fmt, "text/markdown")
-
-              name = (filename or "generated").strip() or "generated"
-              if "." in name:
-                  stem = name.rsplit(".", 1)[0] or "generated"
-              else:
-                  stem = name
-              full_name = stem + ext
-              return {
-                  "content": content,
-                  "filename": full_name,
-                  "filename_stem": stem,
-                  "mime_type": mime,
-                  "output_format": fmt,
-              }
+{indent_block(FINALIZE_CODE)}
         code_language: python3
         desc: 本文整形とファイル名・形式の確定
         outputs:
@@ -2229,10 +1860,10 @@ workflow:
         tool_parameters:
           md_text:
             type: mixed
-            value: '{{#1750000000012.content#}}'
+            value: '{{{{#1750000000012.content#}}}}'
           output_filename:
             type: mixed
-            value: '{{#1750000000012.filename_stem#}}'
+            value: '{{{{#1750000000012.filename_stem#}}}}'
         type: tool
       height: 120
       id: '1750000000014'
@@ -2262,7 +1893,7 @@ workflow:
         provider_type: builtin
         selected: false
         title: PPTX 変換
-        tool_configurations: {}
+        tool_configurations: {{}}
         tool_description: Markdown を PPTX に変換する
         tool_label: Markdown ⮕ PPTX
         tool_name: md_to_pptx
@@ -2270,10 +1901,10 @@ workflow:
         tool_parameters:
           md_text:
             type: mixed
-            value: '{{#1750000000012.content#}}'
+            value: '{{{{#1750000000012.content#}}}}'
           output_filename:
             type: mixed
-            value: '{{#1750000000012.filename_stem#}}'
+            value: '{{{{#1750000000012.filename_stem#}}}}'
         type: tool
       height: 120
       id: '1750000000015'
@@ -2317,16 +1948,16 @@ workflow:
         tool_parameters:
           content:
             type: mixed
-            value: '{{#1750000000012.content#}}'
+            value: '{{{{#1750000000012.content#}}}}'
           encoding:
             type: mixed
             value: utf-8
           filename:
             type: mixed
-            value: '{{#1750000000012.filename#}}'
+            value: '{{{{#1750000000012.filename#}}}}'
           mime_type:
             type: mixed
-            value: '{{#1750000000012.mime_type#}}'
+            value: '{{{{#1750000000012.mime_type#}}}}'
         type: tool
       height: 120
       id: '1750000000016'
@@ -2412,3 +2043,55 @@ workflow:
       y: 20
       zoom: 0.35
   rag_pipeline_variables: []
+"""
+
+    # Fix f-string over-escaping: we used {{{{ for Jinja which becomes {{ in output - good for YAML
+    # But Schema: {{"need_search"... became Schema: {"need_search" - good
+    # tool values '{{{{#...#}}}}' become '{{#...#}}' - good
+    # Empty dict {{}} becomes {} - good
+
+    # Graph sync issue: search-if depends on need aggregator, but working_context and search_query
+    # aggregators may not have run if we only edge from need aggregator. In Dify, aggregators
+    # receive values when upstream nodes complete via edges. We have edges from pack nodes to
+    # all three aggregators. But search-if only waits for need aggregator. The enrich node
+    # reads working_context aggregator - that must be populated. Since pack nodes fan-out to
+    # all three aggs before need-agg → search-if, all should be ready when any path completes
+    # all three edges... Actually in parallel edge execution, need-agg might fire search-if
+    # before ctx-agg finishes if edges are concurrent. Safer: chain aggregators.
+    #
+    # Fix graph: pack → ctx_agg → query_agg → need_agg → search_if
+    # And remove direct pack→need/query edges; instead:
+    # pack → ctx_agg (multiple inputs)
+    # Also need query and need from same packs - use ONE pack code and ONE multi-output approach
+    # with a single "join" code that doesn't work across branches.
+    #
+    # Simpler sync fix: edge ctx_agg → query_agg → need_agg → search_if
+    # And packs only connect to ctx_agg. But then need_search isn't in ctx_agg.
+    #
+    # Best sync: each pack connects only to a single "path join" variable aggregator isn't enough.
+    # Use: packs → ctx_agg, and also packs → need_agg, packs → query_agg (3 edges).
+    # Then: ctx_agg → bridge code that just passes, taking need from need_agg... circular.
+    #
+    # Chain: 
+    #   packs → ctx_agg
+    #   packs → need_agg  
+    #   packs → query_agg
+    #   ctx_agg → sync1 (code: pass-through context, reads need/query from aggs)
+    # That still races.
+    #
+    # Dify runs node when all incoming edges ready. So if search-if has incoming from need_agg ONLY,
+    # enrich has no edge from ctx_agg - it just variable-refs ctx_agg. Variable refs don't wait!
+    # So we need explicit edge: ctx_agg → search-if (or enrich), and query_agg → search-if.
+    #
+    # Make search-if wait by using a sync code node:
+    #   inputs: working_context (0029), need_search (0031), search_query (0032)
+    #   edges: 0029→0033, 0031→0033, 0032→0033 → 0006
+    # Dify code nodes typically need all variable selectors available; multiple incoming edges
+    # from three aggregators to sync code, then to if-else.
+
+    OUT.write_text(yaml_doc, encoding="utf-8")
+    print(f"Wrote {OUT} ({OUT.stat().st_size} bytes)")
+
+
+if __name__ == "__main__":
+    main()
