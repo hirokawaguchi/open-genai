@@ -63,8 +63,17 @@ def classify_provider_error(
     default_code: str = "WORKFLOW_ERROR",
     http_status: int | None = None,
 ) -> AppInvokeError:
-    """生エラー文字列を分類し、固定文言の AppInvokeError を返す。"""
+    """生エラー文字列と HTTP status を分類し、固定文言の AppInvokeError を返す。
+
+    判定順:
+      1. レート制限（status 429 または本文の rate limit 表現）→ RATE_LIMIT
+      2. コンテキスト超過（status 413 または本文の context length 表現）→ CONTEXT_TOO_LARGE
+      3. その他 4xx → INVALID_INPUT（クライアント起因。接続失敗と混同しない）
+      4. 5xx → CONNECTION（サーバ/接続側の問題。default より優先）
+      5. status 不明・その他 → default_code（フォールバック）
+    """
     text = (raw or "").lower()
+    # 1. レート制限
     if http_status == 429 or (
         "429" in (raw or "")
         or "rate_limit" in text
@@ -72,7 +81,8 @@ def classify_provider_error(
         or "rate limit" in text
     ):
         return AppInvokeError("RATE_LIMIT", detail=raw)
-    if (
+    # 2. コンテキスト超過（413 または本文表現）
+    if http_status == 413 or (
         "context length" in text
         or "maximum context" in text
         or "exceeds model" in text
@@ -81,6 +91,13 @@ def classify_provider_error(
         or "string_above_max_length" in text
     ):
         return AppInvokeError("CONTEXT_TOO_LARGE", detail=raw)
+    # 3. その他 4xx は入力不備として扱う（「接続できない」と誤表示しない）
+    if http_status is not None and 400 <= http_status < 500:
+        return AppInvokeError("INVALID_INPUT", detail=raw)
+    # 4. 5xx はサーバ/接続側の問題として扱う
+    if http_status is not None and 500 <= http_status < 600:
+        return AppInvokeError("CONNECTION", detail=raw)
+    # 5. status 不明・その他は呼び出し側の default にフォールバック
     if default_code not in ERROR_MESSAGES:
         default_code = "WORKFLOW_ERROR"
     return AppInvokeError(default_code, detail=raw)

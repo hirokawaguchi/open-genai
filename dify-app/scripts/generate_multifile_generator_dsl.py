@@ -138,6 +138,23 @@ def main(texts, prompt: str, output_filename: str, output_format: str) -> dict:
     p1, p2, p3 = split_parts(full)
     # 小容量時のみ全文を context_small に載せる（Dify出力上限対策）
     context_small = full if not is_large else ""
+    # Dify のコードノード出力上限対策で本文は 3 パート(=PART_SIZE*3)までしか
+    # 後段へ渡せない。超過分は黙って欠落するため、ここで可視化する。
+    part_capacity = PART_SIZE * 3
+    kept_chars = min(char_count, part_capacity)
+    truncated = char_count > part_capacity
+    notes = []
+    if is_large:
+        notes.append(
+            f"資料が大きいため、関連区間の抽出または代表区間の要約に基づいて"
+            f"生成しています（全 {cid} 区間）"
+        )
+    if truncated:
+        notes.append(
+            f"処理上限を超えたため先頭 {kept_chars} 文字のみを対象にしました"
+            f"（元 {char_count} 文字）。対象範囲を絞るか分割してお試しください"
+        )
+    coverage_note = ("／".join(notes) + "。") if notes else ""
     fmt = (output_format or "markdown").strip().lower() or "markdown"
     if fmt not in ("markdown", "html", "text", "json", "docx", "pptx"):
         fmt = "markdown"
@@ -150,6 +167,9 @@ def main(texts, prompt: str, output_filename: str, output_format: str) -> dict:
         "outline": outline,
         "chunks_meta_json": json.dumps(meta, ensure_ascii=False)[:90000],
         "char_count": char_count,
+        "kept_chars": kept_chars,
+        "truncated": "true" if truncated else "false",
+        "coverage_note": coverage_note,
         "chunk_count": cid,
         "is_large": "true" if is_large else "false",
         "prompt": (prompt or "").strip(),
@@ -435,7 +455,7 @@ def main(context: str) -> dict:
 '''.strip("\n")
 
 FINALIZE_CODE = r'''
-def main(text: str, filename: str, output_format: str) -> dict:
+def main(text: str, filename: str, output_format: str, coverage_note: str = "") -> dict:
     content = (text or "").strip()
     if content.startswith("```"):
         lines = content.split("\n")
@@ -471,8 +491,17 @@ def main(text: str, filename: str, output_format: str) -> dict:
     else:
         stem = name
     full_name = stem + ext
+
+    # 注意文はファイル本文(content)を汚さない（json/html を壊さない）よう
+    # 表示用テキスト(result_text)にのみ前置する。
+    note = (coverage_note or "").strip()
+    if note:
+        result_text = f"> ※ {note}\n\n{content}"
+    else:
+        result_text = content
     return {
         "content": content,
+        "result_text": result_text,
         "filename": full_name,
         "filename_stem": stem,
         "mime_type": mime,
@@ -821,6 +850,15 @@ workflow:
           char_count:
             children: null
             type: number
+          kept_chars:
+            children: null
+            type: number
+          truncated:
+            children: null
+            type: string
+          coverage_note:
+            children: null
+            type: string
           chunk_count:
             children: null
             type: number
@@ -1752,6 +1790,9 @@ workflow:
           content:
             children: null
             type: string
+          result_text:
+            children: null
+            type: string
           filename:
             children: null
             type: string
@@ -1780,6 +1821,10 @@ workflow:
           - '1750000000003'
           - output_format
           variable: output_format
+        - value_selector:
+          - '1750000000003'
+          - coverage_note
+          variable: coverage_note
       height: 54
       id: '1750000000012'
       position:
@@ -2004,7 +2049,7 @@ workflow:
         outputs:
         - value_selector:
           - '1750000000012'
-          - content
+          - result_text
           value_type: string
           variable: result
         - value_selector:

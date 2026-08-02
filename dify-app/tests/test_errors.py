@@ -35,6 +35,39 @@ class ClassifyProviderErrorTest(unittest.TestCase):
         err = classify_provider_error("upstream busy", http_status=429)
         self.assertEqual(err.code, "RATE_LIMIT")
 
+    def test_http_status_400_is_invalid_input_not_connection(self) -> None:
+        # 本文が context/rate のどれにも当たらない 400 は、接続失敗ではなく入力不備
+        err = classify_provider_error(
+            "Bad Request", default_code="CONNECTION", http_status=400
+        )
+        self.assertEqual(err.code, "INVALID_INPUT")
+        self.assertEqual(err.status, 400)
+
+    def test_http_status_413_is_context_too_large(self) -> None:
+        err = classify_provider_error(
+            "Payload Too Large", default_code="CONNECTION", http_status=413
+        )
+        self.assertEqual(err.code, "CONTEXT_TOO_LARGE")
+        self.assertEqual(err.status, 413)
+
+    def test_http_status_502_is_connection(self) -> None:
+        err = classify_provider_error(
+            "Bad Gateway", default_code="WORKFLOW_ERROR", http_status=502
+        )
+        self.assertEqual(err.code, "CONNECTION")
+        self.assertEqual(err.status, 502)
+
+    def test_no_status_uses_default_code(self) -> None:
+        # status 不明かつ本文が特定できない場合は呼び出し側の default にフォールバック
+        err = classify_provider_error("unknown failure", default_code="CONNECTION")
+        self.assertEqual(err.code, "CONNECTION")
+
+    def test_context_body_wins_over_5xx_status(self) -> None:
+        # 5xx でも本文が context 超過を示すなら CONTEXT_TOO_LARGE を優先
+        raw = "status 500: Input length (200000) exceeds model's maximum context length"
+        err = classify_provider_error(raw, default_code="CONNECTION", http_status=500)
+        self.assertEqual(err.code, "CONTEXT_TOO_LARGE")
+
     def test_unknown_falls_back_to_fixed_workflow_error(self) -> None:
         raw = "Internal failure involving deployment gpt-4.1 in eastus"
         err = classify_provider_error(raw)
