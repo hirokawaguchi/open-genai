@@ -63,6 +63,11 @@ def _load():
         httpx.AsyncClient = _AsyncClient  # type: ignore[attr-defined]
         sys.modules["httpx"] = httpx
 
+    # main.py の同ディレクトリ相対 import フォールバック用
+    app_dir = str(MAIN.parent)
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+
     spec = importlib.util.spec_from_file_location("dify_app_main", MAIN)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)

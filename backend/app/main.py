@@ -1999,6 +1999,54 @@ async def remove_my_app_pin(team_id: str, item_id: str, request: Request) -> JSO
     return JSONResponse(content={"pins": pins})
 
 
+# AI アプリ（dify-app 等）由来エラーのユーザ向け固定文言。
+# 生のプロバイダ詳細（モデル名・リージョン等）はここへ載せない。
+_EXAPP_ERROR_MESSAGES: dict[str, str] = {
+    "RATE_LIMIT": (
+        "現在リクエストが集中しています。"
+        "しばらく時間をおいてから再度お試しください。"
+    ),
+    "UPLOAD_FAILED": (
+        "ファイルのアップロードに失敗しました。"
+        "形式・サイズを確認してから再度お試しください。"
+    ),
+    "CONNECTION": (
+        "サービスに接続できませんでした。時間をおいて再度お試しください。"
+    ),
+    "INVALID_INPUT": "入力内容を確認してから再度お試しください。",
+    "CONTEXT_TOO_LARGE": (
+        "入力内容が大きすぎて処理できませんでした。"
+        "指示を具体にするか、対象範囲を絞って再度お試しください。"
+    ),
+    "WORKFLOW_ERROR": (
+        "処理中にエラーが発生しました。時間をおいて再度お試しください。"
+        "解消しない場合は管理者にお問い合わせください。"
+    ),
+}
+_EXAPP_ERROR_STATUS: dict[str, int] = {
+    "RATE_LIMIT": 429,
+    "UPLOAD_FAILED": 502,
+    "CONNECTION": 502,
+    "INVALID_INPUT": 400,
+    "CONTEXT_TOO_LARGE": 413,
+    "WORKFLOW_ERROR": 502,
+}
+
+
+def _normalize_exapp_error(
+    error_code: Any,
+    *,
+    http_status: int | None = None,
+) -> tuple[int, str, str]:
+    """既知 error_code のみ信頼し、(status, message, code) を返す。"""
+    code = str(error_code or "")
+    if http_status == 429:
+        code = "RATE_LIMIT"
+    if code not in _EXAPP_ERROR_MESSAGES:
+        code = "WORKFLOW_ERROR"
+    return _EXAPP_ERROR_STATUS[code], _EXAPP_ERROR_MESSAGES[code], code
+
+
 @app.post("/exapps/invoke")
 async def invoke_exapp(request: Request) -> JSONResponse:
     """実行要求を、登録された AI アプリの endpoint へプロキシする。"""
@@ -2058,6 +2106,53 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     # モデル制御は保存時にチーム名→IDの解決・表示に全チーム(id+name)を使う
     if ex_app_id == "modelpolicy":
         _invoke_headers["x-teams"] = _all_teams_header()
+
+    def _persist_invoke(
+        *,
+        outputs: str,
+        status: str,
+        artifacts: Any = None,
+        audit_status: int,
+    ) -> None:
+        team = teams_store.get_team(team_id)
+        try:
+            teams_store.create_exapp_history(
+                {
+                    "teamId": team_id,
+                    "teamName": team["teamName"] if team else "",
+                    "exAppId": ex_app_id,
+                    "exAppName": app_def.get("exAppName", ""),
+                    "userId": user_id,
+                    "inputs": inputs,
+                    "outputs": outputs,
+                    "status": status,
+                    "progress": "",
+                    "artifacts": artifacts,
+                    "sessionId": session_id or None,
+                }
+            )
+        except Exception as e:  # noqa: BLE001 - 履歴保存失敗で実行結果は返す
+            print(f"[exapps] 履歴の保存に失敗: {e}")
+        try:
+            audit.record(
+                request,
+                action="exapp.invoke",
+                teamId=team_id,
+                exAppId=ex_app_id,
+                session_id=session_id or None,
+                status=audit_status,
+                input_text=(
+                    json.dumps(_redact_for_audit(inputs), ensure_ascii=False)
+                    if inputs
+                    else ""
+                ),
+                output_text=outputs if isinstance(outputs, str) else json.dumps(
+                    outputs, ensure_ascii=False
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[exapps] 監査ログの記録に失敗: {e}")
+
     try:
         async with httpx.AsyncClient(timeout=600) as client:
             res = await client.post(
@@ -2066,15 +2161,52 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                 headers=_invoke_headers,
             )
     except httpx.HTTPError as e:
+        print(f"[exapps] AI アプリ接続失敗: {e}")
+        ended = _now_iso()
+        status_code, message, error_code = _normalize_exapp_error("CONNECTION")
+        _persist_invoke(outputs=message, status="ERROR", audit_status=status_code)
         return JSONResponse(
-            status_code=502, content={"error": f"AI アプリに接続できませんでした: {e}"}
+            status_code=status_code,
+            content={
+                "error": message,
+                "error_code": error_code,
+                "timestamps": {
+                    "processingStartedAt": started,
+                    "processingEndedAt": ended,
+                },
+            },
         )
     ended = _now_iso()
 
     if res.status_code != 200:
+        raw_body = ""
+        data: dict[str, Any] = {}
+        try:
+            data = res.json()
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:  # noqa: BLE001
+            raw_body = (res.text or "")[:1000]
+            data = {}
+        print(
+            f"[exapps] AI アプリ呼び出し失敗 status={res.status_code} "
+            f"error_code={data.get('error_code')} body={raw_body or data}"
+        )
+        status_code, message, error_code = _normalize_exapp_error(
+            data.get("error_code"),
+            http_status=res.status_code,
+        )
+        _persist_invoke(outputs=message, status="ERROR", audit_status=status_code)
         return JSONResponse(
-            status_code=502,
-            content={"error": f"AI アプリの呼び出しに失敗しました (status: {res.status_code})"},
+            status_code=status_code,
+            content={
+                "error": message,
+                "error_code": error_code,
+                "timestamps": {
+                    "processingStartedAt": started,
+                    "processingEndedAt": ended,
+                },
+            },
         )
 
     data = res.json()
@@ -2087,47 +2219,14 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     except Exception as e:  # noqa: BLE001 - 失敗時は元の結果を返す
         print(f"[exapps] 成果物の再ホストに失敗: {e}")
 
-    # 実行履歴を保存（会話継続「会話を続ける」や履歴表示で参照される）
-    team = teams_store.get_team(team_id)
-    try:
-        teams_store.create_exapp_history(
-            {
-                "teamId": team_id,
-                "teamName": team["teamName"] if team else "",
-                "exAppId": ex_app_id,
-                "exAppName": app_def.get("exAppName", ""),
-                "userId": user_id,
-                "inputs": inputs,
-                "outputs": outputs,
-                "status": "COMPLETED",
-                "progress": "",
-                "artifacts": artifacts,
-                "sessionId": session_id or None,
-            }
-        )
-    except Exception as e:  # noqa: BLE001 - 履歴保存失敗で実行結果は返す
-        print(f"[exapps] 履歴の保存に失敗: {e}")
-
-    # 監査ログ（内容ログ）: AI アプリ実行を証跡として記録
-    try:
-        audit.record(
-            request,
-            action="exapp.invoke",
-            teamId=team_id,
-            exAppId=ex_app_id,
-            session_id=session_id or None,
-            status=200,
-            input_text=(
-                json.dumps(_redact_for_audit(inputs), ensure_ascii=False)
-                if inputs
-                else ""
-            ),
-            output_text=outputs if isinstance(outputs, str) else json.dumps(
-                outputs, ensure_ascii=False
-            ),
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"[exapps] 監査ログの記録に失敗: {e}")
+    _persist_invoke(
+        outputs=outputs if isinstance(outputs, str) else json.dumps(
+            outputs, ensure_ascii=False
+        ),
+        status="COMPLETED",
+        artifacts=artifacts,
+        audit_status=200,
+    )
 
     return JSONResponse(
         content={

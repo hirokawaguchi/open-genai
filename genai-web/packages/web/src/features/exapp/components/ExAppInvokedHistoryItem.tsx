@@ -120,7 +120,11 @@ export const ExAppInvokedHistoryItem = (props: Props) => {
 
             <div className='px-4 py-3'>
               {history.status === 'ERROR' && (
-                <p className='text-error-2'>実行中にエラーが発生しました。再度お試しください。</p>
+                <p className='text-error-2'>
+                  {typeof history.outputs === 'string' && history.outputs.trim()
+                    ? history.outputs
+                    : '実行中にエラーが発生しました。再度お試しください。'}
+                </p>
               )}
               {history.status === 'ACCEPTED' && (
                 <div>
