@@ -1,3 +1,4 @@
+import { fileObjectKeyFromUrl } from '@/lib/fileUrl';
 import { useTranscribeStore } from '../stores/useTranscribeStore';
 import { useFetchTranscription } from './useFetchTranscription';
 import { useTranscribeApi } from './useTranscribeApi';
@@ -26,8 +27,12 @@ export const useTranscribe = () => {
     // 音声のアップロード
     await api.uploadAudio(signedUrl, { file: targetFile });
 
-    // 署名付き URL から S3 Key を抽出 (`{identityId}/{uuid}/{filename}` 形式)
-    const audioKey = decodeURIComponent(new URL(signedUrl).pathname.replace(/^\//, ''));
+    // 署名付き URL からオブジェクトキーを抽出（/api プレフィックスは含めない）
+    const audioKey = fileObjectKeyFromUrl(signedUrl);
+    if (!audioKey) {
+      setLoading(false);
+      throw new Error('アップロード URL から音声キーを取得できませんでした');
+    }
 
     // 音声認識
     const startTranscriptionRes = await api.startTranscription({

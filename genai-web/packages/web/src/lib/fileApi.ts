@@ -63,7 +63,7 @@ export const getFileDownloadSignedUrl = async (s3Url: string) => {
 
 export const deleteUploadedFile = async (fileName: string) => {
   // PUT/GET と同じ `/files/<key>` を使う（認証不要の公開パス）。
-  // スラッシュはパス区切りとして残し、セグメント単位でエンコードする。
+  // fileName はオブジェクトキー（`<uuid>/<name>`）。スラッシュは区切りとして残す。
   const key = fileName.replace(/^\/+/, '').replace(/^files\//, '');
   const encoded = key
     .split('/')
