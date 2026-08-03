@@ -471,7 +471,12 @@ async def retrieve_full(
     if doc_id:
         docs = [d for d in docs if d.get("doc_id") == doc_id]
     elif source:
-        docs = [d for d in docs if d.get("source") == source]
+        from . import textnorm
+
+        ns = textnorm.normalize_source(source)
+        docs = [
+            d for d in docs if textnorm.normalize_source(d.get("source")) == ns
+        ]
     nodes: list[dict[str, Any]] = []
     for d in docs:
         pages = docstore.get_all_pages(d["doc_id"])
@@ -509,17 +514,22 @@ def _resolve_source_filter(
     scope: str, doc_id: str | None, source: str | None
 ) -> tuple[str | None, str | None, dict[str, Any] | None]:
     """doc_id / source を正規化し、対象文書（あれば）を返す。"""
+    from . import textnorm
+
     did = (doc_id or "").strip() or None
-    src = (source or "").strip() or None
+    src = textnorm.normalize_source(source) or None
     doc: dict[str, Any] | None = None
     if did:
         doc = docstore.get_doc(did, scope)
         if doc and not src:
-            src = (doc.get("source") or "").strip() or None
+            src = textnorm.normalize_source(doc.get("source")) or None
     elif src:
         doc = docstore.get_doc_by_source(scope, src)
         if doc and not did:
             did = doc.get("doc_id")
+        # 解決できた文書の正規化済み source を以降のフィルタに使う
+        if doc:
+            src = textnorm.normalize_source(doc.get("source")) or src
     return did, src, doc
 
 

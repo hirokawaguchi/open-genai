@@ -306,6 +306,52 @@ async def _migrate_tag_unicode_nfc() -> None:
         print(f"[rag-app] タグ Unicode NFC 移行: {renamed} 件更新")
 
 
+async def _migrate_source_unicode_nfc() -> None:
+    """docs.source / Qdrant payload.source を Unicode NFC に揃える。
+
+    macOS 由来の NFD ファイル名と、LLM が返す NFC ファイル名の不一致で
+    knowledge_search(source=...) が 0 件になるのを防ぐ。
+    """
+    from . import textnorm
+
+    renamed = 0
+    try:
+        with docstore._connect() as conn:  # noqa: SLF001 - 移行専用
+            rows = list(conn.execute("SELECT doc_id, scope, source FROM docs"))
+            for doc_id, scope, source in rows:
+                nfc = textnorm.normalize_source(source)
+                if not nfc or nfc == source:
+                    continue
+                conflict = conn.execute(
+                    "SELECT doc_id FROM docs WHERE scope = ? AND source = ?",
+                    (scope, nfc),
+                ).fetchone()
+                if conflict and conflict["doc_id"] != doc_id:
+                    print(
+                        f"[rag-app] source NFC 移行スキップ（衝突）: "
+                        f"{scope}/{source!r} → {nfc!r}"
+                    )
+                    continue
+                conn.execute(
+                    "UPDATE docs SET source = ? WHERE doc_id = ?",
+                    (nfc, doc_id),
+                )
+                renamed += 1
+                try:
+                    await vectorstore.rename_source_in_payloads(scope, source, nfc)
+                except Exception as e:  # noqa: BLE001
+                    print(
+                        f"[rag-app] Qdrant source NFC 移行警告 "
+                        f"({scope}/{source}): {e}"
+                    )
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] docs source NFC 移行警告: {e}")
+        return
+
+    if renamed:
+        print(f"[rag-app] source Unicode NFC 移行: {renamed} 件更新")
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await vectorstore.ensure_collection()
@@ -330,6 +376,10 @@ async def _startup() -> None:
         await _migrate_tag_unicode_nfc()
     except Exception as e:  # noqa: BLE001
         print(f"[rag-app] タグ NFC 移行をスキップ: {e}")
+    try:
+        await _migrate_source_unicode_nfc()
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] source NFC 移行をスキップ: {e}")
     # 旧 rag-manage(ADMIN_TEAM scope) → 共有ナレッジ(COMMON) への一度きり移行
     try:
         moved = await vectorstore.reassign_scope(LEGACY_ADMIN_SCOPE, DEFAULT_SCOPE)
