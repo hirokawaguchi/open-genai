@@ -85,6 +85,9 @@ async def _save_pages(
     index_kind: str,
     also_vector: bool,
 ) -> dict[str, Any]:
+    from . import textnorm
+
+    source = textnorm.normalize_source(source) or "unknown"
     full = "\n\n".join(p.get("text") or "" for p in pages)
     content_hash = hashlib.sha256(full.encode("utf-8", "ignore")).hexdigest()
     doc_id = docstore.upsert_document(
