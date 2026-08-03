@@ -60,6 +60,70 @@ def b64_to_bytes(data: str) -> bytes:
     return base64.b64decode(strip_base64_prefix(data))
 
 
+def _score_decoded_text(text: str) -> float:
+    """文字コード候補の尤もらしさ。日本語文書向けに CJK を加点する。"""
+    if not text:
+        return -1.0
+    sample = text if len(text) <= 8000 else text[:8000]
+    cjk = 0
+    replacement = 0
+    controls = 0
+    for ch in sample:
+        o = ord(ch)
+        if ch == "\ufffd":
+            replacement += 1
+        elif (
+            0x3040 <= o <= 0x30FF  # ひらがな・カタカナ
+            or 0x4E00 <= o <= 0x9FFF  # CJK
+            or 0xFF66 <= o <= 0xFF9D  # 半角カナ
+            or 0x3000 <= o <= 0x303F  # 句読点など
+        ):
+            cjk += 1
+        elif o < 32 and ch not in "\t\n\r":
+            controls += 1
+    # 置換文字・制御文字は強く減点。同点なら呼び出し側で utf-8 を優先する。
+    return float(cjk * 3 - replacement * 50 - controls * 5)
+
+
+def decode_text_bytes(raw: bytes) -> str:
+    """テキストバイト列を UTF-8 / CP932 等から自動判定してデコードする。
+
+    役所・業務系の .txt は Shift_JIS (CP932) が多く、UTF-8 固定だと文字化けする。
+    BOM があればそれに従う。UTF-8 として厳密に読めればそれを優先し、
+    失敗した場合のみ CP932 / EUC-JP 等をスコア比較する。
+    """
+    if not raw:
+        return ""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+    if raw.startswith(b"\xff\xfe"):
+        return raw.decode("utf-16-le")
+    if raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16-be")
+
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
+    best_text: str | None = None
+    best_score = float("-inf")
+    for enc in ("cp932", "euc_jp", "iso-2022-jp"):
+        try:
+            text = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        score = _score_decoded_text(text)
+        if best_text is None or score > best_score:
+            best_score = score
+            best_text = text
+
+    if best_text is not None:
+        return best_text
+
+    return raw.decode("utf-8", "replace")
+
+
 def _docx_extract_text(raw: bytes) -> str:
     """docx から本文段落・表・ヘッダー/フッターを本文順に抽出する。
 
@@ -178,7 +242,7 @@ def _extract_raw_text(
             "json",
             "log",
         ) or mt.startswith("text/"):
-            text = raw.decode("utf-8", "ignore")
+            text = decode_text_bytes(raw)
         else:
             return None, None
     except Exception as e:  # noqa: BLE001
@@ -314,7 +378,7 @@ def extract_doc_pages(name: str, media_type: str, b64: str) -> list[dict[str, An
             "json",
             "log",
         ) or mt.startswith("text/"):
-            text = raw.decode("utf-8", "ignore").strip()
+            text = decode_text_bytes(raw).strip()
         else:
             return []
 

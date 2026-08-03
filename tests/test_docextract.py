@@ -24,6 +24,33 @@ def test_extract_doc_text_from_plain_text() -> None:
     assert docextract.extract_doc_text("note.txt", "text/plain", payload) == "hello world"
 
 
+def test_decode_text_bytes_prefers_utf8() -> None:
+    text = "戦略ロードマップと優先計画 2026"
+    assert docextract.decode_text_bytes(text.encode("utf-8")) == text
+
+
+def test_decode_text_bytes_cp932() -> None:
+    """Shift_JIS/CP932 の業務テキストを文字化けさせない。"""
+    text = "令和８年度　ＡＩ・ＤＸ推進の重点方針（案）"
+    raw = text.encode("cp932")
+    # 旧実装（utf-8 ignore）では読めないことを確認したうえで新実装を検証
+    assert raw.decode("utf-8", "ignore") != text
+    assert docextract.decode_text_bytes(raw) == text
+
+
+def test_extract_doc_text_from_cp932_txt() -> None:
+    text = "この資料は政策優先度のアウトラインです。"
+    payload = base64.b64encode(text.encode("cp932")).decode("ascii")
+    assert docextract.extract_doc_text("outline.txt", "text/plain", payload) == text
+
+
+def test_extract_doc_pages_from_cp932_txt() -> None:
+    text = "ナレッジ登録経路でも CP932 を正しく読む。"
+    payload = base64.b64encode(text.encode("cp932")).decode("ascii")
+    pages = docextract.extract_doc_pages("outline.txt", "text/plain", payload)
+    assert "".join(p["text"] for p in pages) == text
+
+
 def test_extract_doc_text_from_pdf() -> None:
     writer = PdfWriter()
     writer.add_blank_page(width=72, height=72)
