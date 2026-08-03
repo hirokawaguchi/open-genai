@@ -6,7 +6,8 @@ import {
   GetFileUploadSignedUrlResponse,
   UploadFileRequest,
 } from 'genai-web';
-import { genUApi, uploadToSignedUrl } from '@/lib/fetcher';
+import { genUApi, readUploadPutJson, uploadToSignedUrl } from '@/lib/fetcher';
+import type { UploadPutResponse } from '@/lib/fetcher';
 
 const parseS3Url = (s3Url: string) => {
   let result = /^s3:\/\/(?<bucketName>.+?)\/(?<prefix>.+)/.exec(s3Url);
@@ -35,8 +36,12 @@ export const getSignedUrl = (req: GetFileUploadSignedUrlRequest) => {
   return genUApi.post<GetFileUploadSignedUrlResponse>('file/url', req);
 };
 
-export const uploadFile = (url: string, req: UploadFileRequest) => {
-  return uploadToSignedUrl(url, req.file, 'file/*');
+export const uploadFile = async (
+  url: string,
+  req: UploadFileRequest,
+): Promise<UploadPutResponse> => {
+  const res = await uploadToSignedUrl(url, req.file, 'file/*');
+  return readUploadPutJson(res);
 };
 
 export const getFileDownloadSignedUrl = async (s3Url: string) => {

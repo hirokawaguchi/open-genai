@@ -237,12 +237,16 @@ const useFilesState = create<{
         .then(async (signedUrlRes) => {
           const signedUrl = signedUrlRes.data;
           const fileUrl = extractBaseURL(signedUrl); // 署名付き url からクエリパラメータを除外
-          // ファイルのアップロード
-          fileApi.uploadFile(signedUrl, { file: uploadedFile.file }).then(() => {
+          // ファイルのアップロード（応答に個人情報警告が付く場合がある）
+          fileApi.uploadFile(signedUrl, { file: uploadedFile.file }).then((scan) => {
             set(
               produce((state) => {
                 state.uploadedFilesDict[id][idx].uploading = false;
                 state.uploadedFilesDict[id][idx].s3Url = fileUrl;
+                state.uploadedFilesDict[id][idx].piiWarned = Boolean(scan?.warned);
+                state.uploadedFilesDict[id][idx].piiCategories = scan?.categories ?? [];
+                state.uploadedFilesDict[id][idx].piiHits = scan?.hits ?? [];
+                state.uploadedFilesDict[id][idx].piiMessage = scan?.message;
                 state.base64Cache = {
                   ...state.base64Cache,
                   [fileUrl]: reader.result?.toString() ?? '',

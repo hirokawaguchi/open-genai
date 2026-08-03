@@ -39,6 +39,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-0}
     container_name: open-genai-backend
     # ホストにポート公開しない（proxy 経由のみ）
     expose:
@@ -223,6 +225,8 @@ services:
     build:
       context: .
       dockerfile: rag-app/Dockerfile
+      args:
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-0}
     container_name: open-genai-rag-app
     environment:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -250,8 +254,11 @@ services:
       - URL_REFRESH_INTERVAL=${URL_REFRESH_INTERVAL:-86400}
       # URL 取り込みの SSRF 対策: 生成元の既知ホストのみ許可を推奨（カンマ区切り）
       - URL_FETCH_ALLOWED_HOSTS=${URL_FETCH_ALLOWED_HOSTS:-}
+      # 入力制限ルール（添付警告・ナレッジ PII）を backend と共有
+      - NGWORD_DB_PATH=/ngword-data/ngwords.db
     volumes:
       - rag_app_data:/data
+      - backend_data:/ngword-data:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # embed は profiles で任意起動のため depends_on にしない（埋め込みは呼び出し時のみ必要）。

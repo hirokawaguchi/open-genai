@@ -16,6 +16,12 @@ RUN apt-get update \
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 氏名・住所 NER（GiNZA）。未導入でも電話・マイナンバー・住所パターンは動作する。
+ARG PII_INSTALL_NER=0
+RUN if [ "$PII_INSTALL_NER" = "1" ]; then \
+      pip install --no-cache-dir 'ginza>=5.1.3' 'ja-ginza>=5.1.3'; \
+    fi
+
 COPY shared ./shared
 COPY backend/app ./app
 
