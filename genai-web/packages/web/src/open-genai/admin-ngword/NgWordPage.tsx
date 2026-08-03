@@ -89,6 +89,7 @@ export const NgWordPage = () => {
             <p>・「入力制限」を有効にすると、禁止ワード・機密情報を含む入力をブロックします。</p>
             <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
             <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
+            <p>・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。</p>
             <p>・システム管理者による管理系アプリの実行は本制限の対象外です。</p>
           </div>
         </Disclosure>
@@ -129,6 +130,9 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
   const [enabled, setEnabled] = useState(rules.enabled);
   const [caseSensitive, setCaseSensitive] = useState(rules.case_sensitive);
   const [checkMynumber, setCheckMynumber] = useState(rules.check_mynumber);
+  const [warnAttachments, setWarnAttachments] = useState(rules.warn_attachments ?? true);
+  const [scanKnowledgePii, setScanKnowledgePii] = useState(rules.scan_knowledge_pii ?? true);
+  const [checkPiiNer, setCheckPiiNer] = useState(rules.check_pii_ner ?? true);
   const [words, setWords] = useState((rules.words ?? []).join('\n'));
   const [patterns, setPatterns] = useState((rules.patterns ?? []).join('\n'));
   const [localError, setLocalError] = useState<string | null>(null);
@@ -139,6 +143,9 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
     setEnabled(rules.enabled);
     setCaseSensitive(rules.case_sensitive);
     setCheckMynumber(rules.check_mynumber);
+    setWarnAttachments(rules.warn_attachments ?? true);
+    setScanKnowledgePii(rules.scan_knowledge_pii ?? true);
+    setCheckPiiNer(rules.check_pii_ner ?? true);
     setWords((rules.words ?? []).join('\n'));
     setPatterns((rules.patterns ?? []).join('\n'));
     setDone(false);
@@ -161,6 +168,9 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
       enabled,
       case_sensitive: caseSensitive,
       check_mynumber: checkMynumber,
+      warn_attachments: warnAttachments,
+      scan_knowledge_pii: scanKnowledgePii,
+      check_pii_ner: checkPiiNer,
       words: toLines(words),
       patterns: toLines(patterns),
     });
@@ -207,6 +217,33 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
             onChange={(e) => setCheckMynumber(e.target.checked)}
           />
           マイナンバー検査を行う（検査用数字が一致する12桁のみ）
+        </label>
+        <label className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
+          <input
+            type='checkbox'
+            className='size-5'
+            checked={warnAttachments}
+            onChange={(e) => setWarnAttachments(e.target.checked)}
+          />
+          添付アップロード時に個人情報を警告する（氏名・住所・電話・マイナンバー）
+        </label>
+        <label className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
+          <input
+            type='checkbox'
+            className='size-5'
+            checked={scanKnowledgePii}
+            onChange={(e) => setScanKnowledgePii(e.target.checked)}
+          />
+          ナレッジ登録時に個人情報を検知する（管理画面にラベル表示）
+        </label>
+        <label className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
+          <input
+            type='checkbox'
+            className='size-5'
+            checked={checkPiiNer}
+            onChange={(e) => setCheckPiiNer(e.target.checked)}
+          />
+          氏名・住所の NER 検知を行う（GiNZA。未導入時は電話・マイナンバーと住所パターンのみ）
         </label>
       </fieldset>
 

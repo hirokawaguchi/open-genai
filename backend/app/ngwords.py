@@ -30,6 +30,9 @@ _DEFAULT: dict[str, Any] = {
     "enabled": False,
     "case_sensitive": False,
     "check_mynumber": True,
+    "warn_attachments": True,
+    "scan_knowledge_pii": True,
+    "check_pii_ner": True,
     "words": [],
     "patterns": [],
 }
@@ -75,9 +78,10 @@ def _read_rules() -> dict[str, Any]:
         data = json.loads(row[0])
         if not isinstance(data, dict):
             return dict(_DEFAULT)
-        # 旧ルールにキーが無い場合は既定でマイナンバー検査を有効にする
-        if "check_mynumber" not in data:
-            data["check_mynumber"] = True
+        # 旧ルールにキーが無い場合は既定値を補完する
+        for key, default in _DEFAULT.items():
+            if key not in data:
+                data[key] = default
         return data
     except Exception:  # noqa: BLE001 - 読取不可時は制限なし
         return dict(_DEFAULT)

@@ -157,16 +157,56 @@ export const DocsSection = ({
             <li key={d.doc_id || d.source} className='flex flex-col gap-2 px-4 py-3'>
               <div className='flex flex-wrap items-start justify-between gap-3'>
                 <div className='flex flex-col gap-1'>
-                  <span className='flex items-center gap-2 text-oln-16N-100 break-all'>
+                  <span className='flex flex-wrap items-center gap-2 text-oln-16N-100 break-all'>
                     <ChipLabel className='bg-solid-gray-100 text-solid-gray-800'>
                       {isUrl(d.source) ? 'URL' : d.index_kind === 'tree' ? '構造化' : '全文'}
                     </ChipLabel>
+                    {(d.ingest_status === 'queued' || d.ingest_status === 'processing') && (
+                      <ChipLabel className='bg-solid-gray-200 text-solid-gray-800'>
+                        {d.ingest_status === 'queued' ? '登録待ち' : '登録中'}
+                      </ChipLabel>
+                    )}
+                    {d.ingest_status === 'failed' && (
+                      <ChipLabel className='bg-red-50 text-red-900' title={d.ingest_error || undefined}>
+                        登録失敗
+                      </ChipLabel>
+                    )}
+                    {d.pii_status === 'pending' && d.ingest_status === 'ready' && (
+                      <ChipLabel className='bg-solid-gray-200 text-solid-gray-800'>
+                        個人情報検査中
+                      </ChipLabel>
+                    )}
+                    {d.pii_status === 'suspected' && (
+                      <ChipLabel
+                        className='bg-orange-50 text-orange-900'
+                        title={
+                          (d.pii_hits ?? [])
+                            .slice(0, 5)
+                            .map((h) => `${h.category}: ${h.context || h.match}`)
+                            .join('\n') || (d.pii_labels ?? []).join('・') || undefined
+                        }
+                      >
+                        個人情報: {(d.pii_labels ?? []).join('・') || '検知'}
+                      </ChipLabel>
+                    )}
                     <span className='font-bold'>{d.source}</span>
                   </span>
                   <span className='text-dns-14N-130 text-solid-gray-600'>
                     {d.page_count > 0 ? `${d.page_count} ページ・` : ''}
                     タグ: {(d.tags ?? []).length > 0 ? (d.tags ?? []).join(', ') : 'なし（検索対象外）'}
+                    {d.ingest_status === 'failed' && d.ingest_error
+                      ? `・${d.ingest_error}`
+                      : ''}
                   </span>
+                  {d.pii_status === 'suspected' && (d.pii_hits ?? []).length > 0 && (
+                    <ul className='text-dns-14N-130 text-orange-900 list-disc pl-5'>
+                      {(d.pii_hits ?? []).slice(0, 5).map((h, i) => (
+                        <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
+                          {h.category}: 「{h.context || h.match}」
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 {canManage && (
                   <div className='flex shrink-0 gap-2'>

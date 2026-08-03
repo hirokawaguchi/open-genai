@@ -42,6 +42,19 @@ export type KnowledgeDoc = {
   content_hash?: string;
   /** 索引種別。 */
   index_kind: 'tree' | 'fulltext';
+  /** 非同期登録の状態。 */
+  ingest_status?: 'queued' | 'processing' | 'ready' | 'failed';
+  ingest_error?: string;
+  /** 個人情報検知。 */
+  pii_status?: 'pending' | 'clear' | 'suspected' | 'error';
+  pii_labels?: string[];
+  /** 検知箇所の抜粋（警告表示用） */
+  pii_hits?: Array<{
+    category: string;
+    match: string;
+    context: string;
+    offset?: number;
+  }>;
   created_at?: string;
   updated_at?: string;
 };
