@@ -9,6 +9,26 @@ const extractBaseURL = (url: string) => {
   return url.split(/[?#]/)[0];
 };
 
+/** アップロード URL からストレージキー（`files/<uuid>/<name>`）を取り出す。
+ *
+ * PUBLIC_BASE_URL が `https://host/api` のとき pathname は `/api/files/...` になる。
+ * 先頭の `/api` を誤ってキーに含めると DELETE が 401/失敗し、解除でログアウト扱いになる。
+ */
+const fileKeyFromUrl = (fileUrl: string): string | undefined => {
+  try {
+    const pathname = decodeURIComponent(new URL(fileUrl).pathname);
+    const marker = '/files/';
+    const idx = pathname.indexOf(marker);
+    if (idx >= 0) {
+      return pathname.slice(idx + 1); // files/<uuid>/<name>
+    }
+    const stripped = pathname.replace(/^\//, '');
+    return stripped || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const useFilesState = create<{
   uploadFiles: (id: string, files: File[], fileLimit: FileLimit, accept: string[]) => Promise<void>;
   checkFiles: (id: string, fileLimit: FileLimit, accept: string[]) => Promise<void>;
@@ -266,15 +286,8 @@ const useFilesState = create<{
 
     let targetIndex = findTargetIndex();
     if (targetIndex > -1) {
-      // S3 Key にはスラッシュや `:` を含む (例: `{identityId}/{uuid}/{filename}`)
-      // ため、URL のパス部分全体を復号して Key として扱う
       const s3Url = get().uploadedFilesDict[id][targetIndex].s3Url ?? '';
-      let fileName: string | undefined;
-      try {
-        fileName = decodeURIComponent(new URL(s3Url).pathname.replace(/^\//, ''));
-      } catch {
-        fileName = undefined;
-      }
+      const fileName = fileKeyFromUrl(s3Url);
 
       if (fileName) {
         // Set deleting state
@@ -284,15 +297,22 @@ const useFilesState = create<{
           }),
         );
 
-        await fileApi.deleteUploadedFile(fileName);
+        try {
+          await fileApi.deleteUploadedFile(fileName);
+        } catch (error) {
+          // サーバ削除に失敗しても UI 上は外す（再クリックでログアウト等に繋がらないようにする）
+          console.error('Failed to delete uploaded file:', error);
+        }
 
         // 削除処理中に他の画像も削除された場合に、Indexがズレるため再取得する
         targetIndex = findTargetIndex();
-        set(
-          produce((state) => {
-            state.uploadedFilesDict[id].splice(targetIndex, 1);
-          }),
-        );
+        if (targetIndex > -1) {
+          set(
+            produce((state) => {
+              state.uploadedFilesDict[id].splice(targetIndex, 1);
+            }),
+          );
+        }
 
         // Refresh error messages
         await checkFiles(id, fileLimit, accept);
