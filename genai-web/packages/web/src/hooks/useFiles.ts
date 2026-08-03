@@ -4,29 +4,10 @@ import { produce } from 'immer';
 import { useCallback } from 'react';
 import { createWithEqualityFn as create } from 'zustand/traditional';
 import * as fileApi from '@/lib/fileApi';
+import { fileObjectKeyFromUrl } from '@/lib/fileUrl';
 
 const extractBaseURL = (url: string) => {
   return url.split(/[?#]/)[0];
-};
-
-/** アップロード URL からストレージキー（`files/<uuid>/<name>`）を取り出す。
- *
- * PUBLIC_BASE_URL が `https://host/api` のとき pathname は `/api/files/...` になる。
- * 先頭の `/api` を誤ってキーに含めると DELETE が 401/失敗し、解除でログアウト扱いになる。
- */
-const fileKeyFromUrl = (fileUrl: string): string | undefined => {
-  try {
-    const pathname = decodeURIComponent(new URL(fileUrl).pathname);
-    const marker = '/files/';
-    const idx = pathname.indexOf(marker);
-    if (idx >= 0) {
-      return pathname.slice(idx + 1); // files/<uuid>/<name>
-    }
-    const stripped = pathname.replace(/^\//, '');
-    return stripped || undefined;
-  } catch {
-    return undefined;
-  }
 };
 
 const useFilesState = create<{
@@ -287,7 +268,7 @@ const useFilesState = create<{
     let targetIndex = findTargetIndex();
     if (targetIndex > -1) {
       const s3Url = get().uploadedFilesDict[id][targetIndex].s3Url ?? '';
-      const fileName = fileKeyFromUrl(s3Url);
+      const fileName = fileObjectKeyFromUrl(s3Url);
 
       if (fileName) {
         // Set deleting state
