@@ -91,6 +91,18 @@ def _scope_filter(
     return filt
 
 
+def _source_filter_clause(source: str | None) -> list[dict[str, Any]] | None:
+    """source フィルタ。NFC/NFD 混在に備え候補形を any で渡す。"""
+    from . import textnorm
+
+    forms = textnorm.source_match_forms(source)
+    if not forms:
+        return None
+    if len(forms) == 1:
+        return [{"key": "source", "match": {"value": forms[0]}}]
+    return [{"key": "source", "match": {"any": forms}}]
+
+
 async def search(
     vector: list[float],
     limit: int,
@@ -100,9 +112,7 @@ async def search(
     require_tags: bool = True,
     source: str | None = None,
 ) -> list[dict[str, Any]]:
-    extra: list[dict[str, Any]] | None = None
-    if source:
-        extra = [{"key": "source", "match": {"value": source}}]
+    extra = _source_filter_clause(source)
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
@@ -121,14 +131,13 @@ async def search(
 
 async def delete_by_source(source: str, scope: str) -> None:
     """指定スコープ内の出典(source=ファイル名/URL)のチャンクを全削除する。"""
+    extra = _source_filter_clause(source) or [
+        {"key": "source", "match": {"value": (source or "").strip()}}
+    ]
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"{QDRANT_URL}/collections/{COLLECTION}/points/delete?wait=true",
-            json={
-                "filter": _scope_filter(
-                    scope, [{"key": "source", "match": {"value": source}}]
-                )
-            },
+            json={"filter": _scope_filter(scope, extra)},
         )
         res.raise_for_status()
 
@@ -239,17 +248,60 @@ async def list_tags(scope: str) -> list[dict[str, Any]]:
 
 async def set_tags_by_source(scope: str, source: str, tags: list[str]) -> None:
     """指定ドキュメントの全チャンクの tags を置き換える。"""
+    extra = _source_filter_clause(source) or [
+        {"key": "source", "match": {"value": (source or "").strip()}}
+    ]
     async with httpx.AsyncClient(timeout=60) as client:
         res = await client.post(
             f"{QDRANT_URL}/collections/{COLLECTION}/points/payload?wait=true",
             json={
                 "payload": {"tags": list(tags)},
-                "filter": _scope_filter(
-                    scope, [{"key": "source", "match": {"value": source}}]
-                ),
+                "filter": _scope_filter(scope, extra),
             },
         )
         res.raise_for_status()
+
+
+async def rename_source_in_payloads(scope: str, old: str, new: str) -> int:
+    """スコープ内のチャンク payload.source を old→new に置換する。"""
+    if not old or not new or old == new:
+        return 0
+    updated = 0
+    offset: Any = None
+    extra = _source_filter_clause(old) or [
+        {"key": "source", "match": {"value": old}}
+    ]
+    async with httpx.AsyncClient(timeout=60) as client:
+        while True:
+            body: dict[str, Any] = {
+                "limit": 128,
+                "with_payload": ["source"],
+                "with_vector": False,
+                "filter": _scope_filter(scope, extra),
+            }
+            if offset is not None:
+                body["offset"] = offset
+            res = await client.post(
+                f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll", json=body
+            )
+            if res.status_code != 200:
+                break
+            result = res.json().get("result", {})
+            points = result.get("points") or []
+            for p in points:
+                pid = p.get("id")
+                payload = p.get("payload") or {}
+                if payload.get("source") == new:
+                    continue
+                await client.post(
+                    f"{QDRANT_URL}/collections/{COLLECTION}/points/payload?wait=true",
+                    json={"payload": {"source": new}, "points": [pid]},
+                )
+                updated += 1
+            offset = result.get("next_page_offset")
+            if offset is None:
+                break
+    return updated
 
 
 async def rename_tag_in_payloads(scope: str, old: str, new: str) -> int:

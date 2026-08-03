@@ -132,15 +132,20 @@ async def knowledge_list_docs(scope: str = "", tags: str = "") -> str:
         params["tags"] = ",".join(tag_list)
     data = await _get("/knowledge/docs", params)
     # エージェント向けに要点だけ整形（全文は載せない）
+    import unicodedata
+
     docs = data.get("documents") or []
     slim = []
     for d in docs:
         if not isinstance(d, dict):
             continue
+        src = d.get("source") or ""
+        if isinstance(src, str):
+            src = unicodedata.normalize("NFC", src)
         slim.append(
             {
                 "doc_id": d.get("doc_id") or d.get("id"),
-                "source": d.get("source"),
+                "source": src,
                 "tags": d.get("tags") or [],
                 "index_kind": d.get("index_kind"),
             }
@@ -213,7 +218,10 @@ async def knowledge_search(
         "top_k": int(top_k or 4),
         "mode": (mode or "auto").strip().lower(),
     }
-    src = (source or "").strip()
+    # macOS NFD ファイル名と LLM の NFC 表記差を吸収
+    import unicodedata
+
+    src = unicodedata.normalize("NFC", (source or "").strip())
     did = (doc_id or "").strip()
     if src:
         body["source"] = src

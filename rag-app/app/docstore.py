@@ -133,6 +133,7 @@ def upsert_document(
       - fulltext: 全文のみ（簡易／URL）。コンテキスト収まる場合の全文投入用
     """
     now = _now()
+    source = textnorm.normalize_source(source) or "unknown"
     page_count = len(pages)
     char_count = sum(len(p.get("text") or "") for p in pages)
     tags_s = _tags_json(tags)
@@ -145,17 +146,26 @@ def upsert_document(
             "SELECT doc_id FROM docs WHERE scope = ? AND source = ?",
             (scope, source),
         ).fetchone()
+        if not existing:
+            # macOS 由来 NFD などで保存済みの行を NFC キーで拾う
+            for row in conn.execute(
+                "SELECT doc_id, source FROM docs WHERE scope = ?", (scope,)
+            ).fetchall():
+                if textnorm.normalize_source(row["source"]) == source:
+                    existing = row
+                    break
         if existing:
             doc_id = existing["doc_id"]
             conn.execute("DELETE FROM pages WHERE doc_id = ?", (doc_id,))
             conn.execute("DELETE FROM tree_nodes WHERE doc_id = ?", (doc_id,))
             conn.execute(
                 """
-                UPDATE docs SET tags = ?, page_count = ?, char_count = ?,
+                UPDATE docs SET source = ?, tags = ?, page_count = ?, char_count = ?,
                   truncated = ?, content_hash = ?, index_kind = ?, updated_at = ?
                 WHERE doc_id = ?
                 """,
                 (
+                    source,
                     tags_s,
                     page_count,
                     char_count,
@@ -225,6 +235,9 @@ def _normalize_doc_row(r: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     d["index_kind"] = (d.get("index_kind") or "tree").strip().lower()
     if d["index_kind"] not in ("tree", "fulltext"):
         d["index_kind"] = "tree"
+    d["source"] = textnorm.normalize_source(d.get("source") or "") or (
+        d.get("source") or ""
+    )
     return d
 
 
@@ -247,6 +260,9 @@ def list_docs(scope: str, tags: list[str] | None = None) -> list[dict[str, Any]]
             continue
         # 応答も NFC に揃える（LLM がコピーしても照合できる）
         d["tags"] = sorted(doc_tags) if doc_tags else []
+        d["source"] = textnorm.normalize_source(d.get("source") or "") or (
+            d.get("source") or ""
+        )
         out.append(d)
     return out
 
@@ -268,14 +284,26 @@ def get_doc(doc_id: str, scope: str | None = None) -> dict[str, Any] | None:
 
 
 def get_doc_by_source(scope: str, source: str) -> dict[str, Any] | None:
+    """source（ファイル名）で文書を探す。NFC/NFD 差を吸収する。"""
+    src = textnorm.normalize_source(source)
+    if not src:
+        return None
     with _connect() as conn:
         r = conn.execute(
             "SELECT * FROM docs WHERE scope = ? AND source = ?",
-            (scope, source),
+            (scope, src),
         ).fetchone()
-    if not r:
-        return None
-    return _normalize_doc_row(r)
+        if r:
+            return _normalize_doc_row(r)
+        # 既存 NFD 行向けフォールバック
+        rows = conn.execute(
+            "SELECT * FROM docs WHERE scope = ?",
+            (scope,),
+        ).fetchall()
+    for row in rows:
+        if textnorm.normalize_source(row["source"]) == src:
+            return _normalize_doc_row(row)
+    return None
 
 
 def get_toc(doc_id: str) -> list[dict[str, Any]]:
