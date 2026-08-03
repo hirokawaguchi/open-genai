@@ -45,6 +45,12 @@ export const useGenUApps = () => {
           },
         ]
       : []),
+    // 旧 rag-tags / rag-register / rag-maintain を集約した専用ページ。
+    {
+      label: 'ナレッジ管理',
+      value: 'knowledge',
+      description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
+    },
     // 文字起こし(transcribe)はクラウド(Amazon Transcribe)依存のため除外。
     // ローカルの「文字起こし（ローカル Whisper）」AIアプリで代替している。
   ];

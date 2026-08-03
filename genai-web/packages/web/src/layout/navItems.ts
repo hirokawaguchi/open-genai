@@ -11,7 +11,7 @@ export const WHISPER_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/whisper`;
 export const KNOWLEDGE_PATH = '/knowledge';
 
 /** ナレッジ管理 専用ページへ集約する（＝リダイレクトする）旧 exApp ID。検索(rag)は除く。 */
-const KNOWLEDGE_EXAPP_IDS = new Set(['rag-tags', 'rag-register', 'rag-maintain']);
+export const KNOWLEDGE_EXAPP_IDS = new Set(['rag-tags', 'rag-register', 'rag-maintain']);
 
 /** プロンプトテンプレートは汎用 exApp フォームではなく専用ページで提供する */
 export const PROMPT_TEMPLATES_PATH = '/prompts';

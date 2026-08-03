@@ -1948,6 +1948,10 @@ async def list_exapps(request: Request) -> list[Any]:
     claims = _claims_from_request(request)
     is_admin = _is_system_admin(claims)
     candidates = teams_store.list_visible_exapps(_user_id(claims), is_admin)
+    # /knowledge へ集約済みの旧管理系は起動時削除するが、残存しても一覧に出さない
+    candidates = [
+        a for a in candidates if a.get("exAppId") not in RETIRED_SEED_EXAPP_IDS
+    ]
     # 管理者限定 exApp（監査ログ参照 等）は非管理者の一覧から隠す
     if not is_admin:
         candidates = [

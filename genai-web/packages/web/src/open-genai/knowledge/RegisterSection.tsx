@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useState } from 'react';
+import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
@@ -22,6 +22,7 @@ type Props = {
 export const RegisterSection = ({ scope, tags, mutateTags, mutateDocs }: Props) => {
   const { notice, success, fail, clear } = useNotice();
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ---- ファイル登録 ----
   const [mode, setMode] = useState<RegisterMode>('tree');
@@ -56,6 +57,9 @@ export const RegisterSection = ({ scope, tags, mutateTags, mutateDocs }: Props) 
       const count = res.documents?.length ?? 0;
       success(`${count} 件のドキュメントを登録しました。`);
       setFiles([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       setSelected([]);
       setNewTagsText('');
       mutateTags();
@@ -114,17 +118,32 @@ export const RegisterSection = ({ scope, tags, mutateTags, mutateDocs }: Props) 
           <Label htmlFor='reg-files' size='sm'>
             ファイル
           </Label>
+          {/* ネイティブ file input は OS 依存でボタンに見えないため、見た目は Button に寄せる */}
           <input
             id='reg-files'
+            ref={fileInputRef}
             type='file'
             multiple
             accept={ACCEPT}
             onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-            className='text-oln-16N-100'
+            className='sr-only'
           />
-          {files.length > 0 && (
-            <p className='text-dns-14N-130 text-solid-gray-600'>選択中: {files.length} 件</p>
-          )}
+          <div className='flex flex-wrap items-center gap-3'>
+            <Button
+              type='button'
+              variant='outline'
+              size='md'
+              onClick={() => fileInputRef.current?.click()}
+              aria-disabled={busy || undefined}
+            >
+              ファイルを選択
+            </Button>
+            <p className='text-dns-14N-130 text-solid-gray-600'>
+              {files.length > 0
+                ? `選択中: ${files.map((f) => f.name).join('、')}`
+                : '選択されていません'}
+            </p>
+          </div>
         </div>
 
         <TagPicker
