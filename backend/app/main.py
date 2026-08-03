@@ -1908,17 +1908,33 @@ async def get_file(key: str) -> FileResponse:
     return FileResponse(full)
 
 
-@app.delete("/file/{file_name:path}")
-async def delete_file(file_name: str) -> dict[str, Any]:
-    # file_name は "files/<uuid>/<name>" 形式（フロントが pathname から生成）
-    key = file_name[len("files/") :] if file_name.startswith("files/") else file_name
+def _delete_stored_file(key: str) -> None:
+    """FILES_DIR 配下のオブジェクトを削除する（存在しなければ何もしない）。"""
+    # 旧フロントが pathname 全体（api/files/... や files/...）を渡す場合を吸収
+    for prefix in ("api/files/", "files/"):
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
     try:
         full = _safe_path(key)
         if os.path.isfile(full):
             os.remove(full)
     except ValueError:
         pass
-    return None
+
+
+@app.delete("/files/{key:path}")
+async def delete_file_public(key: str) -> dict[str, Any]:
+    """添付ファイル削除（PUT/GET と同じ /files 配下。Authorization 不要）。"""
+    _delete_stored_file(key)
+    return {}
+
+
+@app.delete("/file/{file_name:path}")
+async def delete_file(file_name: str) -> dict[str, Any]:
+    # 互換: 旧フロントの /file/<pathname> 削除
+    _delete_stored_file(file_name)
+    return {}
 
 
 # ---------------------------------------------------------------------------
