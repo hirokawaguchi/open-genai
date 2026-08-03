@@ -1890,14 +1890,66 @@ async def get_upload_url(request: Request) -> str:
     return f"{PUBLIC_BASE_URL}/files/{key}"
 
 
+def _guess_media_type(filename: str) -> str:
+    """拡張子からおおまかな mediaType を推定する（添付検査用）。"""
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    return {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "txt": "text/plain",
+        "md": "text/markdown",
+        "csv": "text/csv",
+        "tsv": "text/tab-separated-values",
+        "html": "text/html",
+        "htm": "text/html",
+        "json": "application/json",
+        "log": "text/plain",
+    }.get(ext, "")
+
+
 @app.put("/files/{key:path}")
 async def put_file(key: str, request: Request) -> dict[str, Any]:
+    """添付を保存し、抽出可能な本文があれば個人情報を警告検知する（ブロックしない）。"""
     full = _safe_path(key)
     os.makedirs(os.path.dirname(full), exist_ok=True)
     data = await request.body()
     with open(full, "wb") as f:
         f.write(data)
-    return {}
+
+    result: dict[str, Any] = {"warned": False, "categories": []}
+    try:
+        from shared.pii_scan import format_warning_message, load_pii_settings, scan
+        from shared.docextract import extract_doc_text_full
+        import base64 as _b64
+
+        settings = load_pii_settings()
+        if not settings.get("warn_attachments", True):
+            return result
+        filename = os.path.basename(key) or "file"
+        media_type = _guess_media_type(filename)
+        b64 = _b64.b64encode(data).decode("ascii")
+        text = extract_doc_text_full(filename, media_type, b64)
+        if not text or text.startswith("(添付ファイル"):
+            return result
+        scanned = scan(
+            text,
+            enable_ner=bool(settings.get("check_pii_ner", True)),
+            ner_max_chars=int(os.environ.get("PII_NER_MAX_CHARS", "8000")),
+            check_mynumber=bool(settings.get("check_mynumber", True)),
+        )
+        cats = list(scanned.get("categories") or [])
+        hits = list(scanned.get("hits") or [])
+        if cats:
+            result = {
+                "warned": True,
+                "categories": cats,
+                "hits": hits,
+                "message": format_warning_message(scanned),
+            }
+    except Exception as e:  # noqa: BLE001 - 保存自体は成功させる
+        print(f"[files] 個人情報検査をスキップ: {e}")
+    return result
 
 
 @app.get("/files/{key:path}")

@@ -55,7 +55,9 @@ export const RegisterSection = ({ scope, tags, mutateTags, mutateDocs }: Props) 
       );
       const res = await registerFiles(scope, mode, mergeTags(selected, newTagsText), uploads);
       const count = res.documents?.length ?? 0;
-      success(`${count} 件のドキュメントを登録しました。`);
+      success(
+        `${count} 件の登録を受け付けました。バックグラウンドで索引化・個人情報検査を行います。`,
+      );
       setFiles([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -77,7 +79,7 @@ export const RegisterSection = ({ scope, tags, mutateTags, mutateDocs }: Props) 
     setBusy(true);
     try {
       await registerUrl(scope, url.trim(), mergeTags(urlSelected, urlNewTagsText));
-      success(`URL を登録しました。`);
+      success('URL の登録を受け付けました。バックグラウンドで取得・検査します。');
       setUrl('');
       setUrlSelected([]);
       setUrlNewTagsText('');

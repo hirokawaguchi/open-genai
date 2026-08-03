@@ -236,6 +236,34 @@ export const ChatInput = (props: Props) => {
                               uploadedFile.errorMessages.map((error) => (
                                 <p key={error}>＊{error}</p>
                               ))}
+                            {uploadedFile.piiWarned && (
+                              <div className='text-orange-800 whitespace-pre-wrap'>
+                                <p>
+                                  ＊
+                                  {(uploadedFile.piiMessage || '').split('\n')[0] ||
+                                    `個人情報の可能性: ${(uploadedFile.piiCategories ?? []).join('・')}`}
+                                </p>
+                                {(uploadedFile.piiHits ?? []).length > 0 ? (
+                                  <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
+                                    {(uploadedFile.piiHits ?? []).slice(0, 6).map((h, i) => (
+                                      <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
+                                        {h.category}: 「{h.context || h.match}」
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  (uploadedFile.piiMessage || '')
+                                    .split('\n')
+                                    .slice(1)
+                                    .filter(Boolean)
+                                    .map((line) => (
+                                      <p key={line} className='text-dns-14N-130'>
+                                        {line}
+                                      </p>
+                                    ))
+                                )}
+                              </div>
+                            )}
                           </FileUploadFileInfo>
                           <Button
                             id={`attached-file-${idx}-remove`}

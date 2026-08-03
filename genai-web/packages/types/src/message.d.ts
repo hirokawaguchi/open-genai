@@ -44,6 +44,16 @@ export type UploadedFileType = {
   uploading: boolean;
   deleting?: boolean;
   errorMessages: string[];
+  /** 個人情報検知の警告（ブロックではない） */
+  piiWarned?: boolean;
+  piiCategories?: string[];
+  piiMessage?: string;
+  piiHits?: Array<{
+    category: string;
+    match: string;
+    context: string;
+    offset?: number;
+  }>;
 };
 
 export type FileLimit = {

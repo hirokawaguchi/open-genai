@@ -60,6 +60,26 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE docs ADD COLUMN index_kind TEXT NOT NULL DEFAULT 'tree'"
             )
+        if "ingest_status" not in cols:
+            conn.execute(
+                "ALTER TABLE docs ADD COLUMN ingest_status TEXT NOT NULL DEFAULT 'ready'"
+            )
+        if "ingest_error" not in cols:
+            conn.execute(
+                "ALTER TABLE docs ADD COLUMN ingest_error TEXT NOT NULL DEFAULT ''"
+            )
+        if "pii_status" not in cols:
+            conn.execute(
+                "ALTER TABLE docs ADD COLUMN pii_status TEXT NOT NULL DEFAULT 'clear'"
+            )
+        if "pii_labels" not in cols:
+            conn.execute(
+                "ALTER TABLE docs ADD COLUMN pii_labels TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "pii_hits" not in cols:
+            conn.execute(
+                "ALTER TABLE docs ADD COLUMN pii_hits TEXT NOT NULL DEFAULT '[]'"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS pages (
@@ -67,6 +87,19 @@ def init_db() -> None:
               page INTEGER NOT NULL,
               text TEXT NOT NULL,
               PRIMARY KEY (doc_id, page),
+              FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ingest_payloads (
+              doc_id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              mode TEXT NOT NULL DEFAULT 'tree',
+              media_type TEXT NOT NULL DEFAULT '',
+              content_b64 TEXT NOT NULL DEFAULT '',
+              url TEXT NOT NULL DEFAULT '',
               FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
             )
             """
@@ -161,7 +194,8 @@ def upsert_document(
             conn.execute(
                 """
                 UPDATE docs SET source = ?, tags = ?, page_count = ?, char_count = ?,
-                  truncated = ?, content_hash = ?, index_kind = ?, updated_at = ?
+                  truncated = ?, content_hash = ?, index_kind = ?, updated_at = ?,
+                  ingest_status = 'ready', ingest_error = ''
                 WHERE doc_id = ?
                 """,
                 (
@@ -182,8 +216,9 @@ def upsert_document(
                 """
                 INSERT INTO docs (
                   doc_id, scope, source, tags, page_count, char_count,
-                  truncated, content_hash, index_kind, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  truncated, content_hash, index_kind, created_at, updated_at,
+                  ingest_status, ingest_error, pii_status, pii_labels
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', '', 'pending', '[]')
                 """,
                 (
                     doc_id,
@@ -228,6 +263,26 @@ def upsert_document(
     return doc_id  # type: ignore[return-value]
 
 
+def _parse_pii_labels(raw: str | None) -> list[str]:
+    try:
+        v = json.loads(raw or "[]")
+        if isinstance(v, list):
+            return [str(x) for x in v if x]
+        return []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _parse_pii_hits(raw: str | None) -> list[dict[str, Any]]:
+    try:
+        v = json.loads(raw or "[]")
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, dict)]
+        return []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
 def _normalize_doc_row(r: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     d = dict(r)
     d["tags"] = _parse_tags(d.get("tags"))
@@ -238,6 +293,17 @@ def _normalize_doc_row(r: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     d["source"] = textnorm.normalize_source(d.get("source") or "") or (
         d.get("source") or ""
     )
+    status = (d.get("ingest_status") or "ready").strip().lower()
+    if status not in ("queued", "processing", "ready", "failed"):
+        status = "ready"
+    d["ingest_status"] = status
+    d["ingest_error"] = d.get("ingest_error") or ""
+    pii = (d.get("pii_status") or "clear").strip().lower()
+    if pii not in ("pending", "clear", "suspected", "error"):
+        pii = "clear"
+    d["pii_status"] = pii
+    d["pii_labels"] = _parse_pii_labels(d.get("pii_labels"))
+    d["pii_hits"] = _parse_pii_hits(d.get("pii_hits"))
     return d
 
 
@@ -246,7 +312,8 @@ def list_docs(scope: str, tags: list[str] | None = None) -> list[dict[str, Any]]
         rows = conn.execute(
             """
             SELECT doc_id, scope, source, tags, page_count, char_count,
-                   truncated, content_hash, index_kind, created_at, updated_at
+                   truncated, content_hash, index_kind, created_at, updated_at,
+                   ingest_status, ingest_error, pii_status, pii_labels, pii_hits
             FROM docs WHERE scope = ? ORDER BY source
             """,
             (scope,),
@@ -403,8 +470,178 @@ def delete_by_source(scope: str, source: str) -> bool:
     if not doc:
         return False
     with _connect() as conn:
+        conn.execute("DELETE FROM ingest_payloads WHERE doc_id = ?", (doc["doc_id"],))
         conn.execute("DELETE FROM docs WHERE doc_id = ?", (doc["doc_id"],))
     return True
+
+
+def enqueue_file(
+    *,
+    scope: str,
+    source: str,
+    tags: list[str] | None,
+    mode: str,
+    media_type: str,
+    content_b64: str,
+) -> dict[str, Any]:
+    """非同期登録用に stub 行と payload を作成し queued で返す。"""
+    now = _now()
+    source = textnorm.normalize_source(source) or "unknown"
+    kind = (mode or "tree").strip().lower()
+    if kind not in ("tree", "fulltext"):
+        kind = "tree"
+    tags_s = _tags_json(tags)
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT doc_id FROM docs WHERE scope = ? AND source = ?",
+            (scope, source),
+        ).fetchone()
+        if existing:
+            doc_id = existing["doc_id"]
+            conn.execute(
+                """
+                UPDATE docs SET tags = ?, index_kind = ?, updated_at = ?,
+                  ingest_status = 'queued', ingest_error = '',
+                  pii_status = 'pending', pii_labels = '[]'
+                WHERE doc_id = ?
+                """,
+                (tags_s, kind, now, doc_id),
+            )
+            conn.execute("DELETE FROM ingest_payloads WHERE doc_id = ?", (doc_id,))
+        else:
+            doc_id = new_doc_id()
+            conn.execute(
+                """
+                INSERT INTO docs (
+                  doc_id, scope, source, tags, page_count, char_count,
+                  truncated, content_hash, index_kind, created_at, updated_at,
+                  ingest_status, ingest_error, pii_status, pii_labels
+                ) VALUES (?, ?, ?, ?, 0, 0, 0, '', ?, ?, ?, 'queued', '', 'pending', '[]')
+                """,
+                (doc_id, scope, source, tags_s, kind, now, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO ingest_payloads (doc_id, kind, mode, media_type, content_b64, url)
+            VALUES (?, 'file', ?, ?, ?, '')
+            """,
+            (doc_id, kind, media_type or "", content_b64 or ""),
+        )
+    doc = get_doc(doc_id, scope)
+    return doc or {"doc_id": doc_id, "scope": scope, "source": source}
+
+
+def enqueue_url(
+    *,
+    scope: str,
+    url: str,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    """URL 登録を queued で受け付ける。"""
+    now = _now()
+    source = textnorm.normalize_source(url) or url
+    tags_s = _tags_json(tags)
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT doc_id FROM docs WHERE scope = ? AND source = ?",
+            (scope, source),
+        ).fetchone()
+        if existing:
+            doc_id = existing["doc_id"]
+            conn.execute(
+                """
+                UPDATE docs SET tags = ?, index_kind = 'fulltext', updated_at = ?,
+                  ingest_status = 'queued', ingest_error = '',
+                  pii_status = 'pending', pii_labels = '[]'
+                WHERE doc_id = ?
+                """,
+                (tags_s, now, doc_id),
+            )
+            conn.execute("DELETE FROM ingest_payloads WHERE doc_id = ?", (doc_id,))
+        else:
+            doc_id = new_doc_id()
+            conn.execute(
+                """
+                INSERT INTO docs (
+                  doc_id, scope, source, tags, page_count, char_count,
+                  truncated, content_hash, index_kind, created_at, updated_at,
+                  ingest_status, ingest_error, pii_status, pii_labels
+                ) VALUES (?, ?, ?, ?, 0, 0, 0, '', 'fulltext', ?, ?, 'queued', '', 'pending', '[]')
+                """,
+                (doc_id, scope, source, tags_s, now, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO ingest_payloads (doc_id, kind, mode, media_type, content_b64, url)
+            VALUES (?, 'url', 'fulltext', '', '', ?)
+            """,
+            (doc_id, url),
+        )
+    doc = get_doc(doc_id, scope)
+    return doc or {"doc_id": doc_id, "scope": scope, "source": source}
+
+
+def get_ingest_payload(doc_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        r = conn.execute(
+            "SELECT * FROM ingest_payloads WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+    return dict(r) if r else None
+
+
+def delete_ingest_payload(doc_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM ingest_payloads WHERE doc_id = ?", (doc_id,))
+
+
+def set_ingest_status(
+    doc_id: str,
+    status: str,
+    *,
+    error: str = "",
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE docs SET ingest_status = ?, ingest_error = ?, updated_at = ?
+            WHERE doc_id = ?
+            """,
+            (status, error or "", _now(), doc_id),
+        )
+
+
+def set_pii_result(
+    doc_id: str,
+    *,
+    pii_status: str,
+    pii_labels: list[str] | None = None,
+    pii_hits: list[dict[str, Any]] | None = None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE docs SET pii_status = ?, pii_labels = ?, pii_hits = ?, updated_at = ?
+            WHERE doc_id = ?
+            """,
+            (
+                pii_status,
+                json.dumps(pii_labels or [], ensure_ascii=False),
+                json.dumps(pii_hits or [], ensure_ascii=False),
+                _now(),
+                doc_id,
+            ),
+        )
+
+
+def list_ingest_job_ids(statuses: list[str] | None = None) -> list[str]:
+    wanted = statuses or ["queued", "processing"]
+    placeholders = ",".join("?" for _ in wanted)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT doc_id FROM docs WHERE ingest_status IN ({placeholders})",
+            wanted,
+        ).fetchall()
+    return [str(r["doc_id"]) for r in rows]
 
 
 def delete_scope(scope: str) -> int:
