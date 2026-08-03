@@ -62,7 +62,15 @@ export const getFileDownloadSignedUrl = async (s3Url: string) => {
 };
 
 export const deleteUploadedFile = async (fileName: string) => {
-  return genUApi.delete<DeleteFileResponse>(`file/${encodeURIComponent(fileName)}`);
+  // PUT/GET と同じ `/files/<key>` を使う（認証不要の公開パス）。
+  // スラッシュはパス区切りとして残し、セグメント単位でエンコードする。
+  const key = fileName.replace(/^\/+/, '').replace(/^files\//, '');
+  const encoded = key
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+  return genUApi.delete<DeleteFileResponse>(`files/${encoded}`);
 };
 
 export const getS3Uri = (s3Url: string) => {
