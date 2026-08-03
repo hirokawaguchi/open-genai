@@ -34,6 +34,10 @@ app = FastAPI(title="Open GENAI NG-Word App", version="0.1.0")
 _DEFAULT: dict[str, Any] = {
     "enabled": False,
     "case_sensitive": False,
+    "check_mynumber": True,
+    "warn_attachments": True,
+    "scan_knowledge_pii": True,
+    "check_pii_ner": True,
     "words": [],
     "patterns": [],
 }
@@ -112,6 +116,9 @@ _EXAMPLE = (
     '  "enabled": true,\n'
     '  "case_sensitive": false,\n'
     '  "check_mynumber": true,\n'
+    '  "warn_attachments": true,\n'
+    '  "scan_knowledge_pii": true,\n'
+    '  "check_pii_ner": true,\n'
     '  "words": ["禁止語の例"],\n'
     '  "patterns": []\n'
     '}'
@@ -173,6 +180,43 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
             if rules.get("check_mynumber") is False
             else "true",
             "desc": "総務省令の検査用数字で個人番号らしさを判定します（単なる12桁数字では止めません）。",
+            "visibleWhen": set_vw,
+        },
+        "warn_attachments": {
+            "type": "select",
+            "title": "添付アップロード時の個人情報警告",
+            "items": [
+                {"title": "する", "value": "true"},
+                {"title": "しない", "value": "false"},
+            ],
+            "default_value": "false"
+            if rules.get("warn_attachments") is False
+            else "true",
+            "desc": "チャット等の添付保存時に氏名・住所・電話・マイナンバーを警告します（ブロックしません）。",
+            "visibleWhen": set_vw,
+        },
+        "scan_knowledge_pii": {
+            "type": "select",
+            "title": "ナレッジ登録時の個人情報検知",
+            "items": [
+                {"title": "する", "value": "true"},
+                {"title": "しない", "value": "false"},
+            ],
+            "default_value": "false"
+            if rules.get("scan_knowledge_pii") is False
+            else "true",
+            "visibleWhen": set_vw,
+        },
+        "check_pii_ner": {
+            "type": "select",
+            "title": "氏名・住所の NER 検知",
+            "items": [
+                {"title": "する（GiNZA）", "value": "true"},
+                {"title": "しない（電話・マイナンバーのみ）", "value": "false"},
+            ],
+            "default_value": "false"
+            if rules.get("check_pii_ner") is False
+            else "true",
             "visibleWhen": set_vw,
         },
         "words": {
@@ -309,6 +353,9 @@ async def invoke(
                 "enabled": _as_bool(inputs.get("enabled")),
                 "case_sensitive": _as_bool(inputs.get("case_sensitive")),
                 "check_mynumber": _as_bool(inputs.get("check_mynumber", True)),
+                "warn_attachments": _as_bool(inputs.get("warn_attachments", True)),
+                "scan_knowledge_pii": _as_bool(inputs.get("scan_knowledge_pii", True)),
+                "check_pii_ner": _as_bool(inputs.get("check_pii_ner", True)),
                 "words": [w.strip() for w in (inputs.get("words") or "").splitlines() if w.strip()],
                 "patterns": [
                     p.strip() for p in (inputs.get("patterns") or "").splitlines() if p.strip()

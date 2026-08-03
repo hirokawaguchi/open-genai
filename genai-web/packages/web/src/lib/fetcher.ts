@@ -160,6 +160,20 @@ export const teamApiFetcher = <T>(url: string): Promise<T> =>
 export const genUApiFetcher = <T>(url: string): Promise<T> =>
   genUApi.get<T>(url).then((res) => res.data);
 
+export type PiiHit = {
+  category: string;
+  match: string;
+  context: string;
+  offset?: number;
+};
+
+export type UploadPutResponse = {
+  warned?: boolean;
+  categories?: string[];
+  hits?: PiiHit[];
+  message?: string;
+};
+
 export const uploadToSignedUrl = async (
   url: string,
   data: File | Blob,
@@ -174,4 +188,14 @@ export const uploadToSignedUrl = async (
     throw new ApiError(res.status, undefined);
   }
   return res;
+};
+
+/** Open GENAI の PUT /files 応答（個人情報警告）を JSON として読む。 */
+export const readUploadPutJson = async (res: Response): Promise<UploadPutResponse> => {
+  try {
+    const data = (await res.clone().json()) as UploadPutResponse;
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
 };

@@ -24,6 +24,7 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
 from shared.docextract import DocExtractError, extract_doc_text
+from shared.pii_scan import load_pii_settings, scan as pii_scan
 
 from . import (
     docstore,
@@ -401,6 +402,18 @@ async def _startup() -> None:
         asyncio.create_task(_url_refresh_loop())
     except Exception as e:  # noqa: BLE001
         print(f"[rag-app] URL 自動更新スケジューラ起動をスキップ: {e}")
+    # 再起動で残った登録ジョブのリカバリ
+    try:
+        for jid in docstore.list_ingest_job_ids(["processing"]):
+            docstore.set_ingest_status(
+                jid, "failed", error="プロセス再起動により処理が中断されました。"
+            )
+            docstore.set_pii_result(jid, pii_status="error", pii_labels=[])
+            docstore.delete_ingest_payload(jid)
+        for jid in docstore.list_ingest_job_ids(["queued"]):
+            _schedule_ingest_job(jid)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] ingest ジョブリカバリをスキップ: {e}")
     # RAG_SEED_SAMPLES=false で起動時のサンプル自動投入を無効化できる（本番想定）。
     seed_samples = os.environ.get("RAG_SEED_SAMPLES", "true").lower() != "false"
     try:
@@ -983,7 +996,7 @@ async def _kb_delete_tag(scope: str, name: str) -> None:
 async def _kb_register_files(
     scope: str, files: list[dict[str, str]], tags: list[str], mode: str
 ) -> list[dict[str, Any]]:
-    """ファイル群を取り込む。mode='tree'（構造化）/'fulltext'（簡易・全文）。"""
+    """ファイル群を同期取り込み（invoke 互換・テスト用）。"""
     if tags:
         tagstore.ensure_tags(scope, tags)
     results: list[dict[str, Any]] = []
@@ -1025,6 +1038,161 @@ async def _kb_register_url(scope: str, url: str, tags: list[str]) -> dict[str, A
     urlstore.add_url(scope, url, tags, title)
     urlstore.mark_fetched(scope, url, content_hash, title)
     return {"url": url, "title": title, "added_chunks": added}
+
+
+async def _apply_pii_for_doc(doc_id: str) -> None:
+    """索引済みドキュメント本文を個人情報検知し pii_* を更新する。"""
+    settings = load_pii_settings()
+    if not settings.get("scan_knowledge_pii", True):
+        docstore.set_pii_result(doc_id, pii_status="clear", pii_labels=[])
+        return
+    pages = docstore.get_all_pages(doc_id)
+    text = "\n\n".join((p.get("text") or "") for p in pages)
+    if not text.strip():
+        docstore.set_pii_result(doc_id, pii_status="clear", pii_labels=[])
+        return
+    try:
+        result = pii_scan(
+            text,
+            enable_ner=bool(settings.get("check_pii_ner", True)),
+            # ナレッジは非同期のため大きめ上限（同期アップロードの 8k とは別）
+            ner_max_chars=int(os.environ.get("PII_KNOWLEDGE_NER_MAX_CHARS", "200000")),
+            check_mynumber=bool(settings.get("check_mynumber", True)),
+        )
+        cats = list(result.get("categories") or [])
+        hits = list(result.get("hits") or [])
+        docstore.set_pii_result(
+            doc_id,
+            pii_status="suspected" if cats else "clear",
+            pii_labels=cats,
+            pii_hits=hits,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] PII 検知失敗 doc_id={doc_id}: {e}")
+        docstore.set_pii_result(doc_id, pii_status="error", pii_labels=[])
+
+
+async def _run_ingest_job(doc_id: str) -> None:
+    """queued ドキュメントをバックグラウンドで索引化し、続けて PII 検知する。"""
+    payload = docstore.get_ingest_payload(doc_id)
+    doc = docstore.get_doc(doc_id)
+    if not payload or not doc:
+        return
+    scope = doc["scope"]
+    source = doc["source"]
+    tags = list(doc.get("tags") or [])
+    docstore.set_ingest_status(doc_id, "processing")
+    try:
+        kind = (payload.get("kind") or "file").strip().lower()
+        if kind == "url":
+            url = (payload.get("url") or source or "").strip()
+            await _kb_register_url(scope, url, tags)
+            # ingest_url 経路でも doc 行が upsert される。doc_id が変わった場合に備える
+            fresh = docstore.get_doc_by_source(scope, url) or docstore.get_doc(doc_id)
+            target_id = (fresh or {}).get("doc_id") or doc_id
+        else:
+            mode = (payload.get("mode") or "tree").strip().lower()
+            media_type = payload.get("media_type") or ""
+            content_b64 = payload.get("content_b64") or ""
+            if mode == "fulltext":
+                info = await tree_ingest.ingest_fulltext_file(
+                    scope=scope,
+                    filename=source,
+                    media_type=media_type,
+                    content_b64=content_b64,
+                    tags=tags,
+                    also_vector=True,
+                )
+            else:
+                info = await tree_ingest.ingest_structured_file(
+                    scope=scope,
+                    filename=source,
+                    media_type=media_type,
+                    content_b64=content_b64,
+                    tags=tags,
+                    also_vector=True,
+                )
+            target_id = info.get("doc_id") or doc_id
+
+        docstore.set_ingest_status(target_id, "ready")
+        await _apply_pii_for_doc(target_id)
+        docstore.delete_ingest_payload(doc_id)
+        if target_id != doc_id:
+            docstore.delete_ingest_payload(target_id)
+    except DocExtractError as e:
+        docstore.set_ingest_status(doc_id, "failed", error=str(e))
+        docstore.set_pii_result(doc_id, pii_status="error", pii_labels=[])
+        docstore.delete_ingest_payload(doc_id)
+    except KnowledgeError as e:
+        docstore.set_ingest_status(doc_id, "failed", error=str(e))
+        docstore.set_pii_result(doc_id, pii_status="error", pii_labels=[])
+        docstore.delete_ingest_payload(doc_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] ingest job 失敗 doc_id={doc_id}: {e}")
+        docstore.set_ingest_status(doc_id, "failed", error=str(e))
+        docstore.set_pii_result(doc_id, pii_status="error", pii_labels=[])
+        docstore.delete_ingest_payload(doc_id)
+
+
+def _schedule_ingest_job(doc_id: str) -> None:
+    try:
+        asyncio.create_task(_run_ingest_job(doc_id))
+    except Exception as e:  # noqa: BLE001
+        print(f"[rag-app] ingest job 起動失敗: {e}")
+
+
+async def _kb_enqueue_files(
+    scope: str, files: list[dict[str, str]], tags: list[str], mode: str
+) -> list[dict[str, Any]]:
+    """ファイル登録を受け付け、バックグラウンド処理を開始する。"""
+    if tags:
+        tagstore.ensure_tags(scope, tags)
+    results: list[dict[str, Any]] = []
+    for f in files:
+        filename = f.get("filename") or "uploaded"
+        media_type = f.get("media_type") or f.get("type") or ""
+        content_b64 = f.get("content") or ""
+        doc = docstore.enqueue_file(
+            scope=scope,
+            source=filename,
+            tags=tags,
+            mode=mode,
+            media_type=media_type,
+            content_b64=content_b64,
+        )
+        _schedule_ingest_job(doc["doc_id"])
+        results.append(
+            {
+                "doc_id": doc["doc_id"],
+                "source": doc.get("source") or filename,
+                "page_count": int(doc.get("page_count") or 0),
+                "char_count": int(doc.get("char_count") or 0),
+                "vector_chunks": 0,
+                "index_kind": doc.get("index_kind") or mode,
+                "ingest_status": doc.get("ingest_status") or "queued",
+                "pii_status": doc.get("pii_status") or "pending",
+                "pii_labels": doc.get("pii_labels") or [],
+            }
+        )
+    return results
+
+
+async def _kb_enqueue_url(scope: str, url: str, tags: list[str]) -> dict[str, Any]:
+    url = (url or "").strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise KnowledgeError("http(s):// で始まる URL を指定してください。")
+    if tags:
+        tagstore.ensure_tags(scope, tags)
+    doc = docstore.enqueue_url(scope=scope, url=url, tags=tags)
+    _schedule_ingest_job(doc["doc_id"])
+    return {
+        "url": url,
+        "title": "",
+        "added_chunks": 0,
+        "doc_id": doc["doc_id"],
+        "ingest_status": doc.get("ingest_status") or "queued",
+        "pii_status": doc.get("pii_status") or "pending",
+    }
 
 
 async def _kb_delete_source(scope: str, source: str) -> None:
@@ -1603,12 +1771,10 @@ async def api_register(
     if not files:
         return JSONResponse(status_code=400, content={"error": "登録するファイルを添付してください。"})
     try:
-        infos = await _kb_register_files(scope, files, tags, mode)
-    except DocExtractError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        infos = await _kb_enqueue_files(scope, files, tags, mode)
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(e)})
-    return {"ok": True, "scope": scope, "mode": mode, "documents": infos}
+    return {"ok": True, "accepted": True, "scope": scope, "mode": mode, "documents": infos}
 
 
 @app.post("/knowledge/urls")
@@ -1631,14 +1797,12 @@ async def api_register_url(
         return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
     tags = _parse_tags(body.get("tags"))
     try:
-        r = await _kb_register_url(scope, body.get("url") or "", tags)
+        r = await _kb_enqueue_url(scope, body.get("url") or "", tags)
     except KnowledgeError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    except httpx.HTTPError as e:
-        return JSONResponse(status_code=400, content={"error": f"URL の取得に失敗しました: {e}"})
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(e)})
-    return {"ok": True, "scope": scope, **r}
+    return {"ok": True, "accepted": True, "scope": scope, **r}
 
 
 @app.post("/knowledge/urls/delete")

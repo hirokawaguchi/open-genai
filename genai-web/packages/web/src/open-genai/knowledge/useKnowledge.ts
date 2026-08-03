@@ -48,7 +48,20 @@ export const useDocs = (scope: string | undefined, tags?: string[]) => {
           params: { scope: scope!, ...(tagParam ? { tags: tagParam } : {}) },
         })
         .then((r) => r.data),
-    { revalidateOnFocus: false },
+    {
+      revalidateOnFocus: false,
+      // 登録中・PII 検査中がある間だけ短間隔で再取得
+      refreshInterval: (latest) => {
+        const docs = latest?.documents ?? [];
+        const busy = docs.some(
+          (d) =>
+            d.ingest_status === 'queued' ||
+            d.ingest_status === 'processing' ||
+            d.pii_status === 'pending',
+        );
+        return busy ? 2000 : 0;
+      },
+    },
   );
   return { docs: (data?.documents ?? []) as KnowledgeDoc[], error, isLoading, mutate };
 };

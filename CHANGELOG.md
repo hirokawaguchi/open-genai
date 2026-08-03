@@ -29,6 +29,13 @@
 
 ## [Unreleased]
 
+### 添付・ナレッジの個人情報検知（警告／ラベル）
+
+- `shared/pii_scan.py`: 氏名・住所・電話番号・マイナンバーを種別付きで検知（匿名化なし）。電話・マイナンバーは正規表現／検査数字、住所はパターン補助、氏名・住所 NER は任意の GiNZA（`PII_INSTALL_NER=1` ビルド）
+- チャット等: `PUT /files` 保存と同時に警告（`warned` / `categories`）。フロントは添付行に種別を表示（送信は可）
+- ナレッジ: 登録を非同期化（`ingest_status`）。ジョブ内で索引化のあと PII 検知し、`DocsSection` にラベル表示。`NGWORD_DB_PATH` を rag-app が backend_data 経由で参照
+- 入力制限画面: 添付警告・ナレッジ検知・NER のトグルを追加
+
 ### 通常チャット添付の大容量対応（その場マップリデュース）
 
 - backend: チャット添付を 30,000 文字で黙って打ち切る挙動を廃止し、`shared/docextract.py` に切り捨てなしの `extract_doc_text_full` を追加（安全弁 `MAX_CHAT_DOC_CHARS` 既定 500,000、超過は明示注記で先頭保持）

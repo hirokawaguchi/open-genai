@@ -5,6 +5,9 @@
       "enabled": true,
       "case_sensitive": false,
       "check_mynumber": true,
+      "warn_attachments": true,
+      "scan_knowledge_pii": true,
+      "check_pii_ner": true,
       "words": ["禁止語1"],
       "patterns": ["\\\\d{3}-\\\\d{4}"]
     }
@@ -34,6 +37,9 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
     enabled = bool(data.get("enabled", False))
     case_sensitive = bool(data.get("case_sensitive", False))
     check_mynumber = bool(data.get("check_mynumber", True))
+    warn_attachments = bool(data.get("warn_attachments", True))
+    scan_knowledge_pii = bool(data.get("scan_knowledge_pii", True))
+    check_pii_ner = bool(data.get("check_pii_ner", True))
 
     words = data.get("words", [])
     if not isinstance(words, list) or not all(isinstance(x, str) for x in words):
@@ -53,6 +59,9 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
             "enabled": enabled,
             "case_sensitive": case_sensitive,
             "check_mynumber": check_mynumber,
+            "warn_attachments": warn_attachments,
+            "scan_knowledge_pii": scan_knowledge_pii,
+            "check_pii_ner": check_pii_ner,
             "words": [str(w) for w in words if w],
             "patterns": [str(p) for p in patterns if p],
         },
@@ -70,6 +79,12 @@ def render_rules(rules: dict[str, Any]) -> str:
         f"- 大文字小文字の区別: {'する' if rules.get('case_sensitive') else 'しない'}",
         f"- マイナンバー検査（検査数字）: "
         f"{'する' if rules.get('check_mynumber', True) else 'しない'}",
+        f"- 添付アップロード時の個人情報警告: "
+        f"{'する' if rules.get('warn_attachments', True) else 'しない'}",
+        f"- ナレッジ登録時の個人情報検知: "
+        f"{'する' if rules.get('scan_knowledge_pii', True) else 'しない'}",
+        f"- 氏名・住所の NER 検知: "
+        f"{'する' if rules.get('check_pii_ner', True) else 'しない'}",
         f"- 禁止ワード数: {len(words)}",
         f"- 機密パターン数: {len(patterns)}",
     ]
