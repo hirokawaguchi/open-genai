@@ -61,7 +61,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 ### 4 つの柱
 
-1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検査、プロンプトテンプレート、契約終了時の完全削除と報告書生成
+1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、契約終了時の完全削除と報告書生成
 2. **チーム主体・複数所属** — 親子階層のないフラットなチーム。利用者は複数チームに所属可能。AI アプリ・RAG ナレッジ・保存プロンプトの共有は **所属チーム** を軸に制御
 3. **源内 UI 制約の opt-in 拡張** — Form Spec v1（条件表示・リアクティブフォーム・プレビュー）、`dynamic_schema` による動的フォーム、各画面の折りたたみヘルプ。既存 exApp は無改修で従来どおり動作
 4. **成果物のオブジェクトストレージ** — AI アプリ（Dify 等）が生成したファイルを SeaweedFS に保存し、backend 経由で署名付き URL を提示
@@ -80,7 +80,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `audit-app/` | 監査ログ参照（管理者限定 exApp） |
 | `usermgmt-app/` | 利用者 CSV 一括管理（Keycloak Admin API、管理者限定 exApp） |
 | `modelpolicy-app/` | モデル利用制御ポリシー管理（管理者限定 exApp） |
-| `ngword-app/` | 禁止語・個人情報パターン管理（管理者限定 exApp） |
+| `ngword-app/` | 禁止語・個人情報検知の設定（管理者限定 exApp。添付警告／ナレッジ検知／NER トグル） |
 | `prompt-app/` | プロンプトテンプレートカタログ（標準／個人／グループ共有） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
@@ -125,7 +125,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | 監査ログ | `backend/app/audit.py` + `audit-app`（3 年以上保持、利用者削除と非連動） |
 | 利用者管理 | `usermgmt-app`（CSV 一括作成・更新・削除） |
 | モデル制御 | `backend/app/policy.py` + `modelpolicy-app`（チーム／グループ単位） |
-| 入力制限 | `backend/app/ngwords.py` + `ngword-app`（禁止語・PII 正規表現） |
+| 入力制限 | `backend/app/ngwords.py` + `ngword-app` + `shared/pii_scan.py`（禁止語・添付／ナレッジの個人情報検知） |
 | プロンプト | `prompt-app`（テンプレート → チャットディープリンク） |
 | 成果物配信 | `backend/app/objstore.py` + SeaweedFS（Dify 等の file artifact 再ホスト） |
 | 内部認証 | 各 `app/intauth.py`（backend↔exApp 間 HMAC 署名） |
@@ -310,6 +310,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 | **フロント**（`genai-web/**`。プロンプト・画面・ルーティング等） | `docker compose ... up -d --build web` |
 | **backend**（`backend/**`） | `docker compose ... up -d --build backend` |
 | **各 exApp**（`rag-app/` 等） | `docker compose ... up -d --build <service>` |
+| **氏名 NER（GiNZA）**（`PII_INSTALL_NER=1`） | `PII_INSTALL_NER=1 docker compose ... up -d --build backend rag-app`（詳細は[個人情報検知](#入力制限と個人情報検知添付ナレッジ)） |
 | **proxy 設定**（`proxy/nginx.conf`） | `docker compose ... restart proxy`（設定はマウントのため再起動のみ） |
 | **`.env.prod` の値**（LLM 接続・S3 公開先・`TITLE_MODE` 等） | 対象サービスを `up -d`（再作成で env 再読込。フロント埋め込み値は再ビルド） |
 
@@ -408,6 +409,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed u
 - 大きい添付は 30,000 文字で黙って打ち切らず、**その場でマップリデュース**（チャンク化 → 読み計画 → 抜粋 or バッチ要約）してから回答します。しきい値 `CHAT_DOC_INLINE_CHARS`（既定 60,000 文字）以下はそのまま全文注入、超過分は圧縮して参照し、「どう参照したか」を応答冒頭に短く明示します
 - 安全弁として全文抽出は `MAX_CHAT_DOC_CHARS`（既定 500,000 文字）を上限とし、超えた場合のみ明示注記を付けて先頭を保持します（全文が必要な場合はナレッジ登録を利用）。ベクトル RAG 簡易登録など従来経路は引き続き `MAX_DOC_CHARS`（既定 30,000 文字）で打ち切ります
 - レガシー形式（`.doc` / `.xls` のバイナリ旧形式）はテキスト抽出に未対応です
+- アップロード時に個人情報が検知された場合は**警告のみ**（送信・保存は継続）。詳細は[入力制限と個人情報検知](#入力制限と個人情報検知添付ナレッジ)
 
 > アップロードしたファイルは backend（`backend_data` ボリューム）に保存されます。
 
@@ -598,6 +600,7 @@ SAML 経由で backend に渡る主な属性:
 
 - 画面先頭の **スコープセレクタ**で「共有ナレッジ（共通）」と「所属チーム」を切り替え
 - **共有ナレッジの書込はシステム管理者のみ**（閲覧は全ユーザー）。チームスコープは**メンバー**が管理可能
+- ドキュメント登録は**非同期**（`ingest_status`: pending → ready / error）。登録ジョブ内で索引化のあと個人情報検知し、一覧にラベル表示（詳細は[個人情報検知](#入力制限と個人情報検知添付ナレッジ)）
 - 旧管理 exApp（`rag-tags` / `rag-register` / `rag-maintain` と各チームの「タグ管理／ドキュメント登録／ドキュメント管理」）は **AI アプリ一覧から廃止**し、`/knowledge` に一本化（起動時に既存レコードを削除。新規デプロイでも最初から表示されない）。万一残った旧 URL / ピン留めは `/knowledge` へ自動リダイレクト
 - **ナレッジ検索**は従来どおり「AI アプリ」の「ナレッジ検索」（`rag` exApp）を使用
 - 実装: `rag-app` の構造化 REST（`/knowledge/*`）を `backend` が認証・スコープ認可付きでプロキシ（詳細は [docs/knowledge-api.md](docs/knowledge-api.md)）
@@ -1098,8 +1101,86 @@ S3_PUBLIC_ENDPOINT=https://files.example.lg.jp
 | 監査ログ参照 | 利用状況・内容ログの検索・閲覧 |
 | 利用者一括管理 | CSV による Keycloak 利用者の作成・更新・削除 |
 | モデル利用制御 | グループ／チーム別の利用可能モデル設定 |
-| 入力制限 | 禁止語・個人情報パターン（正規表現）の管理 |
+| 入力制限 | 禁止語・カスタム正規表現、添付警告／ナレッジ検知／NER のトグル、マイナンバー検査 |
 | プロンプトテンプレート | 標準／個人／グループ共有テンプレートの管理 |
+
+## 入力制限と個人情報検知（添付・ナレッジ）
+
+禁止語ブロックに加え、**氏名・住所・電話番号・マイナンバー**を種別付きで検知できます。
+匿名化は行わず、**警告／ラベル表示のみ**（アップロードやナレッジ登録自体は止めません）。
+実装の中核は `shared/pii_scan.py` です。
+
+### 動作概要
+
+| 経路 | タイミング | 利用者向けの見え方 |
+| --- | --- | --- |
+| チャット等の添付 | `PUT /files` 保存と同時（同期）。先頭 `PII_NER_MAX_CHARS`（既定 8,000）文字まで NER | 添付行に種別と検知箇所の抜粋付き警告。送信は可能 |
+| ナレッジ登録 | 非同期ジョブ内で索引化のあと検知（`PII_KNOWLEDGE_NER_MAX_CHARS` 既定 200,000） | `/knowledge` のドキュメント一覧に `pii_labels` 等を表示 |
+| プロンプト本文 | 従来どおり禁止語・カスタム正規表現・マイナンバー検査 | ヒット時はブロック（従来仕様） |
+
+管理者向け **入力制限** exApp で次を切り替えられます。
+
+- 添付アップロード時の個人情報警告（`warn_attachments`）
+- ナレッジ登録時の個人情報検知（`scan_knowledge_pii`）
+- 氏名・住所の NER 検知（`check_pii_ner`。GiNZA 未導入時は実質オフ）
+- マイナンバー検査・禁止ワード・カスタム正規表現（従来どおり）
+
+### 検知方式
+
+| 種別 | 方式 | 備考 |
+| --- | --- | --- |
+| 電話番号 | 正規表現 | イメージへの GiNZA 導入不要 |
+| マイナンバー | 検査用数字（総務省令） | 単なる 12 桁数字では検知しない |
+| 住所 | 都道府県＋市区町村などのパターン ＋ 任意の NER | NER は GiNZA 導入時 |
+| 氏名 | 任意の NER（GiNZA / spaCy） | 未導入なら氏名 NER はスキップ。明らかな誤検知はフィルタ |
+
+### GiNZA（spaCy）のセットアップ
+
+氏名 NER と住所 NER 強化には、**spaCy 系の日本語モデル GiNZA**（`ginza` + `ja-ginza`）を
+`backend` / `rag-app` イメージに入れます。既定ビルド（`PII_INSTALL_NER=0`）では入れず、
+電話・マイナンバー・住所パターンだけが動きます（イメージを軽量に保つため）。
+
+Dockerfile（`backend/Dockerfile` / `rag-app/Dockerfile`）はビルド引数で分岐します。
+
+```dockerfile
+ARG PII_INSTALL_NER=0
+RUN if [ "$PII_INSTALL_NER" = "1" ]; then \
+      pip install --no-cache-dir 'ginza>=5.1.3' 'ja-ginza>=5.1.3'; \
+    fi
+```
+
+Compose は `.env` / `.env.prod` の `PII_INSTALL_NER` を build args に渡します。
+
+```bash
+# --- 開発 ---
+# .env に PII_INSTALL_NER=1 を設定してから再ビルド（またはコマンド先頭で渡す）
+PII_INSTALL_NER=1 docker compose up -d --build backend rag-app
+
+# --- 本番 ---
+# .env.prod に PII_INSTALL_NER=1 を設定してから:
+PII_INSTALL_NER=1 docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  up -d --build backend rag-app
+# backend 再作成直後に proxy が一時的に名前解決に失敗する場合は:
+docker restart open-genai-proxy
+```
+
+確認の目安:
+
+- コンテナ内で `python -c "import spacy; spacy.load('ja_ginza'); print('ok')"` が通る
+- 入力制限で「氏名・住所の NER 検知」を「する」にしたうえで、氏名を含むテキスト添付で警告が出る
+- GiNZA 読込に失敗してもサービスは起動し、電話・マイナンバー等は継続動作する（ログに `[pii_scan] GiNZA 読込失敗`）
+
+| 変数 | 既定 | 役割 |
+| --- | --- | --- |
+| `PII_INSTALL_NER` | `0` | ビルド時に GiNZA を入れるか（`1` で有効） |
+| `PII_NER_MAX_CHARS` | `8000` | 同期添付経路の NER 対象文字数上限 |
+| `PII_KNOWLEDGE_NER_MAX_CHARS` | `200000` | ナレッジ非同期経路の NER 対象文字数上限 |
+
+注意:
+
+- GiNZA 導入でイメージサイズとビルド時間が増えます（初回は依存取得のためネットワークが必要。閉域では事前に依存をキャッシュ／ミラーしてください）
+- `ja-ginza-electra` は既定では入れません（より重い）。必要なら Dockerfile の `pip install` 行を拡張してください
+- 検知は補助であり、**網羅や誤検知ゼロを保証しません**。運用では警告を確認し、本番文書での誤検知を見てトグルやフィルタを調整してください
 
 ## 制限事項（ローカル版）
 

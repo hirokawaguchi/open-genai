@@ -35,6 +35,7 @@
 - チャット等: `PUT /files` 保存と同時に警告（`warned` / `categories`）。フロントは添付行に種別を表示（送信は可）
 - ナレッジ: 登録を非同期化（`ingest_status`）。ジョブ内で索引化のあと PII 検知し、`DocsSection` にラベル表示。`NGWORD_DB_PATH` を rag-app が backend_data 経由で参照
 - 入力制限画面: 添付警告・ナレッジ検知・NER のトグルを追加
+- README: 動作概要と GiNZA（spaCy）セットアップ（`PII_INSTALL_NER`）を追記。`.env.example` / `.env.prod.example` に変数例を追加
 
 ### 通常チャット添付の大容量対応（その場マップリデュース）
 
