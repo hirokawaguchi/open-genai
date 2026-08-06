@@ -12,7 +12,8 @@
 | [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
 | [v0.3.2](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.2) | `1a9eb42` 以降 | 出典表示・ローカルDify成果物取得・Enter送信など |
 | [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | `96f3484` | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
-| [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | （本リリース） | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
+| [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | （当該リリース） | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
+| [v0.6.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.6.0) | （本リリース） | 添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付、Dify エラー分類、OSS ガバナンス整備 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -28,6 +29,11 @@
 ---
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-08-06
+
+添付・ナレッジの個人情報検知、ナレッジ管理の専用ページ化、チャット大容量添付のマップリデュース、
+Dify エラー分類の改善に加え、公式リポジトリとしてのガバナンス文書（貢献・セキュリティ・行動規範）を整備。
 
 ### 添付・ナレッジの個人情報検知（警告／ラベル）
 
@@ -64,6 +70,13 @@
 ### セキュリティ / ドキュメント
 
 - ナレッジ検索 MCP（`knowledge-mcp` `:8002/mcp`）が**無認証**で `scope`(teamId) を任意指定でき、到達できれば全チームのナレッジを読める点を明文化。dev `docker-compose.yml` に公開バインドを制御する `KNOWLEDGE_MCP_BIND`（既定 `0.0.0.0` で従来挙動）を追加し、`.env.example`・README・[docs/knowledge-mcp.md](docs/knowledge-mcp.md) に公開範囲の絞り方（loopback/gateway バインド・FW・認証付きリバプロ）を追記。挙動の既定値は不変で、既存環境への影響はない
+
+### OSS ガバナンス
+
+- ルートに `SECURITY.md`（Advisories 優先・公開 Issue 可だが詳細禁止）、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、Issue/PR テンプレートを追加
+- `LICENSE` を純粋な MIT 本文に整理し、同梱源内・非公式フォークの注記を `NOTICE` へ分離
+- `genai-web/.github` にあった上流向け SECURITY / CODEOWNERS / Issue・PR テンプレを除去し、親リポ方針との混同を防ぐ注記を追加
+- 顧客・個別案件の検討ドキュメントはオフィシャル公開物に含めない方針を `.gitignore` / CONTRIBUTING で明文化
 
 ---
 
@@ -325,7 +338,9 @@
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.0...v0.3.1

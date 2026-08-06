@@ -1,6 +1,6 @@
 # Open GENAI
 
-![Version](https://img.shields.io/badge/version-0.5.0-blue)
+![Version](https://img.shields.io/badge/version-0.6.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI--compatible-0a7)
 ![Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Qdrant%20%7C%20Keycloak-success)
@@ -10,7 +10,7 @@
 デジタル庁がオープンソースで公開したガバメント AI「源内（GENAI）」を、
 **完全ローカル環境 × ローカル LLM（OpenAI 互換 API）** で動かすためのプロジェクトです。
 
-> **バージョン:** 現在 **v0.5.0**（本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化）。v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.2 = 出典表示・ローカルDify成果物取得・Enter送信など、v0.3.1 = 起動手順・CI・添付拡張子判定の修正、v0.3.0 = 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信、v0.2.1 = セキュリティ・品質保証、v0.2.0 = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
+> **バージョン:** 現在 **v0.6.0**（添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付のマップリデュース、Dify エラー分類、MCP 公開範囲の文書化）。v0.5.0 = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.x = 出典表示・画像生成一本化等、v0.2.x = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
 > 変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
 
 > **免責 / Disclaimer**: 本リポジトリは有志による**非公式フォーク**です。デジタル庁とは一切関係がなく、
@@ -40,7 +40,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 本番は `docker-compose.prod.yml` で TLS(443) 終端。閉域検証は HTTP(80) のみ（`docker-compose.verify.yml`）。SeaweedFS（8333）は本番 compose ではホスト非公開で、成果物のダウンロードは `S3_PUBLIC_ENDPOINT` 経由のリバースプロキシを別途用意します（詳細は「成果物ファイル」節）。
 
-> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、**v0.3.2** = 出典表示・ローカルDify成果物取得・Enter送信など、**v0.3.1** = 起動手順・CI・添付拡張子判定の修正、**v0.3.0** = 画像生成の源内一本化・アプリピン留め・LGWAN 成果物キャリア配信、**v0.2.1** = セキュリティ・品質保証、**v0.2.0** = 自治体・閉域向け拡張、**v0.1.0** = ローカル源内化）
+> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.6.0** = PII 検知・ナレッジ専用ページ・大容量添付 mapreduce 等、**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデル差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、それ以前は CHANGELOG 参照）
 
 ## 設計思想：自治体・閉域運用への拡張
 
@@ -1191,10 +1191,16 @@ docker restart open-genai-proxy
   **閉域・本番**では `docker-compose.prod.yml`、TLS 証明書、`INTERNAL_SIGNING_SECRET`、
   `S3_*`、SSRF 許可ホスト等を必ず見直してください（`.env.prod.example` 参照）
 
+## 貢献・セキュリティ
+
+- 貢献の進め方: [CONTRIBUTING.md](CONTRIBUTING.md)
+- 行動規範: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- 脆弱性報告: [SECURITY.md](SECURITY.md)（GitHub Security Advisories を優先。公開 Issue も可だが詳細・PoC は禁止）
+
 ## ライセンス
 
 - 本プロジェクト独自のコード（`backend/`, `rag-app/`, `whisper-app/`, `shared/`,
-  `docker-compose.yml` 等）は **MIT License**（ルート `LICENSE`）。
-- 同梱の `genai-web/` はデジタル庁による公開物（**MIT** / ドキュメントは **CC BY 4.0**）を改変したもので、
-  原ライセンス・著作権表示は `genai-web/LICENSE`・`genai-web/THIRD-PARTY-NOTICES.txt` に保持しています。
+  `docker-compose.yml` 等）は **MIT License**（ルート [`LICENSE`](LICENSE)）。
+- 同梱の `genai-web/` の出自・第三者通知は [`NOTICE`](NOTICE) および
+  `genai-web/LICENSE`・`genai-web/THIRD-PARTY-NOTICES.txt` を参照してください。
 - 本リポジトリはデジタル庁とは無関係の非公式フォークです（上部の免責を参照）。

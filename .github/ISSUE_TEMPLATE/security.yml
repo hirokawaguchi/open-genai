@@ -1,0 +1,49 @@
+name: セキュリティ報告
+description: 脆弱性の疑いを報告する（詳細・PoC は書かない）
+title: "[Security]: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **詳細・再現手順・PoC がある場合は、この Issue ではなく
+        [Private vulnerability report](https://github.com/hirokawaguchi/open-genai/security/advisories/new)
+        を使ってください。**
+
+        公開 Issue では影響の概要のみにしてください（[SECURITY.md](https://github.com/hirokawaguchi/open-genai/blob/main/SECURITY.md)）。
+  - type: checkboxes
+    id: no_details
+    attributes:
+      label: 公開 Issue のルール
+      options:
+        - label: 再現手順の詳細・PoC・認証情報・ログ全文・設定値をこの Issue に書いていない
+          required: true
+        - label: 詳細は Advisories（またはメンテナ案内の非公開経路）で共有する / 済み
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: 影響の概要
+      description: どのコンポーネントに、どのような種類の問題がありそうか（詳細な手順は書かない）
+      placeholder: 例: knowledge-mcp の公開面に関する認可の懸念（詳細は Advisories へ）
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 深刻度の見込み
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+        - 不明
+    validations:
+      required: false
+  - type: input
+    id: advisory_url
+    attributes:
+      label: Advisories の URL（作成済みなら）
+      description: 非公開レポートを既に送っている場合
+    validations:
+      required: false

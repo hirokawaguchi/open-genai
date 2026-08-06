@@ -1,0 +1,29 @@
+name: 機能要望
+description: 新機能や改善の提案
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したいこと / 背景
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案内容
+      description: 望ましい挙動や UI。実現方法の案があれば
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案・既存機能での回避策
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        個別顧客向けの要件や非公開資料は Issue に貼らないでください。
+        汎用機能として議論できる範囲で書いてください。

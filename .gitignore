@@ -37,7 +37,8 @@ deletion-report-*.txt
 # --- その他 ---
 **/.DS_Store
 
-# --- 検討ドキュメント（公開ガイドのみ追跡） ---
+# --- ドキュメント（公開ガイドのみ追跡） ---
+# 顧客・個別案件の検討資料（適合性方針・非公開設計メモ等）はオフィシャル公開物に含めない。
 /docs/*
 !/docs/knowledge-api.md
 !/docs/knowledge-mcp.md

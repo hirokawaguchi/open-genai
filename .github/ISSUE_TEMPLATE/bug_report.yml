@@ -1,0 +1,54 @@
+name: バグ報告
+description: 想定どおり動かない挙動を報告する
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        セキュリティ上の問題が疑われる場合は、通常のバグ報告ではなく
+        [Security Advisories](https://github.com/hirokawaguchi/open-genai/security/advisories/new)
+        または「セキュリティ報告」テンプレートを使ってください（[SECURITY.md](https://github.com/hirokawaguchi/open-genai/blob/main/SECURITY.md)）。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きているか、期待していた挙動は何か
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 再現手順
+      description: 秘密情報・本番設定値は含めないでください
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: バージョン / コミット
+      description: 例: v0.6.0 / main の SHA
+    validations:
+      required: false
+  - type: dropdown
+    id: compose
+    attributes:
+      label: 起動構成
+      options:
+        - docker-compose.yml（開発）
+        - docker-compose.prod.yml
+        - docker-compose.verify.yml
+        - その他 / 不明
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境
+      description: OS、GPU の有無、利用している LLM サーバなど（秘密情報は書かない）
+    validations:
+      required: false

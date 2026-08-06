@@ -1,0 +1,10 @@
+Open GENAI
+Copyright (c) 2026 Open GENAI Project contributors
+
+This repository bundles a modified copy of "源内 (GENAI) Web" by the
+Digital Agency of Japan (digital-go-jp/genai-web), distributed under the
+MIT License. The original copyright notice and license are retained in
+`genai-web/LICENSE` and `genai-web/THIRD-PARTY-NOTICES.txt`.
+
+Open GENAI is an UNOFFICIAL, community fork for fully-local operation and is
+NOT affiliated with, endorsed by, or supported by the Digital Agency of Japan.

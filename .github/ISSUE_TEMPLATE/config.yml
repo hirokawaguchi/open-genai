@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: セキュリティ報告（推奨: Advisories）
+    url: https://github.com/hirokawaguchi/open-genai/security/advisories/new
+    about: 詳細・再現手順・PoC を含む脆弱性報告はこちら（非公開）
+  - name: Security Policy
+    url: https://github.com/hirokawaguchi/open-genai/blob/main/SECURITY.md
+    about: 報告方法（Advisories 優先 / Issue 可・詳細禁止）の説明
+  - name: ドキュメント（README）
+    url: https://github.com/hirokawaguchi/open-genai/blob/main/README.md
+    about: セットアップ・運用・制限事項
