@@ -12,8 +12,8 @@
 | [v0.3.1](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.1) | `e047dae` 以降 | 起動手順の修正・CI 修正・添付拡張子判定の修正 |
 | [v0.3.2](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.3.2) | `1a9eb42` 以降 | 出典表示・ローカルDify成果物取得・Enter送信など |
 | [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | `96f3484` | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
-| [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | （当該リリース） | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
-| [v0.6.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.6.0) | （本リリース） | 添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付、Dify エラー分類、OSS ガバナンス整備 |
+| [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | `9e4015f` | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
+| [v0.6.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.6.0) | `340e88e` | 添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付、Dify エラー分類、OSS ガバナンス整備 |
 
 ## 設計思想の転換（0.1 → 0.2）
 
