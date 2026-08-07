@@ -1,0 +1,257 @@
+:root {
+  --blue-900: #0017c1;
+  --blue-1000: #000082;
+  --solid-gray-50: #f8f8fb;
+  --solid-gray-300: #d8d8d8;
+  --solid-gray-420: #b4b4b4;
+  --solid-gray-600: #767676;
+  --solid-gray-700: #626262;
+  --solid-gray-900: #222222;
+  --error: #c41a1a;
+  --ok-bg: #e8f5e9;
+  --maybe-bg: #fff8e1;
+  --ng-bg: #fce4ec;
+  --font: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--solid-gray-900);
+  background: linear-gradient(180deg, #eef1f8 0%, var(--solid-gray-50) 40%, #fff 100%);
+  min-height: 100vh;
+  line-height: 1.7;
+}
+
+.wrap {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+h1 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.brand {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--blue-900);
+  margin-bottom: 1rem;
+}
+
+.meta {
+  color: var(--solid-gray-700);
+  margin-bottom: 1.5rem;
+  white-space: pre-wrap;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--solid-gray-300);
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--solid-gray-420);
+  border-radius: 4px;
+  font: inherit;
+  margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--solid-gray-300);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.date-label {
+  flex: 1 1 12rem;
+  font-size: 0.95rem;
+}
+
+.statuses {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.statuses label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 500;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--solid-gray-300);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.statuses input {
+  margin: 0;
+}
+
+.statuses label:has(input[value="ok"]:checked) {
+  background: var(--ok-bg);
+  border-color: #81c784;
+}
+.statuses label:has(input[value="maybe"]:checked) {
+  background: var(--maybe-bg);
+  border-color: #ffd54f;
+}
+.statuses label:has(input[value="ng"]:checked) {
+  background: var(--ng-bg);
+  border-color: #f48fb1;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0.65rem 1.25rem;
+  border: 4px double transparent;
+  background: var(--blue-900);
+  color: #fff;
+}
+
+button:hover {
+  background: var(--blue-1000);
+  text-decoration: underline;
+}
+
+button.secondary {
+  background: #fff;
+  color: var(--blue-900);
+  border: 1px solid var(--blue-900);
+}
+
+.error {
+  color: var(--error);
+  margin: 0.75rem 0;
+}
+
+.stats table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.stats th,
+.stats td {
+  border-bottom: 1px solid var(--solid-gray-300);
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--solid-gray-600);
+}
+
+/* 調整さん風：日程×回答者マトリクス */
+.matrix-wrap {
+  overflow-x: auto;
+  margin-top: 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.matrix {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+table.matrix th,
+table.matrix td {
+  border: 1px solid var(--solid-gray-300);
+  padding: 0.55rem 0.65rem;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+table.matrix thead th {
+  background: var(--solid-gray-50);
+  font-weight: 700;
+}
+
+table.matrix .col-date {
+  text-align: left;
+  min-width: 10rem;
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 1;
+}
+
+table.matrix thead .col-date {
+  background: var(--solid-gray-50);
+  z-index: 2;
+}
+
+table.matrix .col-sum {
+  min-width: 2.5rem;
+  color: var(--solid-gray-700);
+  font-variant-numeric: tabular-nums;
+}
+
+table.matrix .col-person {
+  min-width: 4.5rem;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+table.matrix .mark {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+table.matrix .mark-ok {
+  color: #1b5e20;
+}
+
+table.matrix .mark-maybe {
+  color: #e65100;
+}
+
+table.matrix .mark-ng {
+  color: var(--solid-gray-600);
+}
+
+table.matrix .mark-empty {
+  color: var(--solid-gray-420);
+  font-weight: 500;
+}

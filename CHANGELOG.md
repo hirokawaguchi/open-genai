@@ -30,6 +30,14 @@
 
 ## [Unreleased]
 
+### 日程調整（chosei）オプション機能
+
+- `chosei-app`（FastAPI + SQLite）を Compose `profiles: ["chosei"]` でオプション起動
+- 庁内は専用ページ `/chosei`（DADS）。外部ゲストは `CHOSEI_PUBLIC_ENDPOINT` の `/public` のみ（デュアルイングレス）
+- 暗証番号は bcrypt ハッシュ保存。保持日数は `CHOSEI_RETENTION_DAYS`（既定 90 日）
+- LLM アシスト（庁内のみ）: 最適日提案・自然文からの日程候補・案内文下書き（Ollama 等の OpenAI 互換 API）
+- 詳細は [`docs/chosei.md`](docs/chosei.md)
+
 ## [0.6.0] - 2026-08-06
 
 添付・ナレッジの個人情報検知、ナレッジ管理の専用ページ化、チャット大容量添付のマップリデュース、

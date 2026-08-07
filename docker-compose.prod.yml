@@ -79,6 +79,9 @@ services:
       - NGWORD_APP_URL=${NGWORD_APP_URL:-http://ngword-app:8008/invoke}
       - NGWORD_DB_PATH=/data/ngwords.db
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
+      # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
+      - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -366,6 +369,31 @@ services:
       - backend_data:/data
     restart: unless-stopped
 
+  # 任意: 日程調整（`COMPOSE_PROFILES=chosei` または `--profile chosei`）
+  # ホストポートは公開しない。外部ゲストは別プロキシで /public のみ露出すること。
+  chosei-app:
+    profiles: ["chosei"]
+    build: ./chosei-app
+    container_name: open-genai-chosei-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - CHOSEI_DB_PATH=/data/chosei.db
+      # profile 有効時は外部公開 URL を必ず設定すること（例: https://chosei.example.lg.jp）
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
+      - CHOSEI_RETENTION_DAYS=${CHOSEI_RETENTION_DAYS:-90}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+    volumes:
+      - chosei_app_data:/data
+    expose:
+      - "8010"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -397,3 +425,4 @@ volumes:
   dify_app_data:
   rag_app_data:
   seaweedfs_data:
+  chosei_app_data:
