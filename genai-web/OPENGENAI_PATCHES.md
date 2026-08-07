@@ -53,6 +53,19 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/routes.tsx` | `/prompts` ルート追加、`/apps/:teamId/prompt` → `/prompts` リダイレクト |
 | `packages/web/src/layout/navItems.ts` | おすすめに「プロンプトテンプレート」、`pinnedAppHref` で `prompt` を `/prompts` に振替 |
 
+### 日程調整専用ページ（Open GENAI 拡張・オプション）
+
+回答マトリクスと外部共有のため専用ページ（`/chosei`）を提供する。Compose
+`profiles: ["chosei"]` 未起動時は有効化案内を表示。外部ゲストは別ホストの `/public`
+のみ（`chosei-app`）。旧 `/apps/:teamId/chosei` は `/chosei` へリダイレクトする。
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `packages/web/src/routes.tsx` | `/chosei` 系ルート追加、`/apps/:teamId/chosei` → `/chosei` リダイレクト |
+| `packages/web/src/layout/navItems.ts` | おすすめに「日程調整」、`pinnedAppHref` で `chosei` を `/chosei` に振替 |
+| `packages/web/src/open-genai/chosei/` | 専用ページ（作成・詳細・編集） |
+| `packages/web/src/lib/fetcher.ts` | `teamApi.delete` が任意ボディを送れるよう拡張（イベント削除の暗証番号用） |
+
 ### 監査ログ専用ページ（Open GENAI 拡張・管理者限定）
 
 管理系の第一弾。汎用 exApp フォーム（Markdown 出力）では詳細確認・全文閲覧・エクスポート

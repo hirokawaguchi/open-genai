@@ -25,6 +25,9 @@ import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
 import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
 import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
 import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
+import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
+import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
+import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -74,6 +77,11 @@ export const createRoutes = (): RouteObject[] => {
     // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
     { path: 'prompts', element: <PromptTemplatesPage /> },
     { path: 'apps/:teamId/prompt', element: <Navigate to='/prompts' replace /> },
+    // 日程調整は専用ページへ（Compose profiles: ["chosei"]）。
+    { path: 'chosei', element: <ChoseiPage /> },
+    { path: 'chosei/events/:eventId', element: <ChoseiEventPage /> },
+    { path: 'chosei/events/:eventId/edit', element: <ChoseiEditPage /> },
+    { path: 'apps/:teamId/chosei', element: <Navigate to='/chosei' replace /> },
     // 監査ログは管理者限定の専用ページへ。旧 exApp URL（/apps/:teamId/audit）は
     // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
     { path: 'admin/audit', element: <AuditLogsPage /> },
