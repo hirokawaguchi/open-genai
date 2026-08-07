@@ -61,7 +61,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 ### 4 つの柱
 
-1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、契約終了時の完全削除と報告書生成
+1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、日程調整（オプション profile）、契約終了時の完全削除と報告書生成
 2. **チーム主体・複数所属** — 親子階層のないフラットなチーム。利用者は複数チームに所属可能。AI アプリ・RAG ナレッジ・保存プロンプトの共有は **所属チーム** を軸に制御
 3. **源内 UI 制約の opt-in 拡張** — Form Spec v1（条件表示・リアクティブフォーム・プレビュー）、`dynamic_schema` による動的フォーム、各画面の折りたたみヘルプ。既存 exApp は無改修で従来どおり動作
 4. **成果物のオブジェクトストレージ** — AI アプリ（Dify 等）が生成したファイルを SeaweedFS に保存し、backend 経由で署名付き URL を提示
@@ -82,6 +82,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `modelpolicy-app/` | モデル利用制御ポリシー管理（管理者限定 exApp） |
 | `ngword-app/` | 禁止語・個人情報検知の設定（管理者限定 exApp。添付警告／ナレッジ検知／NER トグル） |
 | `prompt-app/` | プロンプトテンプレートカタログ（標準／個人／グループ共有） |
+| `chosei-app/` | 日程調整（オプション・`profiles: ["chosei"]`。詳細は [`docs/chosei.md`](docs/chosei.md)） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
 | `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md)） |

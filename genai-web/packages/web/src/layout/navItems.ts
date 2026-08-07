@@ -19,6 +19,12 @@ export const PROMPT_TEMPLATES_PATH = '/prompts';
 /** プロンプトテンプレート exApp の識別子（専用ページへ振り替える対象） */
 export const PROMPT_EXAPP_ID = 'prompt';
 
+/** 日程調整は汎用 exApp フォームではなく専用ページで提供する */
+export const CHOSEI_PATH = '/chosei';
+
+/** 日程調整 exApp の識別子（専用ページへ振り替える対象） */
+export const CHOSEI_EXAPP_ID = 'chosei';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -107,6 +113,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     items.push({
+      label: '日程調整',
+      to: CHOSEI_PATH,
+      description: '庁内・外部向けの日程調整（要 profile chosei）',
+    });
+
+    items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
       description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
@@ -129,6 +141,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // プロンプトテンプレートは専用ページへ振り替える（汎用 exApp URL を使わない）
   if (item.app.value === PROMPT_EXAPP_ID) {
     return PROMPT_TEMPLATES_PATH;
+  }
+  // 日程調整は専用ページへ振り替える
+  if (item.app.value === CHOSEI_EXAPP_ID) {
+    return CHOSEI_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
