@@ -94,6 +94,11 @@ NGWORD_APP_URL = os.environ.get("NGWORD_APP_URL", "http://ngword-app:8008/invoke
 # プロンプトテンプレート「AI アプリ」連携先（全ユーザー利用可）
 PROMPT_APP_URL = os.environ.get("PROMPT_APP_URL", "http://prompt-app:8009/invoke")
 
+# 日程調整（Compose profiles: ["chosei"] でオプション起動。未起動時は専用ページが案内を出す）
+# 実 API は /chosei/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
+CHOSEI_APP_URL = os.environ.get("CHOSEI_APP_URL", "http://chosei-app:8010/invoke")
+CHOSEI_PUBLIC_ENDPOINT = (os.environ.get("CHOSEI_PUBLIC_ENDPOINT") or "").rstrip("/")
+
 # 管理者(SystemAdminGroup)のみに一覧表示・実行を許可する exApp
 # （共有ナレッジの管理系は共通チーム上だが管理者限定）
 ADMIN_ONLY_EXAPP_IDS = {
@@ -350,6 +355,31 @@ PROMPT_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 日程調整（共通アプリ）。UI は専用ページ /chosei。Compose profile `chosei` 未起動時は
+# /health 失敗で一覧非表示。endpoint はヘルスチェック用（実 API は /chosei/* プロキシ）。
+CHOSEI_SEED: dict[str, Any] = {
+    "exAppId": "chosei",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "日程調整",
+    "endpoint": (
+        CHOSEI_APP_URL
+        if CHOSEI_APP_URL.endswith("/invoke")
+        else CHOSEI_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「日程調整」からイベントを作成し、共有 URL を配布します。\n"
+        "- 庁内利用者はログインしたまま回答できます。外部は公開 URL から回答します。\n"
+        "- 有効化: `docker compose --profile chosei up -d` または `COMPOSE_PROFILES=chosei`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
         "exAppName": f"{team_name}のナレッジ検索",
@@ -421,6 +451,7 @@ EXAPP_SEEDS = [
     MODELPOLICY_SEED,
     NGWORD_SEED,
     PROMPT_SEED,
+    CHOSEI_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -2521,6 +2552,261 @@ async def render_prompt_template(template_id: str, request: Request) -> JSONResp
     body = await request.json()
     return await _proxy_prompt(
         "POST", _prompt_app_url(f"/templates/{template_id}/render"), headers, body
+    )
+
+
+# ---------------------------------------------------------------------------
+# 日程調整専用ページ(/chosei) 用プロキシ
+#
+# Compose profiles: ["chosei"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _chosei_app_url(path: str) -> str:
+    if CHOSEI_APP_URL.endswith("/invoke"):
+        base = CHOSEI_APP_URL[: -len("/invoke")]
+    else:
+        base = CHOSEI_APP_URL.rstrip("/")
+    return base + path
+
+
+def _chosei_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_chosei(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 30,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "日程調整サービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile chosei up -d` "
+                    "または `COMPOSE_PROFILES=chosei` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "日程調整サービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/chosei/config")
+async def chosei_config(request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    res = await _proxy_chosei("GET", _chosei_app_url("/config"), headers)
+    # サービス側の public_endpoint が空でも、backend 側の env を補完して返す
+    if res.status_code == 200:
+        try:
+            data = json.loads(res.body)
+            if isinstance(data, dict) and CHOSEI_PUBLIC_ENDPOINT:
+                data["public_endpoint"] = (
+                    data.get("public_endpoint") or CHOSEI_PUBLIC_ENDPOINT
+                )
+            return JSONResponse(status_code=200, content=data)
+        except Exception:  # noqa: BLE001
+            pass
+    return res
+
+
+@app.get("/chosei/events")
+async def chosei_list_events(request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    return await _proxy_chosei("GET", _chosei_app_url("/events"), headers)
+
+
+@app.post("/chosei/events")
+async def chosei_create_event(request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_chosei("POST", _chosei_app_url("/events"), headers, body)
+
+
+@app.get("/chosei/events/{event_id}")
+async def chosei_get_event(event_id: str, request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    return await _proxy_chosei(
+        "GET", _chosei_app_url(f"/events/{event_id}"), headers
+    )
+
+
+@app.put("/chosei/events/{event_id}")
+async def chosei_update_event(event_id: str, request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_chosei(
+        "PUT", _chosei_app_url(f"/events/{event_id}"), headers, body
+    )
+
+
+@app.delete("/chosei/events/{event_id}")
+async def chosei_delete_event(event_id: str, request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_chosei(
+        "DELETE", _chosei_app_url(f"/events/{event_id}"), headers, body
+    )
+
+
+@app.post("/chosei/events/{event_id}/responses")
+async def chosei_submit_response(event_id: str, request: Request) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_chosei(
+        "POST", _chosei_app_url(f"/events/{event_id}/responses"), headers, body
+    )
+
+
+@app.delete("/chosei/events/{event_id}/participants/{participant_name}")
+async def chosei_delete_participant(
+    event_id: str, participant_name: str, request: Request
+) -> JSONResponse:
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_chosei(
+        "DELETE",
+        _chosei_app_url(
+            f"/events/{event_id}/participants/{quote(participant_name, safe='')}"
+        ),
+        headers,
+        body,
+    )
+
+
+@app.post("/chosei/assist/parse-dates")
+async def chosei_assist_parse_dates(request: Request) -> JSONResponse:
+    """自然文から日程候補を抽出（LLM）。"""
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_chosei(
+        "POST",
+        _chosei_app_url("/assist/parse-dates"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.post("/chosei/events/{event_id}/assist/recommend")
+async def chosei_assist_recommend(event_id: str, request: Request) -> JSONResponse:
+    """回答マトリクスから最適日を提案（LLM、失敗時は簡易集計）。"""
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    return await _proxy_chosei(
+        "POST",
+        _chosei_app_url(f"/events/{event_id}/assist/recommend"),
+        headers,
+        {},
+        timeout=120,
+    )
+
+
+@app.post("/chosei/events/{event_id}/assist/invite")
+async def chosei_assist_invite(event_id: str, request: Request) -> JSONResponse:
+    """外部共有向けの案内文を下書き（LLM）。"""
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_chosei(
+        "POST",
+        _chosei_app_url(f"/events/{event_id}/assist/invite"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.get("/chosei/events/{event_id}/carrier")
+async def chosei_event_carrier(
+    event_id: str, request: Request, format: str = Query(default="txt")
+) -> Response:
+    """外部共有 URL のリンクファイルをダウンロードさせる（LGWAN carrier）。"""
+    err, headers = _chosei_headers(request)
+    if err:
+        return err
+    res = await _proxy_chosei(
+        "GET",
+        _chosei_app_url(f"/events/{event_id}/carrier") + f"?format={quote(format)}",
+        headers,
+    )
+    if res.status_code != 200:
+        return res
+    try:
+        data = json.loads(res.body)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "不正な応答です"})
+    content = data.get("content") or ""
+    filename = data.get("filename") or "chosei_link.txt"
+    fmt = (data.get("format") or format or "txt").lower()
+    media = "text/html; charset=utf-8" if fmt == "html" else "text/plain; charset=utf-8"
+    ascii_name = "".join(c if c.isascii() and c not in '"\\' else "_" for c in filename)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=content.encode("utf-8"),
+        media_type=media,
+        headers={"Content-Disposition": disposition},
     )
 
 
