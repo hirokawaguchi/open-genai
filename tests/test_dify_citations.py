@@ -43,6 +43,7 @@ def _load():
         fastapi.Request = object  # type: ignore[attr-defined]
         responses = types.ModuleType("fastapi.responses")
         responses.JSONResponse = dict  # type: ignore[attr-defined]
+        responses.StreamingResponse = object  # type: ignore[attr-defined]
         sys.modules["fastapi"] = fastapi
         sys.modules["fastapi.responses"] = responses
     if "httpx" not in sys.modules:
