@@ -1,16 +1,19 @@
 import { Artifact, ExApp } from 'genai-web';
 import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
+import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { isApiError } from '@/lib/fetcher';
 import { submitKeyHint, isSubmitKey } from '@/utils/keyboard';
+import { ExAppConversation, useExAppConversations } from '../hooks/useExAppConversations';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
 import { processFormFiles } from '../utils/processFormFiles';
 import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 import { ExAppCitations } from './ExAppCitations';
+import { ExAppConversationList } from './ExAppConversationList';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -30,14 +33,44 @@ type Props = {
 // dify-app 側の session -> conversation_id 対応に委ねる。
 const ACCEPT = 'image/*,.pdf,.docx,.xlsx,.txt,.md,.csv,.html,.json';
 
+const GENERIC_ERROR =
+  '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。';
+
+// 履歴の inputs.files（processFormFiles の出力）から添付ファイル名を復元する。
+// 本文（base64）は復元対象外で、表示用のファイル名のみ取り出す。
+const extractFileNames = (inputs: Record<string, unknown>): string[] | undefined => {
+  const files = inputs?.files;
+  if (!Array.isArray(files)) {
+    return undefined;
+  }
+  const names: string[] = [];
+  for (const group of files) {
+    const inner = (group as { files?: unknown })?.files;
+    if (!Array.isArray(inner)) {
+      continue;
+    }
+    for (const file of inner) {
+      const filename = (file as { filename?: unknown })?.filename;
+      if (typeof filename === 'string') {
+        names.push(filename);
+      }
+    }
+  }
+  return names.length > 0 ? names : undefined;
+};
+
 export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
-  const { invokeExApp } = useInvokeExApp();
+  const { invokeExAppStream } = useInvokeExApp();
+  const { conversations, mutate: mutateConversations } = useExAppConversations(
+    exApp.teamId,
+    exApp.exAppId,
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const isComposing = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,37 +96,76 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
       content: text,
       fileNames: sendingFiles.map((f) => f.name),
     };
-    setMessages((prev) => [...prev, userMessage]);
+    // ユーザー発話に続けて、逐次追記する空のアシスタント枠を先に置く。
+    setMessages((prev) => [...prev, userMessage, { role: 'assistant', content: '' }]);
     setInput('');
     setFiles([]);
     setIsLoading(true);
+
+    // 最後のアシスタントメッセージだけを更新するヘルパ。
+    const updateAssistant = (fn: (m: ChatMessage) => ChatMessage) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = fn(last);
+        }
+        return next;
+      });
+    };
+
+    // 内容が空のアシスタント枠を取り除く（エラー時・空応答時）。
+    const dropEmptyAssistant = () => {
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant' && !last.content) {
+          next.pop();
+        }
+        return next;
+      });
+    };
 
     try {
       const inputs: Record<string, unknown> = { query: text };
       if (sendingFiles.length > 0) {
         inputs.files = await processFormFiles({ files: sendingFiles });
       }
-      const res = await invokeExApp({
-        teamId: exApp.teamId,
-        exAppId: exApp.exAppId,
-        inputs,
-        sessionId,
-      });
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: res.outputs ?? '', artifacts: res.artifacts },
-      ]);
+      await invokeExAppStream(
+        {
+          teamId: exApp.teamId,
+          exAppId: exApp.exAppId,
+          inputs,
+          sessionId,
+        },
+        {
+          onDelta: (chunk) => {
+            updateAssistant((m) => ({ ...m, content: m.content + chunk }));
+          },
+          onDone: ({ outputs, artifacts }) => {
+            // done の outputs が確定値。断片の積み上げを最終全文で置き換える。
+            updateAssistant((m) => ({
+              ...m,
+              content: outputs || m.content,
+              artifacts,
+            }));
+            // 完了時点でサーバ側の履歴保存が済んでいるため、
+            // 「過去の会話」一覧を再取得して今の会話を反映する。
+            void mutateConversations();
+          },
+          onError: (message) => {
+            dropEmptyAssistant();
+            setError(message || GENERIC_ERROR);
+          },
+        },
+      );
     } catch (error: unknown) {
+      dropEmptyAssistant();
       if (isApiError(error)) {
         const data = error.data as { error?: string };
-        setError(
-          data?.error ||
-            '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
-        );
+        setError(data?.error || GENERIC_ERROR);
       } else {
-        setError(
-          '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
-        );
+        setError(GENERIC_ERROR);
       }
     } finally {
       setIsLoading(false);
@@ -115,8 +187,45 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
     setSessionId(crypto.randomUUID());
   };
 
+  // 「過去の会話」を選ぶと、その sessionId とやり取りを復元する。
+  // sessionId を引き継ぐことで dify-app 側の会話（conversation_id）も継続できる。
+  const restoreConversation = (conversation: ExAppConversation) => {
+    const restored: ChatMessage[] = [];
+    for (const history of conversation.histories) {
+      const query = typeof history.inputs?.query === 'string' ? history.inputs.query : '';
+      restored.push({
+        role: 'user',
+        content: query,
+        fileNames: extractFileNames(history.inputs),
+      });
+      if (history.outputs) {
+        restored.push({
+          role: 'assistant',
+          content: history.outputs,
+          artifacts: history.artifacts ?? undefined,
+        });
+      }
+    }
+    setMessages(restored);
+    setSessionId(conversation.sessionId);
+    setInput('');
+    setFiles([]);
+    setError('');
+  };
+
+  // 逐次描画前の空アシスタント枠は描画しない（下のスピナーで代替）。
+  const visibleMessages = messages.filter(
+    (m) => !(m.role === 'assistant' && m.content.length === 0 && !m.artifacts),
+  );
+
   return (
     <div className='flex flex-col gap-4'>
+      <ExAppConversationList
+        conversations={conversations}
+        activeSessionId={sessionId}
+        onSelect={restoreConversation}
+      />
+
       <div className='min-h-[40vh] rounded-8 border border-solid-gray-420 p-4'>
         {messages.length === 0 && !isLoading && (
           <p className='leading-175 text-solid-gray-536'>
@@ -125,7 +234,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
         )}
 
         <div className='flex flex-col gap-3'>
-          {messages.map((m, i) => (
+          {visibleMessages.map((m, i) => (
             <div
               key={i}
               className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
@@ -142,6 +251,13 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
                     <Markdown>{m.content}</Markdown>
                     <ExAppCitations artifacts={m.artifacts} />
                     <ExAppArtifactDownloads artifacts={m.artifacts} />
+                    {/* 生成完了後のみコピーを表示（配信途中の部分テキストは対象外） */}
+                    {m.content.length > 0 &&
+                      !(isLoading && i === visibleMessages.length - 1) && (
+                        <div className='mt-1 flex justify-end'>
+                          <ButtonCopy text={m.content} />
+                        </div>
+                      )}
                   </>
                 ) : (
                   <div className='whitespace-pre-wrap break-words text-std-16N-170'>
@@ -157,6 +273,8 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
             </div>
           ))}
 
+          {/* 生成中は常にスピナーを出す。回答がまだ完了していない（続きがある）
+              ことを示すため、トークン到着後も表示し続ける。 */}
           {isLoading && (
             <div className='flex justify-start'>
               <div className='rounded-8 border border-solid-gray-420 bg-white px-4 py-3'>
