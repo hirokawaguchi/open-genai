@@ -685,7 +685,8 @@ AI アプリ一覧（`/apps`）は各 exApp の `/health` を確認し、**起�
 
 - `dify-app` は源内の AI アプリ・プロトコル（同期 `{inputs}` → `{outputs}`）を、Dify の API（`/v1/workflows/run` または `/v1/chat-messages`）に変換します。
 - **UI は種別で出し分きます**。`dify_app_type` が `workflow` のアプリは従来の**フォーム実行型 UI**、`chat` のアプリは**対話型 UI**（吹き出し形式のチャット画面）で開きます。どちらも「AI アプリ」一覧に並びます。
-- Dify の **blocking モードには既知の不具合**（1.4.1〜1.13 系で blocking 指定でも `text/event-stream` を返す）があるため、`dify-app` は常に **streaming で受信してサーバ側で集約**し、源内には同期 `outputs` として返します。
+- `dify-app` は Dify API を常に **streaming（SSE）で受信**します。**チャットフロー（`chat`）は、そのトークンをブラウザまで NDJSON で中継**し、対話 UI がタイプライター表示で逐次描画します（`/exapps/invoke/stream`）。**ワークフロー（`workflow`）は従来どおりサーバ側で集約**して同期 `outputs` として返します。
+  - streaming を採用する理由: Dify は長時間実行やプロキシ切断への耐性から streaming を推奨しており、Agent 系フローは streaming のみ対応です。加えて 1.4.1〜1.13 系には blocking 指定でも `text/event-stream` を返す既知の不具合がありました（1.16 系で修正）。
 - Dify 本体は本リポジトリには含めません（**既存/外部の Dify** に接続します）。セルフホスト版は `host.docker.internal` 経由でホスト上の Dify にも接続できます。**Dify クラウド版** は `dify_base_url` に `https://api.dify.ai/v1` を指定します（後述）。
 - ワークフロー用アプリとチャットフロー用アプリはエンドポイントが同じ（`dify-app`）でも問題ありません。**APIキー**（ワークフロー用 / チャット用）と `dify_app_type` で区別します。
 
@@ -1062,7 +1063,7 @@ S3_PUBLIC_ENDPOINT=https://files.example.lg.jp
 
 ### 制約
 
-- 呼び出しは**同期形式**です（Dify 側は streaming で受信して集約）。非同期ポーリング形式は未対応です。
+- **チャットフロー**は NDJSON ストリーミングでトークンを逐次表示します（`/exapps/invoke/stream`）。**ワークフロー / フォーム実行型は同期形式**（`{inputs}` → `{outputs}`）で、完了後に一括表示します。いずれも非同期ポーリング形式は未対応です。
 - 会話継続は**チャットフロー**が対象です（ワークフローは状態を持ちません）。
 
 ## チーム / AI アプリ管理
@@ -1186,7 +1187,7 @@ docker restart open-genai-proxy
 ## 制限事項（ローカル版）
 
 - 画像生成は源内 Web の **「画像を生成」**（`/image`）を利用します。ホストで A1111 互換 SD サーバ（または `scripts/mock-sd-server.py`）が必要です。
-- AI アプリの呼び出しは同期形式のみ対応（非同期のポーリング形式は未対応）
+- AI アプリの呼び出しは、Dify チャットフローが NDJSON ストリーミング、それ以外（ワークフロー / フォーム実行型）は同期形式（非同期のポーリング形式は未対応）
 - 添付のうち **動画** はローカル LLM が直接扱えないため未対応（画像・ドキュメントは対応）
 - 認証は SAML（Keycloak）で行います。開発用は HTTP・既定パスワードです。
   **閉域・本番**では `docker-compose.prod.yml`、TLS 証明書、`INTERNAL_SIGNING_SECRET`、
