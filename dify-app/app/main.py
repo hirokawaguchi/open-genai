@@ -34,10 +34,15 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
-    from .errors import AppInvokeError, classify_provider_error, error_response
+    from .errors import (
+        AppInvokeError,
+        classify_provider_error,
+        error_body,
+        error_response,
+    )
 except ImportError:  # pragma: no cover - 単体読み込み（pytest の file location import）
     import sys
     from pathlib import Path
@@ -45,7 +50,12 @@ except ImportError:  # pragma: no cover - 単体読み込み（pytest の file l
     _app_dir = str(Path(__file__).resolve().parent)
     if _app_dir not in sys.path:
         sys.path.insert(0, _app_dir)
-    from errors import AppInvokeError, classify_provider_error, error_response
+    from errors import (
+        AppInvokeError,
+        classify_provider_error,
+        error_body,
+        error_response,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -846,10 +856,15 @@ async def _run_chat(
     user: str,
     conversation_id: str,
     files: list[dict[str, Any]],
+    session_id: str = "",
 ) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
     """チャットフローを実行する。
 
     戻り値: (answer, conversation_id, file_objs, citation_artifacts)
+
+    `session_id` が渡された場合、新規会話IDが判明した時点で session→conversation
+    を即保存する（生成途中でタイムアウトしても会話継続を失わないため。呼び出し側
+    は完了後にも保存するが冪等）。
     """
     payload: dict[str, Any] = {
         "query": query,
@@ -867,6 +882,7 @@ async def _run_chat(
     retriever_resources: list[Any] = []
     tool_citations: list[dict[str, Any]] = []
     new_conv_id = conversation_id
+    conv_saved = False
     error: str | None = None
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -899,6 +915,14 @@ async def _run_chat(
                     continue
                 if obj.get("conversation_id"):
                     new_conv_id = obj["conversation_id"]
+                    # 新規会話が採番された時点で即保存（done を待たずに継続性を確保）。
+                    if (
+                        not conv_saved
+                        and session_id
+                        and new_conv_id != conversation_id
+                    ):
+                        conv_saved = True
+                        _save_conversation_id(session_id, new_conv_id)
                 event = obj.get("event")
                 if event in ("message", "agent_message"):
                     answer_parts.append(obj.get("answer", ""))
@@ -947,6 +971,131 @@ async def _run_chat(
     _merge_citation_arts(citations, tool_citations)
     citations = _filter_citations_cited_in_answer(answer, citations)
     return (answer, new_conv_id, out_files, citations)
+
+
+async def _run_chat_stream(
+    base: str,
+    api_key: str,
+    query: str,
+    inputs: dict[str, Any],
+    user: str,
+    conversation_id: str,
+    files: list[dict[str, Any]],
+):
+    """チャットフローを streaming 実行し、回答の断片を逐次 yield する。
+
+    yield するイベント（dict）:
+      {"type": "conversation", "conversation_id": str}  会話ID判明時（早期・1回）
+      {"type": "delta", "text": "..."}                 回答トークンの断片
+      {"type": "done", "answer": str, "conversation_id": str,
+       "files": [...], "citations": [...]}             完了（全文と成果物）
+
+    provider 由来のエラーは `_run_chat` と同様に AppInvokeError を raise する。
+    集計ロジックは `_run_chat` と同一で、違いは `message`/`agent_message`
+    到着時に断片を即 yield する点、及び会話IDが判明した時点で `conversation`
+    を先に yield する点（生成途中でタイムアウトしても会話継続を失わないため）。
+    """
+    payload: dict[str, Any] = {
+        "query": query,
+        "inputs": inputs,
+        "response_mode": "streaming",
+        "user": user,
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if files:
+        payload["files"] = files
+
+    answer_parts: list[str] = []
+    file_objs: list[dict[str, Any]] = []
+    retriever_resources: list[Any] = []
+    tool_citations: list[dict[str, Any]] = []
+    new_conv_id = conversation_id
+    conv_emitted = False
+    error: str | None = None
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        async with client.stream(
+            "POST",
+            f"{base}/chat-messages",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        ) as res:
+            if res.status_code != 200:
+                body = (await res.aread()).decode("utf-8", "replace")
+                raise classify_provider_error(
+                    body,
+                    default_code="CONNECTION",
+                    http_status=res.status_code,
+                )
+            async for line in res.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                payload_str = line[len("data:") :].strip()
+                if not payload_str or payload_str == "[DONE]":
+                    continue
+                try:
+                    obj = json.loads(payload_str)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("conversation_id"):
+                    new_conv_id = obj["conversation_id"]
+                    # 新規会話が採番された時点で早期通知。生成途中でタイムアウト
+                    # しても、次回リクエストで会話を継続できるよう即保存させる。
+                    if not conv_emitted and new_conv_id != conversation_id:
+                        conv_emitted = True
+                        yield {"type": "conversation", "conversation_id": new_conv_id}
+                event = obj.get("event")
+                if event in ("message", "agent_message"):
+                    chunk = obj.get("answer", "")
+                    if chunk:
+                        answer_parts.append(chunk)
+                        yield {"type": "delta", "text": chunk}
+                elif event == "message_file":
+                    file_objs.append(obj)
+                elif event == "agent_thought":
+                    obs = obj.get("observation")
+                    if obs:
+                        _scavenge_citations(obs, tool_citations)
+                elif event == "agent_log":
+                    _scavenge_citations(obj.get("data"), tool_citations)
+                elif event == "node_finished":
+                    data = obj.get("data") or {}
+                    hits = _extract_knowledge_results(data)
+                    if hits:
+                        retriever_resources.extend(hits)
+                    if isinstance(data, dict):
+                        _scavenge_citations(data.get("outputs"), tool_citations)
+                        _scavenge_citations(data.get("process_data"), tool_citations)
+                elif event == "message_end":
+                    for f in obj.get("files") or []:
+                        if isinstance(f, dict):
+                            file_objs.append(f)
+                    meta = obj.get("metadata") or {}
+                    resources = meta.get("retriever_resources") or []
+                    if isinstance(resources, list) and resources:
+                        retriever_resources = list(resources)
+                elif event == "error":
+                    error = obj.get("message") or "unknown error"
+
+    if error:
+        raise classify_provider_error(error, default_code="WORKFLOW_ERROR")
+    answer = "".join(answer_parts)
+    out_files = _extract_dify_files(file_objs)
+    citations = _citations_to_artifacts(retriever_resources)
+    _merge_citation_arts(citations, tool_citations)
+    citations = _filter_citations_cited_in_answer(answer, citations)
+    yield {
+        "type": "done",
+        "answer": answer,
+        "conversation_id": new_conv_id,
+        "files": out_files,
+        "citations": citations,
+    }
 
 
 # 源内フォームには出さず、invoke 時に自動注入する Dify 入力変数（常時）
@@ -1243,7 +1392,14 @@ async def invoke(
                 dify_inputs[file_var] = all_file_refs if is_list else all_file_refs[0]
                 chat_files = []
         answer, new_conv_id, out_files, citations = await _run_chat(
-            base, api_key, query, dify_inputs, user, conversation_id, chat_files
+            base,
+            api_key,
+            query,
+            dify_inputs,
+            user,
+            conversation_id,
+            chat_files,
+            session_id=x_session_id or "",
         )
         if new_conv_id and x_session_id:
             _save_conversation_id(x_session_id, new_conv_id)
@@ -1259,3 +1415,134 @@ async def invoke(
     except Exception as e:  # noqa: BLE001
         logger.exception("dify-app invoke unexpected error")
         return error_response(AppInvokeError("WORKFLOW_ERROR", detail=str(e)))
+
+
+@app.post("/invoke/stream")
+async def invoke_stream(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_app_config: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+) -> Any:
+    """チャットフローを NDJSON でストリーミングする（chat 種別専用）。
+
+    出力は 1 行 1 JSON（application/x-ndjson）:
+      {"event":"delta","text":"..."}                  回答の断片
+      {"event":"done","outputs":"...","artifacts":[...]}  完了
+      {"event":"error","error":"...","error_code":"..."}  失敗
+
+    workflow 種別は同期の /invoke を使う（このエンドポイントは 400 を返す）。
+    ファイルアップロード・入力解決など、ストリーム開始前に失敗し得る処理は
+    事前に実行し、失敗時は非ストリームの JSON エラーで返す。
+    """
+    err = _check_key(x_api_key)
+    if err:
+        return err
+
+    cfg = _parse_config(x_app_config)
+    base = (cfg.get("dify_base_url") or DEFAULT_DIFY_BASE_URL).rstrip("/")
+    if not base:
+        return error_response(
+            AppInvokeError("CONNECTION", detail="dify_base_url is not configured")
+        )
+
+    app_type = (cfg.get("dify_app_type") or "chat").strip().lower()
+    if app_type != "chat":
+        # ストリーミングは対話型のみ。workflow は同期 /invoke を使う。
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "このアプリはストリーミングに対応していません。",
+                "error_code": "INVALID_INPUT",
+            },
+        )
+
+    query_fields = _normalize_field_names(cfg.get("query_field")) or ["query"]
+    query_field = query_fields[0]
+    api_key = x_api_key or ""
+    user = x_user_id or "open-genai"
+
+    body = await request.json()
+    inputs = _inject_hidden_inputs(
+        body.get("inputs", body) or {},
+        scope=x_scope,
+        cfg=cfg,
+    )
+
+    # ファイルを Dify にアップロードして参照オブジェクト化（ストリーム開始前）
+    file_refs_by_key: dict[str, list[dict[str, Any]]] = {}
+    all_file_refs: list[dict[str, Any]] = []
+    files_meta = _iter_input_files(inputs)
+    if files_meta:
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                for key, filename, content_b64 in files_meta:
+                    ref = await _upload_file(
+                        client, base, api_key, filename, content_b64, user
+                    )
+                    file_refs_by_key.setdefault(key, []).append(ref)
+                    all_file_refs.append(ref)
+        except httpx.HTTPError as e:
+            return error_response(AppInvokeError("UPLOAD_FAILED", detail=str(e)))
+        except Exception as e:  # noqa: BLE001
+            return error_response(AppInvokeError("UPLOAD_FAILED", detail=str(e)))
+
+    query = str(inputs.get(query_field) or inputs.get("question") or "").strip()
+    if not query:
+        return error_response(AppInvokeError("INVALID_INPUT", detail="empty query"))
+
+    dify_inputs = _coerce_dify_input_values(
+        _strip_meta(inputs, query_field, "question")
+    )
+    conversation_id = _get_conversation_id(x_session_id or "")
+    chat_files = all_file_refs
+    if all_file_refs:
+        if cfg.get("file_var"):
+            file_var, is_list = cfg.get("file_var"), True
+        else:
+            file_var, is_list = await _detect_file_input(base, api_key)
+        if file_var:
+            dify_inputs[file_var] = all_file_refs if is_list else all_file_refs[0]
+            chat_files = []
+
+    async def _ndjson():
+        def _line(obj: dict[str, Any]) -> str:
+            return json.dumps(obj, ensure_ascii=False) + "\n"
+
+        try:
+            async for ev in _run_chat_stream(
+                base, api_key, query, dify_inputs, user, conversation_id, chat_files
+            ):
+                if ev["type"] == "delta":
+                    yield _line({"event": "delta", "text": ev["text"]})
+                elif ev["type"] == "conversation":
+                    # 会話ID判明時に即保存（done を待たずに継続性を確保）。
+                    # このイベントは dify-app 内部で消費し、下流には流さない。
+                    if ev["conversation_id"] and x_session_id:
+                        _save_conversation_id(x_session_id, ev["conversation_id"])
+                elif ev["type"] == "done":
+                    if ev["conversation_id"] and x_session_id:
+                        _save_conversation_id(x_session_id, ev["conversation_id"])
+                    arts = _files_to_artifacts(base, ev["files"]) + ev["citations"]
+                    done: dict[str, Any] = {"event": "done", "outputs": ev["answer"]}
+                    if arts:
+                        done["artifacts"] = arts
+                    yield _line(done)
+        except AppInvokeError as e:
+            yield _line({"event": "error", **error_body(e)})
+        except httpx.HTTPError as e:
+            yield _line(
+                {"event": "error", **error_body(AppInvokeError("CONNECTION", detail=str(e)))}
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("dify-app invoke_stream unexpected error")
+            yield _line(
+                {
+                    "event": "error",
+                    **error_body(AppInvokeError("WORKFLOW_ERROR", detail=str(e))),
+                }
+            )
+
+    return StreamingResponse(_ndjson(), media_type="application/x-ndjson")
