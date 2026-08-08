@@ -2340,6 +2340,242 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     )
 
 
+def _derive_stream_endpoint(endpoint: str) -> str:
+    """同期 invoke の endpoint URL から、ストリーミング用 URL を導出する。
+
+    例: http://dify-app:8004/invoke -> http://dify-app:8004/invoke/stream
+    """
+    base = (endpoint or "").rstrip("/")
+    if base.endswith("/invoke"):
+        return base + "/stream"
+    return base + "/invoke/stream"
+
+
+@app.post("/exapps/invoke/stream")
+async def invoke_exapp_stream(request: Request) -> Any:
+    """AI アプリ実行を NDJSON でストリーミング中継する（Dify chat 種別専用）。
+
+    dify-app の /invoke/stream からの NDJSON をそのままクライアントへ流し、
+    `done` 到達時に成果物を自前ストレージへ再ホストして差し替える。履歴・監査は
+    ストリーム完了時に 1 件記録する。chat 以外や未対応 endpoint は 400 を返す。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    body = await request.json()
+    team_id = body.get("teamId", "")
+    ex_app_id = body.get("exAppId", "")
+    inputs = body.get("inputs", {})
+    session_id = body.get("sessionId", "")
+
+    app_def = teams_store.get_exapp(team_id, ex_app_id)
+    if not app_def:
+        return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+
+    if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
+        return _forbidden("このアプリの実行には管理者権限が必要です")
+
+    if (
+        team_id != COMMON_TEAM_ID
+        and not _is_system_admin(claims)
+        and not teams_store.is_team_member(team_id, user_id)
+    ):
+        return _forbidden("このアプリを実行する権限がありません")
+
+    if ex_app_id not in ADMIN_ONLY_EXAPP_IDS:
+        ng = _ngword_denied(request, _texts_from_inputs(inputs), usecase=f"exapp:{ex_app_id}")
+        if ng:
+            return JSONResponse(status_code=403, content={"error": ng})
+
+    # ストリーミングは Dify chat 種別のみ対応（フォーム型 workflow は同期 /exapps/invoke）
+    try:
+        _cfg = json.loads(app_def.get("config") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        _cfg = {}
+    if not isinstance(_cfg, dict) or (
+        str(_cfg.get("dify_app_type") or "").strip().lower() != "chat"
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "このアプリはストリーミングに対応していません。",
+                "error_code": "INVALID_INPUT",
+            },
+        )
+
+    stream_endpoint = _derive_stream_endpoint(app_def["endpoint"])
+
+    started = _now_iso()
+    _groups_str = ",".join(claims.get("groups") or [])
+    _team_ids = _user_team_ids_str(user_id)
+    _teams_hdr = _user_teams_header(user_id)
+    _invoke_headers = {
+        "x-api-key": app_def.get("apiKey", ""),
+        "x-user-id": user_id,
+        "x-user-groups": _groups_str,
+        "x-user-tags": _team_ids,
+        "x-user-teams": _teams_hdr,
+        "x-scope": team_id,
+        "x-app-config": _header_config_value(app_def.get("config")),
+        "x-session-id": session_id,
+        **intauth.signed_headers(user_id, _groups_str, team_id, _team_ids),
+        "Content-Type": "application/json",
+    }
+
+    def _persist_invoke(
+        *,
+        outputs: str,
+        status: str,
+        artifacts: Any = None,
+        audit_status: int,
+    ) -> None:
+        team = teams_store.get_team(team_id)
+        try:
+            teams_store.create_exapp_history(
+                {
+                    "teamId": team_id,
+                    "teamName": team["teamName"] if team else "",
+                    "exAppId": ex_app_id,
+                    "exAppName": app_def.get("exAppName", ""),
+                    "userId": user_id,
+                    "inputs": inputs,
+                    "outputs": outputs,
+                    "status": status,
+                    "progress": "",
+                    "artifacts": artifacts,
+                    "sessionId": session_id or None,
+                }
+            )
+        except Exception as e:  # noqa: BLE001 - 履歴保存失敗で実行結果は返す
+            print(f"[exapps] 履歴の保存に失敗(stream): {e}")
+        try:
+            audit.record(
+                request,
+                action="exapp.invoke",
+                teamId=team_id,
+                exAppId=ex_app_id,
+                session_id=session_id or None,
+                status=audit_status,
+                input_text=(
+                    json.dumps(_redact_for_audit(inputs), ensure_ascii=False)
+                    if inputs
+                    else ""
+                ),
+                output_text=outputs if isinstance(outputs, str) else json.dumps(
+                    outputs, ensure_ascii=False
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[exapps] 監査ログの記録に失敗(stream): {e}")
+
+    async def _gen():
+        def _line(obj: dict[str, Any]) -> str:
+            return json.dumps(obj, ensure_ascii=False) + "\n"
+
+        parts: list[str] = []
+        final_outputs: Any = ""
+        final_artifacts: Any = None
+        status = "COMPLETED"
+        audit_status = 200
+        got_done = False
+        terminal = False  # done または error を送出済み
+        try:
+            async with httpx.AsyncClient(timeout=600) as client:
+                async with client.stream(
+                    "POST",
+                    stream_endpoint,
+                    json={"inputs": inputs},
+                    headers=_invoke_headers,
+                ) as res:
+                    if res.status_code != 200:
+                        raw = (await res.aread()).decode("utf-8", "replace")
+                        try:
+                            data = json.loads(raw)
+                            if not isinstance(data, dict):
+                                data = {}
+                        except (json.JSONDecodeError, TypeError):
+                            data = {}
+                        sc, message, code = _normalize_exapp_error(
+                            data.get("error_code"), http_status=res.status_code
+                        )
+                        status = "ERROR"
+                        audit_status = sc
+                        final_outputs = message
+                        terminal = True
+                        yield _line(
+                            {"event": "error", "error": message, "error_code": code}
+                        )
+                        return
+                    async for line in res.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        event = obj.get("event")
+                        if event == "delta":
+                            parts.append(obj.get("text", ""))
+                            yield line + "\n"
+                        elif event == "done":
+                            got_done = True
+                            outputs = obj.get("outputs", "")
+                            artifacts = obj.get("artifacts")
+                            try:
+                                outputs, artifacts = await _rehost_artifacts(
+                                    request, user_id, outputs, artifacts
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                print(f"[exapps] 成果物の再ホストに失敗(stream): {e}")
+                            final_outputs = outputs
+                            final_artifacts = artifacts
+                            done: dict[str, Any] = {"event": "done", "outputs": outputs}
+                            if artifacts:
+                                done["artifacts"] = artifacts
+                            terminal = True
+                            yield _line(done)
+                        elif event == "error":
+                            status = "ERROR"
+                            audit_status = 502
+                            final_outputs = obj.get("error", "")
+                            terminal = True
+                            yield line + "\n"
+        except httpx.HTTPError as e:
+            print(f"[exapps] AI アプリ接続失敗(stream): {e}")
+            sc, message, code = _normalize_exapp_error("CONNECTION")
+            status = "ERROR"
+            audit_status = sc
+            final_outputs = message
+            if not terminal:
+                terminal = True
+                yield _line({"event": "error", "error": message, "error_code": code})
+        except Exception as e:  # noqa: BLE001
+            print(f"[exapps] ストリーム中継で予期せぬエラー: {e}")
+            sc, message, code = _normalize_exapp_error("WORKFLOW_ERROR")
+            status = "ERROR"
+            audit_status = sc
+            final_outputs = message
+            if not terminal:
+                terminal = True
+                yield _line({"event": "error", "error": message, "error_code": code})
+        finally:
+            # done が来ずに接続が途切れた場合は、受信済みの断片を成果として残す
+            if status == "COMPLETED" and not got_done:
+                final_outputs = "".join(parts)
+            _persist_invoke(
+                outputs=(
+                    final_outputs
+                    if isinstance(final_outputs, str)
+                    else json.dumps(final_outputs, ensure_ascii=False)
+                ),
+                status=status,
+                artifacts=final_artifacts,
+                audit_status=audit_status,
+            )
+
+    return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
+
 @app.post("/exapps/schema")
 async def get_exapp_schema(request: Request) -> JSONResponse:
     """AI アプリの入力フォーム定義(placeholder)を取得する。

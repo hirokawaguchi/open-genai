@@ -48,7 +48,9 @@ export const useChoseiConfig = () => {
     loadError: error
       ? '日程調整の設定取得に失敗しました。時間をおいて再度お試しください。'
       : null,
-    unavailable: data?.enabled === false || (!!data?.error && data.enabled === false),
+    // enabled === false（503 時など）のみを「未起動」。|| 右側で再度 === false すると
+    // TS が左辺失敗後に enabled を true|undefined に絞り TS2367 になる。
+    unavailable: data?.enabled === false,
   };
 };
 

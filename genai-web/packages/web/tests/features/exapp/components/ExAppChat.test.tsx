@@ -5,7 +5,12 @@ import { ExAppChat } from '../../../../src/features/exapp/components/ExAppChat';
 
 // invoke フックは fetcher に依存するため、描画テストではスタブ化する
 vi.mock('../../../../src/features/exapp/hooks/useInvokeExApp.ts', () => ({
-  useInvokeExApp: () => ({ invokeExApp: vi.fn() }),
+  useInvokeExApp: () => ({ invokeExApp: vi.fn(), invokeExAppStream: vi.fn() }),
+}));
+
+// 過去の会話一覧も fetcher に依存するため、描画テストではスタブ化する
+vi.mock('../../../../src/features/exapp/hooks/useExAppConversations.ts', () => ({
+  useExAppConversations: () => ({ conversations: [], mutate: vi.fn() }),
 }));
 
 describe('ExAppChat file attach button', () => {
