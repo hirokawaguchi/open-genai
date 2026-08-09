@@ -30,6 +30,10 @@
 
 ## [Unreleased]
 
+### 依存更新
+
+- `pypdf` を 6.15.0 へ更新（CVE-2026-71852 / CVE-2026-71870。backend / rag-app / tests）
+
 ### dify-app: フォーム／様式 Excel からのファイル生成（後方互換）
 
 - `excel_map`（opt-in）: 様式 `.xlsx` のセル値を Dify 開始変数へ注入。未設定時は従来どおり無変更
