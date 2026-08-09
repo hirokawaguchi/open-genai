@@ -1,0 +1,41 @@
+{
+  "form_xlsx": {
+    "type": "file",
+    "title": "入力様式（Excel）",
+    "desc": "所定の様式ファイル（.xlsx）のみアップロードしてください。セルの値が開始変数へ読み込まれます。参考資料とは別の欄です。",
+    "required": true,
+    "accept": ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "multiple": false
+  },
+  "ref_files": {
+    "type": "file",
+    "title": "参考資料",
+    "desc": "任意。関連する計画書・前回資料・根拠資料などを添付できます（複数可）。様式 Excel とは別にアップロードしてください。",
+    "required": false,
+    "multiple": true,
+    "accept": ".pdf,.docx,.pptx,.txt,.md,.html,.csv,.xlsx"
+  },
+  "output_filename": {
+    "type": "text",
+    "title": "出力ファイル名",
+    "desc": "拡張子は不要です。未入力の場合は generated になります。",
+    "required": false,
+    "default_value": "事業説明資料",
+    "max_length": 200
+  },
+  "output_format": {
+    "type": "select",
+    "title": "出力形式",
+    "desc": "庁内共有は docx、説明資料は pptx を推奨します。",
+    "required": false,
+    "default_value": "docx",
+    "items": [
+      { "title": "Word (docx)", "value": "docx" },
+      { "title": "PowerPoint (pptx)", "value": "pptx" },
+      { "title": "Markdown", "value": "markdown" },
+      { "title": "HTML", "value": "html" },
+      { "title": "テキスト", "value": "text" },
+      { "title": "JSON", "value": "json" }
+    ]
+  }
+}

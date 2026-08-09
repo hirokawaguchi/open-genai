@@ -30,6 +30,16 @@
 
 ## [Unreleased]
 
+### dify-app: フォーム／様式 Excel からのファイル生成（後方互換）
+
+- `excel_map`（opt-in）: 様式 `.xlsx` のセル値を Dify 開始変数へ注入。未設定時は従来どおり無変更
+- 設定: `excel_var`（既定 `form_xlsx`） / `excel_sheet` / `excel_forward`（既定 false＝様式は Dify に送らない）
+- `output_mode=xlsx_fill` + `excel_write_map`（opt-in）: Dify が返した値で様式セルを書き戻し、xlsx を artifacts 化（workflow / chat 共通）。値の受け口は `excel_values`（または回答内 JSON）
+- サンプル DSL [`FormFileGenerator.yml`](dify-app/dsl/FormFileGenerator.yml): 開始変数 → Dify 側でプロンプト組み立て → md/html/text/json/docx/pptx。任意の参考資料 `ref_files`（様式 Excel とは別キー）に対応
+- 源内 Form Spec 例（入力支援の `desc` 付き）と Excel 用 placeholder / config を `dify-app/dsl/samples/` に追加
+- backend: 非画像の `content`(base64) 成果物（xlsx 等）を SeaweedFS へ再ホスト。フロントは content フォールバック DL に対応
+- 依存: `dify-app` に `openpyxl` を追加（セル読取・書込）。既存 MultiFileGenerator 等の挙動は維持
+
 ### 日程調整（chosei）オプション機能
 
 - `chosei-app`（FastAPI + SQLite）を Compose `profiles: ["chosei"]` でオプション起動
