@@ -1,0 +1,14 @@
+{
+  "dify_base_url": "https://api.dify.ai/v1",
+  "dify_app_type": "workflow",
+  "response_field": "result",
+  "file_var": "ref_files",
+  "excel_var": "form_xlsx",
+  "excel_map": {
+    "title": "B2",
+    "dept": "C5",
+    "request": "B12"
+  },
+  "excel_sheet": "様式",
+  "excel_forward": false
+}

@@ -1,0 +1,21 @@
+{
+  "dify_base_url": "https://api.dify.ai/v1",
+  "dify_app_type": "workflow",
+  "response_field": "result",
+  "file_var": "ref_files",
+  "excel_var": "form_xlsx",
+  "excel_map": {
+    "title": "B2",
+    "dept": "C5",
+    "request": "B12"
+  },
+  "excel_write_map": {
+    "summary": "D20",
+    "result": "D21"
+  },
+  "excel_sheet": "様式",
+  "excel_forward": false,
+  "output_mode": "xlsx_fill",
+  "excel_values_field": "excel_values",
+  "excel_output_filename": "事業説明_記入済.xlsx"
+}

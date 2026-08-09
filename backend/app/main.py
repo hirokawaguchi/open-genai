@@ -731,10 +731,12 @@ async def _rehost_artifacts(
 ) -> tuple[Any, Any]:
     """AI アプリの成果物ファイルを自前オブジェクトストレージへ再ホストする。
 
-    - `content`(base64) のアーティファクト（例: 画像）はインライン用にそのまま。
+    - `content`(base64) かつ画像（または mime 未設定の従来互換）はインラインのまま。
+    - `content`(base64) かつ非画像（例: xlsx 書き戻し）はデコードして SeaweedFS へ再ホスト。
     - `file_url`(外部参照, 例: Dify 署名URL) は実体を取得し、S3 互換(SeaweedFS)へ
       アップロードして**自前の署名付き URL**へ差し替え、`outputs` に DL リンクを付す。
     - オブジェクトストレージ未設定時は、取得元 URL をそのままリンクとして提示（フォールバック）。
+      content のみの非画像でストレージ未設定のときは content を残す（フロントは非対応のため非推奨）。
     """
     if not artifacts or not isinstance(artifacts, list):
         return outputs, artifacts
@@ -747,36 +749,72 @@ async def _rehost_artifacts(
         if not isinstance(a, dict):
             new_arts.append(a)
             continue
-        if a.get("content"):
-            new_arts.append(a)  # インライン（画像等）はそのまま
-            continue
-        file_url = a.get("file_url") or ""
+
         name = a.get("display_name") or "file"
-        mime = a.get("mime_type") or ""
-        if not file_url:
+        mime = (a.get("mime_type") or "").split(";")[0].strip()
+        content_b64 = a.get("content") or ""
+        file_url = a.get("file_url") or ""
+
+        # 画像（または mime 未設定の content）は従来どおりインライン
+        if content_b64 and (not mime or mime.startswith("image/")):
             new_arts.append(a)
             continue
 
         data: bytes | None = None
-        if file_url.startswith("http://") or file_url.startswith("https://"):
+        if content_b64 and mime and not mime.startswith("image/"):
+            try:
+                raw = content_b64
+                if isinstance(raw, str) and raw.startswith("data:"):
+                    comma = raw.find(",")
+                    if comma != -1:
+                        raw = raw[comma + 1 :]
+                data = base64.b64decode(raw)
+            except Exception:  # noqa: BLE001
+                data = None
+                new_arts.append(a)
+                continue
+        elif file_url.startswith("http://") or file_url.startswith("https://"):
             data, fetched_mime = await _fetch_artifact(file_url)
             if data is not None:
                 mime = mime or fetched_mime
+        elif not file_url:
+            new_arts.append(a)
+            continue
+
+        if data is None and file_url:
+            # 取得失敗時は元 URL を残す
+            safe_url = file_url if _is_http_url(file_url) else ""
+            art_out = {**a, "file_url": safe_url}
+            if mime:
+                art_out["mime_type"] = mime
+            new_arts.append(art_out)
+            if safe_url:
+                links.append((name, safe_url, mime))
+            continue
+
+        if data is None:
+            new_arts.append(a)
+            continue
 
         presigned = None
         object_key = None
-        if data is not None and objstore.is_configured():
+        if objstore.is_configured():
             presigned, object_key = objstore.put_and_presign(
                 data, filename=name, content_type=mime, user_id=user_id
             )
 
-        final_url = presigned or file_url
+        final_url = presigned or (file_url if _is_http_url(file_url) else "")
         # http(s) 以外(javascript:/data:/相対 等)はリンク化・成果物化しない（注入防止）
         safe_url = final_url if _is_http_url(final_url) else ""
         # carrier モードでは自前ストレージに保存できた成果物の署名 URL を UI から隠し、
         # object_key 経由で別途「リンクファイル」を発行させる（LGWAN 端末は本体へ直接届かない）。
         carrier = ARTIFACT_DELIVERY_MODE == "carrier" and bool(object_key)
-        art_out = {**a, "file_url": "" if carrier else safe_url}
+        art_out = {
+            **a,
+            "file_url": "" if carrier else safe_url,
+            # 再ホストできた非画像 content は UI を URL/carrier に寄せる
+            "content": "" if (object_key or safe_url) else a.get("content"),
+        }
         if object_key:
             art_out["object_key"] = object_key
         if mime:
@@ -785,7 +823,7 @@ async def _rehost_artifacts(
         if carrier:
             carrier_names.append(name)
         elif safe_url:
-            links.append((name, safe_url, (mime or "").split(";")[0].strip()))
+            links.append((name, safe_url, mime))
         try:
             audit.record(
                 request,

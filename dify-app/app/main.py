@@ -43,6 +43,12 @@ try:
         error_body,
         error_response,
     )
+    from .excel_map import (
+        apply_excel_map,
+        build_filled_excel_artifact,
+        is_xlsx_fill_mode,
+        resolve_excel_write_values,
+    )
 except ImportError:  # pragma: no cover - 単体読み込み（pytest の file location import）
     import sys
     from pathlib import Path
@@ -55,6 +61,12 @@ except ImportError:  # pragma: no cover - 単体読み込み（pytest の file l
         classify_provider_error,
         error_body,
         error_response,
+    )
+    from excel_map import (
+        apply_excel_map,
+        build_filled_excel_artifact,
+        is_xlsx_fill_mode,
+        resolve_excel_write_values,
     )
 
 logger = logging.getLogger(__name__)
@@ -350,6 +362,32 @@ def _files_to_artifacts(base: str, files: list[dict[str, Any]]) -> list[dict[str
             }
         )
     return arts
+
+
+def _maybe_filled_excel_artifact(
+    *,
+    cfg: dict[str, Any],
+    template: Any,
+    workflow_outputs: Any = None,
+    answer_text: str = "",
+    inputs: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """output_mode=xlsx_fill のとき、様式へ書き戻した xlsx artifact を返す。"""
+    if template is None or not is_xlsx_fill_mode(cfg):
+        return None
+    values = resolve_excel_write_values(
+        cfg=cfg,
+        workflow_outputs=workflow_outputs,
+        answer_text=answer_text,
+        inputs=inputs,
+    )
+    if not values:
+        return None
+    try:
+        return build_filled_excel_artifact(template, cfg, values)
+    except Exception:  # noqa: BLE001
+        logger.exception("dify-app excel write-back failed")
+        return None
 
 
 # フロントの出典アコーディオン用（rag-app と同一定義）
@@ -791,8 +829,8 @@ async def _run_workflow(
     inputs: dict[str, Any],
     user: str,
     response_field: str | None,
-) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-    """戻り値: (表示テキスト, ファイルobjs, citation artifacts)。"""
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], Any]:
+    """戻り値: (表示テキスト, ファイルobjs, citation artifacts, raw outputs)。"""
     payload = {"inputs": inputs, "response_mode": "streaming", "user": user}
     text_parts: list[str] = []
     final_outputs: Any = None
@@ -843,9 +881,9 @@ async def _run_workflow(
         text = _outputs_to_text(final_outputs, response_field)
         files = _extract_dify_files(final_outputs)
         citations = _citation_artifacts_from_workflow_outputs(final_outputs)
-        return (text, files, citations)
+        return (text, files, citations, final_outputs)
     # workflow_finished が無い場合はストリームされたテキストを返す
-    return ("".join(text_parts), [], [])
+    return ("".join(text_parts), [], [], None)
 
 
 async def _run_chat(
@@ -1323,6 +1361,16 @@ async def invoke(
         cfg=cfg,
     )
 
+    # 様式 Excel → 開始変数注入／書き戻し用テンプレ保持（opt-in。未設定は無変更）
+    excel_template = None
+    try:
+        inputs, _, excel_template = apply_excel_map(inputs, cfg)
+    except ValueError as e:
+        return error_response(AppInvokeError("INVALID_INPUT", detail=str(e)))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("dify-app excel_map failed")
+        return error_response(AppInvokeError("INVALID_INPUT", detail=str(e)))
+
     # ファイルを Dify にアップロードして参照オブジェクト化
     file_refs_by_key: dict[str, list[dict[str, Any]]] = {}
     all_file_refs: list[dict[str, Any]] = []
@@ -1365,11 +1413,20 @@ async def invoke(
                     # フォールバック: 源内フォームのキー名を Dify 変数名として割り当て
                     for key, refs in file_refs_by_key.items():
                         dify_inputs[key] = refs if len(refs) > 1 else refs[0]
-            outputs, out_files, citations = await _run_workflow(
+            outputs, out_files, citations, raw_outputs = await _run_workflow(
                 base, api_key, dify_inputs, user, response_field
             )
             resp: dict[str, Any] = {"outputs": outputs}
             arts = _files_to_artifacts(base, out_files) + citations
+            filled = _maybe_filled_excel_artifact(
+                cfg=cfg,
+                template=excel_template,
+                workflow_outputs=raw_outputs,
+                answer_text=outputs if isinstance(outputs, str) else "",
+                inputs=inputs,
+            )
+            if filled:
+                arts = [filled, *arts]
             if arts:
                 resp["artifacts"] = arts
             return resp
@@ -1405,6 +1462,14 @@ async def invoke(
             _save_conversation_id(x_session_id, new_conv_id)
         resp = {"outputs": answer}
         arts = _files_to_artifacts(base, out_files) + citations
+        filled = _maybe_filled_excel_artifact(
+            cfg=cfg,
+            template=excel_template,
+            answer_text=answer,
+            inputs=inputs,
+        )
+        if filled:
+            arts = [filled, *arts]
         if arts:
             resp["artifacts"] = arts
         return resp
@@ -1471,6 +1536,16 @@ async def invoke_stream(
         cfg=cfg,
     )
 
+    # 様式 Excel → 開始変数注入／書き戻し用テンプレ保持（opt-in。未設定は無変更）
+    excel_template = None
+    try:
+        inputs, _, excel_template = apply_excel_map(inputs, cfg)
+    except ValueError as e:
+        return error_response(AppInvokeError("INVALID_INPUT", detail=str(e)))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("dify-app excel_map failed")
+        return error_response(AppInvokeError("INVALID_INPUT", detail=str(e)))
+
     # ファイルを Dify にアップロードして参照オブジェクト化（ストリーム開始前）
     file_refs_by_key: dict[str, list[dict[str, Any]]] = {}
     all_file_refs: list[dict[str, Any]] = []
@@ -1526,6 +1601,14 @@ async def invoke_stream(
                     if ev["conversation_id"] and x_session_id:
                         _save_conversation_id(x_session_id, ev["conversation_id"])
                     arts = _files_to_artifacts(base, ev["files"]) + ev["citations"]
+                    filled = _maybe_filled_excel_artifact(
+                        cfg=cfg,
+                        template=excel_template,
+                        answer_text=ev.get("answer") or "",
+                        inputs=inputs,
+                    )
+                    if filled:
+                        arts = [filled, *arts]
                     done: dict[str, Any] = {"event": "done", "outputs": ev["answer"]}
                     if arts:
                         done["artifacts"] = arts

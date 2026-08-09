@@ -114,6 +114,26 @@ export const ExAppArtifactDownloads = ({ artifacts }: Props) => {
                     </li>
                   );
                 }
+                // 再ホスト前の content(base64) 非画像（xlsx 書き戻し等）向けフォールバック
+                if (artifact.content) {
+                  const mime =
+                    artifact.mime_type || 'application/octet-stream';
+                  const href = `data:${mime};base64,${artifact.content}`;
+                  return (
+                    <li key={`content-${artifact.display_name}-${index}`}>
+                      <LoadingButton
+                        type='button'
+                        onClick={() => download(href, artifact.display_name)}
+                        variant='outline'
+                        size='md'
+                      >
+                        <DownloadIcon aria-hidden={true} />
+                        {artifact.display_name}
+                        <span className='sr-only'>をダウンロード</span>
+                      </LoadingButton>
+                    </li>
+                  );
+                }
                 return null;
               })}
             </ul>

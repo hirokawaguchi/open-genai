@@ -1,0 +1,6 @@
+{
+  "dify_base_url": "https://api.dify.ai/v1",
+  "dify_app_type": "workflow",
+  "response_field": "result",
+  "file_var": "ref_files"
+}

@@ -1,0 +1,54 @@
+{
+  "title": {
+    "type": "text",
+    "title": "事業名",
+    "desc": "正式名称を記入してください。例: 令和8年度○○推進事業",
+    "required": true,
+    "max_length": 200
+  },
+  "dept": {
+    "type": "text",
+    "title": "担当部署",
+    "desc": "課名まで記入。例: 企画財政課",
+    "required": true,
+    "max_length": 200
+  },
+  "request": {
+    "type": "textarea",
+    "title": "現状と課題・要望",
+    "desc": "背景・困っていること・期待する成果を、箇条書きで3〜5点。個人情報は書かないでください。",
+    "required": true,
+    "max_length": 8000
+  },
+  "ref_files": {
+    "type": "file",
+    "title": "参考資料",
+    "desc": "任意。関連する計画書・前回資料・根拠資料などを添付できます（複数可）。様式 Excel とは別です。",
+    "required": false,
+    "multiple": true,
+    "accept": ".pdf,.docx,.pptx,.txt,.md,.html,.csv,.xlsx"
+  },
+  "output_filename": {
+    "type": "text",
+    "title": "出力ファイル名",
+    "desc": "拡張子は不要です。未入力の場合は generated になります。",
+    "required": false,
+    "default_value": "事業説明資料",
+    "max_length": 200
+  },
+  "output_format": {
+    "type": "select",
+    "title": "出力形式",
+    "desc": "庁内共有は docx、説明資料は pptx を推奨します。",
+    "required": false,
+    "default_value": "docx",
+    "items": [
+      { "title": "Word (docx)", "value": "docx" },
+      { "title": "PowerPoint (pptx)", "value": "pptx" },
+      { "title": "Markdown", "value": "markdown" },
+      { "title": "HTML", "value": "html" },
+      { "title": "テキスト", "value": "text" },
+      { "title": "JSON", "value": "json" }
+    ]
+  }
+}

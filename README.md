@@ -754,6 +754,8 @@ ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai,host.docker.internal
   `mime_type=text/x.open-genai.citation` 相当）を `dify-app` が artifacts に載せ、
   源内 UI（`ExAppCitations`）でリンク風見出し＋展開本文として表示する。
 - `file_var`（任意, chat / workflow 共通）: 添付ファイルを渡す Dify の入力変数名。通常は `/v1/parameters` から**自動検出**するため指定不要。
+- `excel_map` / `excel_var` / `excel_sheet` / `excel_forward`（任意）: 様式 Excel のセル値を開始変数へ注入する opt-in 設定。未設定時は従来どおり。
+- `output_mode=xlsx_fill` / `excel_write_map` / `excel_values_field` / `excel_output_filename`（任意）: 様式への書き戻し成果物。未設定時は従来どおり。詳細は後述の「フォーム／様式 Excel からファイル生成」。
 
 > 「コンフィグ（JSON）」の既定値 `{"max_payload_size":"6MB"}` は、上記の Dify 接続情報に置き換えて構いません。
 
@@ -800,6 +802,7 @@ SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 | --- | --- |
 | [`dify-app/dsl/File Output Test.yml`](dify-app/dsl/File Output Test.yml) | 公開 URL から PDF を取得し `result_file` として返すワークフロー |
 | [`dify-app/dsl/MultiFileGenerator.yml`](dify-app/dsl/MultiFileGenerator.yml) | 複数文書から `markdown` / `html` / `text` / `json` / `docx` / `pptx` を生成。`html` は単一自己完結（デジタル庁デザインシステム風）。署名 URL またはローカルでブラウザ表示可能 |
+| [`dify-app/dsl/FormFileGenerator.yml`](dify-app/dsl/FormFileGenerator.yml) | **フォーム項目（開始変数）から Dify 側でプロンプトを組み立て**、同系のファイル成果物を生成。任意の参考資料（`ref_files`）と様式 Excel セル注入（`excel_map`）を併用可 |
 
 **手順:**
 
@@ -826,6 +829,74 @@ curl -s -w "\nHTTP %{http_code}\n" \
 ```
 
 `HTTP 200` かつ `status: succeeded` なら Dify 側は正常です。
+
+#### フォーム／様式 Excel からファイル生成（FormFileGenerator）
+
+既存の `dify-app` を使った **opt-in 拡張**です。`excel_map` を書かない従来アプリの挙動は変わりません。
+
+**役割分担**
+
+| 関心事 | 正本 |
+| --- | --- |
+| 変数名・型・必須 | Dify 開始変数 |
+| プロンプト組み立て | Dify（FormFileGenerator の「プロンプト組み立て」Code） |
+| ラベル・説明・記入例 | 源内 Form Spec（`title` / `desc`）。キー名＝開始変数名 |
+| 様式 Excel → 変数 | exApp `config` の `excel_map`（dify-app が invoke 前に注入） |
+
+**A. フォーム駆動**
+
+1. [`FormFileGenerator.yml`](dify-app/dsl/FormFileGenerator.yml) を Dify にインポートして公開し、API キーを発行
+2. 源内「アプリの作成」
+   - endpoint: `http://dify-app:8004/invoke`
+   - コンフィグ（1 行）例: `{"dify_base_url":"https://api.dify.ai/v1","dify_app_type":"workflow","response_field":"result","file_var":"ref_files"}`
+   - **データ形式**: [`form-file-generator-placeholder.json`](dify-app/dsl/samples/form-file-generator-placeholder.json) の内容を貼る（`desc` で入力支援。キーは `title` / `dept` / `request` / 任意の `ref_files` 等）
+3. 実行 → 「生成されたファイル」が表示されること
+
+自動フォーム（データ形式を空）でも動きますが、Dify の label しか出ないため、業務利用では Form Spec の `desc` 付きを推奨します。
+
+**参考資料（`ref_files`）**は任意・複数可です。様式 Excel とは別欄で、PDF / Word 等を添付して生成の根拠に使えます。
+
+**B. 様式 Excel 駆動（同じ WF）**
+
+セル値を開始変数へ注入し、同じ FormFileGenerator でプロンプト組み立て〜生成します。参考資料も同じ画面から別途添付できます。
+
+1. 上記と同じ DSL / API キーで別アプリ（または同じアプリ）を登録
+2. **データ形式**: [`form-file-generator-excel-placeholder.json`](dify-app/dsl/samples/form-file-generator-excel-placeholder.json)（`form_xlsx` と `ref_files` が分かれている）
+3. **コンフィグ**例（[`form-file-generator-excel-config.json`](dify-app/dsl/samples/form-file-generator-excel-config.json) を 1 行化）:
+
+```json
+{"dify_base_url":"https://api.dify.ai/v1","dify_app_type":"workflow","response_field":"result","file_var":"ref_files","excel_var":"form_xlsx","excel_map":{"title":"B2","dept":"C5","request":"B12"},"excel_sheet":"様式","excel_forward":false}
+```
+
+| config キー | 意味 | 既定 |
+| --- | --- | --- |
+| `excel_map` | 開始変数名 → セル参照（`B2` / `Sheet1!C5` / `'様式'!A1`） | **未設定なら何もしない（後方互換）** |
+| `excel_var` | 様式ファイルのフォームキー | `form_xlsx` |
+| `excel_sheet` | セル参照にシートが無いときの既定シート | 先頭シート |
+| `excel_forward` | `true` なら様式ファイルを Dify にも転送 | `false`（セル注入のみ。参考資料 `ref_files` は別途転送される） |
+| `file_var` | 参考資料を渡す Dify 変数名 | 自動検出。Excel 併用時は `ref_files` を明示推奨 |
+| `output_mode` | `xlsx_fill` で様式への**書き戻し**成果物を生成 | 未設定＝従来の文章ファイル経路のまま |
+| `excel_write_map` | 書き戻しキー → セル参照 | `output_mode=xlsx_fill` 時に必要 |
+| `excel_values_field` | Dify outputs 内の値辞書キー | `excel_values` |
+| `excel_output_filename` | 書き戻し後のファイル名 | `<元名>_filled.xlsx` |
+
+既にフォームで値が入っているキーは Excel で上書きしません。`.xlsx` / `.xlsm` のみ対応です。
+
+**C. 様式 Excel 書き戻し（workflow / chat 共通）**
+
+文章ファイル（docx 等）ではなく、**アップロードした様式のセルを更新した xlsx** を成果物にします。判断・文案は Dify、セル書き込みは `dify-app`（config）です。
+
+1. データ形式は B と同じ（`form_xlsx` ＋任意の `ref_files`）
+2. コンフィグ例: [`form-file-generator-excel-fill-config.json`](dify-app/dsl/samples/form-file-generator-excel-fill-config.json)
+3. Dify は書き戻し値を次のいずれかで返す（値があるときだけ xlsx を付与。下書きターンでは付与しない）
+   - workflow: outputs の `excel_values`（JSON/dict）。例: `{"summary":"…","result":"…"}`
+   - または outputs に `excel_write_map` と同じキーを個別出力
+   - chat: 回答中の JSON（または \`\`\`json フェンス）。例: `{"summary":"…"}`
+4. `dify-app` がテンプレへ書き、artifacts としてダウンロード可能にする（backend が SeaweedFS へ再ホスト）
+
+チャットでは C+B（下書き→「ファイル出力」等の明示）と組み合わせ、**出力ターンだけ** `excel_values` を返す設計を推奨します。
+
+DSL を再生成する場合: `python3 dify-app/scripts/generate_form_file_generator_dsl.py`
 
 #### トラブルシュート（Dify 連携）
 
