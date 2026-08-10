@@ -28,6 +28,7 @@ services:
       - "${PROXY_HTTPS_PORT:-443}:443"
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
       - ./proxy/certs:/etc/nginx/certs:ro
     depends_on:
       - web
@@ -118,6 +119,9 @@ services:
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api
       - FRONTEND_URL=${PUBLIC_URL}
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
+      # 起動時の既定パスワード警告用（Keycloak 本体の認証とは別。backend が検知して案内する）
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
+      - FILES_URL_SECRET=${FILES_URL_SECRET:-}
       - SAML_SP_ENTITY_ID=${PUBLIC_URL}/api/auth/saml/metadata
       - SAML_SP_ACS_URL=${PUBLIC_URL}/api/auth/saml/acs
       - SAML_SP_SLS_URL=${PUBLIC_URL}/api/auth/saml/sls
@@ -281,8 +285,9 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8002
     ports:
-      # 無認証のため、公開範囲は KNOWLEDGE_MCP_BIND で絞ること（既定は全インターフェース）。
-      - "${KNOWLEDGE_MCP_BIND:-0.0.0.0}:${KNOWLEDGE_MCP_PORT:-8103}:8002"
+      # 無認証。当面は同一サーバ上の Dify のみ想定のため既定は 127.0.0.1。
+      # LGWAN-ASP 転送対象に載せないこと。compose 内は http://knowledge-mcp:8002 で到達可。
+      - "${KNOWLEDGE_MCP_BIND:-127.0.0.1}:${KNOWLEDGE_MCP_PORT:-8103}:8002"
     depends_on:
       - rag-app
     restart: unless-stopped

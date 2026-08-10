@@ -24,7 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -39,12 +39,14 @@ from shared import ssrfguard
 from . import (
     audit,
     auth,
+    filesig,
     image_gen,
     intauth,
     llm,
     ngwords,
     objstore,
     policy,
+    security_warn,
     storage,
     teams_store,
     titlegen,
@@ -63,15 +65,23 @@ PUBLIC_API_PATH_PREFIX = os.environ.get("PUBLIC_API_PATH_PREFIX", "/api").rstrip
 # ログイン後に戻るフロントエンド URL
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 
-# 認証不要のパス（プレフィックス一致）
+# 認証不要のパス
+# /health は完全一致のみ（/health/details は JWT 必須）。
+# /files/ は Authorization を付けられない img/PUT 用。認可は HMAC クエリで行う。
+PUBLIC_EXACT_PATHS = frozenset({"/health"})
 PUBLIC_PATH_PREFIXES = (
-    "/health",
     "/auth/",
-    "/files/",  # 添付ファイルの PUT/GET（img タグ等が Authorization を付けられないため）
+    "/files/",
     "/docs",
     "/openapi.json",
     "/redoc",
 )
+
+
+def _is_public_path(path: str) -> bool:
+    if path in PUBLIC_EXACT_PATHS:
+        return True
+    return any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
 
 # RAG「AI アプリ」連携先（外部マイクロサービス）
 RAG_APP_URL = os.environ.get("RAG_APP_URL", "http://rag-app:8001/invoke")
@@ -924,6 +934,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup() -> None:
+    security_warn.warn_insecure_defaults()
     storage.init_db()
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
@@ -945,9 +956,7 @@ def _startup() -> None:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if request.method == "OPTIONS" or any(
-        path.startswith(p) for p in PUBLIC_PATH_PREFIXES
-    ):
+    if request.method == "OPTIONS" or _is_public_path(path):
         return await call_next(request)
 
     authz = request.headers.get("authorization", "")
@@ -1175,6 +1184,13 @@ async def auth_sls(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    """無認証向け。モデル一覧など内部情報は含めない。"""
+    return {"status": "ok"}
+
+
+@app.get("/health/details")
+async def health_details() -> dict[str, Any]:
+    """認証必須。利用可能モデル一覧などを返す。"""
     return {"status": "ok", "models": await llm.list_models()}
 
 
@@ -1282,7 +1298,9 @@ async def save_image_result(
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "wb") as f:
             f.write(raw)
-        stored_images.append({"fileUrl": f"{PUBLIC_BASE_URL}/files/{key}"})
+        stored_images.append(
+            {"fileUrl": filesig.build_signed_url(PUBLIC_BASE_URL, key, "GET")}
+        )
 
     if not stored_images:
         return JSONResponse(status_code=400, content={"message": "images are empty"})
@@ -1948,15 +1966,66 @@ def _safe_path(key: str) -> str:
     return full
 
 
+_FILE_OPS = {
+    "upload": "PUT",
+    "download": "GET",
+    "delete": "DELETE",
+}
+
+
+def _normalize_file_key(key: str) -> str:
+    """pathname 全体や先頭スラッシュをオブジェクトキーへ正規化する。"""
+    key = (key or "").lstrip("/")
+    for prefix in ("api/files/", "files/"):
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+    return key
+
+
+def _require_file_sig(request: Request, key: str, method: str) -> JSONResponse | None:
+    """HMAC が無効なら 403 レスポンスを返す。有効なら None。"""
+    exp = request.query_params.get("exp")
+    sig = request.query_params.get("sig")
+    if not filesig.verify(method, key, exp, sig):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "invalid or missing file signature"},
+        )
+    return None
+
+
 @app.post("/file/url")
 async def get_upload_url(request: Request) -> str:
-    """アップロード先 URL を発行する（源内 Web の署名付き URL 取得を代替）。"""
+    """署名付きファイル URL を発行する（upload / download / delete）。
+
+    body:
+      - operation: upload（既定）| download | delete
+      - filename / mediaFormat: upload 時のファイル名
+      - key: download/delete 時のオブジェクトキー（`<uuid>/<name>`）
+    """
     body = await request.json()
-    filename = body.get("filename") or f"file.{body.get('mediaFormat', 'bin')}"
-    # ファイル名はそのまま使うとパス衝突するため UUID ディレクトリに格納する
-    safe_name = os.path.basename(filename)
-    key = f"{uuid.uuid4()}/{safe_name}"
-    return f"{PUBLIC_BASE_URL}/files/{key}"
+    operation = str(body.get("operation") or "upload").strip().lower()
+    method = _FILE_OPS.get(operation)
+    if not method:
+        raise HTTPException(
+            status_code=400, detail="operation must be upload|download|delete"
+        )
+
+    if operation == "upload":
+        filename = body.get("filename") or f"file.{body.get('mediaFormat', 'bin')}"
+        safe_name = os.path.basename(str(filename)) or "file.bin"
+        key = f"{uuid.uuid4()}/{safe_name}"
+    else:
+        key = _normalize_file_key(str(body.get("key") or body.get("filename") or ""))
+        if not key or key != os.path.normpath(key) or key.startswith(".."):
+            raise HTTPException(status_code=400, detail="key is required")
+        try:
+            _safe_path(key)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="invalid key") from e
+
+    return filesig.build_signed_url(PUBLIC_BASE_URL, key, method)
 
 
 def _guess_media_type(filename: str) -> str:
@@ -1980,6 +2049,10 @@ def _guess_media_type(filename: str) -> str:
 @app.put("/files/{key:path}")
 async def put_file(key: str, request: Request) -> dict[str, Any]:
     """添付を保存し、抽出可能な本文があれば個人情報を警告検知する（ブロックしない）。"""
+    denied = _require_file_sig(request, key, "PUT")
+    if denied:
+        return denied  # type: ignore[return-value]
+
     full = _safe_path(key)
     os.makedirs(os.path.dirname(full), exist_ok=True)
     data = await request.body()
@@ -2022,7 +2095,10 @@ async def put_file(key: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/files/{key:path}")
-async def get_file(key: str) -> FileResponse:
+async def get_file(key: str, request: Request) -> FileResponse:
+    denied = _require_file_sig(request, key, "GET")
+    if denied:
+        return denied  # type: ignore[return-value]
     full = _safe_path(key)
     if not os.path.isfile(full):
         return JSONResponse(status_code=404, content={"message": "file not found"})
@@ -2031,11 +2107,7 @@ async def get_file(key: str) -> FileResponse:
 
 def _delete_stored_file(key: str) -> None:
     """FILES_DIR 配下のオブジェクトを削除する（存在しなければ何もしない）。"""
-    # 旧フロントが pathname 全体（api/files/... や files/...）を渡す場合を吸収
-    for prefix in ("api/files/", "files/"):
-        if key.startswith(prefix):
-            key = key[len(prefix) :]
-            break
+    key = _normalize_file_key(key)
     try:
         full = _safe_path(key)
         if os.path.isfile(full):
@@ -2045,15 +2117,18 @@ def _delete_stored_file(key: str) -> None:
 
 
 @app.delete("/files/{key:path}")
-async def delete_file_public(key: str) -> dict[str, Any]:
-    """添付ファイル削除（PUT/GET と同じ /files 配下。Authorization 不要）。"""
+async def delete_file_public(key: str, request: Request) -> dict[str, Any]:
+    """添付ファイル削除（署名付きクエリ必須。Authorization 不要）。"""
+    denied = _require_file_sig(request, key, "DELETE")
+    if denied:
+        return denied  # type: ignore[return-value]
     _delete_stored_file(key)
     return {}
 
 
 @app.delete("/file/{file_name:path}")
 async def delete_file(file_name: str) -> dict[str, Any]:
-    # 互換: 旧フロントの /file/<pathname> 削除
+    """互換: 旧フロントの /file/<pathname> 削除（JWT 必須。署名付き /files 削除を推奨）。"""
     _delete_stored_file(file_name)
     return {}
 

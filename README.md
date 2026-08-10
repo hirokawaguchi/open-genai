@@ -250,14 +250,14 @@ docker compose up --build
 
 ## 動作確認
 
-- http://localhost/api/health で `status: ok` と取得済みモデル一覧が返ること
+- http://localhost/api/health で `{"status":"ok"}` が返ること（モデル一覧は認証付き `GET /api/health/details`）
 - http://localhost/ を開くと Keycloak のログイン画面に遷移し、`admin` / `password` でログインできること
 - 「チャット」からメッセージを送り、ローカル LLM の応答がストリーミング表示されること
 - 「AIアプリ」→「**ナレッジ検索**」で質問でき、出典付きで回答されること（起動済みアプリのみ一覧に表示）
 - 「翻訳」「ダイアグラムを生成」「文章を生成」がローカル LLM で動作すること
 - http://localhost:8333/ をブラウザで開くと XML の `AccessDenied` が表示されること（SeaweedFS S3 API の正常応答。**開発時のみホスト公開**。本番は `S3_PUBLIC_ENDPOINT` 経由のリバースプロキシのみ公開）
 - （Dify 連携）[`dify-app/dsl/File Output Test.yml`](dify-app/dsl/File Output Test.yml) をデプロイし、源内 AI アプリから実行して成果物リンクが表示されること
-- http://localhost/kc/ の **Administration Console** に `.env` の `KEYCLOAK_ADMIN` でログインでき、realm **`open-genai`** の Users / Groups が表示されること（利用者アカウント管理用。源内ログイン画面とは別）
+- **開発構成**では http://localhost/kc/ の **Administration Console** に `.env` の `KEYCLOAK_ADMIN` でログインでき、realm **`open-genai`** の Users / Groups が表示されること（利用者アカウント管理用。源内ログイン画面とは別）。**本番／verify** では `/kc/admin` は nginx 既定で全拒否（`proxy/kc-admin-allow.conf` で CIDR 許可）
 
 ## 本番デプロイ
 
@@ -450,7 +450,7 @@ Keycloak は **「誰がログインできるか」** を担うコンポーネ�
 
 | URL | 用途 | ログイン |
 | --- | --- | --- |
-| http://localhost/kc/ | **Keycloak 管理コンソール**（運用者向け） | `.env` の `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD`（既定 `admin` / `admin`） |
+| http://localhost/kc/ | **Keycloak**（ログインフォーム＋管理コンソール） | 管理コンソールは本番で `/kc/admin` を nginx が遮断。開発時は `.env` の `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD`（既定 `admin` / `admin`） |
 | http://localhost/ | **源内 Web**（利用者向け） | realm `open-genai` の利用者（例: `admin` / `password`） |
 
 源内にログインするときに表示される画面は Keycloak の **ログインフォーム**（realm `open-genai`）です。
@@ -541,19 +541,24 @@ SAML 経由で backend に渡る主な属性:
 開発用の既定パスワード（`admin`/`admin`、`admin`/`password` 等）は **そのまま運用してはいけません**。
 運用開始前に、少なくとも次を変更してください。
 
+既定のまま起動すると **backend が stderr に `[SECURITY]` 警告と設定手順を出力**します（起動自体は継続します）。
+
 | 対象 | 設定・操作 | 備考 |
 | --- | --- | --- |
 | **Keycloak サーバ管理者** | `.env.prod` の `KEYCLOAK_ADMIN_PASSWORD` | 管理コンソール（`master` realm）用。**初回起動前**に設定するのが確実（`keycloak_data` ボリューム作成後は環境変数だけでは変わらない） |
 | **源内の初期利用者** | realm `open-genai` の Users でパスワード変更、または削除 | import 済みの `admin`/`user`（いずれも `password`）は検証用。本番では削除するか強固なパスワードに変更 |
 | **新規利用者** | Keycloak 管理コンソール or 利用者一括管理 exApp | 実運用の利用者は CSV 一括登録等で個別パスワードを発行 |
 | **backend JWT 署名** | `.env.prod` の `APP_JWT_SECRET` | Keycloak とは別だが、認証まわりで同時に変更必須 |
+| **内部 HMAC** | `.env.prod` の `INTERNAL_SIGNING_SECRET` | backend↔exApp の `x-user-*` 偽装対策 |
+| **添付 URL 署名** | 任意 `FILES_URL_SECRET`（未設定時は `APP_JWT_SECRET`） | `/api/files` の短命 HMAC |
 
 **初回デプロイの推奨手順:**
 
-1. `.env.prod` で `KEYCLOAK_ADMIN_PASSWORD`・`APP_JWT_SECRET` 等を十分長い乱数に設定
+1. `.env.prod` で次を十分長い乱数に設定（例: `openssl rand -hex 32`）: `KEYCLOAK_ADMIN_PASSWORD`・`APP_JWT_SECRET`・`INTERNAL_SIGNING_SECRET`
 2. `docker compose -f docker-compose.prod.yml --env-file .env.prod up --build` で **初回起動**（以降 `keycloak_data` に管理者パスワードが固定される）
-3. 管理コンソール → realm `open-genai` → 初期ユーザー `admin`/`user` を無効化またはパスワード変更
-4. 実利用者を登録（一括 exApp または Users から）
+3. 管理コンソールへは `proxy/kc-admin-allow.conf` に管理網 CIDR を追記してから到達（既定は `/kc/admin` 全拒否）
+4. realm `open-genai` → 初期ユーザー `admin`/`user` を無効化またはパスワード変更
+5. 実利用者を登録（一括 exApp または Users から）
 
 > 既に `keycloak_data` ボリューム付きで起動済みの環境で `KEYCLOAK_ADMIN_PASSWORD` だけ変えても反映されません。管理コンソールから master 管理者のパスワードを変更するか、検証環境なら `docker compose down -v` でボリュームごと再作成してください。
 
@@ -777,12 +782,10 @@ ARTIFACT_FETCH_ALLOWED_HOSTS=files.dify.ai,upload.dify.ai,host.docker.internal
 SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 ```
 
-> **⚠️ セキュリティ（ナレッジ MCP の公開範囲）:** `knowledge-mcp`（`:8002/mcp`）は
-> **無認証**で、`scope`(teamId) を呼び出し側が任意指定できるため、到達できる者は
-> 全チームのナレッジを読めます。外部到達可能なホストでは `.env` の
-> `KNOWLEDGE_MCP_BIND`（既定 `0.0.0.0`）を `127.0.0.1`／gateway IP に絞る、
-> ファイアウォールで遮断する、認証付きリバースプロキシ越しにのみ公開する、の
-> いずれかで必ず保護してください（詳細: [docs/knowledge-mcp.md](docs/knowledge-mcp.md) の「セキュリティ / 公開範囲」）。
+> **⚠️ セキュリティ（ナレッジ MCP の公開範囲）:** `knowledge-mcp` は **無認証**で、
+> `scope`(teamId) を呼び出し側が任意指定できるため、到達できる者は全チームのナレッジを読めます。
+> 既定の `KNOWLEDGE_MCP_BIND` は **`127.0.0.1`**（同一ホストの Dify 向け）。
+> LGWAN-ASP の転送対象に載せないでください（詳細: [docs/knowledge-mcp.md](docs/knowledge-mcp.md)）。
 
 源内登録の例（workflow / chat）:
 

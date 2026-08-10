@@ -99,6 +99,9 @@ services:
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- SAML 認証 (backend = SAML SP) ---
       - APP_JWT_SECRET=${APP_JWT_SECRET:-change-me-open-genai-secret}
+      # 起動時の既定パスワード警告用（未変更なら stderr にガイドを出す）
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - FILES_URL_SECRET=${FILES_URL_SECRET:-}
       # proxy 経由の公開 URL（末尾スラッシュ無し。PROXY_HTTP_PORT 変更時は合わせる）
       - PUBLIC_BASE_URL=${PUBLIC_URL:-http://localhost}/api
       - FRONTEND_URL=${PUBLIC_URL:-http://localhost}
@@ -206,11 +209,10 @@ services:
       - MCP_PORT=8002
     ports:
       # 注意: knowledge-mcp は無認証で、scope(teamId) は呼び出し側が任意指定できる。
-      # つまり :8002/mcp へ到達できれば全チームのナレッジを読み出せる。
-      # ホスト公開は Dify から host.docker.internal:8002 で利用するためのもの。
-      # 外部到達可能なホストでは KNOWLEDGE_MCP_BIND=127.0.0.1 等で絞るか、
-      # ファイアウォール／認証付きリバースプロキシで必ず保護すること。
-      - "${KNOWLEDGE_MCP_BIND:-0.0.0.0}:${KNOWLEDGE_MCP_PORT:-8002}:8002"
+      # つまり到達できれば全チームのナレッジを読み出せる。
+      # 当面は同一サーバ上の Dify のみ想定のため既定は 127.0.0.1。
+      # compose 内の他サービスは http://knowledge-mcp:8002 で到達（ホスト公開不要）。
+      - "${KNOWLEDGE_MCP_BIND:-127.0.0.1}:${KNOWLEDGE_MCP_PORT:-8002}:8002"
     depends_on:
       - rag-app
     restart: unless-stopped

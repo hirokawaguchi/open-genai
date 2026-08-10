@@ -30,6 +30,14 @@
 
 ## [Unreleased]
 
+### セキュリティ（LGWAN 公開面の硬化）
+
+- 既定秘密情報のまま起動すると backend が `[SECURITY]` 警告と設定手順を stderr に出力（`security_warn.py`）
+- `/api/files` に短命 HMAC（`exp`/`sig`）を必須化。`POST /file/url` で upload/download/delete 用 URL を発行
+- nginx（prod/verify）: `/kc/admin` 既定全拒否（`proxy/kc-admin-allow.conf` で CIDR 許可）、ログイン系レート制限、`/api/docs` 等の遮断
+- 無認証 `/health` は `status` のみ。モデル一覧は認証付き `GET /health/details`
+- `knowledge-mcp` のホスト bind 既定を `127.0.0.1` に変更（同一サーバ Dify 向け）
+
 ### 依存更新
 
 - `pypdf` を 6.15.0 へ更新（CVE-2026-71852 / CVE-2026-71870。backend / rag-app / tests）

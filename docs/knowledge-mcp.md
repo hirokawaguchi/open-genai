@@ -29,19 +29,17 @@ docker compose up -d --build knowledge-mcp rag-app
 > ナレッジを読み出せます**（既定スコープに限りません）。これは paris 等の特定環境
 > に固有の問題ではなく、本サービス共通の性質です。
 
-ホストポート公開は Dify から `host.docker.internal:8002/mcp` で利用するためのもので、
-compose 内の他サービスは内部 DNS（`http://knowledge-mcp:8002`）で到達するため公開は不要です。
-**インターネット到達可能なホストでは、以下のいずれかで必ず公開範囲を絞ってください。**
+ホストポート公開は **同一サーバ上の Dify** から `host.docker.internal:<port>/mcp` で利用するためのものです。
+compose 内の他サービスは内部 DNS（`http://knowledge-mcp:8002`）で到達するためホスト公開は不要です。
 
 | 対策 | 方法 |
 | --- | --- |
-| バインド制限 | `.env` の `KNOWLEDGE_MCP_BIND` を `127.0.0.1`（同一ホストのみ）や Docker ブリッジの gateway IP（特定 Dify ホストのみ）に設定 |
-| ファイアウォール | 当該ポート（既定 8002）への外部アクセスを FW で遮断（現運用の既定手段） |
-| リバースプロキシ | 認証付きの前段（nginx 等）越しにのみ公開 |
-| そもそも公開しない | Dify+MCP を使わない構成では、compose のホストポート公開自体を削除 |
+| バインド制限（既定） | `KNOWLEDGE_MCP_BIND=127.0.0.1`（dev/prod とも既定）。同一ホストの Dify のみ到達可 |
+| ファイアウォール | 当該ポートへの外部アクセスを FW で遮断 |
+| リバースプロキシ | 認証付きの前段（nginx 等）越しにのみ公開する場合 |
+| そもそも公開しない | Dify+MCP を使わない構成では、compose のホスト `ports` 自体を削除 |
 
-> prod compose（`docker-compose.prod.yml`）は既定で knowledge-mcp のホストポートを
-> 公開しません（内部通信のみ）。公開する場合は上記の保護を前提にしてください。
+> **LGWAN-ASP:** ユーザ向け転送は 80/443（proxy）のみとし、MCP ポートを転送対象に載せないこと。
 
 ## ツール
 

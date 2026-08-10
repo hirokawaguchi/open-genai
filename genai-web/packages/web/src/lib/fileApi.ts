@@ -8,6 +8,7 @@ import {
 } from 'genai-web';
 import { genUApi, readUploadPutJson, uploadToSignedUrl } from '@/lib/fetcher';
 import type { UploadPutResponse } from '@/lib/fetcher';
+import { fileObjectKeyFromUrl } from '@/lib/fileUrl';
 
 const parseS3Url = (s3Url: string) => {
   let result = /^s3:\/\/(?<bucketName>.+?)\/(?<prefix>.+)/.exec(s3Url);
@@ -33,7 +34,11 @@ const parseS3Url = (s3Url: string) => {
 };
 
 export const getSignedUrl = (req: GetFileUploadSignedUrlRequest) => {
-  return genUApi.post<GetFileUploadSignedUrlResponse>('file/url', req);
+  return genUApi.post<GetFileUploadSignedUrlResponse>('file/url', {
+    filename: req.filename,
+    mediaFormat: req.mediaFormat,
+    operation: 'upload',
+  } as GetFileUploadSignedUrlRequest & { operation: string });
 };
 
 export const uploadFile = async (
@@ -44,10 +49,27 @@ export const uploadFile = async (
   return readUploadPutJson(res);
 };
 
+const mintLocalFileUrl = async (
+  key: string,
+  operation: 'download' | 'delete',
+): Promise<string> => {
+  const { data: url } = await genUApi.post<string>('file/url', {
+    key,
+    filename: key.split('/').pop() || key,
+    operation,
+  });
+  return url;
+};
+
 export const getFileDownloadSignedUrl = async (s3Url: string) => {
-  // Open GENAI: ローカル版ではファイルは http(s) URL で直接配信されるため、
-  // S3 署名付き URL 取得は行わずそのまま返す。
-  if (/^https?:\/\//.test(s3Url)) {
+  // Open GENAI: ローカル /files は HMAC 付き URL を都度発行する
+  if (/^https?:\/\//.test(s3Url) || s3Url.startsWith('/')) {
+    const key = fileObjectKeyFromUrl(
+      s3Url.startsWith('/') ? `${window.location.origin}${s3Url}` : s3Url,
+    );
+    if (key) {
+      return mintLocalFileUrl(key, 'download');
+    }
     return s3Url;
   }
 
@@ -67,18 +89,12 @@ export const getFileDownloadSignedUrl = async (s3Url: string) => {
 };
 
 export const deleteUploadedFile = async (fileName: string) => {
-  // PUT/GET と同じ `/files/<key>` を使う（認証不要の公開パス）。
-  // fileName はオブジェクトキー（`<uuid>/<name>`）。スラッシュは区切りとして残す。
+  // オブジェクトキー（`<uuid>/<name>`）から DELETE 用署名 URL を発行して削除する。
   const key = fileName.replace(/^\/+/, '').replace(/^files\//, '');
-  const encoded = key
-    .split('/')
-    .filter(Boolean)
-    .map((seg) => encodeURIComponent(seg))
-    .join('/');
-  return genUApi.delete<DeleteFileResponse>(`files/${encoded}`);
-};
-
-export const getS3Uri = (s3Url: string) => {
-  const { bucketName, prefix } = parseS3Url(s3Url);
-  return `s3://${bucketName}/${prefix}`;
+  const signedUrl = await mintLocalFileUrl(key, 'delete');
+  const res = await fetch(signedUrl, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(`Failed to delete file: ${res.status}`);
+  }
+  return { data: {} as DeleteFileResponse, status: res.status };
 };
