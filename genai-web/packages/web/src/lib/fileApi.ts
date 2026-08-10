@@ -98,3 +98,8 @@ export const deleteUploadedFile = async (fileName: string) => {
   }
   return { data: {} as DeleteFileResponse, status: res.status };
 };
+
+export const getS3Uri = (s3Url: string) => {
+  const { bucketName, prefix } = parseS3Url(s3Url);
+  return `s3://${bucketName}/${prefix}`;
+};
