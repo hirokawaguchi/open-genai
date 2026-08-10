@@ -19,3 +19,4 @@ services:
       - "${PROXY_HTTP_PORT:-80}:80"
     volumes: !override
       - ./proxy/nginx.verify.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
