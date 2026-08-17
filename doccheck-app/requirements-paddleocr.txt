@@ -1,0 +1,8 @@
+# AMD64 本番向け: 本家 PaddleOCR（任意）。
+# 既定イメージは RapidOCR のみ。本家を入れる場合:
+#   pip install -r requirements-paddleocr.txt
+# または Docker build-arg INSTALL_PADDLEOCR=1
+#
+# バージョンは環境（CUDA / CPU）に合わせて調整すること。
+paddlepaddle==3.0.0
+paddleocr==2.10.0

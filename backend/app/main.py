@@ -108,6 +108,9 @@ PROMPT_APP_URL = os.environ.get("PROMPT_APP_URL", "http://prompt-app:8009/invoke
 # 実 API は /chosei/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 CHOSEI_APP_URL = os.environ.get("CHOSEI_APP_URL", "http://chosei-app:8010/invoke")
 CHOSEI_PUBLIC_ENDPOINT = (os.environ.get("CHOSEI_PUBLIC_ENDPOINT") or "").rstrip("/")
+# 書類領域分割チェック（Compose profiles: ["doccheck"]）
+DOCCHECK_APP_URL = os.environ.get("DOCCHECK_APP_URL", "http://doccheck-app:8011/invoke")
+DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rstrip("/")
 
 # 管理者(SystemAdminGroup)のみに一覧表示・実行を許可する exApp
 # （共有ナレッジの管理系は共通チーム上だが管理者限定）
@@ -390,6 +393,30 @@ CHOSEI_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 書類領域分割チェック（共通アプリ）。UI は専用ページ /doccheck。
+DOCCHECK_SEED: dict[str, Any] = {
+    "exAppId": "doccheck",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "書類チェック",
+    "endpoint": (
+        DOCCHECK_APP_URL
+        if DOCCHECK_APP_URL.endswith("/invoke")
+        else DOCCHECK_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「書類チェック」から帳票テンプレートとスキャンを登録します。\n"
+        "- 領域ごとに OCR 候補を出し、庁内・外部へチェックを配信します。\n"
+        "- 有効化: `docker compose --profile doccheck up -d` または `COMPOSE_PROFILES=doccheck`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
         "exAppName": f"{team_name}のナレッジ検索",
@@ -462,6 +489,7 @@ EXAPP_SEEDS = [
     NGWORD_SEED,
     PROMPT_SEED,
     CHOSEI_SEED,
+    DOCCHECK_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -498,6 +526,11 @@ def _user_id(claims: dict[str, Any]) -> str:
 
 def _is_system_admin(claims: dict[str, Any]) -> bool:
     return "SystemAdminGroup" in (claims.get("groups") or [])
+
+
+def _is_team_or_system_admin(claims: dict[str, Any]) -> bool:
+    groups = claims.get("groups") or []
+    return "SystemAdminGroup" in groups or "TeamAdminGroup" in groups
 
 
 _MODELS_CACHE: dict[str, Any] = {"ts": 0.0, "models": []}
@@ -3156,6 +3189,431 @@ async def chosei_event_carrier(
         content=content.encode("utf-8"),
         media_type=media,
         headers={"Content-Disposition": disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 書類領域分割チェック専用ページ(/doccheck) 用プロキシ
+#
+# Compose profiles: ["doccheck"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _doccheck_app_url(path: str) -> str:
+    if DOCCHECK_APP_URL.endswith("/invoke"):
+        base = DOCCHECK_APP_URL[: -len("/invoke")]
+    else:
+        base = DOCCHECK_APP_URL.rstrip("/")
+    return base + path
+
+
+def _doccheck_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_doccheck(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 120,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "書類チェックサービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile doccheck up -d` "
+                    "または `COMPOSE_PROFILES=doccheck` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "書類チェックサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/doccheck/config")
+async def doccheck_config(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    claims = _claims_from_request(request)
+    res = await _proxy_doccheck("GET", _doccheck_app_url("/config"), headers)
+    if res.status_code == 200:
+        try:
+            data = json.loads(res.body)
+            if isinstance(data, dict):
+                if DOCCHECK_PUBLIC_ENDPOINT:
+                    data["public_endpoint"] = (
+                        data.get("public_endpoint") or DOCCHECK_PUBLIC_ENDPOINT
+                    )
+                # JWT 側のグループ（チーム管理者付与含む）を優先
+                data["can_arbitrate"] = _is_team_or_system_admin(claims)
+            return JSONResponse(status_code=200, content=data)
+        except Exception:  # noqa: BLE001
+            pass
+    return res
+
+
+@app.post("/doccheck/demo/seed")
+async def doccheck_demo_seed(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_doccheck(
+        "POST", _doccheck_app_url("/demo/seed"), headers, body, timeout=300
+    )
+
+
+@app.get("/doccheck/templates")
+async def doccheck_list_templates(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck("GET", _doccheck_app_url("/templates"), headers)
+
+
+@app.post("/doccheck/templates")
+async def doccheck_create_template(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck("POST", _doccheck_app_url("/templates"), headers, body)
+
+
+@app.put("/doccheck/templates/{template_id}")
+async def doccheck_update_template(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "PUT", _doccheck_app_url(f"/templates/{template_id}"), headers, body
+    )
+
+
+@app.get("/doccheck/templates/{template_id}")
+async def doccheck_get_template(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    include = request.query_params.get("include_sample", "")
+    q = "?include_sample=true" if include in ("1", "true", "yes") else ""
+    return await _proxy_doccheck(
+        "GET", _doccheck_app_url(f"/templates/{template_id}{q}"), headers, timeout=180
+    )
+
+
+@app.post("/doccheck/templates/{template_id}/sample")
+async def doccheck_upload_sample(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "POST",
+        _doccheck_app_url(f"/templates/{template_id}/sample"),
+        headers,
+        body,
+        timeout=180,
+    )
+
+
+@app.put("/doccheck/templates/{template_id}/regions")
+async def doccheck_put_regions(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "PUT",
+        _doccheck_app_url(f"/templates/{template_id}/regions"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/doccheck/templates/{template_id}")
+async def doccheck_delete_template(template_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "DELETE", _doccheck_app_url(f"/templates/{template_id}"), headers
+    )
+
+
+@app.get("/doccheck/documents")
+async def doccheck_list_documents(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    qs = request.url.query
+    path = "/documents" + (f"?{qs}" if qs else "")
+    return await _proxy_doccheck("GET", _doccheck_app_url(path), headers)
+
+
+@app.get("/doccheck/batches")
+async def doccheck_list_batches(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck("GET", _doccheck_app_url("/batches"), headers)
+
+
+@app.post("/doccheck/batches")
+async def doccheck_create_batch(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "POST", _doccheck_app_url("/batches"), headers, body, timeout=600
+    )
+
+
+@app.get("/doccheck/batches/{batch_id}")
+async def doccheck_get_batch(batch_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "GET", _doccheck_app_url(f"/batches/{batch_id}"), headers
+    )
+
+
+@app.post("/doccheck/batches/{batch_id}/dispatch")
+async def doccheck_dispatch_batch(batch_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_doccheck(
+        "POST",
+        _doccheck_app_url(f"/batches/{batch_id}/dispatch"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/doccheck/batches/{batch_id}")
+async def doccheck_delete_batch(batch_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "DELETE", _doccheck_app_url(f"/batches/{batch_id}"), headers, timeout=120
+    )
+
+
+@app.get("/doccheck/batches/{batch_id}/export")
+async def doccheck_export_batch(
+    batch_id: str,
+    request: Request,
+    format: str = Query(default="csv"),
+    status: str = Query(default="completed"),
+) -> Response:
+    """バッチ確定データのダウンロード（CSV / JSONL / JSON）。"""
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    qs = f"?format={quote(format)}&status={quote(status)}"
+    res = await _proxy_doccheck(
+        "GET",
+        _doccheck_app_url(f"/batches/{batch_id}/export") + qs,
+        headers,
+        timeout=120,
+    )
+    if res.status_code != 200:
+        return res
+    try:
+        data = json.loads(res.body)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "不正な応答です"})
+    content = data.get("content") or ""
+    filename = data.get("filename") or "doccheck_export.csv"
+    media = data.get("media_type") or "text/csv; charset=utf-8"
+    ascii_name = "".join(c if c.isascii() and c not in '"\\' else "_" for c in filename)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=content.encode("utf-8"),
+        media_type=media,
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@app.post("/doccheck/documents")
+async def doccheck_create_document(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "POST", _doccheck_app_url("/documents"), headers, body, timeout=300
+    )
+
+
+@app.get("/doccheck/documents/{doc_id}")
+async def doccheck_get_document(doc_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "GET", _doccheck_app_url(f"/documents/{doc_id}"), headers
+    )
+
+
+@app.post("/doccheck/documents/{doc_id}/dispatch")
+async def doccheck_dispatch(doc_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_doccheck(
+        "POST",
+        _doccheck_app_url(f"/documents/{doc_id}/dispatch"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/doccheck/documents/{doc_id}")
+async def doccheck_delete_document(doc_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "DELETE", _doccheck_app_url(f"/documents/{doc_id}"), headers
+    )
+
+
+@app.get("/doccheck/documents/{doc_id}/export")
+async def doccheck_export(doc_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "GET", _doccheck_app_url(f"/documents/{doc_id}/export"), headers
+    )
+
+
+@app.get("/doccheck/queue/next")
+async def doccheck_queue_next(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck("GET", _doccheck_app_url("/queue/next"), headers)
+
+
+@app.post("/doccheck/tasks/{token}/answer")
+async def doccheck_answer(token: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_doccheck(
+        "POST",
+        _doccheck_app_url(f"/tasks/{token}/answer"),
+        headers,
+        body,
+    )
+
+
+@app.get("/doccheck/arbitration")
+async def doccheck_arbitration_list(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    claims = _claims_from_request(request)
+    if not _is_team_or_system_admin(claims):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "裁定はチーム管理者またはシステム管理者のみ実行できます",
+                "can_arbitrate": False,
+            },
+        )
+    return await _proxy_doccheck("GET", _doccheck_app_url("/arbitration"), headers)
+
+
+@app.post("/doccheck/arbitration/{region_id}")
+async def doccheck_arbitration_post(region_id: str, request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    claims = _claims_from_request(request)
+    if not _is_team_or_system_admin(claims):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "裁定はチーム管理者またはシステム管理者のみ実行できます",
+                "can_arbitrate": False,
+            },
+        )
+    body = await request.json()
+    return await _proxy_doccheck(
+        "POST",
+        _doccheck_app_url(f"/arbitration/{region_id}"),
+        headers,
+        body,
+    )
+
+
+@app.get("/doccheck/scores/me")
+async def doccheck_score_me(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck("GET", _doccheck_app_url("/scores/me"), headers)
+
+
+@app.get("/doccheck/scores/leaderboard")
+async def doccheck_leaderboard(request: Request) -> JSONResponse:
+    err, headers = _doccheck_headers(request)
+    if err:
+        return err
+    return await _proxy_doccheck(
+        "GET", _doccheck_app_url("/scores/leaderboard"), headers
     )
 
 
