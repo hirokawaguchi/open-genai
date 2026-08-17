@@ -65,6 +65,9 @@ services:
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
       - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-http://localhost:8010}
+      # 書類領域分割チェック（profiles: ["doccheck"]）
+      - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
+      - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-http://localhost:8011}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -410,6 +413,45 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 書類領域分割チェック (`docker compose --profile doccheck up -d`)
+  # 庁内は backend → 本サービス。外部ゲストは DOCCHECK_PUBLIC_ENDPOINT（開発時は :8011）。
+  # 本番の外部公開は /public のみを別プロキシで露出すること（proxy/doccheck.public.conf.example）。
+  doccheck-app:
+    profiles: ["doccheck"]
+    build:
+      context: ./doccheck-app
+      args:
+        # amd64 本番で本家 PaddleOCR を入れる場合: DOCCHECK_INSTALL_PADDLEOCR=1
+        INSTALL_PADDLEOCR: ${DOCCHECK_INSTALL_PADDLEOCR:-0}
+    container_name: open-genai-doccheck-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - DOCCHECK_DB_PATH=/data/doccheck.db
+      - DOCCHECK_DATA_DIR=/data
+      - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-http://localhost:8011}
+      # 手書き向け既定: hybrid = PP-OCR(本家→RapidOCR) → 低信頼時 Vision
+      # paddleocr / paddle / vision / tesseract / none も可
+      # 本家は amd64 + INSTALL_PADDLEOCR=1 時。未導入/arm64 は RapidOCR に自動フォールバック
+      - DOCCHECK_OCR_ENGINE=${DOCCHECK_OCR_ENGINE:-hybrid}
+      - DOCCHECK_VISION_MODEL=${DOCCHECK_VISION_MODEL:-gemma3:27b}
+      - DOCCHECK_PADDLE_MIN_CONF=${DOCCHECK_PADDLE_MIN_CONF:-0.50}
+      - DOCCHECK_PADDLEOCR_FORCE=${DOCCHECK_PADDLEOCR_FORCE:-0}
+      - DOCCHECK_PADDLEOCR_LANG=${DOCCHECK_PADDLEOCR_LANG:-japan}
+      - DOCCHECK_ASSIGNEES=${DOCCHECK_ASSIGNEES:-3}
+      - DOCCHECK_OVERLAP_RATIO=${DOCCHECK_OVERLAP_RATIO:-0.08}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+    volumes:
+      - doccheck_app_data:/data
+    ports:
+      - "${DOCCHECK_PUBLIC_PORT:-8011}:8011"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 volumes:
   backend_data:
   web_node_modules:
@@ -425,3 +467,4 @@ volumes:
   seaweedfs_data:
   ollama_data:
   chosei_app_data:
+  doccheck_app_data:

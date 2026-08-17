@@ -28,6 +28,7 @@ import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
 import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
+import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -82,6 +83,9 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'chosei/events/:eventId', element: <ChoseiEventPage /> },
     { path: 'chosei/events/:eventId/edit', element: <ChoseiEditPage /> },
     { path: 'apps/:teamId/chosei', element: <Navigate to='/chosei' replace /> },
+    // 書類領域分割チェックは専用ページへ（Compose profiles: ["doccheck"]）。
+    { path: 'doccheck', element: <DoccheckPage /> },
+    { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },
     // 監査ログは管理者限定の専用ページへ。旧 exApp URL（/apps/:teamId/audit）は
     // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
     { path: 'admin/audit', element: <AuditLogsPage /> },
