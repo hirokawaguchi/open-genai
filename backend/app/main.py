@@ -397,7 +397,7 @@ CHOSEI_SEED: dict[str, Any] = {
 DOCCHECK_SEED: dict[str, Any] = {
     "exAppId": "doccheck",
     "teamId": COMMON_TEAM_ID,
-    "exAppName": "書類チェック",
+    "exAppName": "書類読取とチェック",
     "endpoint": (
         DOCCHECK_APP_URL
         if DOCCHECK_APP_URL.endswith("/invoke")
@@ -409,7 +409,7 @@ DOCCHECK_SEED: dict[str, Any] = {
     "description": "申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。",
     "howToUse": (
         "## 使い方\n\n"
-        "- 専用ページ「書類チェック」から帳票テンプレートとスキャンを登録します。\n"
+        "- 専用ページ「書類読取とチェック」から帳票テンプレートとスキャンを登録します。\n"
         "- 領域ごとに OCR 候補を出し、庁内・外部へチェックを配信します。\n"
         "- 有効化: `docker compose --profile doccheck up -d` または `COMPOSE_PROFILES=doccheck`。\n"
     ),
@@ -3243,7 +3243,7 @@ async def _proxy_doccheck(
             status_code=503,
             content={
                 "error": (
-                    "書類チェックサービスに接続できませんでした。"
+                    "書類読取とチェックサービスに接続できませんでした。"
                     "有効化するには `docker compose --profile doccheck up -d` "
                     "または `COMPOSE_PROFILES=doccheck` を設定してください。"
                     f"（詳細: {e}）"
@@ -3254,7 +3254,7 @@ async def _proxy_doccheck(
     try:
         payload = res.json()
     except ValueError:
-        payload = {"error": "書類チェックサービスから不正な応答を受け取りました"}
+        payload = {"error": "書類読取とチェックサービスから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
 
 

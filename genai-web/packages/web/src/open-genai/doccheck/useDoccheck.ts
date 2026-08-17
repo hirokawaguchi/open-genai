@@ -35,7 +35,7 @@ export const useDoccheckConfig = () => {
           const data = e.data as DoccheckConfig | undefined;
           return {
             enabled: false,
-            error: data?.error || errorMessage(e, '書類チェックサービスに接続できません'),
+            error: data?.error || errorMessage(e, '書類読取とチェックサービスに接続できません'),
           };
         }
         throw e;

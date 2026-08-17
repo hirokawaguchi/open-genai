@@ -139,7 +139,7 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 |------|------|
 | `packages/web/src/open-genai/knowledge/` | 専用ページ（`KnowledgePage` / `TagsSection` / `RegisterSection` / `DocsSection` / `TagPicker` / `Notice`）と SWR フック（`useKnowledge.ts`）・型（`types.ts`） |
 | `packages/web/src/routes.tsx` | `/knowledge` ルート追加。`apps/:teamId/rag-tags` `rag-register` `rag-maintain` を `/knowledge` へリダイレクト。`/doccheck` ルート追加 |
-| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替。`DOCCHECK_PATH` とおすすめ「書類チェック」 |
+| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替。`DOCCHECK_PATH` とおすすめ「書類読取とチェック」 |
 | `packages/web/src/layout/navItems.ts` | 「ナレッジ管理」を `useRecommendedNavItems`（おすすめ）に追加。ナレッジは全チーム共通の専用ページに統合されたため、独立/管理者メニューではなく「おすすめ」に配置（旧管理 exApp カード廃止に伴う入口の置換）。SideNav / MobileMenu(sidebar) / LandingPage の「おすすめ」に自動反映 |
 | `rag-app/app/main.py` | 構造化 REST（`/knowledge/tags` 系・`/register`・`/urls` 系・`/docs/delete`・`/docs/retag`・`/clear`）。既存 `/invoke` action と書込ロジックを共用（`_kb_*`） |
 | `backend/app/main.py` | `/knowledge/*` 認可付きプロキシ（`_proxy` 相当の `_knowledge_get/_knowledge_post`）。共有=管理者のみ書込、チーム=メンバー、`refresh/clear`=管理者。`GET /knowledge/scopes` |

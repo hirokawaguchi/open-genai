@@ -907,10 +907,10 @@ def score_leaderboard(
 def public_index() -> HTMLResponse:
     return HTMLResponse(
         """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"/>
-<title>書類チェック</title>
+<title>書類読取とチェック</title>
 <link rel="stylesheet" href="/public/assets/style.css"/>
 </head><body><div class="wrap">
-<div class="brand">Open GENAI · 書類チェック</div>
+<div class="brand">Open GENAI · 書類読取とチェック</div>
 <p>チェック用のリンク（トークン付き URL）からアクセスしてください。</p>
 <p>同一端末では、すでに回答した項目は再配布されません。</p>
 <p><a class="btn" href="#" id="claim">次のチェックを始める</a></p>
