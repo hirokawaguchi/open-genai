@@ -44,3 +44,4 @@ deletion-report-*.txt
 !/docs/knowledge-mcp.md
 !/docs/dify-knowledge.md
 !/docs/chosei.md
+!/docs/doccheck.md

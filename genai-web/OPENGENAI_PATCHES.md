@@ -120,6 +120,7 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/open-genai/admin-usermgmt/` | 利用者一括管理 専用ページ（`UserMgmtPage`・`UserCsvSection`・`useUserMgmt`・`types`／管理者限定） |
 | `packages/web/src/open-genai/admin-modelpolicy/` | モデル利用制御 専用ページ（`ModelPolicyPage`・`useModelPolicy`・`types`／管理者限定） |
 | `packages/web/src/open-genai/admin-ngword/` | 入力制限（禁止ワード）専用ページ（`NgWordPage`・`useNgword`・`types`／管理者限定） |
+| `packages/web/src/open-genai/doccheck/` | 書類領域分割チェック専用ページ（`DoccheckPage`・`useDoccheck`・`types`。Compose profile `doccheck`） |
 | `backend/app/teams_store.py` | `user_app_pins` テーブル |
 | `backend/app/image_gen.py` | `is_sd_up()` による SD 稼働確認 |
 | `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword` |
@@ -137,8 +138,8 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | パス | 内容 |
 |------|------|
 | `packages/web/src/open-genai/knowledge/` | 専用ページ（`KnowledgePage` / `TagsSection` / `RegisterSection` / `DocsSection` / `TagPicker` / `Notice`）と SWR フック（`useKnowledge.ts`）・型（`types.ts`） |
-| `packages/web/src/routes.tsx` | `/knowledge` ルート追加。`apps/:teamId/rag-tags` `rag-register` `rag-maintain` を `/knowledge` へリダイレクト |
-| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替 |
+| `packages/web/src/routes.tsx` | `/knowledge` ルート追加。`apps/:teamId/rag-tags` `rag-register` `rag-maintain` を `/knowledge` へリダイレクト。`/doccheck` ルート追加 |
+| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替。`DOCCHECK_PATH` とおすすめ「書類読取とチェック」 |
 | `packages/web/src/layout/navItems.ts` | 「ナレッジ管理」を `useRecommendedNavItems`（おすすめ）に追加。ナレッジは全チーム共通の専用ページに統合されたため、独立/管理者メニューではなく「おすすめ」に配置（旧管理 exApp カード廃止に伴う入口の置換）。SideNav / MobileMenu(sidebar) / LandingPage の「おすすめ」に自動反映 |
 | `rag-app/app/main.py` | 構造化 REST（`/knowledge/tags` 系・`/register`・`/urls` 系・`/docs/delete`・`/docs/retag`・`/clear`）。既存 `/invoke` action と書込ロジックを共用（`_kb_*`） |
 | `backend/app/main.py` | `/knowledge/*` 認可付きプロキシ（`_proxy` 相当の `_knowledge_get/_knowledge_post`）。共有=管理者のみ書込、チーム=メンバー、`refresh/clear`=管理者。`GET /knowledge/scopes` |

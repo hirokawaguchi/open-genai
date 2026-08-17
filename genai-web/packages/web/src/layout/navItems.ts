@@ -25,6 +25,12 @@ export const CHOSEI_PATH = '/chosei';
 /** 日程調整 exApp の識別子（専用ページへ振り替える対象） */
 export const CHOSEI_EXAPP_ID = 'chosei';
 
+/** 書類領域分割チェックは汎用 exApp フォームではなく専用ページで提供する */
+export const DOCCHECK_PATH = '/doccheck';
+
+/** 書類読取とチェック exApp の識別子（専用ページへ振り替える対象） */
+export const DOCCHECK_EXAPP_ID = 'doccheck';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -119,6 +125,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     items.push({
+      label: '書類読取とチェック',
+      to: DOCCHECK_PATH,
+      description: '領域分割 OCR と分散チェック（要 profile doccheck）',
+    });
+
+    items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
       description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
@@ -145,6 +157,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 日程調整は専用ページへ振り替える
   if (item.app.value === CHOSEI_EXAPP_ID) {
     return CHOSEI_PATH;
+  }
+  // 書類読取とチェックは専用ページへ振り替える
+  if (item.app.value === DOCCHECK_EXAPP_ID) {
+    return DOCCHECK_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
