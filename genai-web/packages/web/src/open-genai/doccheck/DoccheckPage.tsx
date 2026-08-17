@@ -495,17 +495,17 @@ export const DoccheckPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='書類チェック' />
+      <PageTitle title='書類読取とチェック' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <div className='flex flex-col gap-4'>
           <BreadcrumbsNav
             items={[
               { label: 'ホーム', to: '/' },
               { label: 'AIアプリ', to: '/apps' },
-              { label: '書類チェック' },
+              { label: '書類読取とチェック' },
             ]}
           />
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>書類チェック</h1>
+          <h1 className='text-std-20B-160 lg:text-std-24B-150'>書類読取とチェック</h1>
           <p className='text-std-16N-170 text-solid-gray-700'>
             申請書類を領域分割し、OCR 候補と画像を分散チェックして補正データを作ります。外部公開は別ホストの
             /public のみです。
@@ -543,7 +543,7 @@ export const DoccheckPage = () => {
             role='status'
           >
             <p className='text-std-16B-150 text-solid-gray-900'>
-              書類チェックは現在有効化されていません
+              書類読取とチェックは現在有効化されていません
             </p>
             <p className='mt-2 text-solid-gray-700'>
               {config?.error || 'コンテナを profiles: ["doccheck"] で起動してください。'}
@@ -560,7 +560,7 @@ export const DoccheckPage = () => {
             <div
               className='grid grid-cols-[repeat(auto-fit,minmax(calc(140/16*1rem),1fr))] gap-2'
               role='tablist'
-              aria-label='書類チェックの操作'
+              aria-label='書類読取とチェックの操作'
             >
               {tabs.map((t) => {
                 const selected = tab === t.id;

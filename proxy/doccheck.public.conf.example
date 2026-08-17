@@ -1,4 +1,4 @@
-# 書類チェックの外部公開用 nginx 設定例（Open GENAI 本体とは別ホストで運用）
+# 書類読取とチェックの外部公開用 nginx 設定例（Open GENAI 本体とは別ホストで運用）
 #
 # 重要:
 #   - /public のみを doccheck-app へ upstream すること
