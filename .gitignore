@@ -3,6 +3,9 @@
 /.env.prod
 /.env.*.local
 **/.env
+*.env.bak
+**/*.env.bak
+.env.bak
 !**/.env.example
 !**/.env.*.example
 
