@@ -1,8 +1,8 @@
 fastapi==0.139.0
 uvicorn[standard]==0.34.0
 httpx==0.28.1
-Pillow==11.1.0
-pypdf==5.1.0
-python-multipart==0.0.20
+Pillow==12.3.0
+pypdf==6.15.0
+python-multipart==0.0.31
 numpy==2.2.3
 rapidocr-onnxruntime==1.4.4
