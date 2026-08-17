@@ -14,6 +14,7 @@
 | [v0.4.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.4.0) | `96f3484` | 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査 |
 | [v0.5.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.5.0) | `9e4015f` | 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化 |
 | [v0.6.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.6.0) | `340e88e` | 添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付、Dify エラー分類、OSS ガバナンス整備 |
+| [v0.7.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.7.0) | `d7ae61e` | 提案実装：書類読取とチェック・日程調整（chosei）・様式 Excel 文書生成（自治体の「あったらいいな」を AI で実現） |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -30,6 +31,25 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-17
+
+このリリースのテーマは **「提案実装」**。自治体の日常業務で挙がる
+「こんなことができたらいいな」「こんな機能があると便利だな」という声を、
+既存の AI 部品（OCR・Vision LLM・Dify ワークフロー・LLM アシスト）を
+組み合わせて形にした。**書類の読取とチェック**、**日程調整**、
+**様式 Excel からの文書生成** が主な追加で、いずれも既定では無効
+（opt-in の Compose `profiles` / 設定フラグ）のため、既存環境への影響はない。
+
+### 書類読取とチェック（doccheck）オプション機能
+
+- `doccheck-app`（FastAPI + SQLite）を Compose `profiles: ["doccheck"]` でオプション起動。申請書類を領域分割し、OCR 候補と画像を庁内・外部で分散チェックして補正データ（CSV / JSONL）を作る
+- 庁内は専用ページ `/doccheck`（DADS）。外部ゲストは `DOCCHECK_PUBLIC_ENDPOINT` の公開チェック画面のみ（デュアルイングレス）
+- OCR はテンプレート単位で `ppocr` / `fallback` / `always` を選択。`always` は PP-OCR（RapidOCR）と Vision（OpenAI 互換）の両候補を並記し、チェッカーが選ぶ。手書き・日付・数値・複数行のヒントに対応
+- 領域は単一行の N 分割（重なり付き）と複数行（行ごとに領域を作り出力で結合）に対応。単一行分割は安定した `group_id`、複数行は出力項目名で束ねる
+- チェック支援: 補正候補（同一項目の過去確定値・手入力を頻度順）、「空欄（記入なし）」の明示確定（合意・裁定・空文字出力）、「判読不能」。Vision の固定信頼度の数値表示は誤解を避けるため非表示
+- 合意判定（多数決／全員一致／単独）・裁定・スコア/トラップ・バッチ連続スキャンに対応。領域数上限は 50（`DOCCHECK_MAX_REGIONS`）
+- 詳細は [`docs/doccheck.md`](docs/doccheck.md)
+
 ### セキュリティ（LGWAN 公開面の硬化）
 
 - 既定秘密情報のまま起動すると backend が `[SECURITY]` 警告と設定手順を stderr に出力（`security_warn.py`）
@@ -41,6 +61,7 @@
 ### 依存更新
 
 - `pypdf` を 6.15.0 へ更新（CVE-2026-71852 / CVE-2026-71870。backend / rag-app / tests）
+- `doccheck-app`: `Pillow` 12.3.0 / `pypdf` 6.15.0 / `python-multipart` 0.0.31 へ更新（pip-audit 対応。backend と版を統一）
 
 ### dify-app: フォーム／様式 Excel からのファイル生成（後方互換）
 
@@ -368,7 +389,8 @@ Dify エラー分類の改善に加え、公式リポジトリとしてのガバ
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.3.2...v0.4.0
