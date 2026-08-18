@@ -29,6 +29,9 @@ import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
+import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
+import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
+import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -86,6 +89,11 @@ export const createRoutes = (): RouteObject[] => {
     // 書類領域分割チェックは専用ページへ（Compose profiles: ["doccheck"]）。
     { path: 'doccheck', element: <DoccheckPage /> },
     { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },
+    // フォームは専用ページへ（Compose profiles: ["patchform"]）。
+    { path: 'patchform', element: <PatchformPage /> },
+    { path: 'patchform/:formId', element: <PatchformDetailPage /> },
+    { path: 'patchform/:formId/edit', element: <PatchformEditPage /> },
+    { path: 'apps/:teamId/patchform', element: <Navigate to='/patchform' replace /> },
     // 監査ログは管理者限定の専用ページへ。旧 exApp URL（/apps/:teamId/audit）は
     // リダイレクトする（ピン留め・ブックマーク・履歴リンクの互換のため）。
     { path: 'admin/audit', element: <AuditLogsPage /> },
