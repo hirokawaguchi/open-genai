@@ -111,6 +111,9 @@ CHOSEI_PUBLIC_ENDPOINT = (os.environ.get("CHOSEI_PUBLIC_ENDPOINT") or "").rstrip
 # 書類領域分割チェック（Compose profiles: ["doccheck"]）
 DOCCHECK_APP_URL = os.environ.get("DOCCHECK_APP_URL", "http://doccheck-app:8011/invoke")
 DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rstrip("/")
+# フォーム（Compose profiles: ["patchform"]）。実 API は /patchform/* プロキシ。
+PATCHFORM_APP_URL = os.environ.get("PATCHFORM_APP_URL", "http://patchform-app:8012/invoke")
+PATCHFORM_PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
 
 # 管理者(SystemAdminGroup)のみに一覧表示・実行を許可する exApp
 # （共有ナレッジの管理系は共通チーム上だが管理者限定）
@@ -417,6 +420,32 @@ DOCCHECK_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# フォーム（共通アプリ）。UI は専用ページ /patchform。Compose profile `patchform` 未起動時は
+# /health 失敗で一覧非表示。endpoint はヘルスチェック用（実 API は /patchform/* プロキシ）。
+PATCHFORM_SEED: dict[str, Any] = {
+    "exAppId": "patchform",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "フォーム",
+    "endpoint": (
+        PATCHFORM_APP_URL
+        if PATCHFORM_APP_URL.endswith("/invoke")
+        else PATCHFORM_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「フォーム」から定義を作成し、共有 URL を配布します。\n"
+        "- 庁内利用者はログインしたまま回答できます。外部は公開 URL から回答します。\n"
+        "- 有効化: `docker compose --profile patchform up -d` または `COMPOSE_PROFILES=patchform`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
+
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
         "exAppName": f"{team_name}のナレッジ検索",
@@ -490,6 +519,7 @@ EXAPP_SEEDS = [
     PROMPT_SEED,
     CHOSEI_SEED,
     DOCCHECK_SEED,
+    PATCHFORM_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -3614,6 +3644,271 @@ async def doccheck_leaderboard(request: Request) -> JSONResponse:
         return err
     return await _proxy_doccheck(
         "GET", _doccheck_app_url("/scores/leaderboard"), headers
+    )
+
+
+# ---------------------------------------------------------------------------
+# フォーム専用ページ(/patchform) 用プロキシ
+#
+# Compose profiles: ["patchform"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _patchform_app_url(path: str) -> str:
+    if PATCHFORM_APP_URL.endswith("/invoke"):
+        base = PATCHFORM_APP_URL[: -len("/invoke")]
+    else:
+        base = PATCHFORM_APP_URL.rstrip("/")
+    return base + path
+
+
+def _patchform_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_patchform(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 30,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "フォームサービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile patchform up -d` "
+                    "または `COMPOSE_PROFILES=patchform` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/patchform/config")
+async def patchform_config(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    res = await _proxy_patchform("GET", _patchform_app_url("/config"), headers)
+    if res.status_code == 200:
+        try:
+            data = json.loads(res.body)
+            if isinstance(data, dict) and PATCHFORM_PUBLIC_ENDPOINT:
+                data["public_endpoint"] = (
+                    data.get("public_endpoint") or PATCHFORM_PUBLIC_ENDPOINT
+                )
+            return JSONResponse(status_code=200, content=data)
+        except Exception:  # noqa: BLE001
+            pass
+    return res
+
+
+@app.get("/patchform/forms")
+async def patchform_list_forms(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url("/forms"), headers)
+
+
+@app.post("/patchform/forms")
+async def patchform_create_form(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform("POST", _patchform_app_url("/forms"), headers, body)
+
+
+@app.get("/patchform/forms/{form_id}")
+async def patchform_get_form(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/forms/{form_id}"), headers
+    )
+
+
+@app.put("/patchform/forms/{form_id}")
+async def patchform_update_form(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "PUT", _patchform_app_url(f"/forms/{form_id}"), headers, body
+    )
+
+
+@app.delete("/patchform/forms/{form_id}")
+async def patchform_delete_form(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE", _patchform_app_url(f"/forms/{form_id}"), headers
+    )
+
+
+@app.post("/patchform/forms/{form_id}/status")
+async def patchform_set_status(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/forms/{form_id}/status"), headers, body
+    )
+
+
+@app.post("/patchform/forms/{form_id}/submissions")
+async def patchform_submit(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/forms/{form_id}/submissions"), headers, body
+    )
+
+
+@app.get("/patchform/forms/{form_id}/submissions")
+async def patchform_list_submissions(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/forms/{form_id}/submissions"), headers
+    )
+
+
+@app.get("/patchform/forms/{form_id}/export")
+async def patchform_export(form_id: str, request: Request) -> Response:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    fmt = (request.query_params.get("format") or "csv").strip() or "csv"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                _patchform_app_url(f"/forms/{form_id}/export") + f"?format={quote(fmt)}",
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"フォームサービスに接続できませんでした: {e}",
+                "enabled": False,
+            },
+        )
+    ctype = res.headers.get("content-type", "")
+    if ctype.startswith("text/csv") or "ndjson" in ctype:
+        return Response(
+            content=res.content,
+            media_type=ctype or "text/csv",
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="patchform_{form_id}.{"jsonl" if fmt == "jsonl" else "csv"}"',
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.post("/patchform/assist/generate")
+async def patchform_assist_generate(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url("/assist/generate"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.post("/patchform/extract")
+async def patchform_extract(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url("/extract"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.post("/patchform/assist/invite")
+async def patchform_assist_invite(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url("/assist/invite"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.get("/patchform/forms/{form_id}/carrier")
+async def patchform_carrier(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    fmt = request.query_params.get("format") or "txt"
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url(f"/forms/{form_id}/carrier") + f"?format={quote(fmt)}",
+        headers,
     )
 
 

@@ -66,6 +66,19 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/open-genai/chosei/` | 専用ページ（作成・詳細・編集） |
 | `packages/web/src/lib/fetcher.ts` | `teamApi.delete` が任意ボディを送れるよう拡張（イベント削除の暗証番号用） |
 
+### フォーム専用ページ（Open GENAI 拡張・オプション）
+
+庁内作成と外部回答のため専用ページ（`/patchform`）を提供する。Compose
+`profiles: ["patchform"]` 未起動時は有効化案内を表示。外部ゲストは別ホストの `/public`
+のみ（`patchform-app`）。旧 `/apps/:teamId/patchform` は `/patchform` へリダイレクトする。
+画面上の日本語名は「フォーム」。
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `packages/web/src/routes.tsx` | `/patchform` 系ルート追加、`/apps/:teamId/patchform` → `/patchform` リダイレクト |
+| `packages/web/src/layout/navItems.ts` | おすすめに「フォーム」、`pinnedAppHref` で `patchform` を `/patchform` に振替 |
+| `packages/web/src/open-genai/patchform/` | 専用ページ（一覧・編集・詳細）と共通ランタイム `FillForm` |
+
 ### 監査ログ専用ページ（Open GENAI 拡張・管理者限定）
 
 管理系の第一弾。汎用 exApp フォーム（Markdown 出力）では詳細確認・全文閲覧・エクスポート
@@ -121,6 +134,7 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/open-genai/admin-modelpolicy/` | モデル利用制御 専用ページ（`ModelPolicyPage`・`useModelPolicy`・`types`／管理者限定） |
 | `packages/web/src/open-genai/admin-ngword/` | 入力制限（禁止ワード）専用ページ（`NgWordPage`・`useNgword`・`types`／管理者限定） |
 | `packages/web/src/open-genai/doccheck/` | 書類領域分割チェック専用ページ（`DoccheckPage`・`useDoccheck`・`types`。Compose profile `doccheck`） |
+| `packages/web/src/open-genai/patchform/` | フォーム専用ページ（`PatchformPage`・編集・詳細・`FillForm`。Compose profile `patchform`） |
 | `backend/app/teams_store.py` | `user_app_pins` テーブル |
 | `backend/app/image_gen.py` | `is_sd_up()` による SD 稼働確認 |
 | `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword` |
@@ -139,7 +153,7 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 |------|------|
 | `packages/web/src/open-genai/knowledge/` | 専用ページ（`KnowledgePage` / `TagsSection` / `RegisterSection` / `DocsSection` / `TagPicker` / `Notice`）と SWR フック（`useKnowledge.ts`）・型（`types.ts`） |
 | `packages/web/src/routes.tsx` | `/knowledge` ルート追加。`apps/:teamId/rag-tags` `rag-register` `rag-maintain` を `/knowledge` へリダイレクト。`/doccheck` ルート追加 |
-| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替。`DOCCHECK_PATH` とおすすめ「書類読取とチェック」 |
+| `packages/web/src/layout/navItems.ts` | `KNOWLEDGE_PATH` 定数。`pinnedAppHref` で 3 種の管理 exApp ピンを `/knowledge` へ振替。`DOCCHECK_PATH` とおすすめ「書類読取とチェック」。`PATCHFORM_PATH` とおすすめ「フォーム」 |
 | `packages/web/src/layout/navItems.ts` | 「ナレッジ管理」を `useRecommendedNavItems`（おすすめ）に追加。ナレッジは全チーム共通の専用ページに統合されたため、独立/管理者メニューではなく「おすすめ」に配置（旧管理 exApp カード廃止に伴う入口の置換）。SideNav / MobileMenu(sidebar) / LandingPage の「おすすめ」に自動反映 |
 | `rag-app/app/main.py` | 構造化 REST（`/knowledge/tags` 系・`/register`・`/urls` 系・`/docs/delete`・`/docs/retag`・`/clear`）。既存 `/invoke` action と書込ロジックを共用（`_kb_*`） |
 | `backend/app/main.py` | `/knowledge/*` 認可付きプロキシ（`_proxy` 相当の `_knowledge_get/_knowledge_post`）。共有=管理者のみ書込、チーム=メンバー、`refresh/clear`=管理者。`GET /knowledge/scopes` |

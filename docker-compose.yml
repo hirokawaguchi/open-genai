@@ -68,6 +68,9 @@ services:
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-http://localhost:8011}
+      # フォーム（profiles: ["patchform"] で起動。未起動時は専用ページが案内を表示）
+      - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -452,6 +455,34 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: フォーム (`docker compose --profile patchform up -d`)
+  # 庁内は backend → 本サービス。外部ゲストは PATCHFORM_PUBLIC_ENDPOINT（開発時は :8012）。
+  # 本番の外部公開は /public のみを別プロキシで露出すること（proxy/patchform.public.conf.example）。
+  patchform-app:
+    profiles: ["patchform"]
+    build: ./patchform-app
+    container_name: open-genai-patchform-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - PATCHFORM_DB_PATH=/data/patchform.db
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
+      - PATCHFORM_RETENTION_DAYS=${PATCHFORM_RETENTION_DAYS:-365}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PATCHFORM_MODEL=${PATCHFORM_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma3:12b}}
+      - PATCHFORM_ENCRYPT_KEY=${PATCHFORM_ENCRYPT_KEY:-}
+    volumes:
+      - patchform_app_data:/data
+    ports:
+      # 開発用: ゲスト UI/API（/public）をホストから直接確認。本番はホスト公開せず別プロキシへ。
+      - "${PATCHFORM_PUBLIC_PORT:-8012}:8012"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 volumes:
   backend_data:
   web_node_modules:
@@ -468,3 +499,4 @@ volumes:
   ollama_data:
   chosei_app_data:
   doccheck_app_data:
+  patchform_app_data:
