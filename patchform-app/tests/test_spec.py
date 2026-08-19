@@ -152,7 +152,43 @@ def test_visible_when() -> None:
     assert aerr is None
     assert "detail" not in cleaned
     _c, aerr = spec.validate_answers(definition, {"need": "はい"})
-    assert aerr and "詳細" in aerr
+    assert aerr and "必須" in aerr
+
+
+def test_visible_when_in_and_number() -> None:
+    definition, err = spec.validate_definition(
+        {
+            "$version": spec.SPEC_VERSION,
+            "metadata": {"title": "t"},
+            "components": [
+                _comp("kind", "checkbox", label="区分", properties={"options": ["A", "B", "C"]}),
+                _comp("qty", "number", label="数量", required=True),
+                _comp(
+                    "note",
+                    "text",
+                    label="備考",
+                    required=True,
+                    visibleWhen=[
+                        {"field": "kind", "in": ["A", "B"]},
+                        {"field": "qty", "eq": "2"},
+                    ],
+                ),
+            ],
+        }
+    )
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(definition, {"kind": ["A"], "qty": 3})
+    assert aerr is None
+    assert "note" not in cleaned
+    cleaned, aerr = spec.validate_answers(definition, {"kind": ["C"], "qty": 2})
+    assert aerr is None
+    assert "note" not in cleaned
+    _c, aerr = spec.validate_answers(definition, {"kind": ["A"], "qty": 2})
+    assert aerr and "必須" in aerr
+    cleaned, aerr = spec.validate_answers(
+        definition, {"kind": ["A"], "qty": 2, "note": "詳細"}
+    )
+    assert aerr is None and cleaned["note"] == "詳細"
 
 
 def test_composites_and_formula() -> None:
@@ -299,6 +335,28 @@ def test_location_qr_and_ai_fields() -> None:
     assert berr and "画像 URL" in berr
 
 
+def test_file_and_signature_values() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp("att", "file", label="添付", required=True),
+        _comp("sign", "signature_pad", label="署名", required=True),
+    ]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "att": {"file_id": "11111111-1111-1111-1111-111111111111", "filename": "a.pdf", "size": 12},
+            "sign": {"file_id": "22222222-2222-2222-2222-222222222222", "filename": "sign.png"},
+        },
+    )
+    assert aerr is None and cleaned
+    assert cleaned["att"]["file_id"].startswith("1111")
+    assert cleaned["sign"]["filename"] == "sign.png"
+    _c, aerr = spec.validate_answers(definition, {"att": "", "sign": "not-an-image"})
+    assert aerr and "必須" in aerr
+
+
 def test_hide_label_persisted() -> None:
     raw = spec.empty_definition()
     raw["components"] = [
@@ -350,6 +408,50 @@ def test_financial_yuucho_and_codes() -> None:
         },
     )
     assert aerr is None and cleaned
+    assert cleaned["bank"]["branch_code"] == "017"
+    assert cleaned["bank"]["account_number"] == "2345671"
+    assert cleaned["bank"]["bank_code"] == "9900"
+
+
+def test_user_info_gender_and_birth() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [_comp("who", "user_info_composite", label="申請者", required=True)]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "who": {
+                "last_name": "山田",
+                "first_name": "太郎",
+                "gender": "男",
+                "birth_date": "1990-01-02",
+            }
+        },
+    )
+    assert aerr is None and cleaned
+    _c, aerr = spec.validate_answers(
+        definition,
+        {"who": {"last_name": "山田", "first_name": "太郎", "gender": "不明"}},
+    )
+    assert aerr and "性別" in aerr
+
+
+def test_corporate_check_digit() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [_comp("co", "company_info_composite", label="法人", required=True)]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {"co": {"company_name": "国税庁", "corporate_number": "7000012050002"}},
+    )
+    assert aerr is None and cleaned
+    _c, aerr = spec.validate_answers(
+        definition,
+        {"co": {"company_name": "例", "corporate_number": "1234567890123"}},
+    )
+    assert aerr and "検査数字" in aerr
 
 
 def test_canonicalize_fullwidth_and_hyphens() -> None:
@@ -371,7 +473,7 @@ def test_canonicalize_fullwidth_and_hyphens() -> None:
                 "city": "港区",
                 "street": "１ー２−３",
             },
-            "co": {"company_name": "例", "corporate_number": "1234567890123"},
+            "co": {"company_name": "例", "corporate_number": "7000012050002"},
         },
     )
     assert aerr is None and cleaned
@@ -390,11 +492,15 @@ if __name__ == "__main__":
     test_answers_required()
     test_answers_email_and_select()
     test_visible_when()
+    test_visible_when_in_and_number()
     test_composites_and_formula()
     test_mynumber_internal_only()
     test_catalog_enabled_only_in_public()
     test_location_qr_and_ai_fields()
+    test_file_and_signature_values()
     test_hide_label_persisted()
     test_financial_yuucho_and_codes()
+    test_user_info_gender_and_birth()
+    test_corporate_check_digit()
     test_canonicalize_fullwidth_and_hyphens()
     print("ok")

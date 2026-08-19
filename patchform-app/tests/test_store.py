@@ -114,6 +114,8 @@ def test_publish_submit_csv_guest() -> None:
         assert err is None and published
         assert published["status"] == "published"
         assert published["published_version_id"]
+        assert published["draft_differs"] is False
+        assert published["submission_count"] == 0
 
         public, err = store.public_form(form["guest_token"])
         assert err is None and public
@@ -146,6 +148,9 @@ def test_publish_submit_csv_guest() -> None:
         assert err is None and result
         assert result["receipt_code"]
 
+        after = store.get_form(form["id"])
+        assert after and after["submission_count"] == 1
+        assert after["draft_differs"] is False
         items, err = store.list_submissions(form["id"], actor_user_id="u1")
         assert err is None and items
         assert len(items) == 1
@@ -190,8 +195,12 @@ def test_answers_use_submitted_version() -> None:
             actor_user_id="u1",
             definition=changed,
         )
+        pending = store.get_form(form["id"])
+        assert pending and pending["draft_differs"] is True
+        assert pending["submission_count"] == 1
         published, err = store.set_status(form["id"], actor_user_id="u1", status="published")
         assert err is None and published and published["published_version"] == 2
+        assert published["draft_differs"] is False
         result, err = store.submit_answers(
             form_id=form["id"],
             answers={"new_field": "新回答"},

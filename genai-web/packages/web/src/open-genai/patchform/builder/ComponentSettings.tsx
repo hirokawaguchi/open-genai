@@ -1,6 +1,6 @@
 import { Label } from '@/components/ui/dads/Label';
 import { catalogTypeHelp } from '../labels';
-import type { CatalogItem, FormComponent } from '../types';
+import type { CatalogItem, FormComponent, VisibleWhenRule } from '../types';
 
 type Props = {
   component: FormComponent;
@@ -22,7 +22,18 @@ const IMI_PRESETS = [
 
 export const ComponentSettings = ({ component: c, catalog, siblings, onChange }: Props) => {
   const meta = catalog.find((x) => x.type === c.type);
-  const visibleWhen = !Array.isArray(c.visibleWhen) ? c.visibleWhen : undefined;
+  const rules: VisibleWhenRule[] = Array.isArray(c.visibleWhen)
+    ? c.visibleWhen
+    : c.visibleWhen
+      ? [c.visibleWhen]
+      : [];
+  const setRules = (next: VisibleWhenRule[]) => {
+    const cleaned = next.filter((r) => r.field);
+    onChange({
+      ...c,
+      visibleWhen: cleaned.length === 0 ? undefined : cleaned.length === 1 ? cleaned[0] : cleaned,
+    });
+  };
 
   return (
     <div className='flex flex-col gap-3'>
@@ -156,41 +167,99 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           ))}
         </datalist>
       </div>
-      <div className='grid gap-2 md:grid-cols-2'>
-        <div>
-          <Label size='sm'>表示条件の部品</Label>
-          <select
-            className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-            value={visibleWhen?.field || ''}
-            onChange={(e) =>
-              onChange({
-                ...c,
-                visibleWhen: e.target.value
-                  ? { field: e.target.value, eq: visibleWhen?.eq || '' }
-                  : undefined,
-              })
-            }
-          >
-            <option value=''>常に表示</option>
-            {siblings
-              .filter((x) => x.id !== c.id)
-              .map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.label || x.id}
-                </option>
-              ))}
-          </select>
-        </div>
-        {visibleWhen?.field ? (
-          <div>
-            <Label size='sm'>この値のとき表示</Label>
-            <input
-              className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-              value={visibleWhen.eq || ''}
-              onChange={(e) => onChange({ ...c, visibleWhen: { ...visibleWhen, eq: e.target.value } })}
-            />
-          </div>
-        ) : null}
+      <div className='flex flex-col gap-2'>
+        <Label size='sm'>表示条件</Label>
+        <p className='text-dns-14N-130 text-solid-gray-700'>
+          すべての条件を満たすときだけ表示します。隠れた必須項目は回答不要です。
+        </p>
+        {rules.map((rule, i) => {
+          const mode = rule.in ? 'in' : 'eq';
+          return (
+            <div key={`${rule.field}-${i}`} className='grid gap-2 rounded-8 border border-solid-gray-300 p-3 md:grid-cols-2'>
+              <div>
+                <Label size='sm'>部品</Label>
+                <select
+                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                  value={rule.field}
+                  onChange={(e) => {
+                    const next = [...rules];
+                    next[i] = { ...rule, field: e.target.value };
+                    setRules(next);
+                  }}
+                >
+                  <option value=''>選択してください</option>
+                  {siblings
+                    .filter((x) => x.id !== c.id)
+                    .map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.label || x.id}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <Label size='sm'>比べ方</Label>
+                <select
+                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                  value={mode}
+                  onChange={(e) => {
+                    const next = [...rules];
+                    if (e.target.value === 'in') {
+                      next[i] = {
+                        field: rule.field,
+                        in: rule.in ?? (rule.eq ? [rule.eq] : []),
+                      };
+                    } else {
+                      next[i] = { field: rule.field, eq: rule.eq ?? (rule.in || []).join(',') };
+                    }
+                    setRules(next);
+                  }}
+                >
+                  <option value='eq'>この値のとき</option>
+                  <option value='in'>いずれかの値のとき</option>
+                </select>
+              </div>
+              <div className='md:col-span-2'>
+                <Label size='sm'>{mode === 'in' ? '値（カンマ区切り）' : '値'}</Label>
+                <input
+                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                  value={mode === 'in' ? (rule.in || []).join(',') : rule.eq || ''}
+                  onChange={(e) => {
+                    const next = [...rules];
+                    next[i] =
+                      mode === 'in'
+                        ? {
+                            field: rule.field,
+                            in: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                          }
+                        : { field: rule.field, eq: e.target.value };
+                    setRules(next);
+                  }}
+                />
+              </div>
+              <div>
+                <button
+                  type='button'
+                  className='text-dns-16N-130 text-blue-900 underline'
+                  onClick={() => setRules(rules.filter((_, j) => j !== i))}
+                >
+                  この条件を削除
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        <button
+          type='button'
+          className='self-start text-std-16N-170 text-blue-900 underline'
+          onClick={() => {
+            const first = siblings.find((x) => x.id !== c.id);
+            if (!first) return;
+            setRules([...rules, { field: first.id, eq: '' }]);
+          }}
+        >
+          条件を追加
+        </button>
       </div>
       {meta?.has_options && (
         <div>

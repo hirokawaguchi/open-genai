@@ -3812,16 +3812,66 @@ async def patchform_list_submissions(form_id: str, request: Request) -> JSONResp
     )
 
 
+@app.post("/patchform/forms/{form_id}/submissions/{submission_id}/withdraw")
+async def patchform_withdraw_submission(
+    form_id: str, submission_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/forms/{form_id}/submissions/{submission_id}/withdraw"),
+        headers,
+        body,
+    )
+
+
+@app.get("/patchform/forms/{form_id}/submissions/{submission_id}")
+async def patchform_reveal_submission(
+    form_id: str, submission_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url(f"/forms/{form_id}/submissions/{submission_id}"),
+        headers,
+    )
+
+
+@app.get("/patchform/forms/{form_id}/draft")
+async def patchform_get_draft(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url(f"/forms/{form_id}/draft"), headers)
+
+
+@app.get("/patchform/forms/{form_id}/audit")
+async def patchform_list_audit(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url(f"/forms/{form_id}/audit"), headers)
+
+
 @app.get("/patchform/forms/{form_id}/export")
 async def patchform_export(form_id: str, request: Request) -> Response:
     err, headers = _patchform_headers(request)
     if err:
         return err
     fmt = (request.query_params.get("format") or "csv").strip() or "csv"
+    reveal = (request.query_params.get("reveal") or "").strip()
+    qs = f"?format={quote(fmt)}"
+    if reveal:
+        qs += f"&reveal={quote(reveal)}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.get(
-                _patchform_app_url(f"/forms/{form_id}/export") + f"?format={quote(fmt)}",
+                _patchform_app_url(f"/forms/{form_id}/export") + qs,
                 headers=headers,
             )
     except httpx.HTTPError as e:
@@ -3849,6 +3899,87 @@ async def patchform_export(form_id: str, request: Request) -> Response:
     except ValueError:
         payload = {"error": "フォームサービスから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.post("/patchform/forms/{form_id}/files")
+async def patchform_upload_file(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/forms/{form_id}/files"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.get("/patchform/forms/{form_id}/files/{file_id}")
+async def patchform_download_file(form_id: str, file_id: str, request: Request) -> Response:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                _patchform_app_url(f"/forms/{form_id}/files/{file_id}"),
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"フォームサービスに接続できませんでした: {e}",
+                "enabled": False,
+            },
+        )
+    ctype = res.headers.get("content-type", "")
+    if res.status_code == 200 and ctype and not ctype.startswith("application/json"):
+        return Response(
+            content=res.content,
+            media_type=ctype,
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="patchform_{file_id}"',
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/patchform/lookup/postal")
+async def patchform_lookup_postal(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    zipcode = (request.query_params.get("zip") or "").strip()
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url("/lookup/postal") + f"?zip={quote(zipcode)}",
+        headers,
+        timeout=15,
+    )
+
+
+@app.get("/patchform/lookup/corporate")
+async def patchform_lookup_corporate(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    number = (request.query_params.get("number") or "").strip()
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url("/lookup/corporate") + f"?number={quote(number)}",
+        headers,
+        timeout=15,
+    )
 
 
 @app.post("/patchform/assist/generate")

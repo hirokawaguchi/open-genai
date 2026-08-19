@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:patchform-guest": "vite build --config vite.patchform-guest.config.ts",
     "format": "biome format --write *.config.json && biome format --write src",
     "format:test": "biome format --write tests",
     "lint": "biome lint src",
