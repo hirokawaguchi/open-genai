@@ -9,6 +9,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# guest.js / guest.css は genai-web で `npm run build:patchform-guest` してからコピーする
 COPY public ./public
 
 EXPOSE 8012

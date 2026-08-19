@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.lookup import corporate_check_digit_ok, yuucho_to_branch
 from app.normalize import canonicalize
 
 SPEC_VERSION = "opengenai-patchform/1"
@@ -18,6 +19,7 @@ SENSITIVE_TYPES = frozenset({"mynumber"})
 
 STATUSES = ("draft", "published", "closed", "archived")
 VISIBILITIES = ("internal", "public", "both")
+IDENTITY_MODES = ("required", "optional", "anonymous")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^[0-9+\-() ]{8,20}$")
@@ -57,18 +59,18 @@ CATALOG: dict[str, dict[str, Any]] = {
     "datetime-local": _item("日時", "datetime", "日付と時刻を一緒に"),
     "daterange": _item("期間", "datetime", "開始日と終了日"),
     "address_composite": _item("住所", "composite", "郵便番号・都道府県・市区町村など"),
-    "user_info_composite": _item("氏名", "composite", "姓・名・フリガナ"),
+    "user_info_composite": _item("氏名", "composite", "姓・名・フリガナ・性別・生年月日"),
     "company_info_composite": _item("法人情報", "composite", "法人名・法人番号・代表者"),
     "financial_institution_composite": _item(
-        "金融機関", "composite", "振込先。ゆうちょ・金融機関コード・支店コード"
+        "金融機関", "composite", "振込先。ゆうちょは記号番号から店番へ換算"
     ),
     "text_display": _item("説明文", "display", "回答ではなく案内文を出す"),
     "image_display": _item("画像表示", "display", "案内図などの画像を出す"),
     "divider": _item("区切り線", "display", "項目の区切り"),
-    "page_break": _item("改ページ", "display", "長いフォームの区切り（見た目）"),
-    "file": _item("ファイル", "advanced", "添付ファイル名を受け取る"),
+    "page_break": _item("改ページ", "display", "次のページへ進む区切り。進捗と次へが出る"),
+    "file": _item("ファイル", "advanced", "添付ファイルを受け取り、実ファイルを保管する"),
     "password": _item("パスワード", "advanced", "入力内容を隠す"),
-    "calculated": _item("計算", "advanced", "他の数値から自動計算する"),
+    "calculated": _item("計算", "advanced", "他の数値からその場で自動計算する"),
     "mynumber": _item("マイナンバー", "advanced", "12桁。庁内専用・保存時暗号化"),
     "matrix_question": _item("マトリクス", "advanced", "行×列の表で選ぶ"),
     "signature_pad": _item("署名", "advanced", "署名画像を添付する"),
@@ -84,7 +86,14 @@ DISPLAY_TYPES = frozenset(
 
 COMPOSITE_SUBFIELDS: dict[str, list[str]] = {
     "address_composite": ["postal_code", "prefecture", "city", "street", "building"],
-    "user_info_composite": ["last_name", "first_name", "last_name_kana", "first_name_kana"],
+    "user_info_composite": [
+        "last_name",
+        "first_name",
+        "last_name_kana",
+        "first_name_kana",
+        "gender",
+        "birth_date",
+    ],
     "company_info_composite": ["company_name", "corporate_number", "representative"],
     "financial_institution_composite": [
         "is_yuucho",
@@ -113,6 +122,8 @@ _BANK_CODE_RE = re.compile(r"^\d{4}$")
 _BRANCH_CODE_RE = re.compile(r"^\d{3}$")
 _YUCHO_SYMBOL_RE = re.compile(r"^\d{3,5}$")
 _YUCHO_NUMBER_RE = re.compile(r"^\d{1,8}$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_GENDERS = frozenset({"男", "女", "その他", "回答しない"})
 _FORMULA_RE = re.compile(r"^[0-9+\-*/().\s]+$")
 _FIELD_REF_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
 
@@ -255,6 +266,14 @@ def validate_definition(
     }, None
 
 
+def _as_strings(value: Any) -> list[str]:
+    if value is None or value == "":
+        return [""]
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
 def _is_visible(comp: dict[str, Any], answers: dict[str, Any]) -> bool:
     cond = comp.get("visibleWhen")
     if not cond:
@@ -264,12 +283,12 @@ def _is_visible(comp: dict[str, Any], answers: dict[str, Any]) -> bool:
         if not isinstance(rule, dict):
             return False
         field = str(rule.get("field") or "")
-        value = answers.get(field)
-        if "eq" in rule and value != rule["eq"]:
+        got = _as_strings(answers.get(field))
+        if "eq" in rule and str(rule["eq"]) not in got:
             return False
         if "in" in rule:
             allowed = rule["in"]
-            if not isinstance(allowed, list) or value not in allowed:
+            if not isinstance(allowed, list) or not any(str(v) in got for v in allowed):
                 return False
     return True
 
@@ -277,6 +296,8 @@ def _is_visible(comp: dict[str, Any], answers: dict[str, Any]) -> bool:
 def validate_answers(
     definition: dict[str, Any],
     answers: Any,
+    *,
+    partial: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(answers, dict):
         return None, "回答はオブジェクトである必要があります"
@@ -290,12 +311,15 @@ def validate_answers(
             continue
         raw = answers.get(cid)
         if raw is None or raw == "" or raw == []:
-            if comp.get("required"):
+            if comp.get("required") and not partial:
                 return None, f"{comp['label']}は必須です"
             continue
         raw = canonicalize(comp, raw)
-        err = _validate_value(comp, raw)
+        err = _validate_value(comp, raw, partial=partial)
         if err:
+            if partial and ("必須" in err or "不足" in err):
+                cleaned[cid] = raw
+                continue
             return None, err
         cleaned[cid] = _normalize_value(comp, raw)
     for comp in definition.get("components") or []:
@@ -305,6 +329,8 @@ def validate_answers(
             continue
         value, err = evaluate_formula(comp, cleaned)
         if err:
+            if partial:
+                continue
             return None, err
         cleaned[comp["id"]] = value
     return cleaned, None
@@ -326,7 +352,7 @@ def evaluate_formula(comp: dict[str, Any], answers: dict[str, Any]) -> tuple[flo
         return None, f"{comp['label']}を計算できませんでした"
 
 
-def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
+def _validate_value(comp: dict[str, Any], raw: Any, *, partial: bool = False) -> str | None:
     ctype = comp["type"]
     label = comp["label"]
     if ctype in ("text", "textarea", "phone", "email", "date", "time", "datetime-local", "password"):
@@ -376,9 +402,11 @@ def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
                 return f"{label}の列が不正です"
         return None
     if ctype == "signature_pad":
-        if not isinstance(raw, str) or not raw.startswith("data:image"):
-            return f"{label}の署名データが不正です"
-        return None
+        if isinstance(raw, str) and raw.startswith("data:image"):
+            return None
+        if isinstance(raw, dict) and str(raw.get("file_id") or "").strip():
+            return None
+        return f"{label}の署名データが不正です"
     if ctype == "location":
         if not isinstance(raw, dict):
             return f"{label}の形式が不正です"
@@ -421,7 +449,7 @@ def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
     if ctype == "file":
         if isinstance(raw, str) and raw.strip():
             return None
-        if isinstance(raw, dict) and raw.get("filename"):
+        if isinstance(raw, dict) and (raw.get("file_id") or raw.get("filename")):
             return None
         return f"{label}の形式が不正です"
     if ctype in COMPOSITE_SUBFIELDS:
@@ -435,17 +463,27 @@ def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
                 required.extend(["yuucho_symbol", "yuucho_number"])
             else:
                 required.extend(["bank_name", "account_number"])
-        for key in required:
-            if not str(raw.get(key) or "").strip():
-                return f"{label}の必須項目が不足しています"
+        if not partial:
+            for key in required:
+                if not str(raw.get(key) or "").strip():
+                    return f"{label}の必須項目が不足しています"
         if ctype == "address_composite":
             postal = str(raw.get("postal_code") or "").strip()
             if postal and not _POSTAL_RE.match(postal):
                 return f"{label}の郵便番号が不正です"
+        if ctype == "user_info_composite":
+            gender = str(raw.get("gender") or "").strip()
+            if gender and gender not in _GENDERS:
+                return f"{label}の性別が不正です"
+            birth = str(raw.get("birth_date") or "").strip()
+            if birth and not _DATE_RE.match(birth):
+                return f"{label}の生年月日が不正です"
         if ctype == "company_info_composite":
             corp = str(raw.get("corporate_number") or "").strip()
             if corp and not _CORP_RE.match(corp):
                 return f"{label}の法人番号は13桁です"
+            if corp and not corporate_check_digit_ok(corp):
+                return f"{label}の法人番号の検査数字が正しくありません"
         if ctype == "financial_institution_composite":
             bank_code = str(raw.get("bank_code") or "").strip()
             branch_code = str(raw.get("branch_code") or "").strip()
@@ -487,4 +525,38 @@ def _normalize_value(comp: dict[str, Any], raw: Any) -> Any:
         }
     if ctype == "qr_scanner":
         return str(raw).strip()
+    if ctype == "file":
+        if isinstance(raw, str):
+            return {"filename": raw.strip()}
+        return {
+            "file_id": str(raw.get("file_id") or ""),
+            "filename": str(raw.get("filename") or ""),
+            "mime": str(raw.get("mime") or ""),
+            "size": int(raw.get("size") or 0) if str(raw.get("size") or "0").isdigit() else 0,
+        }
+    if ctype == "signature_pad" and isinstance(raw, dict):
+        return {
+            "file_id": str(raw.get("file_id") or ""),
+            "filename": str(raw.get("filename") or ""),
+            "mime": str(raw.get("mime") or ""),
+            "size": int(raw.get("size") or 0) if str(raw.get("size") or "0").isdigit() else 0,
+        }
+    if ctype == "financial_institution_composite" and isinstance(raw, dict) and _truthy(
+        raw.get("is_yuucho")
+    ):
+        converted = yuucho_to_branch(
+            str(raw.get("yuucho_symbol") or ""),
+            str(raw.get("yuucho_number") or ""),
+        )
+        out = dict(raw)
+        for key, val in converted.items():
+            if val and not str(out.get(key) or "").strip():
+                out[key] = val
+            elif key in ("bank_code", "bank_name") and val:
+                out[key] = val
+        if converted.get("branch_code"):
+            out["branch_code"] = converted["branch_code"]
+        if converted.get("account_number"):
+            out["account_number"] = converted["account_number"]
+        return out
     return raw

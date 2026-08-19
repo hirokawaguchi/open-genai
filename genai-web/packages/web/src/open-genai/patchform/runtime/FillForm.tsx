@@ -1,11 +1,18 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/dads/Button';
 import { Checkbox } from '@/components/ui/dads/Checkbox';
 import { Label } from '@/components/ui/dads/Label';
 import { Radio } from '@/components/ui/dads/Radio';
-import type { FormComponent, FormDefinition } from '../types';
+import type { FormComponent, FormDefinition, UploadedFile } from '../types';
 import { FilePickButton } from './FilePickButton';
+import { evaluateFormula, formatCalculated } from './formula';
+import { GENDERS, PREFECTURES, yuuchoToBranch } from './japan';
 import { COMPOSITE_NORMALIZE, normalizeInput, type NormalizeKind } from './normalizeInput';
+import { nextFilledPage, splitPages } from './pages';
+import { isVisible, missingRequired } from './visibility';
 
 export type ExtractKind = 'image' | 'document';
+export type UploadKind = 'file' | 'signature';
 
 type Props = {
   definition: FormDefinition;
@@ -13,6 +20,11 @@ type Props = {
   onChange: (id: string, value: unknown) => void;
   disabled?: boolean;
   onExtract?: (kind: ExtractKind, file: File) => Promise<{ extracted: string }>;
+  onUpload?: (file: File, kind: UploadKind) => Promise<UploadedFile>;
+  onPostalLookup?: (zip: string) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
+  onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
+  wizard?: boolean;
+  onWizardChange?: (info: { page: number; total: number; isLast: boolean }) => void;
 };
 
 const optionsOf = (c: FormComponent): string[] => {
@@ -20,42 +32,9 @@ const optionsOf = (c: FormComponent): string[] => {
   return raw.map((o) => String(o));
 };
 
-const isVisible = (c: FormComponent, values: Record<string, unknown>): boolean => {
-  const cond = c.visibleWhen;
-  if (!cond) return true;
-  const rules = Array.isArray(cond) ? cond : [cond];
-  return rules.every((rule) => {
-    const value = values[rule.field];
-    if (rule.eq !== undefined && value !== rule.eq) return false;
-    if (rule.in && !rule.in.includes(String(value ?? ''))) return false;
-    return true;
-  });
-};
-
 const blurNorm = (kind: NormalizeKind, current: string, apply: (next: string) => void) => {
   const next = normalizeInput(current, kind);
   if (next !== current) apply(next);
-};
-
-const COMPOSITE_FIELDS: Record<string, Array<{ key: string; label: string }>> = {
-  address_composite: [
-    { key: 'postal_code', label: '郵便番号' },
-    { key: 'prefecture', label: '都道府県' },
-    { key: 'city', label: '市区町村' },
-    { key: 'street', label: '町名・番地' },
-    { key: 'building', label: '建物名' },
-  ],
-  user_info_composite: [
-    { key: 'last_name', label: '姓' },
-    { key: 'first_name', label: '名' },
-    { key: 'last_name_kana', label: 'セイ' },
-    { key: 'first_name_kana', label: 'メイ' },
-  ],
-  company_info_composite: [
-    { key: 'company_name', label: '法人名' },
-    { key: 'corporate_number', label: '法人番号' },
-    { key: 'representative', label: '代表者' },
-  ],
 };
 
 const ACCOUNT_TYPES = ['普通', '当座', '貯蓄'];
@@ -71,21 +50,66 @@ const asRecord = (value: unknown): Record<string, string> =>
 const safeImageSrc = (src: string): string =>
   src.startsWith('https://') || src.startsWith('http://') || src.startsWith('data:image/') ? src : '';
 
+const fileMeta = (value: unknown): { filename: string } => {
+  if (typeof value === 'string') return { filename: value };
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const rec = value as { filename?: string };
+    return { filename: String(rec.filename || '') };
+  }
+  return { filename: '' };
+};
+
 const Field = ({
   component: c,
   value,
   onChange,
   disabled,
   onExtract,
+  onUpload,
+  onPostalLookup,
+  onCorporateLookup,
 }: {
   component: FormComponent;
   value: unknown;
   onChange: (v: unknown) => void;
   disabled?: boolean;
   onExtract?: (kind: ExtractKind, file: File) => Promise<{ extracted: string }>;
+  onUpload?: (file: File, kind: UploadKind) => Promise<UploadedFile>;
+  onPostalLookup?: (zip: string) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
+  onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
 }) => {
   const id = `pf-${c.id}`;
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const common = 'mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170';
+  const pickUpload = async (file: File | null, kind: UploadKind) => {
+    if (!file) {
+      setUploadError(null);
+      onChange('');
+      return;
+    }
+    if (!onUpload) {
+      onChange(kind === 'signature' ? '' : { filename: file.name });
+      if (kind === 'signature') {
+        const reader = new FileReader();
+        reader.onload = () => onChange(String(reader.result || ''));
+        reader.readAsDataURL(file);
+      }
+      return;
+    }
+    setUploadBusy(true);
+    setUploadError(null);
+    try {
+      onChange(await onUpload(file, kind));
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'アップロードに失敗しました');
+      onChange('');
+    } finally {
+      setUploadBusy(false);
+    }
+  };
   if (c.type === 'financial_institution_composite') {
     const obj = asRecord(value);
     const yuucho = isYuucho(obj);
@@ -121,7 +145,12 @@ const Field = ({
                 value={obj.yuucho_symbol ?? ''}
                 disabled={disabled}
                 onChange={(e) => set({ yuucho_symbol: e.target.value })}
-                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ yuucho_symbol: v }))}
+                onBlur={(e) =>
+                  blurNorm('digits', e.target.value, (v) => {
+                    const conv = yuuchoToBranch(v, obj.yuucho_number ?? '');
+                    set({ yuucho_symbol: v, ...conv });
+                  })
+                }
               />
             </div>
             <div>
@@ -137,9 +166,21 @@ const Field = ({
                 value={obj.yuucho_number ?? ''}
                 disabled={disabled}
                 onChange={(e) => set({ yuucho_number: e.target.value })}
-                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ yuucho_number: v }))}
+                onBlur={(e) =>
+                  blurNorm('digits', e.target.value, (v) => {
+                    const conv = yuuchoToBranch(obj.yuucho_symbol ?? '', v);
+                    set({ yuucho_number: v, ...conv });
+                  })
+                }
               />
             </div>
+            {obj.branch_code ? (
+              <p className='md:col-span-2 text-dns-14N-130 text-solid-gray-700'>
+                店番 {obj.branch_code}
+                {obj.account_number ? ` / 口座番号 ${obj.account_number}` : ''}
+                （記号・番号から換算）
+              </p>
+            ) : null}
             <div className='md:col-span-2'>
               <Label htmlFor={`${id}-account_holder`} size='sm'>
                 口座名義
@@ -261,40 +302,304 @@ const Field = ({
       </div>
     );
   }
-  const sub = COMPOSITE_FIELDS[c.type];
-  if (sub) {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, string>) : {};
+  if (c.type === 'address_composite') {
+    const obj = asRecord(value);
+    const set = (patch: Record<string, string>) => onChange({ ...obj, ...patch });
+    const runPostal = async (raw: string) => {
+      const zip = normalizeInput(raw, 'postal');
+      set({ postal_code: zip });
+      if (!onPostalLookup || zip.replace(/\D/g, '').length !== 7) return;
+      setLookupBusy(true);
+      setLookupError(null);
+      try {
+        const found = await onPostalLookup(zip);
+        if (!found) {
+          setLookupError('該当する住所が見つかりません');
+          return;
+        }
+        set({
+          postal_code: zip,
+          prefecture: found.prefecture || obj.prefecture,
+          city: found.city || obj.city,
+          street: found.street || obj.street,
+        });
+      } catch (e) {
+        setLookupError(e instanceof Error ? e.message : '住所の検索に失敗しました');
+      } finally {
+        setLookupBusy(false);
+      }
+    };
     return (
       <div className='mt-1 grid gap-2 md:grid-cols-2'>
-        {sub.map((f) => (
-          <div key={f.key}>
-            <Label htmlFor={`${id}-${f.key}`} size='sm'>
-              {f.label}
-            </Label>
+        <div className='md:col-span-2'>
+          <Label htmlFor={`${id}-postal_code`} size='sm'>
+            郵便番号
+          </Label>
+          <div className='flex flex-wrap items-end gap-2'>
             <input
-              id={`${id}-${f.key}`}
-              className={common}
-              inputMode={
-                f.key === 'postal_code' || f.key === 'corporate_number' ? 'numeric' : undefined
-              }
-              value={obj[f.key] ?? ''}
+              id={`${id}-postal_code`}
+              className={`${common} max-w-40`}
+              inputMode='numeric'
+              placeholder='123-4567'
+              value={obj.postal_code ?? ''}
               disabled={disabled}
-              onChange={(e) => onChange({ ...obj, [f.key]: e.target.value })}
-              onBlur={(e) => {
-                const kind = COMPOSITE_NORMALIZE[c.type]?.[f.key];
-                if (!kind) return;
-                blurNorm(kind, e.target.value, (v) => onChange({ ...obj, [f.key]: v }));
-              }}
+              onChange={(e) => set({ postal_code: e.target.value })}
+              onBlur={(e) => void runPostal(e.target.value)}
             />
+            {onPostalLookup ? (
+              <button
+                type='button'
+                className='mb-0.5 text-std-16N-170 text-blue-900 underline'
+                disabled={disabled || lookupBusy}
+                onClick={() => void runPostal(obj.postal_code ?? '')}
+              >
+                {lookupBusy ? '検索中...' : '住所を検索'}
+              </button>
+            ) : null}
           </div>
-        ))}
+          {lookupError ? (
+            <p className='mt-1 text-dns-14N-130 text-error-1' role='alert'>
+              {lookupError}
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <Label htmlFor={`${id}-prefecture`} size='sm'>
+            都道府県
+          </Label>
+          <select
+            id={`${id}-prefecture`}
+            className={common}
+            value={obj.prefecture ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ prefecture: e.target.value })}
+          >
+            <option value=''>選択してください</option>
+            {PREFECTURES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor={`${id}-city`} size='sm'>
+            市区町村
+          </Label>
+          <input
+            id={`${id}-city`}
+            className={common}
+            value={obj.city ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ city: e.target.value })}
+            onBlur={(e) => blurNorm('nfkc', e.target.value, (v) => set({ city: v }))}
+          />
+        </div>
+        <div className='md:col-span-2'>
+          <Label htmlFor={`${id}-street`} size='sm'>
+            町名・番地
+          </Label>
+          <input
+            id={`${id}-street`}
+            className={common}
+            value={obj.street ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ street: e.target.value })}
+            onBlur={(e) => blurNorm('street', e.target.value, (v) => set({ street: v }))}
+          />
+        </div>
+        <div className='md:col-span-2'>
+          <Label htmlFor={`${id}-building`} size='sm'>
+            建物名
+          </Label>
+          <input
+            id={`${id}-building`}
+            className={common}
+            value={obj.building ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ building: e.target.value })}
+            onBlur={(e) => blurNorm('nfkc', e.target.value, (v) => set({ building: v }))}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (c.type === 'user_info_composite') {
+    const obj = asRecord(value);
+    const set = (patch: Record<string, string>) => onChange({ ...obj, ...patch });
+    return (
+      <div className='mt-1 grid gap-2 md:grid-cols-2'>
+        <div>
+          <Label htmlFor={`${id}-last_name`} size='sm'>
+            姓
+          </Label>
+          <input
+            id={`${id}-last_name`}
+            className={common}
+            value={obj.last_name ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ last_name: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${id}-first_name`} size='sm'>
+            名
+          </Label>
+          <input
+            id={`${id}-first_name`}
+            className={common}
+            value={obj.first_name ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ first_name: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${id}-last_name_kana`} size='sm'>
+            セイ
+          </Label>
+          <input
+            id={`${id}-last_name_kana`}
+            className={common}
+            value={obj.last_name_kana ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ last_name_kana: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${id}-first_name_kana`} size='sm'>
+            メイ
+          </Label>
+          <input
+            id={`${id}-first_name_kana`}
+            className={common}
+            value={obj.first_name_kana ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ first_name_kana: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${id}-gender`} size='sm'>
+            性別
+          </Label>
+          <select
+            id={`${id}-gender`}
+            className={common}
+            value={obj.gender ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ gender: e.target.value })}
+          >
+            <option value=''>選択してください</option>
+            {GENDERS.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor={`${id}-birth_date`} size='sm'>
+            生年月日
+          </Label>
+          <input
+            id={`${id}-birth_date`}
+            type='date'
+            className={common}
+            value={obj.birth_date ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ birth_date: e.target.value })}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (c.type === 'company_info_composite') {
+    const obj = asRecord(value);
+    const set = (patch: Record<string, string>) => onChange({ ...obj, ...patch });
+    const runCorporate = async (raw: string) => {
+      const number = normalizeInput(raw, 'digits');
+      set({ corporate_number: number });
+      if (!onCorporateLookup || number.length !== 13) return;
+      setLookupBusy(true);
+      setLookupError(null);
+      try {
+        const found = await onCorporateLookup(number);
+        if (!found?.company_name) {
+          setLookupError('法人名を自動入力できませんでした。手入力してください。');
+          return;
+        }
+        set({ corporate_number: number, company_name: found.company_name });
+      } catch (e) {
+        setLookupError(e instanceof Error ? e.message : '法人番号の検索に失敗しました');
+      } finally {
+        setLookupBusy(false);
+      }
+    };
+    return (
+      <div className='mt-1 grid gap-2 md:grid-cols-2'>
+        <div className='md:col-span-2'>
+          <Label htmlFor={`${id}-corporate_number`} size='sm'>
+            法人番号
+          </Label>
+          <div className='flex flex-wrap items-end gap-2'>
+            <input
+              id={`${id}-corporate_number`}
+              className={`${common} max-w-56`}
+              inputMode='numeric'
+              maxLength={13}
+              placeholder='13桁'
+              value={obj.corporate_number ?? ''}
+              disabled={disabled}
+              onChange={(e) => set({ corporate_number: e.target.value })}
+              onBlur={(e) => void runCorporate(e.target.value)}
+            />
+            {onCorporateLookup ? (
+              <button
+                type='button'
+                className='mb-0.5 text-std-16N-170 text-blue-900 underline'
+                disabled={disabled || lookupBusy}
+                onClick={() => void runCorporate(obj.corporate_number ?? '')}
+              >
+                {lookupBusy ? '検索中...' : '法人名を検索'}
+              </button>
+            ) : null}
+          </div>
+          {lookupError ? (
+            <p className='mt-1 text-dns-14N-130 text-error-1' role='alert'>
+              {lookupError}
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <Label htmlFor={`${id}-company_name`} size='sm'>
+            法人名
+          </Label>
+          <input
+            id={`${id}-company_name`}
+            className={common}
+            value={obj.company_name ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ company_name: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${id}-representative`} size='sm'>
+            代表者
+          </Label>
+          <input
+            id={`${id}-representative`}
+            className={common}
+            value={obj.representative ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ representative: e.target.value })}
+          />
+        </div>
       </div>
     );
   }
   if (c.type === 'calculated') {
     return (
-      <p id={id} className='mt-1 text-std-16N-170 text-solid-gray-700'>
-        送信時に自動計算されます
+      <p id={id} className='mt-1 text-std-16N-170 text-solid-gray-800'>
+        {formatCalculated(value)}
       </p>
     );
   }
@@ -492,22 +797,17 @@ const Field = ({
     );
   }
   if (c.type === 'signature_pad') {
+    const picked = fileMeta(value).filename || (typeof value === 'string' && value ? '選択済み' : '');
     return (
       <FilePickButton
         id={id}
         accept='image/*'
         disabled={disabled}
+        busy={uploadBusy}
+        error={uploadError}
         buttonLabel='署名画像を選択'
-        filename={typeof value === 'string' && value ? '選択済み' : ''}
-        onFile={(file) => {
-          if (!file) {
-            onChange('');
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = () => onChange(String(reader.result || ''));
-          reader.readAsDataURL(file);
-        }}
+        filename={picked}
+        onFile={(file) => void pickUpload(file, 'signature')}
       />
     );
   }
@@ -607,8 +907,10 @@ const Field = ({
       <FilePickButton
         id={id}
         disabled={disabled}
-        filename={typeof value === 'string' ? value : ''}
-        onFile={(file) => onChange(file?.name ?? '')}
+        busy={uploadBusy}
+        error={uploadError}
+        filename={fileMeta(value).filename}
+        onFile={(file) => void pickUpload(file, 'file')}
       />
     );
   }
@@ -642,13 +944,87 @@ const Field = ({
 };
 
 /** 庁内プレビュー / 記入。ゲスト UI と同じ type だけを描画する。 */
-export const FillForm = ({ definition, values, onChange, disabled, onExtract }: Props) => {
+export const FillForm = ({
+  definition,
+  values,
+  onChange,
+  disabled,
+  onExtract,
+  onUpload,
+  onPostalLookup,
+  onCorporateLookup,
+  wizard = true,
+  onWizardChange,
+}: Props) => {
+  const pages = useMemo(() => splitPages(definition.components), [definition.components]);
+  const useWizard = wizard && pages.length > 1;
+  const [page, setPage] = useState(0);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const shape = definition.components.map((c) => c.id).join(',');
+
+  useEffect(() => {
+    setPage(0);
+    setPageError(null);
+  }, [shape]);
+
+  useEffect(() => {
+    const next = { ...values };
+    for (const c of definition.components) {
+      if (c.type !== 'calculated' || !isVisible(c, next)) continue;
+      const result = evaluateFormula(String(c.properties?.formula || ''), next);
+      if (result != null) next[c.id] = result;
+      if (result == null) {
+        if (values[c.id] != null) onChange(c.id, null);
+        continue;
+      }
+      if (values[c.id] !== result) onChange(c.id, result);
+    }
+  }, [definition.components, onChange, values]);
+
+  const safePage = Math.min(page, Math.max(pages.length - 1, 0));
+  const current = (useWizard ? pages[safePage] : definition.components) ?? [];
+  const shown = useWizard ? current : definition.components;
+  const total = pages.length;
+  const isLast = !useWizard || safePage >= total - 1;
+
+  useEffect(() => {
+    onWizardChange?.({ page: safePage, total: useWizard ? total : 1, isLast });
+  }, [isLast, onWizardChange, safePage, total, useWizard]);
+
+  const go = (direction: 1 | -1) => {
+    if (direction === 1) {
+      const missing = missingRequired(current, values);
+      if (missing) {
+        setPageError(`${missing.label}は必須です`);
+        return;
+      }
+    }
+    setPageError(null);
+    setPage((p) =>
+      nextFilledPage(pages, p, direction, (items) => items.some((c) => isVisible(c, values))),
+    );
+  };
+
   return (
     <div className='flex flex-col gap-4'>
-      {definition.components.map((c) => {
+      {useWizard ? (
+        <div>
+          <p className='text-dns-14N-130 text-solid-gray-700'>
+            ページ {safePage + 1} / {total}
+          </p>
+          <div className='mt-2 h-2 overflow-hidden rounded-full bg-solid-gray-200'>
+            <div
+              className='h-full bg-blue-900'
+              style={{ width: `${Math.round(((safePage + 1) / total) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {shown.map((c) => {
+        if (c.type === 'page_break') return null;
         if (!isVisible(c, values)) return null;
         const hideLabel = !!c.hide_label;
-        const skipHeading = c.type === 'divider' || c.type === 'page_break';
+        const skipHeading = c.type === 'divider';
         return (
           <div key={c.id}>
             {skipHeading ? null : hideLabel ? (
@@ -671,10 +1047,34 @@ export const FillForm = ({ definition, values, onChange, disabled, onExtract }: 
               onChange={(v) => onChange(c.id, v)}
               disabled={disabled}
               onExtract={onExtract}
+              onUpload={onUpload}
+              onPostalLookup={onPostalLookup}
+              onCorporateLookup={onCorporateLookup}
             />
           </div>
         );
       })}
+      {useWizard ? (
+        <div className='flex flex-col gap-2'>
+          {pageError ? (
+            <p className='text-dns-14N-130 text-error-1' role='alert'>
+              {pageError}
+            </p>
+          ) : null}
+          <div className='flex flex-wrap gap-2'>
+            {safePage > 0 ? (
+              <Button type='button' variant='outline' size='md' onClick={() => go(-1)}>
+                前へ
+              </Button>
+            ) : null}
+            {!isLast ? (
+              <Button type='button' variant='solid-fill' size='md' onClick={() => go(1)}>
+                次へ
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

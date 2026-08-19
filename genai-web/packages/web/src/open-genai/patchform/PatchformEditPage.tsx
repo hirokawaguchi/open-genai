@@ -12,9 +12,11 @@ import { CatalogTypeIcon } from './builder/CatalogTypeIcon';
 import { ComponentSettings } from './builder/ComponentSettings';
 import { PATCHFORM_LABEL, catalogTypeHelp } from './labels';
 import { FillForm } from './runtime/FillForm';
-import type { CatalogItem, FormComponent, FormDefinition } from './types';
+import type { CatalogItem, FormComponent, FormDefinition, IdentityMode } from './types';
 import {
   extractPatchformFile,
+  lookupPatchformCorporate,
+  lookupPatchformPostal,
   usePatchformActions,
   usePatchformAssist,
   usePatchformConfig,
@@ -65,6 +67,11 @@ export const PatchformEditPage = () => {
   const [visibility, setVisibility] = useState<'internal' | 'public' | 'both'>('internal');
   const [pin, setPin] = useState('');
   const [retentionDays, setRetentionDays] = useState('');
+  const [allowDraft, setAllowDraft] = useState(true);
+  const [allowMultiple, setAllowMultiple] = useState(true);
+  const [identityMode, setIdentityMode] = useState<IdentityMode>('optional');
+  const [editorIds, setEditorIds] = useState('');
+  const [viewerIds, setViewerIds] = useState('');
   const [components, setComponents] = useState<FormComponent[]>([]);
   const [preview, setPreview] = useState<Record<string, unknown>>({});
   const [aiText, setAiText] = useState('');
@@ -78,6 +85,11 @@ export const PatchformEditPage = () => {
     setDescription(form.description || '');
     setVisibility(form.visibility);
     setRetentionDays(String(form.retention_days ?? ''));
+    setAllowDraft(form.allow_draft !== false);
+    setAllowMultiple(form.allow_multiple !== false);
+    setIdentityMode(form.identity_mode || 'optional');
+    setEditorIds((form.editor_user_ids ?? []).join('\n'));
+    setViewerIds((form.viewer_user_ids ?? []).join('\n'));
     setComponents(form.definition.components);
     setSelectedId(form.definition.components[0]?.id ?? null);
   }, [form]);
@@ -116,6 +128,15 @@ export const PatchformEditPage = () => {
       definition: definition(),
       pin: pin.trim() || undefined,
       retention_days: retentionDays.trim() ? Number(retentionDays) : undefined,
+      allow_draft: allowDraft,
+      allow_multiple: allowMultiple,
+      identity_mode: identityMode,
+      ...(form?.role === 'owner' || form?.role === 'admin'
+        ? {
+            editor_user_ids: editorIds.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
+            viewer_user_ids: viewerIds.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
+          }
+        : {}),
     });
     if (detail) navigate(`/patchform/${formId}`);
   };
@@ -133,6 +154,21 @@ export const PatchformEditPage = () => {
           ]}
         />
         <h1 className='text-std-20B-160 lg:text-std-24B-150'>フォームを編集</h1>
+        {form && form.can_edit === false && (
+          <p className='text-error-1' role='alert'>
+            このフォームを編集する権限がありません。
+          </p>
+        )}
+        {form && (form.status === 'published' || form.status === 'closed') && (
+          <p className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-std-16N-170 text-solid-gray-800'>
+            保存は下書きです。部品の追加・削除・種類変更は、詳細画面で
+            {form.status === 'closed' ? '再公開' : '「公開版に反映」'}
+            するまで回答者には見えません。
+            {(form.submission_count ?? 0) > 0
+              ? ` 既存の回答 ${form.submission_count} 件は、答えた当時の版のまま残ります。`
+              : ''}
+          </p>
+        )}
         {isLoading && <p className='text-solid-gray-600'>読み込み中...</p>}
         {loadError && (
           <p className='text-error-1' role='alert'>
@@ -240,6 +276,94 @@ export const PatchformEditPage = () => {
                         />
                       </div>
                     </div>
+                    <fieldset>
+                      <legend className='text-oln-16B-100'>回答者の扱い</legend>
+                      <div className='mt-2 flex flex-col gap-2'>
+                        {(
+                          [
+                            {
+                              id: 'required',
+                              label: '申請（記名必須）',
+                              help: '誰の回答か分からないと使えません。庁内はログイン名、外部は氏名を記録します。',
+                            },
+                            {
+                              id: 'optional',
+                              label: '任意記名',
+                              help: '名前があると助かりますが、空でも受け付けます。',
+                            },
+                            {
+                              id: 'anonymous',
+                              label: '匿名',
+                              help: '一覧にもCSVにも名前や職員IDを出しません。',
+                            },
+                          ] as const
+                        ).map((opt) => (
+                          <label key={opt.id} className='flex items-start gap-2 text-std-16N-170'>
+                            <input
+                              type='radio'
+                              className='mt-1'
+                              name='pf-identity'
+                              checked={identityMode === opt.id}
+                              onChange={() => setIdentityMode(opt.id)}
+                            />
+                            <span>
+                              {opt.label}
+                              <span className='block text-dns-14N-130 text-solid-gray-600'>
+                                {opt.help}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <div className='flex flex-col gap-2'>
+                      <label className='flex items-center gap-2 text-std-16N-170'>
+                        <input
+                          type='checkbox'
+                          checked={allowDraft}
+                          onChange={(e) => setAllowDraft(e.target.checked)}
+                        />
+                        途中の下書き保存を許可する
+                      </label>
+                      <label className='flex items-center gap-2 text-std-16N-170'>
+                        <input
+                          type='checkbox'
+                          checked={allowMultiple}
+                          onChange={(e) => setAllowMultiple(e.target.checked)}
+                        />
+                        同じ人の再提出を許可する
+                      </label>
+                    </div>
+                    {form.role === 'owner' || form.role === 'admin' ? (
+                      <div className='grid gap-4 md:grid-cols-2'>
+                        <div>
+                          <Label htmlFor='pf-editors' size='sm'>
+                            編集できる職員（ユーザーID・1行に1つ）
+                          </Label>
+                          <textarea
+                            id='pf-editors'
+                            className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                            rows={3}
+                            value={editorIds}
+                            onChange={(e) => setEditorIds(e.target.value)}
+                            placeholder='例: staff01'
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor='pf-viewers' size='sm'>
+                            回答だけ見られる職員（ユーザーID・1行に1つ）
+                          </Label>
+                          <textarea
+                            id='pf-viewers'
+                            className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                            rows={3}
+                            value={viewerIds}
+                            onChange={(e) => setViewerIds(e.target.value)}
+                            placeholder='例: staff02'
+                          />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </Disclosure>
 
@@ -428,6 +552,8 @@ export const PatchformEditPage = () => {
                     values={preview}
                     onChange={(id, v) => setPreview((p) => ({ ...p, [id]: v }))}
                     onExtract={extractPatchformFile}
+                    onPostalLookup={lookupPatchformPostal}
+                    onCorporateLookup={lookupPatchformCorporate}
                   />
                 </div>
               </section>

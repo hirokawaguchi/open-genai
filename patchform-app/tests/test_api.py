@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,8 @@ def _headers(user_id: str = "u1") -> dict[str, str]:
 def _setup() -> tuple[TestClient, str]:
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
+    files_dir = tempfile.mkdtemp(prefix="pf-files-")
+    os.environ["PATCHFORM_FILES_DIR"] = files_dir
     store.reset_connection()
     store.DB_PATH = path
     store.init_db()
@@ -42,6 +45,9 @@ def _teardown(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+    files_dir = os.environ.pop("PATCHFORM_FILES_DIR", "")
+    if files_dir:
+        shutil.rmtree(files_dir, ignore_errors=True)
 
 
 def _definition() -> dict:
@@ -206,6 +212,84 @@ def test_assist_generate_template() -> None:
         _teardown(path)
 
 
+_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def test_upload_submit_download() -> None:
+    import base64
+
+    client, path = _setup()
+    try:
+        definition = {
+            "$version": "opengenai-patchform/1",
+            "metadata": {"title": "添付", "description": ""},
+            "components": [
+                {"id": "att", "type": "file", "label": "添付", "required": True},
+                {"id": "sign", "type": "signature_pad", "label": "署名", "required": True},
+            ],
+        }
+        res = client.post(
+            "/forms",
+            headers=_headers(),
+            json={"title": "添付", "visibility": "both", "definition": definition},
+        )
+        assert res.status_code == 201, res.text
+        fid = res.json()["id"]
+        token = res.json()["guest_token"]
+        res = client.post(f"/forms/{fid}/status", headers=_headers(), json={"status": "published"})
+        assert res.status_code == 200
+
+        txt = base64.b64encode("hello".encode("utf-8")).decode("ascii")
+        res = client.post(
+            f"/public/api/forms/{token}/files",
+            json={"filename": "note.txt", "data": f"data:text/plain;base64,{txt}", "kind": "file"},
+        )
+        assert res.status_code == 201, res.text
+        att = res.json()
+        res = client.post(
+            f"/forms/{fid}/files",
+            headers=_headers(),
+            json={"filename": "sign.png", "data": f"data:image/png;base64,{_PNG}", "kind": "signature"},
+        )
+        assert res.status_code == 201, res.text
+        sign = res.json()
+
+        res = client.post(
+            f"/public/api/forms/{token}/submissions",
+            json={"answers": {"att": att, "sign": sign}, "submitter_name": "市民"},
+        )
+        assert res.status_code == 201, res.text
+
+        res = client.get(f"/forms/{fid}/files/{att['file_id']}", headers=_headers())
+        assert res.status_code == 200
+        assert res.content == b"hello"
+        res = client.get(f"/forms/{fid}/files/{att['file_id']}", headers=_headers("u2"))
+        assert res.status_code == 403
+
+        res = client.post(
+            f"/public/api/forms/{token}/files",
+            json={"filename": "bad.exe", "data": "data:application/octet-stream;base64,AAAA", "kind": "file"},
+        )
+        assert res.status_code == 400
+    finally:
+        _teardown(path)
+
+
+def test_lookup_rejects_bad_query() -> None:
+    client, path = _setup()
+    try:
+        res = client.get("/lookup/postal?zip=123", headers=_headers())
+        assert res.status_code == 400
+        res = client.get("/lookup/corporate?number=123", headers=_headers())
+        assert res.status_code == 400
+        res = client.get("/public/api/lookup/postal?zip=12")
+        assert res.status_code == 400
+    finally:
+        _teardown(path)
+
+
 def test_other_user_cannot_edit() -> None:
     client, path = _setup()
     try:
@@ -225,5 +309,7 @@ if __name__ == "__main__":
     test_crud_publish_submit_export()
     test_extract_document_text()
     test_assist_generate_template()
+    test_upload_submit_download()
+    test_lookup_rejects_bad_query()
     test_other_user_cannot_edit()
     print("ok")

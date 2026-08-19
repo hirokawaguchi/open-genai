@@ -217,7 +217,7 @@ export const PatchformPage = () => {
             </section>
 
             <section className='flex flex-col gap-3'>
-              <h2 className='text-std-18B-160'>自分のフォーム</h2>
+              <h2 className='text-std-18B-160'>フォーム一覧</h2>
               <div className='flex flex-wrap gap-2' role='group' aria-label='状態で絞り込み'>
                 {(
                   [
@@ -262,7 +262,15 @@ export const PatchformPage = () => {
                         {f.title}
                       </Link>
                       <p className='text-dns-14N-130 text-solid-gray-600'>
-                        {statusLabel[f.status] || f.status} /{' '}
+                        {statusLabel[f.status] || f.status}
+                        {f.role === 'editor'
+                          ? ' / 編集者'
+                          : f.role === 'viewer'
+                            ? ' / 閲覧者'
+                            : f.role === 'respondent'
+                              ? ' / 回答'
+                              : ''}
+                        {' / '}
                         {new Date(f.updated_at).toLocaleString('ja-JP')}
                       </p>
                     </li>
