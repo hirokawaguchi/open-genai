@@ -16,6 +16,7 @@ def catalog_for_prompt() -> list[dict[str, Any]]:
             "label": meta["label"],
             "has_options": meta.get("has_options", False),
             "category": meta["category"],
+            "description": meta.get("description") or "",
         }
         for t, meta in spec.CATALOG.items()
         if meta["enabled"]

@@ -7,6 +7,7 @@ export type CatalogItem = {
   enabled: boolean;
   category: string;
   has_options: boolean;
+  description?: string;
 };
 
 export type FormComponent = {
@@ -14,6 +15,7 @@ export type FormComponent = {
   type: string;
   label: string;
   required?: boolean;
+  hide_label?: boolean;
   placeholder?: string;
   properties?: { options?: string[]; [key: string]: unknown };
   visibleWhen?: { field: string; eq?: string; in?: string[] } | Array<{ field: string; eq?: string; in?: string[] }>;
@@ -38,6 +40,8 @@ export type FormSummary = {
   creator_name?: string | null;
   retention_days: number;
   published_version_id?: string | null;
+  published_version?: number | null;
+  published_at?: string | null;
   created_at: string;
   updated_at: string;
   public_url: string;
@@ -78,4 +82,8 @@ export type Submission = {
   submitter_name?: string | null;
   answers: Record<string, unknown>;
   created_at: string;
+  version_id?: string | null;
+  form_version?: number | null;
+  published_at?: string | null;
+  definition?: FormDefinition | null;
 };

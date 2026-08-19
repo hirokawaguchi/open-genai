@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.normalize import canonicalize
+
 SPEC_VERSION = "opengenai-patchform/1"
 
 # 公開面に出せない機微部品。visibility が internal 以外なら定義を拒否する。
@@ -23,44 +25,57 @@ _PIN_RE = re.compile(r"^\d{4}$")
 
 # type -> {label, enabled, category, has_options, input}
 # enabled=True のものだけビルダと配信で使う。
-CATALOG: dict[str, dict[str, Any]] = {
-    "text": {"label": "テキスト", "enabled": True, "category": "basic", "has_options": False},
-    "textarea": {"label": "テキストエリア", "enabled": True, "category": "basic", "has_options": False},
-    "email": {"label": "メールアドレス", "enabled": True, "category": "basic", "has_options": False},
-    "phone": {"label": "電話番号", "enabled": True, "category": "basic", "has_options": False},
-    "number": {"label": "数値", "enabled": True, "category": "basic", "has_options": False},
-    "select": {"label": "セレクト", "enabled": True, "category": "selection", "has_options": True},
-    "radio": {"label": "ラジオ", "enabled": True, "category": "selection", "has_options": True},
-    "checkbox": {"label": "チェックボックス", "enabled": True, "category": "selection", "has_options": True},
-    "date": {"label": "日付", "enabled": True, "category": "datetime", "has_options": False},
-    "file": {"label": "ファイル", "enabled": True, "category": "advanced", "has_options": False},
-    "slider": {"label": "スライダー", "enabled": True, "category": "selection", "has_options": False},
-    "rating": {"label": "評価", "enabled": True, "category": "selection", "has_options": False},
-    "time": {"label": "時刻", "enabled": True, "category": "datetime", "has_options": False},
-    "datetime-local": {"label": "日時", "enabled": True, "category": "datetime", "has_options": False},
-    "daterange": {"label": "期間", "enabled": True, "category": "datetime", "has_options": False},
-    "address_composite": {"label": "住所", "enabled": True, "category": "composite", "has_options": False},
-    "user_info_composite": {"label": "氏名", "enabled": True, "category": "composite", "has_options": False},
-    "company_info_composite": {"label": "法人情報", "enabled": True, "category": "composite", "has_options": False},
-    "financial_institution_composite": {
-        "label": "金融機関",
+def _item(
+    label: str,
+    category: str,
+    description: str,
+    *,
+    has_options: bool = False,
+) -> dict[str, Any]:
+    return {
+        "label": label,
         "enabled": True,
-        "category": "composite",
-        "has_options": False,
-    },
-    "text_display": {"label": "説明文", "enabled": True, "category": "display", "has_options": False},
-    "image_display": {"label": "画像表示", "enabled": True, "category": "display", "has_options": False},
-    "divider": {"label": "区切り線", "enabled": True, "category": "display", "has_options": False},
-    "page_break": {"label": "改ページ", "enabled": True, "category": "display", "has_options": False},
-    "password": {"label": "パスワード", "enabled": True, "category": "advanced", "has_options": False},
-    "calculated": {"label": "計算", "enabled": True, "category": "advanced", "has_options": False},
-    "mynumber": {"label": "マイナンバー", "enabled": True, "category": "advanced", "has_options": False},
-    "matrix_question": {"label": "マトリクス", "enabled": True, "category": "advanced", "has_options": False},
-    "signature_pad": {"label": "署名", "enabled": True, "category": "advanced", "has_options": False},
-    "location": {"label": "位置情報", "enabled": True, "category": "advanced", "has_options": False},
-    "qr_scanner": {"label": "QR読取", "enabled": True, "category": "advanced", "has_options": False},
-    "image_recognition": {"label": "画像認識", "enabled": True, "category": "ai", "has_options": False},
-    "document_reader": {"label": "文書読取", "enabled": True, "category": "ai", "has_options": False},
+        "category": category,
+        "has_options": has_options,
+        "description": description,
+    }
+
+
+CATALOG: dict[str, dict[str, Any]] = {
+    "text": _item("テキスト", "basic", "1行の自由記入"),
+    "textarea": _item("テキストエリア", "basic", "複数行の自由記入"),
+    "email": _item("メールアドレス", "basic", "メール形式を確認する"),
+    "phone": _item("電話番号", "basic", "電話番号を入力する"),
+    "number": _item("数値", "basic", "数量や金額など"),
+    "select": _item("セレクト", "selection", "一覧から1つ選ぶ", has_options=True),
+    "radio": _item("ラジオ", "selection", "並んだ選択肢から1つ", has_options=True),
+    "checkbox": _item("チェックボックス", "selection", "複数選べる", has_options=True),
+    "slider": _item("スライダー", "selection", "目安の数値をバーで選ぶ"),
+    "rating": _item("評価", "selection", "1〜5の満足度など"),
+    "date": _item("日付", "datetime", "年月日を選ぶ"),
+    "time": _item("時刻", "datetime", "時分を選ぶ"),
+    "datetime-local": _item("日時", "datetime", "日付と時刻を一緒に"),
+    "daterange": _item("期間", "datetime", "開始日と終了日"),
+    "address_composite": _item("住所", "composite", "郵便番号・都道府県・市区町村など"),
+    "user_info_composite": _item("氏名", "composite", "姓・名・フリガナ"),
+    "company_info_composite": _item("法人情報", "composite", "法人名・法人番号・代表者"),
+    "financial_institution_composite": _item(
+        "金融機関", "composite", "振込先。ゆうちょ・金融機関コード・支店コード"
+    ),
+    "text_display": _item("説明文", "display", "回答ではなく案内文を出す"),
+    "image_display": _item("画像表示", "display", "案内図などの画像を出す"),
+    "divider": _item("区切り線", "display", "項目の区切り"),
+    "page_break": _item("改ページ", "display", "長いフォームの区切り（見た目）"),
+    "file": _item("ファイル", "advanced", "添付ファイル名を受け取る"),
+    "password": _item("パスワード", "advanced", "入力内容を隠す"),
+    "calculated": _item("計算", "advanced", "他の数値から自動計算する"),
+    "mynumber": _item("マイナンバー", "advanced", "12桁。庁内専用・保存時暗号化"),
+    "matrix_question": _item("マトリクス", "advanced", "行×列の表で選ぶ"),
+    "signature_pad": _item("署名", "advanced", "署名画像を添付する"),
+    "location": _item("位置情報", "advanced", "緯度経度または現在地"),
+    "qr_scanner": _item("QR読取", "advanced", "QRの内容を入力・読取する"),
+    "image_recognition": _item("画像認識", "ai", "画像から文字を読み取る"),
+    "document_reader": _item("文書読取", "ai", "テキスト文書から内容を取り出す"),
 }
 
 DISPLAY_TYPES = frozenset(
@@ -72,10 +87,15 @@ COMPOSITE_SUBFIELDS: dict[str, list[str]] = {
     "user_info_composite": ["last_name", "first_name", "last_name_kana", "first_name_kana"],
     "company_info_composite": ["company_name", "corporate_number", "representative"],
     "financial_institution_composite": [
+        "is_yuucho",
+        "bank_code",
         "bank_name",
+        "branch_code",
         "branch_name",
         "account_type",
         "account_number",
+        "yuucho_symbol",
+        "yuucho_number",
         "account_holder",
     ],
 }
@@ -84,13 +104,23 @@ COMPOSITE_REQUIRED_SUBFIELDS: dict[str, list[str]] = {
     "address_composite": ["prefecture", "city", "street"],
     "user_info_composite": ["last_name", "first_name"],
     "company_info_composite": ["company_name"],
-    "financial_institution_composite": ["bank_name", "account_number", "account_holder"],
+    "financial_institution_composite": ["account_holder"],
 }
 
 _CORP_RE = re.compile(r"^\d{13}$")
 _POSTAL_RE = re.compile(r"^\d{3}-?\d{4}$")
+_BANK_CODE_RE = re.compile(r"^\d{4}$")
+_BRANCH_CODE_RE = re.compile(r"^\d{3}$")
+_YUCHO_SYMBOL_RE = re.compile(r"^\d{3,5}$")
+_YUCHO_NUMBER_RE = re.compile(r"^\d{1,8}$")
 _FORMULA_RE = re.compile(r"^[0-9+\-*/().\s]+$")
 _FIELD_REF_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
+
+
+def _truthy(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def mynumber_check_digit_ok(digits: str) -> bool:
@@ -207,6 +237,7 @@ def validate_definition(
                 "type": ctype,
                 "label": label,
                 "required": bool(raw.get("required")),
+                "hide_label": bool(raw.get("hide_label")),
                 "placeholder": str(raw.get("placeholder") or ""),
                 "properties": props,
                 "validation": raw.get("validation") if isinstance(raw.get("validation"), dict) else {},
@@ -262,6 +293,7 @@ def validate_answers(
             if comp.get("required"):
                 return None, f"{comp['label']}は必須です"
             continue
+        raw = canonicalize(comp, raw)
         err = _validate_value(comp, raw)
         if err:
             return None, err
@@ -396,7 +428,13 @@ def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
         if not isinstance(raw, dict):
             return f"{label}の形式が不正です"
         keys = COMPOSITE_SUBFIELDS[ctype]
-        required = COMPOSITE_REQUIRED_SUBFIELDS.get(ctype, [])
+        required = list(COMPOSITE_REQUIRED_SUBFIELDS.get(ctype, []))
+        if ctype == "financial_institution_composite":
+            yuucho = _truthy(raw.get("is_yuucho"))
+            if yuucho:
+                required.extend(["yuucho_symbol", "yuucho_number"])
+            else:
+                required.extend(["bank_name", "account_number"])
         for key in required:
             if not str(raw.get(key) or "").strip():
                 return f"{label}の必須項目が不足しています"
@@ -408,6 +446,19 @@ def _validate_value(comp: dict[str, Any], raw: Any) -> str | None:
             corp = str(raw.get("corporate_number") or "").strip()
             if corp and not _CORP_RE.match(corp):
                 return f"{label}の法人番号は13桁です"
+        if ctype == "financial_institution_composite":
+            bank_code = str(raw.get("bank_code") or "").strip()
+            branch_code = str(raw.get("branch_code") or "").strip()
+            symbol = str(raw.get("yuucho_symbol") or "").strip()
+            number = str(raw.get("yuucho_number") or "").strip()
+            if bank_code and not _BANK_CODE_RE.match(bank_code):
+                return f"{label}の金融機関コードは4桁です"
+            if branch_code and not _BRANCH_CODE_RE.match(branch_code):
+                return f"{label}の支店コードは3桁です"
+            if symbol and not _YUCHO_SYMBOL_RE.match(symbol):
+                return f"{label}の記号は3〜5桁です"
+            if number and not _YUCHO_NUMBER_RE.match(number):
+                return f"{label}の番号は数字8桁以内です"
         unknown = set(raw) - set(keys)
         if unknown:
             return f"{label}に未知の項目があります"

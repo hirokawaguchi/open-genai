@@ -31,6 +31,17 @@ const visLabel: Record<string, string> = {
   both: '庁内と外部',
 };
 
+const formVersionLabel = (
+  formVersion: number | null | undefined,
+  publishedAt: string | null | undefined,
+  currentVersion?: number | null,
+) => {
+  if (formVersion == null) return '版不明';
+  const tag = currentVersion != null && formVersion === currentVersion ? '現行' : '当時';
+  const when = publishedAt ? new Date(publishedAt).toLocaleString('ja-JP') : '';
+  return when ? `第${formVersion}版（${tag} · ${when} 公開）` : `第${formVersion}版（${tag}）`;
+};
+
 export const PatchformDetailPage = () => {
   const { formId } = useParams();
   const navigate = useNavigate();
@@ -209,6 +220,11 @@ export const PatchformDetailPage = () => {
               <section className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
                 <p>保持期間: {form.retention_days} 日</p>
                 <p>部品数: {form.definition.components.length}</p>
+                {form.published_version != null ? (
+                  <p>公開版: 第{form.published_version}版</p>
+                ) : (
+                  <p>公開版: まだありません</p>
+                )}
                 {form.has_pin && <p>外部回答に暗証番号あり</p>}
               </section>
             )}
@@ -266,7 +282,8 @@ export const PatchformDetailPage = () => {
                 ) : (
                   <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
                     {submissions.map((s) => {
-                      const rows = answerRows(form.definition.components, s.answers);
+                      const comps = s.definition?.components ?? form.definition.components;
+                      const rows = answerRows(comps, s.answers);
                       const open = openReceipt === s.id;
                       return (
                         <li key={s.id} className='py-3 text-std-16N-170'>
@@ -277,6 +294,9 @@ export const PatchformDetailPage = () => {
                           >
                             <p className='text-std-16B-150'>
                               {s.submitter_name || '（無名）'} / 控え {s.receipt_code}
+                            </p>
+                            <p className='text-dns-14N-130 text-solid-gray-600'>
+                              {formVersionLabel(s.form_version, s.published_at, form.published_version)}
                             </p>
                             <p className='text-dns-14N-130 text-solid-gray-600'>
                               {new Date(s.created_at).toLocaleString('ja-JP')}
