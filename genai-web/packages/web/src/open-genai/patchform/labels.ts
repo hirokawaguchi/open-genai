@@ -38,7 +38,7 @@ export const CATALOG_TYPE_HELP: Record<string, string> = {
   'datetime-local': '日付と時刻をまとめて選んでもらいます。',
   daterange: '開始日と終了日の期間を入力してもらいます。',
   address_composite: '郵便番号から住所を補完し、都道府県・市区町村・町名などをまとめて聞きます。',
-  user_info_composite: '姓・名・フリガナに加え、性別と生年月日をまとめて聞きます。',
+  user_info_composite: '姓・名・フリガナをまとめて聞きます。性別と生年月日は表示するかを選べます。',
   company_info_composite: '法人番号から法人名を補完し、代表者もまとめて聞きます。',
   financial_institution_composite:
     '振込先を聞きます。ゆうちょは記号・番号から店番と口座番号へ換算します。',

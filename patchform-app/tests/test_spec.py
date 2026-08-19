@@ -437,6 +437,35 @@ def test_user_info_gender_and_birth() -> None:
     assert aerr and "性別" in aerr
 
 
+def test_user_info_can_hide_gender_and_birth() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp(
+            "who",
+            "user_info_composite",
+            label="申請者",
+            required=True,
+            properties={"show_gender": False, "show_birth_date": False},
+        )
+    ]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "who": {
+                "last_name": "山田",
+                "first_name": "太郎",
+                "gender": "不明",
+                "birth_date": "not-a-date",
+            }
+        },
+    )
+    assert aerr is None and cleaned
+    assert "gender" not in cleaned["who"]
+    assert "birth_date" not in cleaned["who"]
+
+
 def test_corporate_check_digit() -> None:
     raw = spec.empty_definition()
     raw["components"] = [_comp("co", "company_info_composite", label="法人", required=True)]
@@ -482,6 +511,30 @@ def test_canonicalize_fullwidth_and_hyphens() -> None:
     assert cleaned["addr"]["street"] == "1-2-3"
 
 
+def test_imi_subfields_kept_and_unknown_dropped() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp(
+            "home",
+            "address_composite",
+            label="住所",
+            imi_type=" ic:住所 ",
+            imi_subfields={
+                "postal_code": " ic:郵便番号 ",
+                "unknown": "ic:無視",
+                "city": "",
+            },
+        ),
+        _comp("name", "text", label="氏名", imi_type="ic:氏名", imi_subfields={"last_name": "x"}),
+    ]
+    d, err = spec.validate_definition(raw)
+    assert err is None and d
+    home = d["components"][0]
+    assert home["imi_type"] == "ic:住所"
+    assert home["imi_subfields"] == {"postal_code": "ic:郵便番号"}
+    assert d["components"][1]["imi_subfields"] == {}
+
+
 if __name__ == "__main__":
     test_empty_definition_ok()
     test_unknown_type_rejected()
@@ -501,6 +554,8 @@ if __name__ == "__main__":
     test_hide_label_persisted()
     test_financial_yuucho_and_codes()
     test_user_info_gender_and_birth()
+    test_user_info_can_hide_gender_and_birth()
     test_corporate_check_digit()
     test_canonicalize_fullwidth_and_hyphens()
+    test_imi_subfields_kept_and_unknown_dropped()
     print("ok")
