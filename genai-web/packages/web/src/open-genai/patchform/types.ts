@@ -23,6 +23,7 @@ export type FormComponent = {
   properties?: { options?: string[]; [key: string]: unknown };
   visibleWhen?: VisibleWhenRule | VisibleWhenRule[];
   imi_type?: string;
+  imi_subfields?: Record<string, string>;
 };
 
 export type FormDefinition = {

@@ -1,5 +1,10 @@
 import { Label } from '@/components/ui/dads/Label';
 import { catalogTypeHelp } from '../labels';
+import {
+  COMPOSITE_SUBFIELD_LABELS,
+  COMPOSITE_SUBFIELDS,
+  IMI_PRESETS,
+} from '../runtime/imiSuggest';
 import type { CatalogItem, FormComponent, VisibleWhenRule } from '../types';
 
 type Props = {
@@ -8,17 +13,6 @@ type Props = {
   siblings: FormComponent[];
   onChange: (next: FormComponent) => void;
 };
-
-const IMI_PRESETS = [
-  'ic:氏名',
-  'ic:氏名カナ',
-  'ic:住所',
-  'ic:郵便番号',
-  'ic:メールアドレス',
-  'ic:電話番号',
-  'ic:生年月日',
-  'ic:法人番号',
-];
 
 export const ComponentSettings = ({ component: c, catalog, siblings, onChange }: Props) => {
   const meta = catalog.find((x) => x.type === c.type);
@@ -77,6 +71,36 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           />
           回答画面でラベルを隠す
         </label>
+        {c.type === 'user_info_composite' ? (
+          <>
+            <label className='flex items-center gap-2 text-std-14N-160'>
+              <input
+                type='checkbox'
+                checked={c.properties?.show_gender !== false}
+                onChange={(e) =>
+                  onChange({
+                    ...c,
+                    properties: { ...c.properties, show_gender: e.target.checked },
+                  })
+                }
+              />
+              性別を表示する
+            </label>
+            <label className='flex items-center gap-2 text-std-14N-160'>
+              <input
+                type='checkbox'
+                checked={c.properties?.show_birth_date !== false}
+                onChange={(e) =>
+                  onChange({
+                    ...c,
+                    properties: { ...c.properties, show_birth_date: e.target.checked },
+                  })
+                }
+              />
+              生年月日を表示する
+            </label>
+          </>
+        ) : null}
       </div>
       {c.hide_label ? (
         <p className='text-dns-14N-130 text-solid-gray-700'>
@@ -154,6 +178,9 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
       )}
       <div>
         <Label size='sm'>IMI 語彙（任意）</Label>
+        <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>
+          同じ語彙の欄には、このフォームで今入力中の値を候補として出します。他の申請からは出しません。
+        </p>
         <input
           className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
           list='pf-imi-presets'
@@ -167,6 +194,31 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           ))}
         </datalist>
       </div>
+      {COMPOSITE_SUBFIELDS[c.type] ? (
+        <div className='grid gap-2 md:grid-cols-2'>
+          <p className='text-dns-14N-130 text-solid-gray-700 md:col-span-2'>
+            サブ項目の語彙を空にすると、親の語彙に項目名を付けて突き合わせます。
+          </p>
+          {COMPOSITE_SUBFIELDS[c.type].map((key) => (
+            <div key={key}>
+              <Label size='sm'>{COMPOSITE_SUBFIELD_LABELS[key] || key}</Label>
+              <input
+                className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                list='pf-imi-presets'
+                value={c.imi_subfields?.[key] || ''}
+                onChange={(e) => {
+                  const next = { ...(c.imi_subfields || {}) };
+                  const val = e.target.value.trim();
+                  if (val) next[key] = val;
+                  else delete next[key];
+                  onChange({ ...c, imi_subfields: next });
+                }}
+                placeholder='親語彙から自動'
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className='flex flex-col gap-2'>
         <Label size='sm'>表示条件</Label>
         <p className='text-dns-14N-130 text-solid-gray-700'>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Checkbox } from '@/components/ui/dads/Checkbox';
 import { Label } from '@/components/ui/dads/Label';
@@ -7,6 +7,7 @@ import type { FormComponent, FormDefinition, UploadedFile } from '../types';
 import { FilePickButton } from './FilePickButton';
 import { evaluateFormula, formatCalculated } from './formula';
 import { GENDERS, PREFECTURES, yuuchoToBranch } from './japan';
+import { suggestFor, type SuggestOption } from './imiSuggest';
 import { COMPOSITE_NORMALIZE, normalizeInput, type NormalizeKind } from './normalizeInput';
 import { nextFilledPage, splitPages } from './pages';
 import { isVisible, missingRequired } from './visibility';
@@ -50,6 +51,95 @@ const asRecord = (value: unknown): Record<string, string> =>
 const safeImageSrc = (src: string): string =>
   src.startsWith('https://') || src.startsWith('http://') || src.startsWith('data:image/') ? src : '';
 
+const ImiPicks = ({
+  options,
+  current,
+  disabled,
+  onPick,
+}: {
+  options: SuggestOption[];
+  current?: string;
+  disabled?: boolean;
+  onPick: (value: string) => void;
+}) => {
+  const shown = options.filter((o) => o.value !== String(current ?? '').trim());
+  if (shown.length === 0 || disabled) return null;
+  return (
+    <div className='mt-1 flex flex-col gap-1'>
+      <p className='text-dns-14N-130 text-solid-gray-600'>このフォームの候補</p>
+      <div className='flex flex-wrap gap-2'>
+        {shown.map((o) => (
+          <button
+            key={`${o.value}:${o.sourceLabel}`}
+            type='button'
+            className='rounded-4 border border-solid-gray-420 bg-white px-2 py-1 text-left text-dns-14N-130 text-blue-900'
+            onClick={() => onPick(o.value)}
+          >
+            {o.value}
+            <span className='ml-1 text-solid-gray-600'>（{o.sourceLabel}）</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const ImiInput = ({
+  options,
+  id,
+  onChange,
+  value,
+  disabled,
+  ...rest
+}: InputHTMLAttributes<HTMLInputElement> & { options: SuggestOption[] }) => (
+  <div className='min-w-0'>
+    <input
+      id={id}
+      {...rest}
+      value={value}
+      disabled={disabled}
+      autoComplete='off'
+      onChange={onChange}
+    />
+    <ImiPicks
+      options={options}
+      current={value == null ? '' : String(value)}
+      disabled={disabled}
+      onPick={(next) =>
+        onChange?.({ target: { value: next } } as Parameters<NonNullable<typeof onChange>>[0])
+      }
+    />
+  </div>
+);
+
+const ImiTextarea = ({
+  options,
+  id,
+  onChange,
+  value,
+  disabled,
+  ...rest
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { options: SuggestOption[] }) => (
+  <div className='min-w-0'>
+    <textarea
+      id={id}
+      {...rest}
+      value={value}
+      disabled={disabled}
+      autoComplete='off'
+      onChange={onChange}
+    />
+    <ImiPicks
+      options={options}
+      current={value == null ? '' : String(value)}
+      disabled={disabled}
+      onPick={(next) =>
+        onChange?.({ target: { value: next } } as Parameters<NonNullable<typeof onChange>>[0])
+      }
+    />
+  </div>
+);
+
 const fileMeta = (value: unknown): { filename: string } => {
   if (typeof value === 'string') return { filename: value };
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -68,6 +158,8 @@ const Field = ({
   onUpload,
   onPostalLookup,
   onCorporateLookup,
+  components,
+  values,
 }: {
   component: FormComponent;
   value: unknown;
@@ -77,8 +169,11 @@ const Field = ({
   onUpload?: (file: File, kind: UploadKind) => Promise<UploadedFile>;
   onPostalLookup?: (zip: string) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
   onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
+  components: FormComponent[];
+  values: Record<string, unknown>;
 }) => {
   const id = `pf-${c.id}`;
+  const slot = (subkey?: string) => suggestFor(components, values, { componentId: c.id, subkey });
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -136,7 +231,7 @@ const Field = ({
               <Label htmlFor={`${id}-yuucho_symbol`} size='sm'>
                 記号
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-yuucho_symbol`}
                 className={common}
                 inputMode='numeric'
@@ -144,6 +239,7 @@ const Field = ({
                 placeholder='5桁'
                 value={obj.yuucho_symbol ?? ''}
                 disabled={disabled}
+                options={slot('yuucho_symbol')}
                 onChange={(e) => set({ yuucho_symbol: e.target.value })}
                 onBlur={(e) =>
                   blurNorm('digits', e.target.value, (v) => {
@@ -157,7 +253,7 @@ const Field = ({
               <Label htmlFor={`${id}-yuucho_number`} size='sm'>
                 番号
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-yuucho_number`}
                 className={common}
                 inputMode='numeric'
@@ -165,6 +261,7 @@ const Field = ({
                 placeholder='8桁以内'
                 value={obj.yuucho_number ?? ''}
                 disabled={disabled}
+                options={slot('yuucho_number')}
                 onChange={(e) => set({ yuucho_number: e.target.value })}
                 onBlur={(e) =>
                   blurNorm('digits', e.target.value, (v) => {
@@ -185,11 +282,12 @@ const Field = ({
               <Label htmlFor={`${id}-account_holder`} size='sm'>
                 口座名義
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-account_holder`}
                 className={common}
                 value={obj.account_holder ?? ''}
                 disabled={disabled}
+                options={slot('account_holder')}
                 onChange={(e) => set({ account_holder: e.target.value })}
               />
             </div>
@@ -200,7 +298,7 @@ const Field = ({
               <Label htmlFor={`${id}-bank_code`} size='sm'>
                 金融機関コード
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-bank_code`}
                 className={common}
                 inputMode='numeric'
@@ -208,6 +306,7 @@ const Field = ({
                 placeholder='4桁'
                 value={obj.bank_code ?? ''}
                 disabled={disabled}
+                options={slot('bank_code')}
                 onChange={(e) => set({ bank_code: e.target.value })}
                 onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ bank_code: v }))}
               />
@@ -216,11 +315,12 @@ const Field = ({
               <Label htmlFor={`${id}-bank_name`} size='sm'>
                 金融機関名
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-bank_name`}
                 className={common}
                 value={obj.bank_name ?? ''}
                 disabled={disabled}
+                options={slot('bank_name')}
                 onChange={(e) => set({ bank_name: e.target.value })}
               />
             </div>
@@ -228,7 +328,7 @@ const Field = ({
               <Label htmlFor={`${id}-branch_code`} size='sm'>
                 支店コード
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-branch_code`}
                 className={common}
                 inputMode='numeric'
@@ -236,6 +336,7 @@ const Field = ({
                 placeholder='3桁'
                 value={obj.branch_code ?? ''}
                 disabled={disabled}
+                options={slot('branch_code')}
                 onChange={(e) => set({ branch_code: e.target.value })}
                 onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ branch_code: v }))}
               />
@@ -244,11 +345,12 @@ const Field = ({
               <Label htmlFor={`${id}-branch_name`} size='sm'>
                 支店名
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-branch_name`}
                 className={common}
                 value={obj.branch_name ?? ''}
                 disabled={disabled}
+                options={slot('branch_name')}
                 onChange={(e) => set({ branch_name: e.target.value })}
               />
             </div>
@@ -275,12 +377,13 @@ const Field = ({
               <Label htmlFor={`${id}-account_number`} size='sm'>
                 口座番号
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-account_number`}
                 className={common}
                 inputMode='numeric'
                 value={obj.account_number ?? ''}
                 disabled={disabled}
+                options={slot('account_number')}
                 onChange={(e) => set({ account_number: e.target.value })}
                 onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ account_number: v }))}
               />
@@ -289,11 +392,12 @@ const Field = ({
               <Label htmlFor={`${id}-account_holder`} size='sm'>
                 口座名義
               </Label>
-              <input
+              <ImiInput
                 id={`${id}-account_holder`}
                 className={common}
                 value={obj.account_holder ?? ''}
                 disabled={disabled}
+                options={slot('account_holder')}
                 onChange={(e) => set({ account_holder: e.target.value })}
               />
             </div>
@@ -336,13 +440,14 @@ const Field = ({
             郵便番号
           </Label>
           <div className='flex flex-wrap items-end gap-2'>
-            <input
+            <ImiInput
               id={`${id}-postal_code`}
               className={`${common} max-w-40`}
               inputMode='numeric'
               placeholder='123-4567'
               value={obj.postal_code ?? ''}
               disabled={disabled}
+              options={slot('postal_code')}
               onChange={(e) => set({ postal_code: e.target.value })}
               onBlur={(e) => void runPostal(e.target.value)}
             />
@@ -386,11 +491,12 @@ const Field = ({
           <Label htmlFor={`${id}-city`} size='sm'>
             市区町村
           </Label>
-          <input
+          <ImiInput
             id={`${id}-city`}
             className={common}
             value={obj.city ?? ''}
             disabled={disabled}
+            options={slot('city')}
             onChange={(e) => set({ city: e.target.value })}
             onBlur={(e) => blurNorm('nfkc', e.target.value, (v) => set({ city: v }))}
           />
@@ -399,11 +505,12 @@ const Field = ({
           <Label htmlFor={`${id}-street`} size='sm'>
             町名・番地
           </Label>
-          <input
+          <ImiInput
             id={`${id}-street`}
             className={common}
             value={obj.street ?? ''}
             disabled={disabled}
+            options={slot('street')}
             onChange={(e) => set({ street: e.target.value })}
             onBlur={(e) => blurNorm('street', e.target.value, (v) => set({ street: v }))}
           />
@@ -412,11 +519,12 @@ const Field = ({
           <Label htmlFor={`${id}-building`} size='sm'>
             建物名
           </Label>
-          <input
+          <ImiInput
             id={`${id}-building`}
             className={common}
             value={obj.building ?? ''}
             disabled={disabled}
+            options={slot('building')}
             onChange={(e) => set({ building: e.target.value })}
             onBlur={(e) => blurNorm('nfkc', e.target.value, (v) => set({ building: v }))}
           />
@@ -433,11 +541,12 @@ const Field = ({
           <Label htmlFor={`${id}-last_name`} size='sm'>
             姓
           </Label>
-          <input
+          <ImiInput
             id={`${id}-last_name`}
             className={common}
             value={obj.last_name ?? ''}
             disabled={disabled}
+            options={slot('last_name')}
             onChange={(e) => set({ last_name: e.target.value })}
           />
         </div>
@@ -445,11 +554,12 @@ const Field = ({
           <Label htmlFor={`${id}-first_name`} size='sm'>
             名
           </Label>
-          <input
+          <ImiInput
             id={`${id}-first_name`}
             className={common}
             value={obj.first_name ?? ''}
             disabled={disabled}
+            options={slot('first_name')}
             onChange={(e) => set({ first_name: e.target.value })}
           />
         </div>
@@ -457,11 +567,12 @@ const Field = ({
           <Label htmlFor={`${id}-last_name_kana`} size='sm'>
             セイ
           </Label>
-          <input
+          <ImiInput
             id={`${id}-last_name_kana`}
             className={common}
             value={obj.last_name_kana ?? ''}
             disabled={disabled}
+            options={slot('last_name_kana')}
             onChange={(e) => set({ last_name_kana: e.target.value })}
           />
         </div>
@@ -469,46 +580,51 @@ const Field = ({
           <Label htmlFor={`${id}-first_name_kana`} size='sm'>
             メイ
           </Label>
-          <input
+          <ImiInput
             id={`${id}-first_name_kana`}
             className={common}
             value={obj.first_name_kana ?? ''}
             disabled={disabled}
+            options={slot('first_name_kana')}
             onChange={(e) => set({ first_name_kana: e.target.value })}
           />
         </div>
-        <div>
-          <Label htmlFor={`${id}-gender`} size='sm'>
-            性別
-          </Label>
-          <select
-            id={`${id}-gender`}
-            className={common}
-            value={obj.gender ?? ''}
-            disabled={disabled}
-            onChange={(e) => set({ gender: e.target.value })}
-          >
-            <option value=''>選択してください</option>
-            {GENDERS.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <Label htmlFor={`${id}-birth_date`} size='sm'>
-            生年月日
-          </Label>
-          <input
-            id={`${id}-birth_date`}
-            type='date'
-            className={common}
-            value={obj.birth_date ?? ''}
-            disabled={disabled}
-            onChange={(e) => set({ birth_date: e.target.value })}
-          />
-        </div>
+        {c.properties?.show_gender !== false ? (
+          <div>
+            <Label htmlFor={`${id}-gender`} size='sm'>
+              性別
+            </Label>
+            <select
+              id={`${id}-gender`}
+              className={common}
+              value={obj.gender ?? ''}
+              disabled={disabled}
+              onChange={(e) => set({ gender: e.target.value })}
+            >
+              <option value=''>選択してください</option>
+              {GENDERS.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        {c.properties?.show_birth_date !== false ? (
+          <div>
+            <Label htmlFor={`${id}-birth_date`} size='sm'>
+              生年月日
+            </Label>
+            <input
+              id={`${id}-birth_date`}
+              type='date'
+              className={common}
+              value={obj.birth_date ?? ''}
+              disabled={disabled}
+              onChange={(e) => set({ birth_date: e.target.value })}
+            />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -541,7 +657,7 @@ const Field = ({
             法人番号
           </Label>
           <div className='flex flex-wrap items-end gap-2'>
-            <input
+            <ImiInput
               id={`${id}-corporate_number`}
               className={`${common} max-w-56`}
               inputMode='numeric'
@@ -549,6 +665,7 @@ const Field = ({
               placeholder='13桁'
               value={obj.corporate_number ?? ''}
               disabled={disabled}
+              options={slot('corporate_number')}
               onChange={(e) => set({ corporate_number: e.target.value })}
               onBlur={(e) => void runCorporate(e.target.value)}
             />
@@ -573,11 +690,12 @@ const Field = ({
           <Label htmlFor={`${id}-company_name`} size='sm'>
             法人名
           </Label>
-          <input
+          <ImiInput
             id={`${id}-company_name`}
             className={common}
             value={obj.company_name ?? ''}
             disabled={disabled}
+            options={slot('company_name')}
             onChange={(e) => set({ company_name: e.target.value })}
           />
         </div>
@@ -585,11 +703,12 @@ const Field = ({
           <Label htmlFor={`${id}-representative`} size='sm'>
             代表者
           </Label>
-          <input
+          <ImiInput
             id={`${id}-representative`}
             className={common}
             value={obj.representative ?? ''}
             disabled={disabled}
+            options={slot('representative')}
             onChange={(e) => set({ representative: e.target.value })}
           />
         </div>
@@ -813,13 +932,14 @@ const Field = ({
   }
   if (c.type === 'textarea') {
     return (
-      <textarea
+      <ImiTextarea
         id={id}
         className={common}
         rows={4}
         value={typeof value === 'string' ? value : ''}
         placeholder={c.placeholder}
         disabled={disabled}
+        options={slot()}
         onChange={(e) => onChange(e.target.value)}
       />
     );
@@ -914,33 +1034,35 @@ const Field = ({
       />
     );
   }
-  return (
-    <input
-      id={id}
-      type={inputType}
-      className={common}
-      value={value == null ? '' : String(value)}
-      placeholder={c.placeholder || (c.type === 'mynumber' ? '12桁' : undefined)}
-      inputMode={c.type === 'mynumber' ? 'numeric' : undefined}
-      maxLength={c.type === 'mynumber' ? 12 : undefined}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={(e) => {
-        const kind: NormalizeKind | null =
-          c.type === 'phone'
-            ? 'phone'
-            : c.type === 'mynumber'
-              ? 'digits'
-              : c.type === 'number'
-                ? 'numeric'
-                : c.type === 'email'
-                  ? 'nfkc'
-                  : null;
-        if (!kind) return;
-        blurNorm(kind, e.target.value, onChange);
-      }}
-    />
-  );
+  const blurKind: NormalizeKind | null =
+    c.type === 'phone'
+      ? 'phone'
+      : c.type === 'mynumber'
+        ? 'digits'
+        : c.type === 'number'
+          ? 'numeric'
+          : c.type === 'email'
+            ? 'nfkc'
+            : null;
+  const shared = {
+    id,
+    type: inputType,
+    className: common,
+    value: value == null ? '' : String(value),
+    placeholder: c.placeholder || (c.type === 'mynumber' ? '12桁' : undefined),
+    inputMode: c.type === 'mynumber' ? ('numeric' as const) : undefined,
+    maxLength: c.type === 'mynumber' ? 12 : undefined,
+    disabled,
+    onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+    onBlur: (e: { target: { value: string } }) => {
+      if (!blurKind) return;
+      blurNorm(blurKind, e.target.value, onChange);
+    },
+  };
+  if (c.type === 'text' || c.type === 'email' || c.type === 'phone') {
+    return <ImiInput {...shared} options={slot()} />;
+  }
+  return <input {...shared} />;
 };
 
 /** 庁内プレビュー / 記入。ゲスト UI と同じ type だけを描画する。 */
@@ -1050,6 +1172,8 @@ export const FillForm = ({
               onUpload={onUpload}
               onPostalLookup={onPostalLookup}
               onCorporateLookup={onCorporateLookup}
+              components={definition.components}
+              values={values}
             />
           </div>
         );

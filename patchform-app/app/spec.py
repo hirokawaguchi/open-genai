@@ -59,7 +59,7 @@ CATALOG: dict[str, dict[str, Any]] = {
     "datetime-local": _item("日時", "datetime", "日付と時刻を一緒に"),
     "daterange": _item("期間", "datetime", "開始日と終了日"),
     "address_composite": _item("住所", "composite", "郵便番号・都道府県・市区町村など"),
-    "user_info_composite": _item("氏名", "composite", "姓・名・フリガナ・性別・生年月日"),
+    "user_info_composite": _item("氏名", "composite", "姓・名・フリガナ。性別と生年月日は表示を選べる"),
     "company_info_composite": _item("法人情報", "composite", "法人名・法人番号・代表者"),
     "financial_institution_composite": _item(
         "金融機関", "composite", "振込先。ゆうちょは記号番号から店番へ換算"
@@ -132,6 +132,13 @@ def _truthy(value: Any) -> bool:
     if value is True or value == 1:
         return True
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _prop_shown(comp: dict[str, Any], name: str) -> bool:
+    props = comp.get("properties") if isinstance(comp.get("properties"), dict) else {}
+    if name not in props:
+        return True
+    return _truthy(props.get(name))
 
 
 def mynumber_check_digit_ok(digits: str) -> bool:
@@ -253,7 +260,8 @@ def validate_definition(
                 "properties": props,
                 "validation": raw.get("validation") if isinstance(raw.get("validation"), dict) else {},
                 "visibleWhen": visible_when,
-                "imi_type": str(raw.get("imi_type") or ""),
+                "imi_type": str(raw.get("imi_type") or "").strip(),
+                "imi_subfields": _imi_subfields(ctype, raw.get("imi_subfields")),
             }
         )
     return {
@@ -264,6 +272,18 @@ def validate_definition(
         },
         "components": normalized,
     }, None
+
+
+def _imi_subfields(ctype: str, raw: Any) -> dict[str, str]:
+    allowed = COMPOSITE_SUBFIELDS.get(ctype)
+    if not allowed or not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in allowed:
+        val = str(raw.get(key) or "").strip()
+        if val:
+            out[key] = val
+    return out
 
 
 def _as_strings(value: Any) -> list[str]:
@@ -472,12 +492,14 @@ def _validate_value(comp: dict[str, Any], raw: Any, *, partial: bool = False) ->
             if postal and not _POSTAL_RE.match(postal):
                 return f"{label}の郵便番号が不正です"
         if ctype == "user_info_composite":
-            gender = str(raw.get("gender") or "").strip()
-            if gender and gender not in _GENDERS:
-                return f"{label}の性別が不正です"
-            birth = str(raw.get("birth_date") or "").strip()
-            if birth and not _DATE_RE.match(birth):
-                return f"{label}の生年月日が不正です"
+            if _prop_shown(comp, "show_gender"):
+                gender = str(raw.get("gender") or "").strip()
+                if gender and gender not in _GENDERS:
+                    return f"{label}の性別が不正です"
+            if _prop_shown(comp, "show_birth_date"):
+                birth = str(raw.get("birth_date") or "").strip()
+                if birth and not _DATE_RE.match(birth):
+                    return f"{label}の生年月日が不正です"
         if ctype == "company_info_composite":
             corp = str(raw.get("corporate_number") or "").strip()
             if corp and not _CORP_RE.match(corp):
@@ -541,6 +563,13 @@ def _normalize_value(comp: dict[str, Any], raw: Any) -> Any:
             "mime": str(raw.get("mime") or ""),
             "size": int(raw.get("size") or 0) if str(raw.get("size") or "0").isdigit() else 0,
         }
+    if ctype == "user_info_composite" and isinstance(raw, dict):
+        out = dict(raw)
+        if not _prop_shown(comp, "show_gender"):
+            out.pop("gender", None)
+        if not _prop_shown(comp, "show_birth_date"):
+            out.pop("birth_date", None)
+        return out
     if ctype == "financial_institution_composite" and isinstance(raw, dict) and _truthy(
         raw.get("is_yuucho")
     ):

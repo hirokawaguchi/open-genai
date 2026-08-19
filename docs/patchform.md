@@ -54,9 +54,9 @@ LGWAN から外部 URL に届かない場合は、フォーム画面の「リン
 
 現在利用できる部品: text, textarea, email, phone, number, select, radio, checkbox, slider, rating, date, time, datetime-local, daterange, file, address_composite, user_info_composite, company_info_composite, financial_institution_composite, calculated, text_display, image_display, divider, page_break, password, mynumber（庁内専用・暗号化）, matrix_question, signature_pad, location, qr_scanner, image_recognition, document_reader
 
-各部品には任意で IMI 語彙（`imi_type`）を付けられます。マイナンバーは `internal` 以外の公開範囲では配置できません。画像認識は Vision モデル、文書読取はテキストファイルを自動抽出し、失敗時は手入力できます。
+各部品には任意で IMI 語彙（`imi_type`）を付けられます。複合部品はサブ項目ごと（`imi_subfields`）にも付けられます。同じ語彙の欄には、今このフォームで入力中の値を候補として出します。他の申請や他のフォームからは出しません。マイナンバーは候補にしません。マイナンバー部品は `internal` 以外の公開範囲では配置できません。画像認識は Vision モデル、文書読取はテキストファイルを自動抽出し、失敗時は手入力できます。
 
-複合部品では次を補います。郵便番号は zipcloud で都道府県・市区町村・町名を補完します。法人番号は検査数字を確認し、`PATCHFORM_GBIZ_TOKEN` があるときだけ gBizINFO から法人名を補完します（未設定・失敗時は手入力）。氏名には性別・生年月日を含めます。ゆうちょの記号・番号は店番と口座番号（7桁）に換算して保存します。
+複合部品では次を補います。郵便番号は zipcloud で都道府県・市区町村・町名を補完します。法人番号は検査数字を確認し、`PATCHFORM_GBIZ_TOKEN` があるときだけ gBizINFO から法人名を補完します（未設定・失敗時は手入力）。氏名の性別と生年月日は編集画面で表示するかを選べます。ゆうちょの記号・番号は店番と口座番号（7桁）に換算して保存します。
 
 庁内の詳細画面では回答内容を開き、CSV / JSONL で書き出せます。ゲスト送信前には確認画面が出ます。出した回答は消さずに取り下げできます。庁内は一覧から、外部は控え番号（暗証があればそれも）から操作します。取下げの取消は庁内だけです。件数とCSVの「受付」は取下げを除きます。
 

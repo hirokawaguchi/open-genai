@@ -12,6 +12,7 @@ import { CatalogTypeIcon } from './builder/CatalogTypeIcon';
 import { ComponentSettings } from './builder/ComponentSettings';
 import { PATCHFORM_LABEL, catalogTypeHelp } from './labels';
 import { FillForm } from './runtime/FillForm';
+import { DEFAULT_IMI, DEFAULT_IMI_SUBFIELDS } from './runtime/imiSuggest';
 import type { CatalogItem, FormComponent, FormDefinition, IdentityMode } from './types';
 import {
   extractPatchformFile,
@@ -42,9 +43,15 @@ const blankComponent = (type: string, catalog: CatalogItem[]): FormComponent => 
             ? { text: '説明文' }
             : type === 'image_display'
               ? { src: '' }
-              : meta?.has_options
-                ? { options: ['選択肢1', '選択肢2'] }
-                : {},
+              : type === 'user_info_composite'
+                ? { show_gender: true, show_birth_date: true }
+                : meta?.has_options
+                  ? { options: ['選択肢1', '選択肢2'] }
+                  : {},
+    imi_type: DEFAULT_IMI[type] || '',
+    imi_subfields: DEFAULT_IMI_SUBFIELDS[type]
+      ? { ...DEFAULT_IMI_SUBFIELDS[type] }
+      : undefined,
   };
 };
 
