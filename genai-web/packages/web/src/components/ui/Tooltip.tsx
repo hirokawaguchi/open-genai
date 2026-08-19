@@ -44,6 +44,7 @@ interface TooltipOptions {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   offset?: number; // 追加
+  strategy?: 'absolute' | 'fixed';
 }
 
 const useTooltip = ({
@@ -52,6 +53,7 @@ const useTooltip = ({
   open: controlledOpen,
   onOpenChange: setControlledOpen,
   offset: offsetValue = 4, // 追加: デフォルト4
+  strategy = 'absolute',
 }: TooltipOptions = {}) => {
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(initialOpen);
 
@@ -60,6 +62,7 @@ const useTooltip = ({
 
   const data = useFloating({
     placement,
+    strategy,
     open,
     onOpenChange: setOpen,
     whileElementsMounted: autoUpdate,

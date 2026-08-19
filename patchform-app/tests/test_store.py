@@ -150,11 +150,72 @@ def test_publish_submit_csv_guest() -> None:
         assert err is None and items
         assert len(items) == 1
         assert items[0]["answers"]["name"] == "佐藤"
+        assert items[0]["form_version"] == 1
+        assert items[0]["definition"]["components"][0]["id"] == "name"
 
         csv_text, err = store.export_csv(form["id"], actor_user_id="u1")
         assert err is None and csv_text
         assert "氏名" in csv_text
         assert "佐藤" in csv_text
+        assert "form_version" in csv_text
+    finally:
+        _teardown(path)
+
+
+def test_answers_use_submitted_version() -> None:
+    path = _setup_db()
+    try:
+        form, err = store.create_form(
+            title="版確認",
+            description=None,
+            creator_user_id="u1",
+            creator_name=None,
+            visibility="internal",
+            definition=_definition(),
+        )
+        assert err is None and form
+        store.set_status(form["id"], actor_user_id="u1", status="published")
+        store.submit_answers(
+            form_id=form["id"],
+            answers={"name": "旧回答", "mail": "old@example.jp"},
+            submitter_user_id="u1",
+            submitter_name="旧",
+        )
+        changed = _definition()
+        changed["components"] = [
+            {"id": "new_field", "type": "text", "label": "新しい項目", "required": True}
+        ]
+        store.update_form(
+            form["id"],
+            actor_user_id="u1",
+            definition=changed,
+        )
+        published, err = store.set_status(form["id"], actor_user_id="u1", status="published")
+        assert err is None and published and published["published_version"] == 2
+        result, err = store.submit_answers(
+            form_id=form["id"],
+            answers={"new_field": "新回答"},
+            submitter_user_id="u1",
+            submitter_name="新",
+        )
+        assert err is None and result
+        items, err = store.list_submissions(form["id"], actor_user_id="u1")
+        assert err is None and items
+        assert len(items) == 2
+        newest = next(i for i in items if i["form_version"] == 2)
+        oldest = next(i for i in items if i["form_version"] == 1)
+        assert newest["answers"]["new_field"] == "新回答"
+        assert [c["id"] for c in newest["definition"]["components"]] == ["new_field"]
+        assert oldest["answers"]["name"] == "旧回答"
+        assert [c["label"] for c in oldest["definition"]["components"] if c["id"] == "name"] == ["氏名"]
+        csv_text, err = store.export_csv(form["id"], actor_user_id="u1")
+        assert err is None and csv_text
+        assert "氏名" in csv_text
+        assert "新しい項目" in csv_text
+        assert "旧回答" in csv_text
+        assert "新回答" in csv_text
+        detail = store.get_form(form["id"])
+        assert detail and detail["published_version"] == 2
     finally:
         _teardown(path)
 
@@ -246,6 +307,7 @@ if __name__ == "__main__":
     test_create_list_update()
     test_publish_requires_components()
     test_publish_submit_csv_guest()
+    test_answers_use_submitted_version()
     test_internal_not_on_public()
     test_mynumber_masked()
     test_retention_cleanup()

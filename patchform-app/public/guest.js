@@ -27,27 +27,49 @@
     return data;
   };
 
-  const fieldHtml = (c) => {
+  const titleHtml = (c, forId) => {
     const req = c.required ? '<span class="req">必須</span>' : "";
+    if (c.hide_label) {
+      return `<label class="sr-only" ${forId ? `for="${esc(forId)}"` : ""}>${esc(c.label)}${req}</label>${c.required ? '<p class="req">必須</p>' : ""}`;
+    }
+    return `<label ${forId ? `for="${esc(forId)}"` : ""}>${esc(c.label)}${req}</label>`;
+  };
+
+  const legendHtml = (c) => {
+    const req = c.required ? '<span class="req">必須</span>' : "";
+    if (c.hide_label) {
+      return `<legend class="sr-only">${esc(c.label)}${req}</legend>${c.required ? '<p class="req">必須</p>' : ""}`;
+    }
+    return `<legend>${esc(c.label)}${req}</legend>`;
+  };
+
+  const filePickHtml = (name, extra = "") =>
+    `<div class="file-pick">
+      <input class="file-input" name="${esc(name)}" type="file" ${extra} />
+      <button type="button" class="file-btn">ファイルを選択</button>
+      <span class="file-name">選択されていません</span>
+    </div>`;
+
+  const fieldHtml = (c) => {
     const ph = esc(c.placeholder || "");
     const opts = (c.properties && c.properties.options) || [];
     if (c.type === "textarea") {
-      return `<label for="${esc(c.id)}">${esc(c.label)}${req}</label><textarea id="${esc(c.id)}" name="${esc(c.id)}" rows="4" placeholder="${ph}"></textarea>`;
+      return `${titleHtml(c, c.id)}<textarea id="${esc(c.id)}" name="${esc(c.id)}" rows="4" placeholder="${ph}"></textarea>`;
     }
     if (c.type === "select") {
       const items = opts
         .map((o) => `<option value="${esc(o)}">${esc(o)}</option>`)
         .join("");
-      return `<label for="${esc(c.id)}">${esc(c.label)}${req}</label><select id="${esc(c.id)}" name="${esc(c.id)}"><option value="">選択してください</option>${items}</select>`;
+      return `${titleHtml(c, c.id)}<select id="${esc(c.id)}" name="${esc(c.id)}"><option value="">選択してください</option>${items}</select>`;
     }
     if (c.type === "radio") {
       const items = opts
         .map(
-          (o, i) =>
+          (o) =>
             `<label><input type="radio" name="${esc(c.id)}" value="${esc(o)}" /> ${esc(o)}</label>`,
         )
         .join("");
-      return `<fieldset><legend>${esc(c.label)}${req}</legend><div class="choices">${items}</div></fieldset>`;
+      return `<fieldset>${legendHtml(c)}<div class="choices">${items}</div></fieldset>`;
     }
     if (c.type === "checkbox") {
       const items = opts
@@ -56,35 +78,48 @@
             `<label><input type="checkbox" name="${esc(c.id)}" value="${esc(o)}" /> ${esc(o)}</label>`,
         )
         .join("");
-      return `<fieldset><legend>${esc(c.label)}${req}</legend><div class="choices">${items}</div></fieldset>`;
+      return `<fieldset>${legendHtml(c)}<div class="choices">${items}</div></fieldset>`;
     }
     if (c.type === "address_composite") {
-      return `<fieldset><legend>${esc(c.label)}${req}</legend>
-        <label>郵便番号</label><input name="${esc(c.id)}.postal_code" type="text" />
+      return `<fieldset>${legendHtml(c)}
+        <label>郵便番号</label><input name="${esc(c.id)}.postal_code" type="text" inputmode="numeric" data-normalize="postal" />
         <label>都道府県</label><input name="${esc(c.id)}.prefecture" type="text" />
         <label>市区町村</label><input name="${esc(c.id)}.city" type="text" />
-        <label>町名・番地</label><input name="${esc(c.id)}.street" type="text" />
-        <label>建物名</label><input name="${esc(c.id)}.building" type="text" /></fieldset>`;
+        <label>町名・番地</label><input name="${esc(c.id)}.street" type="text" data-normalize="street" />
+        <label>建物名</label><input name="${esc(c.id)}.building" type="text" data-normalize="nfkc" /></fieldset>`;
     }
     if (c.type === "user_info_composite") {
-      return `<fieldset><legend>${esc(c.label)}${req}</legend>
+      return `<fieldset>${legendHtml(c)}
         <label>姓</label><input name="${esc(c.id)}.last_name" type="text" />
         <label>名</label><input name="${esc(c.id)}.first_name" type="text" />
         <label>セイ</label><input name="${esc(c.id)}.last_name_kana" type="text" />
         <label>メイ</label><input name="${esc(c.id)}.first_name_kana" type="text" /></fieldset>`;
     }
     if (c.type === "company_info_composite") {
-      return `<fieldset><legend>${esc(c.label)}${req}</legend>
+      return `<fieldset>${legendHtml(c)}
         <label>法人名</label><input name="${esc(c.id)}.company_name" type="text" />
-        <label>法人番号</label><input name="${esc(c.id)}.corporate_number" type="text" />
+        <label>法人番号</label><input name="${esc(c.id)}.corporate_number" type="text" inputmode="numeric" data-normalize="digits" />
         <label>代表者</label><input name="${esc(c.id)}.representative" type="text" /></fieldset>`;
     }
     if (c.type === "financial_institution_composite") {
-      return `<fieldset><legend>${esc(c.label)}${req}</legend>
-        <label>金融機関名</label><input name="${esc(c.id)}.bank_name" type="text" />
-        <label>支店名</label><input name="${esc(c.id)}.branch_name" type="text" />
-        <label>口座種別</label><input name="${esc(c.id)}.account_type" type="text" />
-        <label>口座番号</label><input name="${esc(c.id)}.account_number" type="text" />
+      return `<fieldset>${legendHtml(c)}
+        <label class="choice-row"><input type="checkbox" name="${esc(c.id)}.is_yuucho" value="1" data-yuucho="${esc(c.id)}" /> ゆうちょ銀行の場合</label>
+        <div data-yuucho-bank="${esc(c.id)}">
+          <label>金融機関コード</label><input name="${esc(c.id)}.bank_code" type="text" inputmode="numeric" maxlength="4" placeholder="4桁" data-normalize="digits" />
+          <label>金融機関名</label><input name="${esc(c.id)}.bank_name" type="text" />
+          <label>支店コード</label><input name="${esc(c.id)}.branch_code" type="text" inputmode="numeric" maxlength="3" placeholder="3桁" data-normalize="digits" />
+          <label>支店名</label><input name="${esc(c.id)}.branch_name" type="text" />
+          <label>口座種別</label>
+          <select name="${esc(c.id)}.account_type">
+            <option value="">選択してください</option>
+            <option>普通</option><option>当座</option><option>貯蓄</option>
+          </select>
+          <label>口座番号</label><input name="${esc(c.id)}.account_number" type="text" inputmode="numeric" data-normalize="digits" />
+        </div>
+        <div data-yuucho-jp="${esc(c.id)}" hidden>
+          <label>記号</label><input name="${esc(c.id)}.yuucho_symbol" type="text" inputmode="numeric" maxlength="5" placeholder="5桁" data-normalize="digits" />
+          <label>番号</label><input name="${esc(c.id)}.yuucho_number" type="text" inputmode="numeric" maxlength="8" placeholder="8桁以内" data-normalize="digits" />
+        </div>
         <label>口座名義</label><input name="${esc(c.id)}.account_holder" type="text" /></fieldset>`;
     }
     if (c.type === "calculated") {
@@ -105,25 +140,26 @@
       return `<hr />`;
     }
     if (c.type === "location") {
-      return `<fieldset><legend>${esc(c.label)}${req}</legend>
+      return `<fieldset>${legendHtml(c)}
         <button type="button" data-loc="${esc(c.id)}">現在地を取得</button>
         <label>緯度</label><input name="${esc(c.id)}.lat" type="text" inputmode="decimal" />
         <label>経度</label><input name="${esc(c.id)}.lng" type="text" inputmode="decimal" /></fieldset>`;
     }
     if (c.type === "image_recognition" || c.type === "document_reader") {
       const accept = c.type === "image_recognition" ? "image/*" : "";
-      return `<label>${esc(c.label)}${req}</label>
-        <input name="${esc(c.id)}.file" type="file" ${accept ? `accept="${accept}"` : ""} data-extract="${c.type === "image_recognition" ? "image" : "document"}" />
+      const extract = c.type === "image_recognition" ? "image" : "document";
+      return `${titleHtml(c)}
+        ${filePickHtml(`${c.id}.file`, `${accept ? `accept="${accept}" ` : ""}data-extract="${extract}"`)}
         <textarea name="${esc(c.id)}.extracted" rows="4" placeholder="読み取った内容（自動読取できない場合は手入力）"></textarea>`;
     }
     if (c.type === "daterange") {
-      return `<label>${esc(c.label)}${req}</label><input name="${esc(c.id)}.start" type="date" /> 〜 <input name="${esc(c.id)}.end" type="date" />`;
+      return `${titleHtml(c)}<input name="${esc(c.id)}.start" type="date" /> 〜 <input name="${esc(c.id)}.end" type="date" />`;
     }
     if (c.type === "slider") {
-      return `<label>${esc(c.label)}${req}</label><input name="${esc(c.id)}" type="range" min="0" max="100" />`;
+      return `${titleHtml(c, c.id)}<input id="${esc(c.id)}" name="${esc(c.id)}" type="range" min="0" max="100" />`;
     }
     if (c.type === "rating") {
-      return `<label>${esc(c.label)}${req}</label><input name="${esc(c.id)}" type="number" min="1" max="5" />`;
+      return `${titleHtml(c, c.id)}<input id="${esc(c.id)}" name="${esc(c.id)}" type="number" min="1" max="5" />`;
     }
     if (c.type === "matrix_question") {
       const rows = (c.properties && c.properties.rows) || [];
@@ -137,7 +173,7 @@
               .join("")}</tr>`,
         )
         .join("");
-      return `<fieldset><legend>${esc(c.label)}${req}</legend><table><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></fieldset>`;
+      return `<fieldset>${legendHtml(c)}<table><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></fieldset>`;
     }
     const type =
       c.type === "email"
@@ -160,7 +196,39 @@
                         ? "text"
                         : "text";
     const extra = c.type === "mynumber" ? ' inputmode="numeric" maxlength="12"' : "";
-    return `<label for="${esc(c.id)}">${esc(c.label)}${req}</label><input id="${esc(c.id)}" name="${esc(c.id)}" type="${type}" placeholder="${ph}"${extra} />`;
+    const norm =
+      c.type === "phone"
+        ? "phone"
+        : c.type === "mynumber"
+          ? "digits"
+          : c.type === "number"
+            ? "numeric"
+            : c.type === "email"
+              ? "nfkc"
+              : "";
+    if (type === "file") {
+      return `${titleHtml(c, c.id)}${filePickHtml(c.id, `id="${esc(c.id)}"`)}`;
+    }
+    return `${titleHtml(c, c.id)}<input id="${esc(c.id)}" name="${esc(c.id)}" type="${type}" placeholder="${ph}"${extra}${norm ? ` data-normalize="${norm}"` : ""} />`;
+  };
+
+  const HYPHENS = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043\uFE58\uFE63\uFF0D]/g;
+  const HYPHENS_OR_CHOON = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043\uFE58\uFE63\uFF0D\u30FC\uFF70]/g;
+  const normalizeInput = (value, kind) => {
+    const nfkc = (s) => s.normalize("NFKC").trim();
+    const hyphens = (s, choon) => s.replace(choon ? HYPHENS_OR_CHOON : HYPHENS, "-").replace(/-{2,}/g, "-");
+    if (kind === "digits") return hyphens(nfkc(value), true).replace(/\D/g, "");
+    if (kind === "postal") {
+      const compact = hyphens(nfkc(value), true).replace(/[^\d-]/g, "");
+      const digits = compact.replace(/-/g, "");
+      return /^\d{7}$/.test(digits) ? `${digits.slice(0, 3)}-${digits.slice(3)}` : compact;
+    }
+    if (kind === "phone") {
+      return hyphens(nfkc(value), true).replace(/[^\d+\-() ]/g, "").replace(/ {2,}/g, " ").trim();
+    }
+    if (kind === "street") return hyphens(nfkc(value), true).replace(/ {2,}/g, " ").trim();
+    if (kind === "numeric") return hyphens(nfkc(value), false).replace(/,/g, "");
+    return nfkc(value);
   };
 
   const readDataUrl = (file) =>
@@ -206,7 +274,8 @@
       } else if (c.type.endsWith("_composite")) {
         const obj = {};
         for (const el of form.querySelectorAll(`[name^="${c.id}."]`)) {
-          obj[el.name.slice(c.id.length + 1)] = el.value;
+          const key = el.name.slice(c.id.length + 1);
+          obj[key] = el.type === "checkbox" ? (el.checked ? el.value || "1" : "") : el.value;
         }
         answers[c.id] = obj;
       } else if (c.type === "checkbox") {
@@ -247,6 +316,40 @@
         <button type="submit">送信する</button>
       </form>
     `);
+    document.querySelectorAll("[data-normalize]").forEach((el) => {
+      el.addEventListener("blur", () => {
+        const kind = el.getAttribute("data-normalize");
+        const next = normalizeInput(el.value || "", kind);
+        if (next !== el.value) el.value = next;
+      });
+    });
+    document.querySelectorAll(".file-pick").forEach((wrap) => {
+      const input = wrap.querySelector(".file-input");
+      const btn = wrap.querySelector(".file-btn");
+      const name = wrap.querySelector(".file-name");
+      if (!input || !btn) return;
+      btn.addEventListener("click", () => input.click());
+      input.addEventListener("change", () => {
+        const file = input.files && input.files[0];
+        if (name) name.textContent = file ? `選択中: ${file.name}` : "選択されていません";
+      });
+    });
+    document.querySelectorAll("[data-yuucho]").forEach((el) => {
+      const cid = el.getAttribute("data-yuucho");
+      const bank = document.querySelector(`[data-yuucho-bank="${cid}"]`);
+      const jp = document.querySelector(`[data-yuucho-jp="${cid}"]`);
+      const nameEl = document.querySelector(`[name="${cid}.bank_name"]`);
+      const codeEl = document.querySelector(`[name="${cid}.bank_code"]`);
+      const sync = () => {
+        const on = el.checked;
+        if (bank) bank.hidden = on;
+        if (jp) jp.hidden = !on;
+        if (on && nameEl && !nameEl.value) nameEl.value = "ゆうちょ銀行";
+        if (on && codeEl && !codeEl.value) codeEl.value = "9900";
+      };
+      el.addEventListener("change", sync);
+      sync();
+    });
     document.querySelectorAll("[data-loc]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (!navigator.geolocation) return;

@@ -299,6 +299,87 @@ def test_location_qr_and_ai_fields() -> None:
     assert berr and "画像 URL" in berr
 
 
+def test_hide_label_persisted() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp("agree", "checkbox", label="同意", hide_label=True, properties={"options": ["同意する"]})
+    ]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    assert definition["components"][0]["hide_label"] is True
+
+
+def test_financial_yuucho_and_codes() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp("bank", "financial_institution_composite", label="振込先", required=True)
+    ]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    _a, aerr = spec.validate_answers(definition, {"bank": {"bank_name": "みずほ"}})
+    assert aerr and "必須" in aerr
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "bank": {
+                "bank_code": "0001",
+                "bank_name": "みずほ",
+                "branch_code": "001",
+                "branch_name": "本店",
+                "account_type": "普通",
+                "account_number": "1234567",
+                "account_holder": "ヤマダタロウ",
+            }
+        },
+    )
+    assert aerr is None and cleaned
+    _bad, berr = spec.validate_answers(
+        definition,
+        {"bank": {"bank_code": "1", "bank_name": "みずほ", "account_number": "1", "account_holder": "A"}},
+    )
+    assert berr and "金融機関コード" in berr
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "bank": {
+                "is_yuucho": "1",
+                "yuucho_symbol": "10170",
+                "yuucho_number": "12345671",
+                "account_holder": "ヤマダタロウ",
+            }
+        },
+    )
+    assert aerr is None and cleaned
+
+
+def test_canonicalize_fullwidth_and_hyphens() -> None:
+    raw = spec.empty_definition()
+    raw["components"] = [
+        _comp("tel", "phone", label="電話"),
+        _comp("addr", "address_composite", label="住所"),
+        _comp("co", "company_info_composite", label="法人"),
+    ]
+    definition, err = spec.validate_definition(raw)
+    assert err is None and definition
+    cleaned, aerr = spec.validate_answers(
+        definition,
+        {
+            "tel": "０３−１２３４ー５６７８",
+            "addr": {
+                "postal_code": "１０５０００１",
+                "prefecture": "東京都",
+                "city": "港区",
+                "street": "１ー２−３",
+            },
+            "co": {"company_name": "例", "corporate_number": "1234567890123"},
+        },
+    )
+    assert aerr is None and cleaned
+    assert cleaned["tel"] == "03-1234-5678"
+    assert cleaned["addr"]["postal_code"] == "105-0001"
+    assert cleaned["addr"]["street"] == "1-2-3"
+
+
 if __name__ == "__main__":
     test_empty_definition_ok()
     test_unknown_type_rejected()
@@ -313,4 +394,7 @@ if __name__ == "__main__":
     test_mynumber_internal_only()
     test_catalog_enabled_only_in_public()
     test_location_qr_and_ai_fields()
+    test_hide_label_persisted()
+    test_financial_yuucho_and_codes()
+    test_canonicalize_fullwidth_and_hyphens()
     print("ok")

@@ -186,7 +186,16 @@ def get_form(
             row = db.execute("SELECT * FROM forms WHERE id = ?", (form_id,)).fetchone()
         if not row:
             return None
-        return _row_to_form(row)
+        out = _row_to_form(row)
+        if row["published_version_id"]:
+            ver = db.execute(
+                "SELECT version, published_at FROM form_versions WHERE id = ?",
+                (row["published_version_id"],),
+            ).fetchone()
+            if ver:
+                out["published_version"] = ver["version"]
+                out["published_at"] = ver["published_at"]
+        return out
 
 
 def create_form(
@@ -517,11 +526,15 @@ def list_submissions(form_id: str, *, actor_user_id: str) -> tuple[list[dict[str
             return None, "フォームが見つかりません"
         if row["creator_user_id"] != actor_user_id:
             return None, "回答を閲覧する権限がありません"
-        definition = published_definition(form_id) or _definition(row)
+        fallback = published_definition(form_id) or _definition(row)
         rows = db.execute(
-            "SELECT id, receipt_code, submitter_user_id, submitter_name, answers_json, "
-            "is_draft, created_at FROM submissions WHERE form_id = ? AND is_draft = 0 "
-            "ORDER BY created_at DESC",
+            "SELECT s.id, s.receipt_code, s.submitter_user_id, s.submitter_name, "
+            "s.answers_json, s.created_at, s.version_id, "
+            "v.version AS form_version, v.published_at, v.definition_json "
+            "FROM submissions s "
+            "LEFT JOIN form_versions v ON v.id = s.version_id "
+            "WHERE s.form_id = ? AND s.is_draft = 0 "
+            "ORDER BY s.created_at DESC, s.rowid DESC",
             (form_id,),
         ).fetchall()
         out = []
@@ -530,6 +543,14 @@ def list_submissions(form_id: str, *, actor_user_id: str) -> tuple[list[dict[str
                 answers = json.loads(r["answers_json"])
             except (TypeError, json.JSONDecodeError):
                 answers = {}
+            definition = fallback
+            if r["definition_json"]:
+                try:
+                    parsed = json.loads(r["definition_json"])
+                    if isinstance(parsed, dict):
+                        definition = parsed
+                except (TypeError, json.JSONDecodeError):
+                    pass
             answers = crypto.reveal_answers(definition, answers, mask=True)
             out.append(
                 {
@@ -539,9 +560,30 @@ def list_submissions(form_id: str, *, actor_user_id: str) -> tuple[list[dict[str
                     "submitter_name": r["submitter_name"],
                     "answers": answers,
                     "created_at": r["created_at"],
+                    "version_id": r["version_id"],
+                    "form_version": r["form_version"],
+                    "published_at": r["published_at"],
+                    "definition": definition,
                 }
             )
         return out, None
+
+
+def _union_answer_components(
+    items: list[dict[str, Any]],
+    fallback: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """回答に出てきた版の部品を id でまとめる。新しい回答のラベルを優先。"""
+    by_id: dict[str, dict[str, Any]] = {}
+    sources = [fallback, *[item.get("definition") or {} for item in reversed(items)]]
+    for definition in sources:
+        for comp in definition.get("components") or []:
+            if comp.get("type") in spec.DISPLAY_TYPES:
+                continue
+            cid = str(comp.get("id") or "")
+            if cid:
+                by_id[cid] = comp
+    return list(by_id.values())
 
 
 def export_csv(form_id: str, *, actor_user_id: str) -> tuple[str | None, str | None]:
@@ -550,22 +592,25 @@ def export_csv(form_id: str, *, actor_user_id: str) -> tuple[str | None, str | N
         return None, "フォームが見つかりません"
     if form["creator_user_id"] != actor_user_id:
         return None, "回答を書き出す権限がありません"
-    definition = published_definition(form_id) or form["definition"]
-    comps = [
-        c
-        for c in definition.get("components") or []
-        if c.get("type") not in spec.DISPLAY_TYPES
-    ]
+    fallback = published_definition(form_id) or form["definition"]
     items, err = list_submissions(form_id, actor_user_id=actor_user_id)
     if err or items is None:
         return None, err
+    comps = _union_answer_components(items, fallback)
     buf = io.StringIO()
-    headers = ["receipt_code", "submitter_name", "created_at"] + [c["label"] for c in comps]
+    headers = ["receipt_code", "submitter_name", "created_at", "form_version"] + [
+        c["label"] for c in comps
+    ]
     writer = csv.writer(buf)
     writer.writerow(headers)
     for item in items:
         answers = item.get("answers") or {}
-        row = [item["receipt_code"], item.get("submitter_name") or "", item["created_at"]]
+        row = [
+            item["receipt_code"],
+            item.get("submitter_name") or "",
+            item["created_at"],
+            item.get("form_version") or "",
+        ]
         for c in comps:
             val = answers.get(c["id"], "")
             if isinstance(val, list):
@@ -587,6 +632,8 @@ def export_jsonl(form_id: str, *, actor_user_id: str) -> tuple[str | None, str |
                 "receipt_code": item["receipt_code"],
                 "submitter_name": item.get("submitter_name") or "",
                 "created_at": item["created_at"],
+                "form_version": item.get("form_version"),
+                "published_at": item.get("published_at"),
                 "answers": item.get("answers") or {},
             },
             ensure_ascii=False,

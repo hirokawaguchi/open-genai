@@ -1,5 +1,9 @@
+import { Checkbox } from '@/components/ui/dads/Checkbox';
 import { Label } from '@/components/ui/dads/Label';
+import { Radio } from '@/components/ui/dads/Radio';
 import type { FormComponent, FormDefinition } from '../types';
+import { FilePickButton } from './FilePickButton';
+import { COMPOSITE_NORMALIZE, normalizeInput, type NormalizeKind } from './normalizeInput';
 
 export type ExtractKind = 'image' | 'document';
 
@@ -28,6 +32,11 @@ const isVisible = (c: FormComponent, values: Record<string, unknown>): boolean =
   });
 };
 
+const blurNorm = (kind: NormalizeKind, current: string, apply: (next: string) => void) => {
+  const next = normalizeInput(current, kind);
+  if (next !== current) apply(next);
+};
+
 const COMPOSITE_FIELDS: Record<string, Array<{ key: string; label: string }>> = {
   address_composite: [
     { key: 'postal_code', label: '郵便番号' },
@@ -47,14 +56,17 @@ const COMPOSITE_FIELDS: Record<string, Array<{ key: string; label: string }>> = 
     { key: 'corporate_number', label: '法人番号' },
     { key: 'representative', label: '代表者' },
   ],
-  financial_institution_composite: [
-    { key: 'bank_name', label: '金融機関名' },
-    { key: 'branch_name', label: '支店名' },
-    { key: 'account_type', label: '口座種別' },
-    { key: 'account_number', label: '口座番号' },
-    { key: 'account_holder', label: '口座名義' },
-  ],
 };
+
+const ACCOUNT_TYPES = ['普通', '当座', '貯蓄'];
+
+const isYuucho = (obj: Record<string, string>): boolean =>
+  obj.is_yuucho === '1' || obj.is_yuucho === 'true' || obj.is_yuucho === 'yes';
+
+const asRecord = (value: unknown): Record<string, string> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, v == null ? '' : String(v)]))
+    : {};
 
 const safeImageSrc = (src: string): string =>
   src.startsWith('https://') || src.startsWith('http://') || src.startsWith('data:image/') ? src : '';
@@ -74,6 +86,181 @@ const Field = ({
 }) => {
   const id = `pf-${c.id}`;
   const common = 'mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170';
+  if (c.type === 'financial_institution_composite') {
+    const obj = asRecord(value);
+    const yuucho = isYuucho(obj);
+    const set = (patch: Record<string, string>) => onChange({ ...obj, ...patch });
+    return (
+      <div className='mt-1 flex flex-col gap-3'>
+        <Checkbox
+          size='md'
+          checked={yuucho}
+          disabled={disabled}
+          onChange={(e) =>
+            set(
+              e.target.checked
+                ? { is_yuucho: '1', bank_name: obj.bank_name || 'ゆうちょ銀行', bank_code: obj.bank_code || '9900' }
+                : { is_yuucho: '' },
+            )
+          }
+        >
+          ゆうちょ銀行の場合
+        </Checkbox>
+        {yuucho ? (
+          <div className='grid gap-2 md:grid-cols-2'>
+            <div>
+              <Label htmlFor={`${id}-yuucho_symbol`} size='sm'>
+                記号
+              </Label>
+              <input
+                id={`${id}-yuucho_symbol`}
+                className={common}
+                inputMode='numeric'
+                maxLength={5}
+                placeholder='5桁'
+                value={obj.yuucho_symbol ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ yuucho_symbol: e.target.value })}
+                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ yuucho_symbol: v }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${id}-yuucho_number`} size='sm'>
+                番号
+              </Label>
+              <input
+                id={`${id}-yuucho_number`}
+                className={common}
+                inputMode='numeric'
+                maxLength={8}
+                placeholder='8桁以内'
+                value={obj.yuucho_number ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ yuucho_number: e.target.value })}
+                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ yuucho_number: v }))}
+              />
+            </div>
+            <div className='md:col-span-2'>
+              <Label htmlFor={`${id}-account_holder`} size='sm'>
+                口座名義
+              </Label>
+              <input
+                id={`${id}-account_holder`}
+                className={common}
+                value={obj.account_holder ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ account_holder: e.target.value })}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className='grid gap-2 md:grid-cols-2'>
+            <div>
+              <Label htmlFor={`${id}-bank_code`} size='sm'>
+                金融機関コード
+              </Label>
+              <input
+                id={`${id}-bank_code`}
+                className={common}
+                inputMode='numeric'
+                maxLength={4}
+                placeholder='4桁'
+                value={obj.bank_code ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ bank_code: e.target.value })}
+                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ bank_code: v }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${id}-bank_name`} size='sm'>
+                金融機関名
+              </Label>
+              <input
+                id={`${id}-bank_name`}
+                className={common}
+                value={obj.bank_name ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ bank_name: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${id}-branch_code`} size='sm'>
+                支店コード
+              </Label>
+              <input
+                id={`${id}-branch_code`}
+                className={common}
+                inputMode='numeric'
+                maxLength={3}
+                placeholder='3桁'
+                value={obj.branch_code ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ branch_code: e.target.value })}
+                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ branch_code: v }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${id}-branch_name`} size='sm'>
+                支店名
+              </Label>
+              <input
+                id={`${id}-branch_name`}
+                className={common}
+                value={obj.branch_name ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ branch_name: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${id}-account_type`} size='sm'>
+                口座種別
+              </Label>
+              <select
+                id={`${id}-account_type`}
+                className={common}
+                value={obj.account_type ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ account_type: e.target.value })}
+              >
+                <option value=''>選択してください</option>
+                {ACCOUNT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor={`${id}-account_number`} size='sm'>
+                口座番号
+              </Label>
+              <input
+                id={`${id}-account_number`}
+                className={common}
+                inputMode='numeric'
+                value={obj.account_number ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ account_number: e.target.value })}
+                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ account_number: v }))}
+              />
+            </div>
+            <div className='md:col-span-2'>
+              <Label htmlFor={`${id}-account_holder`} size='sm'>
+                口座名義
+              </Label>
+              <input
+                id={`${id}-account_holder`}
+                className={common}
+                value={obj.account_holder ?? ''}
+                disabled={disabled}
+                onChange={(e) => set({ account_holder: e.target.value })}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
   const sub = COMPOSITE_FIELDS[c.type];
   if (sub) {
     const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, string>) : {};
@@ -87,9 +274,17 @@ const Field = ({
             <input
               id={`${id}-${f.key}`}
               className={common}
+              inputMode={
+                f.key === 'postal_code' || f.key === 'corporate_number' ? 'numeric' : undefined
+              }
               value={obj[f.key] ?? ''}
               disabled={disabled}
               onChange={(e) => onChange({ ...obj, [f.key]: e.target.value })}
+              onBlur={(e) => {
+                const kind = COMPOSITE_NORMALIZE[c.type]?.[f.key];
+                if (!kind) return;
+                blurNorm(kind, e.target.value, (v) => onChange({ ...obj, [f.key]: v }));
+              }}
             />
           </div>
         ))}
@@ -161,13 +356,11 @@ const Field = ({
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
         />
-        <input
-          type='file'
+        <FilePickButton
           accept='image/*'
-          className={common}
           disabled={disabled}
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
+          buttonLabel='QR画像を選択'
+          onFile={async (file) => {
             if (!file || !('BarcodeDetector' in window)) return;
             try {
               const Detector = (window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => { detect: (src: ImageBitmap) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
@@ -187,14 +380,12 @@ const Field = ({
     const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as { filename?: string; extracted?: string }) : {};
     return (
       <div className='mt-1 flex flex-col gap-2'>
-        <input
+        <FilePickButton
           id={id}
-          type='file'
           accept={c.type === 'image_recognition' ? 'image/*' : undefined}
-          className={common}
           disabled={disabled}
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
+          filename={obj.filename}
+          onFile={async (file) => {
             if (!file) {
               onChange({});
               return;
@@ -209,7 +400,6 @@ const Field = ({
             }
           }}
         />
-        {obj.filename ? <p className='text-dns-14N-130 text-solid-gray-700'>{obj.filename}</p> : null}
         <textarea
           className={common}
           rows={4}
@@ -303,14 +493,13 @@ const Field = ({
   }
   if (c.type === 'signature_pad') {
     return (
-      <input
+      <FilePickButton
         id={id}
-        type='file'
         accept='image/*'
-        className={common}
         disabled={disabled}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
+        buttonLabel='署名画像を選択'
+        filename={typeof value === 'string' && value ? '選択済み' : ''}
+        onFile={(file) => {
           if (!file) {
             onChange('');
             return;
@@ -355,19 +544,19 @@ const Field = ({
   }
   if (c.type === 'radio') {
     return (
-      <div className='mt-1 flex flex-col gap-1'>
+      <div className='mt-1 flex flex-col'>
         {optionsOf(c).map((o) => (
-          <label key={o} className='flex items-center gap-2 text-std-16N-170'>
-            <input
-              type='radio'
-              name={c.id}
-              value={o}
-              checked={value === o}
-              disabled={disabled}
-              onChange={() => onChange(o)}
-            />
+          <Radio
+            key={o}
+            size='md'
+            name={c.id}
+            value={o}
+            checked={value === o}
+            disabled={disabled}
+            onChange={() => onChange(o)}
+          >
             {o}
-          </label>
+          </Radio>
         ))}
       </div>
     );
@@ -375,20 +564,20 @@ const Field = ({
   if (c.type === 'checkbox') {
     const selected = Array.isArray(value) ? value.map(String) : [];
     return (
-      <div className='mt-1 flex flex-col gap-1'>
+      <div className='mt-1 flex flex-col'>
         {optionsOf(c).map((o) => (
-          <label key={o} className='flex items-center gap-2 text-std-16N-170'>
-            <input
-              type='checkbox'
-              value={o}
-              checked={selected.includes(o)}
-              disabled={disabled}
-              onChange={() =>
-                onChange(selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o])
-              }
-            />
+          <Checkbox
+            key={o}
+            size='md'
+            value={o}
+            checked={selected.includes(o)}
+            disabled={disabled}
+            onChange={() =>
+              onChange(selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o])
+            }
+          >
             {o}
-          </label>
+          </Checkbox>
         ))}
       </div>
     );
@@ -415,12 +604,11 @@ const Field = ({
                       : 'text';
   if (inputType === 'file') {
     return (
-      <input
+      <FilePickButton
         id={id}
-        type='file'
-        className={common}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.files?.[0]?.name ?? '')}
+        filename={typeof value === 'string' ? value : ''}
+        onFile={(file) => onChange(file?.name ?? '')}
       />
     );
   }
@@ -434,7 +622,21 @@ const Field = ({
       inputMode={c.type === 'mynumber' ? 'numeric' : undefined}
       maxLength={c.type === 'mynumber' ? 12 : undefined}
       disabled={disabled}
-      onChange={(e) => onChange(c.type === 'number' ? e.target.value : e.target.value)}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={(e) => {
+        const kind: NormalizeKind | null =
+          c.type === 'phone'
+            ? 'phone'
+            : c.type === 'mynumber'
+              ? 'digits'
+              : c.type === 'number'
+                ? 'numeric'
+                : c.type === 'email'
+                  ? 'nfkc'
+                  : null;
+        if (!kind) return;
+        blurNorm(kind, e.target.value, onChange);
+      }}
     />
   );
 };
@@ -445,12 +647,24 @@ export const FillForm = ({ definition, values, onChange, disabled, onExtract }: 
     <div className='flex flex-col gap-4'>
       {definition.components.map((c) => {
         if (!isVisible(c, values)) return null;
+        const hideLabel = !!c.hide_label;
+        const skipHeading = c.type === 'divider' || c.type === 'page_break';
         return (
           <div key={c.id}>
-            <Label htmlFor={`pf-${c.id}`} size='sm'>
-              {c.label}
-              {c.required ? <span className='ml-1 text-error-1'>必須</span> : null}
-            </Label>
+            {skipHeading ? null : hideLabel ? (
+              <>
+                <Label htmlFor={`pf-${c.id}`} size='sm' className='sr-only'>
+                  {c.label}
+                  {c.required ? ' 必須' : ''}
+                </Label>
+                {c.required ? <p className='text-dns-14N-130 text-error-1'>必須</p> : null}
+              </>
+            ) : (
+              <Label htmlFor={`pf-${c.id}`} size='sm'>
+                {c.label}
+                {c.required ? <span className='ml-1 text-error-1'>必須</span> : null}
+              </Label>
+            )}
             <Field
               component={c}
               value={values[c.id]}

@@ -2,10 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
+import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { PATCHFORM_LABEL } from './labels';
+import { CatalogPalette } from './builder/CatalogPalette';
+import { CatalogTypeIcon } from './builder/CatalogTypeIcon';
+import { ComponentSettings } from './builder/ComponentSettings';
+import { PATCHFORM_LABEL, catalogTypeHelp } from './labels';
 import { FillForm } from './runtime/FillForm';
 import type { CatalogItem, FormComponent, FormDefinition } from './types';
 import {
@@ -62,10 +67,10 @@ export const PatchformEditPage = () => {
   const [retentionDays, setRetentionDays] = useState('');
   const [components, setComponents] = useState<FormComponent[]>([]);
   const [preview, setPreview] = useState<Record<string, unknown>>({});
-  const [addType, setAddType] = useState('text');
   const [aiText, setAiText] = useState('');
   const [aiNotes, setAiNotes] = useState<string | null>(null);
   const [pane, setPane] = useState<'edit' | 'preview'>('edit');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!form) return;
@@ -74,7 +79,26 @@ export const PatchformEditPage = () => {
     setVisibility(form.visibility);
     setRetentionDays(String(form.retention_days ?? ''));
     setComponents(form.definition.components);
+    setSelectedId(form.definition.components[0]?.id ?? null);
   }, [form]);
+
+  const addComponent = (type: string) => {
+    const next = blankComponent(type, catalog);
+    setComponents((prev) => [...prev, next]);
+    setSelectedId(next.id);
+  };
+
+  const moveComponent = (idx: number, dir: -1 | 1) => {
+    setComponents((prev) => {
+      const to = idx + dir;
+      if (to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[to], next[idx]] = [next[idx], next[to]];
+      return next;
+    });
+  };
+
+  const selected = components.find((c) => c.id === selectedId) ?? null;
 
   const definition = (): FormDefinition => ({
     $version: config?.spec_version || 'opengenai-patchform/1',
@@ -142,450 +166,254 @@ export const PatchformEditPage = () => {
             </div>
 
             {pane === 'edit' && (
-            <div className='flex flex-col gap-6'>
-            <div className='grid gap-4 md:grid-cols-2'>
-              <div>
-                <Label htmlFor='pf-edit-title' size='sm'>
-                  タイトル
-                </Label>
-                <input
-                  id='pf-edit-title'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor='pf-vis' size='sm'>
-                  公開範囲
-                </Label>
-                <select
-                  id='pf-vis'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  value={visibility}
-                  onChange={(e) => setVisibility(e.target.value as typeof visibility)}
-                >
-                  <option value='internal'>庁内のみ</option>
-                  <option value='public'>外部のみ</option>
-                  <option value='both'>庁内と外部</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <Label htmlFor='pf-edit-desc' size='sm'>
-                説明
-              </Label>
-              <textarea
-                id='pf-edit-desc'
-                className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                rows={2}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor='pf-pin' size='sm'>
-                外部回答用暗証番号（4桁・任意）
-              </Label>
-              <input
-                id='pf-pin'
-                className='mt-1 w-full max-w-48 rounded-4 border border-solid-gray-420 px-3 py-2'
-                inputMode='numeric'
-                maxLength={4}
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                placeholder={form.has_pin ? '変更する場合のみ' : ''}
-              />
-            </div>
-            <div>
-              <Label htmlFor='pf-retain' size='sm'>
-                保持日数
-              </Label>
-              <input
-                id='pf-retain'
-                className='mt-1 w-full max-w-48 rounded-4 border border-solid-gray-420 px-3 py-2'
-                inputMode='numeric'
-                value={retentionDays}
-                onChange={(e) => setRetentionDays(e.target.value)}
-              />
-            </div>
-
-            <div className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
-              <Label htmlFor='pf-edit-ai' size='sm'>
-                AIで修正する
-              </Label>
-              <textarea
-                id='pf-edit-ai'
-                className='w-full rounded-4 border border-solid-gray-420 bg-white px-3 py-2'
-                rows={2}
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
-                placeholder='例: 振込先を追加して。メールは必須にして'
-              />
-              {(assistError || aiNotes) && (
-                <p
-                  className={
-                    assistError ? 'text-dns-14N-130 text-error-1' : 'text-dns-14N-130 text-solid-gray-700'
-                  }
-                  role={assistError ? 'alert' : undefined}
-                >
-                  {assistError || aiNotes}
-                </p>
-              )}
-              <div>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  aria-disabled={assistBusy || !aiText.trim()}
-                  onClick={async () => {
-                    setAssistError(null);
-                    setAiNotes(null);
-                    const res = await generate({
-                      text: aiText.trim(),
-                      visibility,
-                      definition: definition(),
-                    });
-                    if (!res) return;
-                    setTitle(res.definition.metadata.title || title);
-                    setDescription(res.definition.metadata.description || description);
-                    setComponents(res.definition.components);
-                    setAiNotes(res.notes || `${res.source === 'llm' ? 'AI' : 'テンプレート'}で反映しました。`);
-                  }}
-                >
-                  {assistBusy ? '生成中...' : '部品に反映'}
-                </Button>
-              </div>
-            </div>
-
-            <section className='flex flex-col gap-3'>
-              <h2 className='text-std-18B-160'>部品</h2>
-              <div className='flex flex-wrap items-end gap-2'>
-                <div>
-                  <Label htmlFor='pf-add-type' size='sm'>
-                    追加する部品
-                  </Label>
-                  <select
-                    id='pf-add-type'
-                    className='mt-1 rounded-4 border border-solid-gray-420 px-3 py-2'
-                    value={addType}
-                    onChange={(e) => setAddType(e.target.value)}
-                  >
-                    {catalog.map((c) => (
-                      <option key={c.type} value={c.type}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  onClick={() => setComponents((prev) => [...prev, blankComponent(addType, catalog)])}
-                >
-                  追加
-                </Button>
-              </div>
-              {components.map((c, idx) => (
-                <div key={c.id} className='rounded-8 border border-solid-gray-300 p-3'>
-                  <div className='grid gap-3 md:grid-cols-2'>
-                    <div>
-                      <Label size='sm'>ラベル</Label>
-                      <input
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        value={c.label}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)),
-                          )
-                        }
-                      />
+              <div className='flex flex-col gap-6'>
+                <Disclosure className='rounded-8 border border-solid-gray-300 px-4 py-3'>
+                  <DisclosureSummary>
+                    <span className='text-std-16B-150'>フォーム設定（タイトル・公開範囲）</span>
+                  </DisclosureSummary>
+                  <div className='mt-3 flex flex-col gap-4'>
+                    <div className='grid gap-4 md:grid-cols-2'>
+                      <div>
+                        <Label htmlFor='pf-edit-title' size='sm'>
+                          タイトル
+                        </Label>
+                        <input
+                          id='pf-edit-title'
+                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor='pf-vis' size='sm'>
+                          公開範囲
+                        </Label>
+                        <select
+                          id='pf-vis'
+                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={visibility}
+                          onChange={(e) => setVisibility(e.target.value as typeof visibility)}
+                        >
+                          <option value='internal'>庁内のみ</option>
+                          <option value='public'>外部のみ</option>
+                          <option value='both'>庁内と外部</option>
+                        </select>
+                      </div>
                     </div>
                     <div>
-                      <Label size='sm'>種類</Label>
-                      <p className='mt-2 text-std-16N-170 text-solid-gray-700'>
-                        {catalog.find((x) => x.type === c.type)?.label || c.type}
+                      <Label htmlFor='pf-edit-desc' size='sm'>
+                        説明
+                      </Label>
+                      <textarea
+                        id='pf-edit-desc'
+                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                        rows={2}
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                      />
+                    </div>
+                    <div className='grid gap-4 md:grid-cols-2'>
+                      <div>
+                        <Label htmlFor='pf-pin' size='sm'>
+                          外部回答用暗証番号（4桁・任意）
+                        </Label>
+                        <input
+                          id='pf-pin'
+                          className='mt-1 w-full max-w-48 rounded-4 border border-solid-gray-420 px-3 py-2'
+                          inputMode='numeric'
+                          maxLength={4}
+                          value={pin}
+                          onChange={(e) => setPin(e.target.value)}
+                          placeholder={form.has_pin ? '変更する場合のみ' : ''}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor='pf-retain' size='sm'>
+                          保持日数
+                        </Label>
+                        <input
+                          id='pf-retain'
+                          className='mt-1 w-full max-w-48 rounded-4 border border-solid-gray-420 px-3 py-2'
+                          inputMode='numeric'
+                          value={retentionDays}
+                          onChange={(e) => setRetentionDays(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </Disclosure>
+
+                <Disclosure className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-3'>
+                  <DisclosureSummary>
+                    <span className='text-std-16B-150'>AIで修正する</span>
+                  </DisclosureSummary>
+                  <div className='mt-3 flex flex-col gap-2'>
+                    <Label htmlFor='pf-edit-ai' size='sm'>
+                      指示
+                    </Label>
+                    <textarea
+                      id='pf-edit-ai'
+                      className='w-full rounded-4 border border-solid-gray-420 bg-white px-3 py-2'
+                      rows={2}
+                      value={aiText}
+                      onChange={(e) => setAiText(e.target.value)}
+                      placeholder='例: 振込先を追加して。メールは必須にして'
+                    />
+                    {(assistError || aiNotes) && (
+                      <p
+                        className={
+                          assistError
+                            ? 'text-dns-14N-130 text-error-1'
+                            : 'text-dns-14N-130 text-solid-gray-700'
+                        }
+                        role={assistError ? 'alert' : undefined}
+                      >
+                        {assistError || aiNotes}
+                      </p>
+                    )}
+                    <div>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        aria-disabled={assistBusy || !aiText.trim()}
+                        onClick={async () => {
+                          setAssistError(null);
+                          setAiNotes(null);
+                          const res = await generate({
+                            text: aiText.trim(),
+                            visibility,
+                            definition: definition(),
+                          });
+                          if (!res) return;
+                          setTitle(res.definition.metadata.title || title);
+                          setDescription(res.definition.metadata.description || description);
+                          setComponents(res.definition.components);
+                          setSelectedId(res.definition.components[0]?.id ?? null);
+                          setAiNotes(
+                            res.notes || `${res.source === 'llm' ? 'AI' : 'テンプレート'}で反映しました。`,
+                          );
+                        }}
+                      >
+                        {assistBusy ? '生成中...' : '部品に反映'}
+                      </Button>
+                    </div>
+                  </div>
+                </Disclosure>
+
+                <section className='grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(16rem,20rem)]'>
+                  <div className='flex flex-col gap-3'>
+                    <div>
+                      <h2 className='text-std-18B-160'>このフォームの部品（{components.length}）</h2>
+                      <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>
+                        並びは上から回答順です。行を選ぶと設定できます。
                       </p>
                     </div>
-                    <div>
-                      <Label size='sm'>プレースホルダ</Label>
-                      <input
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        value={c.placeholder || ''}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) => (x.id === c.id ? { ...x, placeholder: e.target.value } : x)),
-                          )
-                        }
-                      />
-                    </div>
-                    <label className='mt-6 flex items-center gap-2 text-std-14N-160'>
-                      <input
-                        type='checkbox'
-                        checked={!!c.required}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) => (x.id === c.id ? { ...x, required: e.target.checked } : x)),
-                          )
-                        }
-                      />
-                      必須
-                    </label>
-                  </div>
-                  {c.type === 'matrix_question' && (
-                    <div className='mt-2 grid gap-2 md:grid-cols-2'>
-                      <div>
-                        <Label size='sm'>行（改行区切り）</Label>
-                        <textarea
-                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                          rows={3}
-                          value={((c.properties?.rows as string[]) || []).join('\n')}
-                          onChange={(e) =>
-                            setComponents((prev) =>
-                              prev.map((x) =>
-                                x.id === c.id
-                                  ? {
-                                      ...x,
-                                      properties: {
-                                        ...x.properties,
-                                        rows: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                                      },
+                    {components.length === 0 ? (
+                      <p className='rounded-8 border border-dashed border-solid-gray-420 px-4 py-6 text-std-16N-170 text-solid-gray-700'>
+                        まだ部品がありません。右（狭い画面では下）の分類から追加してください。
+                      </p>
+                    ) : (
+                      <ol className='flex flex-col gap-2'>
+                        {components.map((c, idx) => {
+                          const meta = catalog.find((x) => x.type === c.type);
+                          const open = selectedId === c.id;
+                          return (
+                            <li
+                              key={c.id}
+                              className={`overflow-hidden rounded-8 border ${
+                                open ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-300 bg-white'
+                              }`}
+                            >
+                              <div className='flex flex-wrap items-center gap-2 px-3 py-2'>
+                                <span className='w-6 text-dns-14N-130 text-solid-gray-600'>{idx + 1}</span>
+                                <Tooltip placement='top' strategy='fixed'>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type='button'
+                                      className='flex min-w-0 flex-1 items-start gap-2 text-left'
+                                      onClick={() => setSelectedId(open ? null : c.id)}
+                                    >
+                                      <CatalogTypeIcon
+                                        type={c.type}
+                                        className='mt-0.5 size-5 text-blue-900'
+                                      />
+                                      <span className='min-w-0'>
+                                        <span className='block text-std-16B-150 text-solid-gray-900'>
+                                          {c.label || '（ラベル未設定）'}
+                                          {c.required ? (
+                                            <span className='ml-2 text-dns-14N-130 text-error-1'>必須</span>
+                                          ) : null}
+                                        </span>
+                                        <span className='block text-dns-14N-130 text-solid-gray-700'>
+                                          {meta?.label || c.type}
+                                        </span>
+                                      </span>
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent role='tooltip' aria-hidden={true}>
+                                    <span className='block max-w-64 whitespace-normal'>
+                                      {catalogTypeHelp(c.type, meta?.description)}
+                                    </span>
+                                  </TooltipContent>
+                                </Tooltip>
+                                <div className='flex flex-none gap-1'>
+                                  <Button
+                                    type='button'
+                                    variant='text'
+                                    size='sm'
+                                    aria-disabled={idx === 0}
+                                    onClick={() => moveComponent(idx, -1)}
+                                  >
+                                    上へ
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='text'
+                                    size='sm'
+                                    aria-disabled={idx === components.length - 1}
+                                    onClick={() => moveComponent(idx, 1)}
+                                  >
+                                    下へ
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='text'
+                                    size='sm'
+                                    onClick={() => {
+                                      setComponents((prev) => prev.filter((x) => x.id !== c.id));
+                                      if (selectedId === c.id) setSelectedId(null);
+                                    }}
+                                  >
+                                    削除
+                                  </Button>
+                                </div>
+                              </div>
+                              {open && selected ? (
+                                <div className='rounded-b-8 border-t border-solid-gray-300 bg-white px-3 py-3'>
+                                  <ComponentSettings
+                                    component={selected}
+                                    catalog={catalog}
+                                    siblings={components}
+                                    onChange={(next) =>
+                                      setComponents((prev) =>
+                                        prev.map((x) => (x.id === next.id ? next : x)),
+                                      )
                                     }
-                                  : x,
-                              ),
-                            )
-                          }
-                        />
-                      </div>
-                      <div>
-                        <Label size='sm'>列（改行区切り）</Label>
-                        <textarea
-                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                          rows={3}
-                          value={((c.properties?.columns as string[]) || []).join('\n')}
-                          onChange={(e) =>
-                            setComponents((prev) =>
-                              prev.map((x) =>
-                                x.id === c.id
-                                  ? {
-                                      ...x,
-                                      properties: {
-                                        ...x.properties,
-                                        columns: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                                      },
-                                    }
-                                  : x,
-                              ),
-                            )
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {c.type === 'text_display' && (
-                    <div className='mt-2'>
-                      <Label size='sm'>説明文</Label>
-                      <textarea
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        rows={3}
-                        value={String(c.properties?.text || '')}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) =>
-                              x.id === c.id
-                                ? { ...x, properties: { ...x.properties, text: e.target.value } }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  )}
-                  {c.type === 'image_display' && (
-                    <div className='mt-2'>
-                      <Label size='sm'>画像 URL（https または data:image）</Label>
-                      <input
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        value={String(c.properties?.src || '')}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) =>
-                              x.id === c.id
-                                ? { ...x, properties: { ...x.properties, src: e.target.value } }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  )}
-                  {c.type === 'calculated' && (
-                    <div className='mt-2'>
-                      <Label size='sm'>計算式（例: {'{{qty}} * 100'}）</Label>
-                      <input
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        value={String(c.properties?.formula || '')}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) =>
-                              x.id === c.id
-                                ? { ...x, properties: { ...x.properties, formula: e.target.value } }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  )}
-                  <div className='mt-2'>
-                    <Label size='sm'>IMI 語彙（任意）</Label>
-                    <input
-                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                      list='pf-imi-presets'
-                      value={c.imi_type || ''}
-                      onChange={(e) =>
-                        setComponents((prev) =>
-                          prev.map((x) => (x.id === c.id ? { ...x, imi_type: e.target.value } : x)),
-                        )
-                      }
-                      placeholder='例: ic:住所'
-                    />
-                    <datalist id='pf-imi-presets'>
-                      <option value='ic:氏名' />
-                      <option value='ic:氏名カナ' />
-                      <option value='ic:住所' />
-                      <option value='ic:郵便番号' />
-                      <option value='ic:メールアドレス' />
-                      <option value='ic:電話番号' />
-                      <option value='ic:生年月日' />
-                      <option value='ic:法人番号' />
-                    </datalist>
+                                  />
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
                   </div>
-                  <div className='mt-2 grid gap-2 md:grid-cols-2'>
-                    <div>
-                      <Label size='sm'>表示条件の部品</Label>
-                      <select
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        value={!Array.isArray(c.visibleWhen) && c.visibleWhen?.field ? c.visibleWhen.field : ''}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) =>
-                              x.id === c.id
-                                ? {
-                                    ...x,
-                                    visibleWhen: e.target.value
-                                      ? {
-                                          field: e.target.value,
-                                          eq: !Array.isArray(x.visibleWhen) ? x.visibleWhen?.eq || '' : '',
-                                        }
-                                      : undefined,
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      >
-                        <option value=''>常に表示</option>
-                        {components
-                          .filter((x) => x.id !== c.id)
-                          .map((x) => (
-                            <option key={x.id} value={x.id}>
-                              {x.label || x.id}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    {!Array.isArray(c.visibleWhen) && c.visibleWhen?.field ? (
-                      <div>
-                        <Label size='sm'>この値のとき表示</Label>
-                        <input
-                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                          value={c.visibleWhen.eq || ''}
-                          onChange={(e) =>
-                            setComponents((prev) =>
-                              prev.map((x) =>
-                                x.id === c.id && !Array.isArray(x.visibleWhen) && x.visibleWhen
-                                  ? { ...x, visibleWhen: { ...x.visibleWhen, eq: e.target.value } }
-                                  : x,
-                              ),
-                            )
-                          }
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                  {catalog.find((x) => x.type === c.type)?.has_options && (
-                    <div className='mt-2'>
-                      <Label size='sm'>選択肢（改行区切り）</Label>
-                      <textarea
-                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                        rows={3}
-                        value={(c.properties?.options || []).join('\n')}
-                        onChange={(e) =>
-                          setComponents((prev) =>
-                            prev.map((x) =>
-                              x.id === c.id
-                                ? {
-                                    ...x,
-                                    properties: {
-                                      ...x.properties,
-                                      options: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                                    },
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  )}
-                  <div className='mt-2 flex gap-2'>
-                    <Button
-                      type='button'
-                      variant='text'
-                      size='sm'
-                      aria-disabled={idx === 0}
-                      onClick={() =>
-                        setComponents((prev) => {
-                          if (idx === 0) return prev;
-                          const next = [...prev];
-                          [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                          return next;
-                        })
-                      }
-                    >
-                      上へ
-                    </Button>
-                    <Button
-                      type='button'
-                      variant='text'
-                      size='sm'
-                      aria-disabled={idx === components.length - 1}
-                      onClick={() =>
-                        setComponents((prev) => {
-                          if (idx >= prev.length - 1) return prev;
-                          const next = [...prev];
-                          [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
-                          return next;
-                        })
-                      }
-                    >
-                      下へ
-                    </Button>
-                    <Button
-                      type='button'
-                      variant='text'
-                      size='sm'
-                      onClick={() => setComponents((prev) => prev.filter((x) => x.id !== c.id))}
-                    >
-                      削除
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </section>
-            </div>
+                  <aside className='xl:sticky xl:top-4 xl:self-start'>
+                    <CatalogPalette catalog={catalog} onAdd={addComponent} />
+                  </aside>
+                </section>
+              </div>
             )}
 
             {pane === 'preview' && (
