@@ -186,8 +186,8 @@ export const PatchformDetailPage = () => {
                 {applicationToken
                   ? '必要事項を記入して送信してください。'
                   : isReception
-                    ? `${statusLabel[form.status]} / ${visLabel[form.visibility]}。この申請の様式です。回答の確認は「申請受付」で行います。`
-                    : `${workLabel(form.locked, form.work_status)} / ${visLabel[form.visibility]}。部品の定義です。受付は「手続き」を公開して開始します。`}
+                    ? `${statusLabel[form.status]} · ${visLabel[form.visibility]}`
+                    : `${workLabel(form.locked, form.work_status)} · ${visLabel[form.visibility]}`}
               </p>
               {form.description && (
                 <p className='text-std-16N-170 text-solid-gray-700'>{form.description}</p>
@@ -196,7 +196,7 @@ export const PatchformDetailPage = () => {
             {applicationToken ? null : (
             <div className='flex flex-wrap gap-2'>
               {canEdit && (
-              <Link to={`/patchform/${form.id}/edit`}>
+              <Link to={`/patchform/${form.id}/edit`} className='inline-flex'>
                 <Button type='button' variant='outline' size='sm'>
                   編集
                 </Button>
@@ -231,12 +231,12 @@ export const PatchformDetailPage = () => {
               ) : null}
             </div>
             )}
-            {applicationToken ? null : (
+            {applicationToken || !(canFill || alreadySubmitted) ? null : (
             <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label='詳細の表示'>
               {(
                 [
                   { id: 'overview', label: '概要' },
-                  ...(canFill || alreadySubmitted ? [{ id: 'fill', label: '回答する' } as const] : []),
+                  { id: 'fill', label: '回答する' },
                 ] as const
               ).map((t) => (
                 <button
@@ -258,33 +258,29 @@ export const PatchformDetailPage = () => {
             )}
 
             {pane === 'overview' && !applicationToken && (
-              <section className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
-                <p>保持期間: {form.retention_days} 日</p>
-                <p>部品数: {form.definition.components.length}</p>
-                <p>
-                  受付の開始と終了、公開 URL、届いた申請の確認は「手続きを公開」と「申請受付」で行います。
-                </p>
-                <p>
-                  <Link to='/patchform/procedures' className='text-blue-900 underline-offset-2 hover:underline'>
-                    手続きを公開
-                  </Link>
-                  {' / '}
-                  <Link to='/patchform/inbox' className='text-blue-900 underline-offset-2 hover:underline'>
-                    申請受付
-                  </Link>
-                </p>
-                {form.has_pin && <p>外部回答に暗証番号あり</p>}
-                <p>下書き保存: {form.allow_draft === false ? '不可' : '可'}</p>
-                <p>同じ人の再提出: {form.allow_multiple === false ? '不可' : '可'}</p>
-                <p>
-                  回答者:{' '}
-                  {form.identity_mode === 'required'
-                    ? '申請（記名必須）'
-                    : form.identity_mode === 'anonymous'
-                      ? '匿名'
-                      : '任意記名'}
-                </p>
-              </section>
+              <dl className='grid max-w-xl grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-std-16N-170'>
+                {[
+                  { term: '保持期間', desc: `${form.retention_days} 日` },
+                  { term: '部品数', desc: `${form.definition.components.length}` },
+                  ...(form.has_pin ? [{ term: '暗証番号', desc: '外部回答にあり' }] : []),
+                  { term: '下書き保存', desc: form.allow_draft === false ? '不可' : '可' },
+                  { term: '同じ人の再提出', desc: form.allow_multiple === false ? '不可' : '可' },
+                  {
+                    term: '回答者',
+                    desc:
+                      form.identity_mode === 'required'
+                        ? '申請（記名必須）'
+                        : form.identity_mode === 'anonymous'
+                          ? '匿名'
+                          : '任意記名',
+                  },
+                ].map((row) => (
+                  <div key={row.term} className='contents'>
+                    <dt className='text-solid-gray-600'>{row.term}</dt>
+                    <dd className='text-solid-gray-900'>{row.desc}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
 
             {(pane === 'fill' || applicationToken) && alreadySubmitted && (
