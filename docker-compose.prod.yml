@@ -445,7 +445,10 @@ services:
   # ホストポートは公開しない。外部ゲストは別プロキシで /public のみ露出すること。
   patchform-app:
     profiles: ["patchform"]
-    build: ./patchform-app
+    build:
+      context: .
+      dockerfile: patchform-app/Dockerfile
+
     container_name: open-genai-patchform-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -462,12 +465,37 @@ services:
       - PATCHFORM_FILES_DIR=/data/files
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
       - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
+      - PATCHFORM_SEED=${PATCHFORM_SEED:-0}
+      - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
+      - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
+      - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}
+      - PATCHFORM_SMTP_PASSWORD=${PATCHFORM_SMTP_PASSWORD:-}
+      - PATCHFORM_SMTP_STARTTLS=${PATCHFORM_SMTP_STARTTLS:-1}
+      - PATCHFORM_SMTP_SSL=${PATCHFORM_SMTP_SSL:-0}
+      - PATCHFORM_SMTP_FROM=${PATCHFORM_SMTP_FROM:-}
+      - PATCHFORM_STAFF_BASE_URL=${PATCHFORM_STAFF_BASE_URL:-${PUBLIC_URL:-}}
     volumes:
       - patchform_app_data:/data
     expose:
       - "8012"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 手続きマスタ MCP（同一サーバ Dify 向け。LGWAN-ASP 転送対象に載せない）
+  procedure-mcp:
+    profiles: ["patchform"]
+    build: ./procedure-mcp
+    container_name: open-genai-procedure-mcp
+    environment:
+      - PATCHFORM_BASE_URL=${PATCHFORM_BASE_URL:-http://patchform-app:8012}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8013
+    ports:
+      - "${PROCEDURE_MCP_BIND:-127.0.0.1}:${PROCEDURE_MCP_PORT:-8104}:8013"
+    depends_on:
+      - patchform-app
     restart: unless-stopped
 
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。

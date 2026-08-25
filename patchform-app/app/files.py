@@ -125,6 +125,18 @@ def remove_form_dir(form_id: str) -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+def rename_form_dir(old_form_id: str, new_form_id: str) -> None:
+    try:
+        src = form_dir(old_form_id)
+        dest = form_dir(new_form_id)
+    except ValueError:
+        return
+    if not src.exists() or dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dest)
+
+
 def content_disposition(filename: str) -> str:
     name = safe_filename(filename)
     ascii_name = name.encode("ascii", "replace").decode("ascii").replace('"', "")

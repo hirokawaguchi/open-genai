@@ -8,6 +8,7 @@ type Props = {
   busy?: boolean;
   filename?: string;
   buttonLabel?: string;
+  busyLabel?: string;
   error?: string | null;
   onFile: (file: File | null) => void;
 };
@@ -20,6 +21,7 @@ export const FilePickButton = ({
   busy,
   filename,
   buttonLabel = 'ファイルを選択',
+  busyLabel = 'アップロード中...',
   error,
   onFile,
 }: Props) => {
@@ -27,6 +29,7 @@ export const FilePickButton = ({
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     onFile(e.target.files?.[0] ?? null);
+    e.target.value = '';
   };
 
   return (
@@ -47,7 +50,7 @@ export const FilePickButton = ({
         aria-disabled={disabled || busy || undefined}
         onClick={() => inputRef.current?.click()}
       >
-        {busy ? 'アップロード中...' : buttonLabel}
+        {busy ? busyLabel : buttonLabel}
       </Button>
       <p className='text-std-16N-170 text-solid-gray-700'>
         {filename ? `選択中: ${filename}` : '選択されていません'}

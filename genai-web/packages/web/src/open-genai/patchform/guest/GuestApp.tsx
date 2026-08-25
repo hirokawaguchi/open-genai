@@ -5,7 +5,8 @@ import { FillForm } from '../runtime/FillForm';
 import { answerRows } from '../runtime/formatAnswer';
 import { lookupPostalDirect } from '../runtime/postalLookup';
 import { missingRequired } from '../runtime/visibility';
-import type { FormDefinition, UploadedFile } from '../types';
+import type { Application, FormDefinition, UploadedFile } from '../types';
+import { GuestBundle } from './GuestBundle';
 
 type PublicForm = {
   title?: string;
@@ -39,6 +40,8 @@ const tokenFromPath = () => {
   return (parts[1] || '').replace(/\/+$/, '');
 };
 
+const appTokenFromQuery = () => new URLSearchParams(location.search).get('app') || '';
+
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -60,7 +63,15 @@ const api = async <T,>(path: string, opts?: RequestInit): Promise<T> => {
 };
 
 export const GuestApp = () => {
+  if (location.pathname.includes('/public/p/')) {
+    return <GuestBundle />;
+  }
+  return <GuestForm />;
+};
+
+const GuestForm = () => {
   const token = tokenFromPath();
+  const applicationToken = appTokenFromQuery();
   const [phase, setPhase] = useState<
     'load' | 'pin' | 'form' | 'confirm' | 'done' | 'withdrawn' | 'error'
   >('load');
@@ -75,6 +86,7 @@ export const GuestApp = () => {
   const [draftNote, setDraftNote] = useState<string | null>(null);
   const [resumeToken, setResumeToken] = useState('');
   const [withdrawCode, setWithdrawCode] = useState('');
+  const [openedApp, setOpenedApp] = useState<Application | null>(null);
 
   const onWithdraw = async (code: string) => {
     const receiptCode = code.trim();
@@ -233,7 +245,7 @@ export const GuestApp = () => {
     setBusy(true);
     setError(null);
     try {
-      const result = await api<{ receipt_code?: string }>(
+      const result = await api<{ receipt_code?: string; application?: Application }>(
         `/public/api/forms/${encodeURIComponent(token)}/submissions`,
         {
           method: 'POST',
@@ -242,11 +254,13 @@ export const GuestApp = () => {
             submitter_name: submitterName.trim() || undefined,
             answers: values,
             resume_token: resumeToken || undefined,
+            application_token: applicationToken || undefined,
           }),
         },
       );
       writeGuestState(token, { receipt: result.receipt_code || '', submitted: true, resume: '' });
       setReceipt(result.receipt_code || '');
+      setOpenedApp(result.application || null);
       setPhase('done');
     } catch (e) {
       setError(e instanceof Error ? e.message : '送信に失敗しました');
@@ -364,6 +378,7 @@ export const GuestApp = () => {
                               answers: values,
                               is_draft: true,
                               resume_token: resumeToken || undefined,
+                              application_token: applicationToken || undefined,
                             }),
                           },
                         );
@@ -452,6 +467,25 @@ export const GuestApp = () => {
             控え番号: <strong>{receipt}</strong>
           </p>
           <p className='mt-2'>この番号を控えてください。</p>
+          {openedApp?.public_url ? (
+            <p className='mt-4'>
+              <a
+                href={openedApp.public_url}
+                className='text-blue-900 underline-offset-2 hover:underline'
+              >
+                この申請の一覧へ
+              </a>
+            </p>
+          ) : applicationToken ? (
+            <p className='mt-4'>
+              <a
+                href={`/public/p/${encodeURIComponent(applicationToken)}`}
+                className='text-blue-900 underline-offset-2 hover:underline'
+              >
+                手続きの一覧に戻る
+              </a>
+            </p>
+          ) : null}
           {error && (
             <p className='mt-3 text-error-1' role='alert'>
               {error}

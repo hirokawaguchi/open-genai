@@ -48,9 +48,23 @@ def _publish(creator: str = "u1") -> dict:
         definition=_definition(),
     )
     assert err is None and form
-    published, err = store.set_status(form["id"], actor_user_id=creator, status="published")
+    proc, err = store.create_procedure(
+        name="届出の手続き",
+        description=None,
+        guide_form_id=form["id"],
+        creator_user_id=creator,
+    )
+    assert err is None and proc
+    published, err = store.set_procedure_status(
+        proc["id"], actor_user_id=creator, status="published"
+    )
     assert err is None and published
-    return published
+    detail = store.get_form(form["id"], actor_user_id=creator)
+    recs = [r for r in (detail or {}).get("receptions") or [] if r.get("status") == "published"]
+    assert recs
+    full = store.get_form(recs[0]["id"], actor_user_id=creator)
+    assert full
+    return full
 
 
 def test_draft_resume_and_finalize() -> None:
@@ -111,18 +125,40 @@ def test_allow_multiple_false() -> None:
 def test_editor_and_viewer_acl() -> None:
     path = _setup_db()
     try:
-        form = _publish()
+        created, err = store.create_form(
+            title="届出",
+            description=None,
+            creator_user_id="u1",
+            creator_name="作成者",
+            visibility="internal",
+            definition=_definition(),
+        )
+        assert err is None and created
         _, err = store.update_form(
-            form["id"],
+            created["id"],
             actor_user_id="u1",
             editor_user_ids=["ed1"],
             viewer_user_ids=["vw1"],
         )
         assert err is None
+        proc, err = store.create_procedure(
+            name="届出の手続き",
+            description=None,
+            guide_form_id=created["id"],
+            creator_user_id="u1",
+        )
+        assert err is None and proc
+        _, err = store.set_procedure_status(proc["id"], actor_user_id="u1", status="published")
+        assert err is None
+        detail = store.get_form(created["id"], actor_user_id="u1")
+        recs = [r for r in (detail or {}).get("receptions") or [] if r.get("status") == "published"]
+        assert recs
+        form = store.get_form(recs[0]["id"], actor_user_id="u1")
+        assert form
         detail = store.get_form(form["id"], actor_user_id="ed1")
         assert detail and detail["can_edit"] is True
         listed = store.list_forms_for_user("ed1")
-        assert any(item["id"] == form["id"] for item in listed)
+        assert any(item["id"] == created["id"] for item in listed)
         _, err = store.update_form(form["id"], actor_user_id="ed1", title="届出改")
         assert err is None
         _, err = store.update_form(form["id"], actor_user_id="ed1", editor_user_ids=["x"])
@@ -156,8 +192,22 @@ def test_mynumber_reveal_audit() -> None:
             definition=raw,
         )
         assert err is None and form
-        published, err = store.set_status(form["id"], actor_user_id="u1", status="published")
-        assert err is None and published
+        proc, err = store.create_procedure(
+            name="番号の手続き",
+            description=None,
+            guide_form_id=form["id"],
+            creator_user_id="u1",
+        )
+        assert err is None and proc
+        published_proc, err = store.set_procedure_status(
+            proc["id"], actor_user_id="u1", status="published"
+        )
+        assert err is None and published_proc
+        detail = store.get_form(form["id"], actor_user_id="u1")
+        recs = [r for r in (detail or {}).get("receptions") or [] if r.get("status") == "published"]
+        assert recs
+        form = store.get_form(recs[0]["id"], actor_user_id="u1")
+        assert form
         first11 = "12345678901"
         total = 0
         for i in range(1, 12):

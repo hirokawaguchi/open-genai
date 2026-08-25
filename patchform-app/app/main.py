@@ -19,7 +19,7 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import assist, extract, files, intauth, llm, lookup, spec, store
+from . import assist, extract, files, intauth, llm, lookup, notify, seed, spec, store
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
@@ -80,6 +80,11 @@ def on_startup() -> None:
             print(f"[patchform] startup cleanup: deleted {n} old forms")
     except Exception as e:  # noqa: BLE001
         print(f"[patchform] startup cleanup error: {e}")
+    if seed.seed_enabled():
+        try:
+            seed.ensure_sample_data()
+        except Exception as e:  # noqa: BLE001
+            print(f"[patchform] sample seed error: {e}")
     t = threading.Thread(target=_cleanup_loop, name="patchform-cleanup", daemon=True)
     t.start()
 
@@ -115,6 +120,7 @@ def get_config(
                 "model": llm.PATCHFORM_MODEL,
                 "base_url": llm.OPENAI_BASE_URL,
             },
+            "mail": {"configured": notify.smtp_configured()},
         }
     )
 
@@ -166,6 +172,7 @@ async def create_form(
         definition=body.get("definition"),
         pin=body.get("pin"),
         retention_days=body.get("retention_days"),
+        tags=body.get("tags"),
     )
     if msg or detail is None:
         return JSONResponse(status_code=400, content={"error": msg})
@@ -230,6 +237,7 @@ async def update_form(
         editor_user_ids=body.get("editor_user_ids"),
         viewer_user_ids=body.get("viewer_user_ids"),
         identity_mode=body.get("identity_mode"),
+        tags=body.get("tags"),
     )
     if msg:
         code = 404 if "見つかりません" in msg else 403 if "権限" in msg else 400
@@ -256,8 +264,13 @@ async def set_status(
         return err
     body = await request.json()
     status = (body.get("status") or "").strip()
+    locked = body.get("locked")
     detail, msg = store.set_status(
-        form_id, actor_user_id=uid, status=status, actor_groups=_groups(x_user_groups)
+        form_id,
+        actor_user_id=uid,
+        status=status,
+        actor_groups=_groups(x_user_groups),
+        locked=None if locked is None else bool(locked),
     )
     if msg:
         code = 404 if "見つかりません" in msg else 403 if "権限" in msg else 400
@@ -283,10 +296,365 @@ def delete_form(
         return err
     msg = store.delete_form(form_id, actor_user_id=uid, actor_groups=_groups(x_user_groups))
     if msg:
-        code = 404 if "見つかりません" in msg else 403
+        code = 404 if "見つかりません" in msg else 403 if "権限" in msg else 400
         return JSONResponse(status_code=code, content={"error": msg})
     print(f"[patchform] form deleted id={form_id} by={uid}")
     return JSONResponse(content={"message": "フォームを削除しました"})
+
+
+@app.get("/procedures")
+def list_procedures(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    return JSONResponse(
+        content={"procedures": store.list_procedures(actor_user_id=uid, actor_groups=_groups(x_user_groups))}
+    )
+
+
+@app.post("/procedures")
+async def create_procedure(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    detail, msg = store.create_procedure(
+        name=(body.get("name") or body.get("title") or ""),
+        description=(body.get("description") or None),
+        guide_form_id=(body.get("guide_form_id") or ""),
+        mapping=body.get("mapping"),
+        notify_emails=body.get("notify_emails"),
+        creator_user_id=uid,
+        creator_name=(body.get("creator_name") or None),
+    )
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg})
+    return JSONResponse(status_code=201, content=detail)
+
+
+@app.get("/procedures/{procedure_id}")
+def get_procedure(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    detail = store.get_procedure(
+        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
+    return JSONResponse(content=detail)
+
+
+@app.get("/procedures/{procedure_id}/share")
+def get_procedure_share(
+    procedure_id: str,
+    origin: str = "",
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    detail, msg = store.procedure_share(
+        procedure_id,
+        origin=origin,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or detail is None:
+        code = 404 if "見つかりません" in (msg or "") else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
+@app.put("/procedures/{procedure_id}")
+async def update_procedure(
+    procedure_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    detail, msg = store.update_procedure(
+        procedure_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        name=body.get("name"),
+        description=body.get("description"),
+        guide_form_id=body.get("guide_form_id"),
+        mapping=body.get("mapping"),
+        notify_emails=body.get("notify_emails"),
+    )
+    if msg or detail is None:
+        code = 404 if "見つかりません" in (msg or "") else 403 if "権限" in (msg or "") else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
+@app.post("/procedures/{procedure_id}/status")
+async def set_procedure_status(
+    procedure_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    detail, msg = store.set_procedure_status(
+        procedure_id,
+        actor_user_id=uid,
+        status=(body.get("status") or ""),
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or detail is None:
+        code = 404 if "見つかりません" in (msg or "") else 403 if "権限" in (msg or "") else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
+@app.delete("/procedures/{procedure_id}")
+def delete_procedure(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    msg = store.delete_procedure(
+        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if msg:
+        code = 404 if "見つかりません" in msg else 403 if "権限" in msg else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content={"message": "手続きを削除しました"})
+
+
+@app.get("/inbox")
+def get_inbox(
+    procedure_id: str | None = None,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    return JSONResponse(
+        content=store.list_inbox(
+            actor_user_id=uid,
+            actor_groups=_groups(x_user_groups),
+            procedure_id=procedure_id,
+        )
+    )
+
+
+@app.get("/procedures/{procedure_id}/applications")
+def list_procedure_applications(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    items, msg = store.list_applications(
+        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if msg or items is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return JSONResponse(content={"applications": items})
+
+
+@app.get("/applications/{application_id}")
+def get_application(
+    application_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    detail = store.get_application(application_id, actor_user_id=uid)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "申請が見つかりません"})
+    return JSONResponse(content=detail)
+
+
+def _export_attachment(body: str | None, msg: str | None, *, filename: str, media: str, utf8_sig: bool) -> Response:
+    if msg or body is None:
+        code = 404 if msg and "見つかりません" in msg else 403
+        return JSONResponse(status_code=code, content={"error": msg})
+    encoded = (body or "").encode("utf-8-sig" if utf8_sig else "utf-8")
+    return Response(
+        content=encoded,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/procedures/{procedure_id}/export")
+def export_procedure_applications(
+    procedure_id: str,
+    format: str = "csv",
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    fmt = (format or "csv").lower()
+    body, msg = store.export_procedure_applications(
+        procedure_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        fmt=fmt,
+    )
+    if fmt == "jsonl":
+        return _export_attachment(
+            body,
+            msg,
+            filename=f"procedure_{procedure_id}.jsonl",
+            media="application/x-ndjson; charset=utf-8",
+            utf8_sig=False,
+        )
+    return _export_attachment(
+        body,
+        msg,
+        filename=f"procedure_{procedure_id}.csv",
+        media="text/csv; charset=utf-8",
+        utf8_sig=True,
+    )
+
+
+@app.get("/applications/{application_id}/export")
+def export_application(
+    application_id: str,
+    format: str = "csv",
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    fmt = (format or "csv").lower()
+    body, msg = store.export_application(application_id, fmt=fmt)
+    if fmt in ("json", "jsonl"):
+        return _export_attachment(
+            body,
+            msg,
+            filename=f"application_{application_id}.{'json' if fmt == 'json' else 'jsonl'}",
+            media="application/x-ndjson; charset=utf-8"
+            if fmt == "jsonl"
+            else "application/json; charset=utf-8",
+            utf8_sig=False,
+        )
+    return _export_attachment(
+        body,
+        msg,
+        filename=f"application_{application_id}.csv",
+        media="text/csv; charset=utf-8",
+        utf8_sig=True,
+    )
 
 
 @app.post("/forms/{form_id}/submissions")
@@ -315,6 +683,7 @@ async def submit_internal(
         pin=body.get("pin"),
         is_draft=bool(body.get("is_draft")),
         resume_token=(body.get("resume_token") or None),
+        application_token=(body.get("application_token") or None),
     )
     if msg or result is None:
         code = 404 if "見つかりません" in (msg or "") else 403 if "公開" in (msg or "") else 400
@@ -662,6 +1031,50 @@ async def assist_generate(
     return JSONResponse(content=result)
 
 
+@app.post("/assist/procedure")
+async def assist_procedure(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    visibility = (body.get("visibility") or "internal").strip() or "internal"
+    try:
+        generated = await assist.draft_procedure(text, visibility=visibility)
+        detail, msg = store.create_procedure_from_draft(
+            generated["draft"],
+            creator_user_id=uid,
+            creator_name=(body.get("creator_name") or None),
+            visibility=visibility,
+        )
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": f"手続きの生成に失敗しました: {e}"})
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg})
+    return JSONResponse(
+        status_code=201,
+        content={
+            "source": generated.get("source"),
+            "notes": generated.get("notes"),
+            "model": generated.get("model"),
+            "procedure": detail,
+        },
+    )
+
+
 @app.post("/assist/invite")
 async def assist_invite(
     request: Request,
@@ -794,6 +1207,85 @@ async def lookup_corporate_internal(
 
 
 # ---------------------------------------------------------------------------
+# 機械向けカタログ（API キーのみ）。公開済み手続きだけ。提出・下書きは出さない。
+# ---------------------------------------------------------------------------
+CATALOG_LIST_NOTE = (
+    "公開中の手続き一覧です。下書きは含みません。"
+    "市民の提出本文や申請束トークンは出ません。"
+)
+CATALOG_INSPECT_NOTE = (
+    "案内の選択肢と、答えごとに足す様式・持ち物です。"
+    "提出は受け付けません。束を作るには patchform の案内を提出してください。"
+)
+CATALOG_RESOLVE_NOTE = (
+    "案内の答えから、今回足す様式の和集合です。申請束は作っていません。"
+)
+
+
+@app.get("/catalog/procedures")
+def catalog_list_procedures(
+    q: str | None = None,
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    items = store.list_published_procedures(query=q)
+    return JSONResponse(
+        content={
+            "meaning": "庁が公開している手続きマスタの一覧",
+            "note": CATALOG_LIST_NOTE,
+            "procedures": items,
+            "count": len(items),
+        }
+    )
+
+
+@app.get("/catalog/procedure")
+def catalog_inspect_procedure(
+    ref: str = "",
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    detail, msg = store.find_published_procedure(ref)
+    if msg or detail is None:
+        code = 400 if msg and ("必須" in msg or "複数" in msg) else 404
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(
+        content={
+            "meaning": "答えが様式を足す対応表",
+            "note": CATALOG_INSPECT_NOTE,
+            "procedure": detail,
+        }
+    )
+
+
+@app.post("/catalog/resolve")
+async def catalog_resolve_bundle(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    body = await request.json()
+    ref = str(body.get("procedure") or body.get("procedure_id") or body.get("ref") or "").strip()
+    resolved, msg = store.resolve_published_bundle(ref, body.get("answers"))
+    if msg or resolved is None:
+        code = 400 if msg and ("必須" in msg or "複数" in msg) else 404
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(
+        content={
+            "meaning": "この答えなら足す様式の和集合",
+            "note": CATALOG_RESOLVE_NOTE,
+            **resolved,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # 公開面（ゲスト）。公開プロキシはここだけ upstream すること。
 # ---------------------------------------------------------------------------
 @app.get("/public/api/forms/{guest_token}")
@@ -916,6 +1408,7 @@ async def public_submit(guest_token: str, request: Request) -> JSONResponse:
         pin=body.get("pin"),
         is_draft=bool(body.get("is_draft")),
         resume_token=(body.get("resume_token") or None),
+        application_token=(body.get("application_token") or None),
     )
     if msg or result is None:
         code = 404 if "見つかりません" in (msg or "") else 403 if "公開" in (msg or "") or "暗証" in (msg or "") else 400
@@ -923,8 +1416,17 @@ async def public_submit(guest_token: str, request: Request) -> JSONResponse:
     return JSONResponse(status_code=201, content=result)
 
 
+@app.get("/public/api/applications/{token}")
+def public_get_application(token: str) -> JSONResponse:
+    data, msg = store.public_application(token)
+    if msg or data is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return JSONResponse(content=data)
+
+
 @app.get("/public/f/{guest_token}", response_model=None)
-def public_form_page(guest_token: str) -> FileResponse | HTMLResponse:
+@app.get("/public/p/{token}", response_model=None)
+def public_form_page(guest_token: str = "", token: str = "") -> FileResponse | HTMLResponse:
     path = PUBLIC_DIR / "form.html"
     if path.is_file():
         return FileResponse(path, media_type="text/html; charset=utf-8")
