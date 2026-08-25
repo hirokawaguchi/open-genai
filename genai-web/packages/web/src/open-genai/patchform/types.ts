@@ -1,4 +1,6 @@
 export type FormStatus = 'draft' | 'published' | 'closed' | 'archived';
+export type FormKind = 'definition' | 'reception';
+export type FormWorkStatus = 'editing' | 'ready';
 export type FormVisibility = 'internal' | 'public' | 'both';
 export type IdentityMode = 'required' | 'optional' | 'anonymous';
 
@@ -68,6 +70,15 @@ export type FormSummary = {
   created_at: string;
   updated_at: string;
   public_url: string;
+  source_form_id?: string | null;
+  source_title?: string | null;
+  locked?: boolean;
+  kind?: FormKind;
+  work_status?: FormWorkStatus | null;
+  receptions?: FormSummary[];
+  reception_count?: number;
+  has_opening?: boolean;
+  tags?: string[];
 };
 
 export type FormDetail = FormSummary & {
@@ -92,6 +103,7 @@ export type FormConfig = {
   spec_version?: string;
   catalog?: CatalogItem[];
   llm?: { model?: string; base_url?: string };
+  mail?: { configured?: boolean };
 };
 
 export type AssistGenerateResult = {
@@ -99,6 +111,15 @@ export type AssistGenerateResult = {
   definition: FormDefinition;
   notes?: string;
   model?: string;
+};
+
+export type AssistProcedureResult = {
+  source: 'llm' | 'template';
+  notes?: string;
+  model?: string;
+  procedure: Procedure & {
+    created_forms?: { id: string; title: string; role: string }[];
+  };
 };
 
 export type AssistInviteResult = {
@@ -113,6 +134,134 @@ export type UploadedFile = {
   filename: string;
   mime?: string;
   size?: number;
+};
+
+export type ProcedureStatus = 'draft' | 'published';
+
+export type ProcedureRule = {
+  component_id: string;
+  option: string;
+  form_ids: string[];
+  notes?: string;
+  prepare?: string[];
+  refs?: string[];
+};
+
+export type ProcedureChoiceField = {
+  id: string;
+  type: string;
+  label: string;
+  options: string[];
+};
+
+/** 答えで様式を足さない手続き（申請用紙1枚。ナビゲーションは使わない）。 */
+export const omitsNavigation = (procedure: { choice_fields?: ProcedureChoiceField[] | null }) =>
+  !(procedure.choice_fields || []).length;
+
+export type Procedure = {
+  id: string;
+  name: string;
+  description?: string | null;
+  guide_form_id: string;
+  guide_title?: string | null;
+  guide_status?: FormStatus | null;
+  guide_guest_token?: string | null;
+  guide_public_url?: string | null;
+  guide_reception_id?: string | null;
+  guide_visibility?: FormVisibility | null;
+  mapping: { rules: ProcedureRule[] };
+  status: ProcedureStatus;
+  creator_user_id?: string | null;
+  creator_name?: string | null;
+  created_at: string;
+  updated_at: string;
+  choice_fields?: ProcedureChoiceField[];
+  warnings?: string[];
+  can_edit?: boolean;
+  notify_emails?: string[];
+};
+
+export type ApplicationFormStatus = 'none' | 'draft' | 'submitted' | 'withdrawn';
+
+export type ApplicationForm = {
+  id: string;
+  title: string;
+  guest_token?: string | null;
+  public_url?: string | null;
+  visibility?: FormVisibility | null;
+  status: ApplicationFormStatus;
+  answers?: Record<string, unknown>;
+  definition?: FormDefinition;
+  receipt_code?: string | null;
+  respondent_label?: string | null;
+  submitted_at?: string | null;
+};
+
+export type Application = {
+  id: string;
+  token: string;
+  procedure_id: string;
+  procedure_name: string;
+  procedure_description?: string | null;
+  guide_form_id: string;
+  guide_submission_id: string;
+  form_ids: string[];
+  notice: { notes?: string[]; prepare?: string[]; refs?: string[] };
+  forms: ApplicationForm[];
+  public_url: string;
+  created_at: string;
+};
+
+export type InboxItem = {
+  kind: 'bundle' | 'form';
+  id: string;
+  created_at: string;
+  title: string;
+  label: string;
+  procedure_id?: string;
+  submitted?: number;
+  total?: number;
+  public_url?: string | null;
+  form_id?: string;
+  respondent_label?: string | null;
+  withdrawn?: boolean;
+};
+
+export type InboxOpening = {
+  kind: 'procedure' | 'form';
+  id: string;
+  title: string;
+  guide_title?: string | null;
+  public_url?: string | null;
+};
+
+export type InboxProcedure = {
+  id: string;
+  name: string;
+  title: string;
+  status: ProcedureStatus;
+  guide_title?: string | null;
+  public_url?: string | null;
+  bundle_count: number;
+  can_edit?: boolean;
+  updated_at: string;
+};
+
+export type ProcedureShare = {
+  id: string;
+  name: string;
+  internal_url: string;
+  external_url?: string | null;
+  internal_qr_svg: string;
+  external_qr_svg?: string | null;
+};
+
+export type Inbox = {
+  items: InboxItem[];
+  procedures?: InboxProcedure[];
+  openings: InboxOpening[];
+  bundle_count: number;
+  form_count: number;
 };
 
 export type Submission = {

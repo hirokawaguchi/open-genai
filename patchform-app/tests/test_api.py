@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("INTERNAL_SIGNING_SECRET", "")
 os.environ.setdefault("RAG_API_KEY", "test-key")
+os.environ["PATCHFORM_SEED"] = ""
 
 from fastapi.testclient import TestClient
 
@@ -110,7 +111,6 @@ def test_crud_publish_submit_export() -> None:
         assert res.status_code == 201, res.text
         form = res.json()
         fid = form["id"]
-        token = form["guest_token"]
 
         res = client.get("/forms", headers=_headers())
         assert res.status_code == 200
@@ -121,8 +121,27 @@ def test_crud_publish_submit_export() -> None:
             headers=_headers(),
             json={"status": "published"},
         )
-        assert res.status_code == 200
-        assert res.json()["status"] == "published"
+        assert res.status_code == 400
+        assert "手続き" in res.json()["error"]
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "届出の手続き", "guide_form_id": fid},
+        )
+        assert res.status_code == 201, res.text
+        proc_id = res.json()["id"]
+        res = client.post(
+            f"/procedures/{proc_id}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        res = client.get(f"/forms/{fid}", headers=_headers())
+        published = res.json()["receptions"][0]
+        assert published["status"] == "published"
+        assert published["source_form_id"] == fid
+        rid = published["id"]
+        token = published["guest_token"]
 
         res = client.get(f"/public/api/forms/{token}")
         assert res.status_code == 200
@@ -139,23 +158,27 @@ def test_crud_publish_submit_export() -> None:
         assert res.status_code == 201, res.text
         assert res.json()["receipt_code"]
 
-        res = client.get(f"/forms/{fid}/submissions", headers=_headers())
+        res = client.get("/forms", headers=_headers())
+        assert res.status_code == 200
+        assert [item["id"] for item in res.json()["forms"]] == [fid]
+
+        res = client.get(f"/forms/{rid}/submissions", headers=_headers())
         assert res.status_code == 200
         assert res.json()["submissions"][0]["answers"]["name"] == "田中"
 
-        res = client.get(f"/forms/{fid}/export", headers=_headers())
+        res = client.get(f"/forms/{rid}/export", headers=_headers())
         assert res.status_code == 200
         text = res.content.decode("utf-8-sig")
         assert "氏名" in text
         assert "田中" in text
 
-        res = client.get(f"/forms/{fid}/export?format=jsonl", headers=_headers())
+        res = client.get(f"/forms/{rid}/export?format=jsonl", headers=_headers())
         assert res.status_code == 200
         line = res.content.decode("utf-8").strip().split("\n")[0]
         payload = __import__("json").loads(line)
         assert payload["answers"]["name"] == "田中"
 
-        res = client.get(f"/forms/{fid}/carrier", headers=_headers())
+        res = client.get(f"/forms/{rid}/carrier", headers=_headers())
         assert res.status_code == 200
         assert "/public/f/" in res.json()["public_url"]
     finally:
@@ -188,7 +211,7 @@ def test_extract_document_text() -> None:
             },
         )
         assert res.status_code == 200
-        assert res.json()["source"] == "text"
+        assert res.json()["source"] == "docextract"
     finally:
         _teardown(path)
 
@@ -237,9 +260,21 @@ def test_upload_submit_download() -> None:
         )
         assert res.status_code == 201, res.text
         fid = res.json()["id"]
-        token = res.json()["guest_token"]
-        res = client.post(f"/forms/{fid}/status", headers=_headers(), json={"status": "published"})
-        assert res.status_code == 200
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "添付の手続き", "guide_form_id": fid},
+        )
+        assert res.status_code == 201, res.text
+        res = client.post(
+            f"/procedures/{res.json()['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        published = client.get(f"/forms/{fid}", headers=_headers()).json()["receptions"][0]
+        rid = published["id"]
+        token = published["guest_token"]
 
         txt = base64.b64encode("hello".encode("utf-8")).decode("ascii")
         res = client.post(
@@ -249,7 +284,7 @@ def test_upload_submit_download() -> None:
         assert res.status_code == 201, res.text
         att = res.json()
         res = client.post(
-            f"/forms/{fid}/files",
+            f"/forms/{rid}/files",
             headers=_headers(),
             json={"filename": "sign.png", "data": f"data:image/png;base64,{_PNG}", "kind": "signature"},
         )
@@ -262,7 +297,7 @@ def test_upload_submit_download() -> None:
         )
         assert res.status_code == 201, res.text
 
-        res = client.get(f"/forms/{fid}/files/{att['file_id']}", headers=_headers())
+        res = client.get(f"/forms/{rid}/files/{att['file_id']}", headers=_headers())
         assert res.status_code == 200
         assert res.content == b"hello"
         res = client.get(f"/forms/{fid}/files/{att['file_id']}", headers=_headers("u2"))

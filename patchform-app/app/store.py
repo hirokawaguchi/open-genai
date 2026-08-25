@@ -13,10 +13,11 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import bcrypt
 
-from . import crypto, files, spec
+from . import crypto, files, notify, procedure, spec
 
 DB_PATH = os.environ.get("PATCHFORM_DB_PATH", "/data/patchform.db")
 RETENTION_DAYS = int(os.environ.get("PATCHFORM_RETENTION_DAYS", "365"))
@@ -137,10 +138,43 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_submissions_form ON submissions(form_id);
             CREATE INDEX IF NOT EXISTS idx_uploads_form ON uploaded_files(form_id);
             CREATE INDEX IF NOT EXISTS idx_audit_form ON audit_events(form_id);
+            CREATE TABLE IF NOT EXISTS procedures (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT,
+              guide_form_id TEXT NOT NULL,
+              mapping_json TEXT NOT NULL,
+              status TEXT NOT NULL,
+              creator_user_id TEXT,
+              creator_name TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (guide_form_id) REFERENCES forms(id)
+            );
+            CREATE TABLE IF NOT EXISTS applications (
+              id TEXT PRIMARY KEY,
+              token TEXT NOT NULL UNIQUE,
+              procedure_id TEXT NOT NULL,
+              guide_form_id TEXT NOT NULL,
+              guide_submission_id TEXT NOT NULL,
+              form_ids_json TEXT NOT NULL,
+              notice_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (procedure_id) REFERENCES procedures(id),
+              FOREIGN KEY (guide_form_id) REFERENCES forms(id),
+              FOREIGN KEY (guide_submission_id) REFERENCES submissions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_procedures_guide ON procedures(guide_form_id);
+            CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
+            CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token);
+            CREATE INDEX IF NOT EXISTS idx_applications_proc ON applications(procedure_id);
             """
         )
         _ensure_columns(db)
+        file_moves = _migrate_legacy_receptions(db)
         db.commit()
+    for old_id, new_id in file_moves:
+        files.rename_form_dir(old_id, new_id)
 
 
 def _ensure_columns(db: sqlite3.Connection) -> None:
@@ -150,13 +184,195 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("forms", "editor_user_ids", "TEXT"),
         ("forms", "viewer_user_ids", "TEXT"),
         ("forms", "identity_mode", "TEXT NOT NULL DEFAULT 'optional'"),
+        ("forms", "source_form_id", "TEXT"),
+        ("forms", "locked", "INTEGER NOT NULL DEFAULT 0"),
+        ("forms", "tags", "TEXT NOT NULL DEFAULT '[]'"),
         ("submissions", "withdrawn_at", "TEXT"),
         ("submissions", "withdrawn_by", "TEXT"),
+        ("submissions", "application_id", "TEXT"),
+        ("procedures", "notify_emails_json", "TEXT NOT NULL DEFAULT '[]'"),
     )
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if name not in cols:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_forms_source ON forms(source_form_id)")
+
+
+def _source_form_id(row: sqlite3.Row) -> str | None:
+    if "source_form_id" not in row.keys():
+        return None
+    value = row["source_form_id"]
+    return str(value) if value else None
+
+
+def _is_reception(row: sqlite3.Row) -> bool:
+    return bool(_source_form_id(row))
+
+
+def _definition_id(row: sqlite3.Row) -> str:
+    return _source_form_id(row) or row["id"]
+
+
+def _is_locked(row: sqlite3.Row) -> bool:
+    return bool(_flag(row, "locked", 0))
+
+
+NAVIGATION_TAG = "ナビゲーション"
+MAX_FORM_TAGS = 20
+MAX_FORM_TAG_LEN = 30
+
+
+def normalize_tags(raw: Any) -> tuple[list[str] | None, str | None]:
+    if raw is None:
+        return [], None
+    if isinstance(raw, str):
+        items = [part.strip() for part in raw.replace("、", ",").replace(";", ",").split(",")]
+    elif isinstance(raw, (list, tuple)):
+        items = [str(item).strip() for item in raw]
+    else:
+        return None, "タグの形式が不正です"
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not item:
+            continue
+        if len(item) > MAX_FORM_TAG_LEN:
+            return None, f"タグは{MAX_FORM_TAG_LEN}文字以内にしてください"
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+        if len(out) > MAX_FORM_TAGS:
+            return None, f"タグは{MAX_FORM_TAGS}個までです"
+    return out, None
+
+
+def _row_tags(row: sqlite3.Row) -> list[str]:
+    if "tags" not in row.keys() or not row["tags"]:
+        return []
+    try:
+        data = json.loads(row["tags"])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    tags, _err = normalize_tags(data if isinstance(data, list) else [])
+    return tags or []
+
+
+def _tags_json(tags: list[str]) -> str:
+    return json.dumps(tags, ensure_ascii=False)
+
+
+def _form_row(db: sqlite3.Connection, form_id: str) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM forms WHERE id = ?", (form_id,)).fetchone()
+
+
+def _as_definition_id(db: sqlite3.Connection, form_id: str) -> str | None:
+    row = _form_row(db, form_id)
+    return _definition_id(row) if row else None
+
+
+def _published_reception_row(db: sqlite3.Connection, form_id: str) -> sqlite3.Row | None:
+    row = _form_row(db, form_id)
+    if not row:
+        return None
+    def_id = _definition_id(row)
+    rec = db.execute(
+        "SELECT * FROM forms WHERE source_form_id = ? AND status = 'published' "
+        "ORDER BY created_at DESC",
+        (def_id,),
+    ).fetchone()
+    if rec:
+        return rec
+    src = _form_row(db, def_id)
+    if src and not _is_reception(src) and src["status"] == "published":
+        return src
+    return None
+
+
+def _replace_form_id_json(raw: str | None, old_id: str, new_id: str) -> str:
+    try:
+        items = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        items = []
+    if not isinstance(items, list):
+        return raw or "[]"
+    changed = [new_id if item == old_id else item for item in items]
+    return json.dumps(changed, ensure_ascii=False)
+
+
+def _migrate_legacy_receptions(db: sqlite3.Connection) -> list[tuple[str, str]]:
+    """公開中・受付終了の定義を、同じゲスト URL の受付コピーに分ける。"""
+    cols = {r[1] for r in db.execute("PRAGMA table_info(forms)").fetchall()}
+    if "source_form_id" not in cols:
+        return []
+    rows = db.execute(
+        "SELECT * FROM forms WHERE (source_form_id IS NULL OR source_form_id = '') "
+        "AND status IN ('published', 'closed')"
+    ).fetchall()
+    moves: list[tuple[str, str]] = []
+    for row in rows:
+        rec_id = str(uuid.uuid4())
+        old_token = row["guest_token"]
+        def_token = secrets.token_urlsafe(24)
+        now = _now_iso()
+        db.execute(
+            "UPDATE forms SET guest_token = ?, updated_at = ? WHERE id = ?",
+            (def_token, now, row["id"]),
+        )
+        db.execute(
+            "INSERT INTO forms (id, guest_token, title, description, status, visibility, "
+            "definition_json, published_version_id, pin_hash, creator_user_id, creator_name, "
+            "retention_days, created_at, updated_at, allow_draft, allow_multiple, "
+            "editor_user_ids, viewer_user_ids, identity_mode, source_form_id, locked, tags) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                rec_id,
+                old_token,
+                row["title"],
+                row["description"],
+                row["status"],
+                row["visibility"],
+                row["definition_json"],
+                row["published_version_id"],
+                row["pin_hash"],
+                row["creator_user_id"],
+                row["creator_name"],
+                row["retention_days"],
+                row["created_at"],
+                now,
+                _flag(row, "allow_draft"),
+                _flag(row, "allow_multiple"),
+                row["editor_user_ids"] if "editor_user_ids" in row.keys() else "[]",
+                row["viewer_user_ids"] if "viewer_user_ids" in row.keys() else "[]",
+                _identity_mode(row),
+                row["id"],
+                0,
+                _tags_json(_row_tags(row)),
+            ),
+        )
+        db.execute("UPDATE form_versions SET form_id = ? WHERE form_id = ?", (rec_id, row["id"]))
+        db.execute("UPDATE submissions SET form_id = ? WHERE form_id = ?", (rec_id, row["id"]))
+        db.execute("UPDATE uploaded_files SET form_id = ? WHERE form_id = ?", (rec_id, row["id"]))
+        db.execute("UPDATE audit_events SET form_id = ? WHERE form_id = ?", (rec_id, row["id"]))
+        db.execute(
+            "UPDATE applications SET guide_form_id = ? WHERE guide_form_id = ?",
+            (rec_id, row["id"]),
+        )
+        for app in db.execute("SELECT id, form_ids_json FROM applications").fetchall():
+            next_json = _replace_form_id_json(app["form_ids_json"], row["id"], rec_id)
+            if next_json != app["form_ids_json"]:
+                db.execute(
+                    "UPDATE applications SET form_ids_json = ? WHERE id = ?",
+                    (next_json, app["id"]),
+                )
+        db.execute(
+            "UPDATE forms SET status = 'draft', locked = 1, published_version_id = NULL, "
+            "updated_at = ? WHERE id = ?",
+            (now, row["id"]),
+        )
+        moves.append((row["id"], rec_id))
+    return moves
 
 
 def _parse_user_ids(raw: Any) -> list[str]:
@@ -326,6 +542,12 @@ def public_url_for(guest_token: str) -> str:
     return f"{PUBLIC_ENDPOINT}/public/f/{guest_token}"
 
 
+def public_application_url_for(token: str) -> str:
+    if not PUBLIC_ENDPOINT:
+        return f"/public/p/{token}"
+    return f"{PUBLIC_ENDPOINT}/public/p/{token}"
+
+
 def _stable_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
 
@@ -359,6 +581,13 @@ def _row_to_form(row: sqlite3.Row, *, include_definition: bool = True) -> dict[s
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "public_url": public_url_for(row["guest_token"]),
+        "source_form_id": _source_form_id(row),
+        "locked": _is_locked(row),
+        "kind": "reception" if _is_reception(row) else "definition",
+        "work_status": None
+        if _is_reception(row)
+        else ("ready" if _is_locked(row) else "editing"),
+        "tags": _row_tags(row),
     }
     if include_definition:
         out["definition"] = _definition(row)
@@ -379,6 +608,8 @@ def list_forms_for_user(user_id: str, *, actor_groups: list[str] | None = None) 
         admin = _is_admin(actor_groups)
         out: list[dict[str, Any]] = []
         for row in rows:
+            if _is_reception(row):
+                continue
             role = _role(row, user_id, actor_groups)
             open_to_staff = row["status"] == "published" and row["visibility"] in (
                 "internal",
@@ -390,6 +621,16 @@ def list_forms_for_user(user_id: str, *, actor_groups: list[str] | None = None) 
             item["role"] = role or "respondent"
             item["can_edit"] = role in ("admin", "owner", "editor")
             item["can_view_submissions"] = role in ("admin", "owner", "editor", "viewer")
+            item["reception_count"] = db.execute(
+                "SELECT COUNT(*) AS n FROM forms WHERE source_form_id = ?",
+                (row["id"],),
+            ).fetchone()["n"]
+            item["has_opening"] = bool(
+                db.execute(
+                    "SELECT 1 FROM forms WHERE source_form_id = ? AND status = 'published' LIMIT 1",
+                    (row["id"],),
+                ).fetchone()
+            )
             out.append(item)
         return out
 
@@ -471,6 +712,26 @@ def get_form(
         out["can_reveal"] = _can_reveal(row, actor_user_id, actor_groups) and out["has_mynumber"]
         out["my_submitted"] = submitted
         out["my_has_draft"] = has_draft
+        if not _is_reception(row):
+            recs = db.execute(
+                "SELECT * FROM forms WHERE source_form_id = ? ORDER BY created_at DESC",
+                (row["id"],),
+            ).fetchall()
+            receptions: list[dict[str, Any]] = []
+            for rec in recs:
+                item = _row_to_form(rec, include_definition=False)
+                item["submission_count"] = db.execute(
+                    "SELECT COUNT(*) AS n FROM submissions WHERE form_id = ? AND is_draft = 0 "
+                    "AND (withdrawn_at IS NULL OR withdrawn_at = '')",
+                    (rec["id"],),
+                ).fetchone()["n"]
+                receptions.append(item)
+            out["receptions"] = receptions
+            if receptions:
+                out["can_delete"] = False
+        else:
+            src = _form_row(db, row["source_form_id"])
+            out["source_title"] = src["title"] if src else None
         if actor_user_id and not out["can_edit"] and fill_def:
             out["definition"] = fill_def
             out["draft_differs"] = False
@@ -487,6 +748,7 @@ def create_form(
     definition: dict[str, Any] | None = None,
     pin: str | None = None,
     retention_days: int | None = None,
+    tags: list[str] | str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if visibility not in spec.VISIBILITIES:
         return None, "公開範囲が不正です"
@@ -504,6 +766,9 @@ def create_form(
     normalized, err = spec.validate_definition(base, visibility=visibility)
     if err or normalized is None:
         return None, err
+    tag_list, tag_err = normalize_tags(tags)
+    if tag_err or tag_list is None:
+        return None, tag_err
     form_id = str(uuid.uuid4())
     guest_token = secrets.token_urlsafe(24)
     now = _now_iso()
@@ -513,7 +778,8 @@ def create_form(
         db.execute(
             "INSERT INTO forms (id, guest_token, title, description, status, visibility, "
             "definition_json, published_version_id, pin_hash, creator_user_id, creator_name, "
-            "retention_days, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "retention_days, created_at, updated_at, source_form_id, locked, tags) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 form_id,
                 guest_token,
@@ -529,6 +795,9 @@ def create_form(
                 days,
                 now,
                 now,
+                None,
+                0,
+                _tags_json(tag_list),
             ),
         )
         db.commit()
@@ -553,6 +822,7 @@ def update_form(
     editor_user_ids: list[str] | str | None = None,
     viewer_user_ids: list[str] | str | None = None,
     identity_mode: str | None = None,
+    tags: list[str] | str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     db = connect()
     with _lock:
@@ -563,6 +833,8 @@ def update_form(
             return None, "このフォームを編集する権限がありません"
         if row["status"] in ("archived",):
             return None, "アーカイブ済みのフォームは編集できません"
+        if not _is_reception(row) and _is_locked(row):
+            return None, "作成完了のフォームは部品を変えられません。作成に戻してから直してください。"
         new_title = title if title is not None else row["title"]
         new_desc = description if description is not None else row["description"]
         new_vis = visibility if visibility is not None else row["visibility"]
@@ -615,10 +887,18 @@ def update_form(
             if identity_mode not in spec.IDENTITY_MODES:
                 return None, "回答者の扱いが不正です"
             next_identity = identity_mode
+        if tags is not None:
+            tag_list, tag_err = normalize_tags(tags)
+            if tag_err or tag_list is None:
+                return None, tag_err
+            next_tags = _tags_json(tag_list)
+        else:
+            next_tags = row["tags"] if "tags" in row.keys() and row["tags"] else "[]"
         db.execute(
             "UPDATE forms SET title = ?, description = ?, visibility = ?, definition_json = ?, "
             "pin_hash = ?, retention_days = ?, allow_draft = ?, allow_multiple = ?, "
-            "editor_user_ids = ?, viewer_user_ids = ?, identity_mode = ?, updated_at = ? WHERE id = ?",
+            "editor_user_ids = ?, viewer_user_ids = ?, identity_mode = ?, tags = ?, "
+            "updated_at = ? WHERE id = ?",
             (
                 new_title.strip(),
                 new_desc,
@@ -631,6 +911,7 @@ def update_form(
                 next_editors,
                 next_viewers,
                 next_identity,
+                next_tags,
                 _now_iso(),
                 form_id,
             ),
@@ -639,12 +920,176 @@ def update_form(
     return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
 
 
+def _publish_form_version(
+    db: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    actor_user_id: str,
+) -> tuple[str | None, str | None]:
+    definition = _definition(row)
+    normalized, err = spec.validate_definition(definition, visibility=row["visibility"])
+    if err or normalized is None:
+        return None, err
+    if not normalized["components"]:
+        return None, "部品が無いフォームは公開できません"
+    next_ver = db.execute(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS n FROM form_versions WHERE form_id = ?",
+        (row["id"],),
+    ).fetchone()["n"]
+    version_id = str(uuid.uuid4())
+    now = _now_iso()
+    db.execute(
+        "INSERT INTO form_versions (id, form_id, version, definition_json, "
+        "published_at, published_by) VALUES (?,?,?,?,?,?)",
+        (
+            version_id,
+            row["id"],
+            next_ver,
+            json.dumps(normalized, ensure_ascii=False),
+            now,
+            actor_user_id,
+        ),
+    )
+    db.execute(
+        "UPDATE forms SET status = 'published', published_version_id = ?, definition_json = ?, "
+        "updated_at = ? WHERE id = ?",
+        (version_id, json.dumps(normalized, ensure_ascii=False), now, row["id"]),
+    )
+    return version_id, None
+
+
+def _insert_reception(
+    db: sqlite3.Connection,
+    source: sqlite3.Row,
+    *,
+    actor_user_id: str,
+) -> tuple[str | None, str | None]:
+    definition = _definition(source)
+    normalized, err = spec.validate_definition(definition, visibility=source["visibility"])
+    if err or normalized is None:
+        return None, err
+    if not normalized["components"]:
+        return None, "部品が無いフォームは受付を開始できません"
+    rec_id = str(uuid.uuid4())
+    guest_token = secrets.token_urlsafe(24)
+    now = _now_iso()
+    version_id = str(uuid.uuid4())
+    db.execute(
+        "INSERT INTO forms (id, guest_token, title, description, status, visibility, "
+        "definition_json, published_version_id, pin_hash, creator_user_id, creator_name, "
+        "retention_days, created_at, updated_at, allow_draft, allow_multiple, "
+        "editor_user_ids, viewer_user_ids, identity_mode, source_form_id, locked, tags) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            rec_id,
+            guest_token,
+            source["title"],
+            source["description"],
+            "published",
+            source["visibility"],
+            json.dumps(normalized, ensure_ascii=False),
+            version_id,
+            source["pin_hash"],
+            source["creator_user_id"],
+            source["creator_name"],
+            source["retention_days"],
+            now,
+            now,
+            _flag(source, "allow_draft"),
+            _flag(source, "allow_multiple"),
+            source["editor_user_ids"] if "editor_user_ids" in source.keys() else "[]",
+            source["viewer_user_ids"] if "viewer_user_ids" in source.keys() else "[]",
+            _identity_mode(source),
+            source["id"],
+            0,
+            _tags_json(_row_tags(source)),
+        ),
+    )
+    db.execute(
+        "INSERT INTO form_versions (id, form_id, version, definition_json, "
+        "published_at, published_by) VALUES (?,?,?,?,?,?)",
+        (
+            version_id,
+            rec_id,
+            1,
+            json.dumps(normalized, ensure_ascii=False),
+            now,
+            actor_user_id,
+        ),
+    )
+    db.execute(
+        "UPDATE forms SET locked = 1, status = 'draft', published_version_id = NULL, "
+        "updated_at = ? WHERE id = ?",
+        (now, source["id"]),
+    )
+    return rec_id, None
+
+
+def _closed_reception_row(db: sqlite3.Connection, form_id: str) -> sqlite3.Row | None:
+    row = _form_row(db, form_id)
+    if not row:
+        return None
+    source = row if not _is_reception(row) else _form_row(db, _definition_id(row))
+    if not source:
+        return None
+    return db.execute(
+        "SELECT * FROM forms WHERE source_form_id = ? AND status = 'closed' "
+        "ORDER BY created_at DESC",
+        (_definition_id(source),),
+    ).fetchone()
+
+
+def _ensure_reception(
+    db: sqlite3.Connection,
+    form_id: str,
+    *,
+    actor_user_id: str,
+) -> tuple[str | None, str | None]:
+    rec = _published_reception_row(db, form_id)
+    if rec:
+        return rec["id"], None
+    row = _form_row(db, form_id)
+    if not row:
+        return None, "フォームが見つかりません"
+    source = row if not _is_reception(row) else _form_row(db, _definition_id(row))
+    if not source:
+        return None, "フォームが見つかりません"
+    closed = _closed_reception_row(db, form_id)
+    if closed:
+        db.execute(
+            "UPDATE forms SET status = 'published', updated_at = ? WHERE id = ?",
+            (_now_iso(), closed["id"]),
+        )
+        return closed["id"], None
+    return _insert_reception(db, source, actor_user_id=actor_user_id)
+
+
+def _close_procedure_receptions(db: sqlite3.Connection, row: sqlite3.Row) -> None:
+    mapping, _err = procedure.normalize_mapping(row["mapping_json"])
+    ids = [row["guide_form_id"]]
+    for rule in mapping.get("rules") or []:
+        ids.extend(rule.get("form_ids") or [])
+    seen: set[str] = set()
+    now = _now_iso()
+    for fid in ids:
+        if not fid or fid in seen:
+            continue
+        seen.add(fid)
+        rec = _published_reception_row(db, fid)
+        if rec:
+            db.execute(
+                "UPDATE forms SET status = 'closed', updated_at = ? WHERE id = ?",
+                (now, rec["id"]),
+            )
+
+
 def set_status(
     form_id: str,
     *,
     actor_user_id: str,
     status: str,
     actor_groups: list[str] | None = None,
+    locked: bool | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if status not in spec.STATUSES:
         return None, "状態が不正です"
@@ -655,37 +1100,51 @@ def set_status(
             return None, "フォームが見つかりません"
         if not _can_edit(row, actor_user_id, actor_groups):
             return None, "このフォームを変更する権限がありません"
-        version_id = row["published_version_id"]
+        if _is_reception(row):
+            if locked is not None:
+                return None, "受付の窓口では作成完了の操作はできません"
+            if status == "draft":
+                return None, "受付の窓口を作成中には戻せません。受付を終了してください。"
+            if status == "published":
+                _vid, err = _publish_form_version(db, row, actor_user_id=actor_user_id)
+                if err:
+                    return None, err
+            elif status == "closed":
+                db.execute(
+                    "UPDATE forms SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, _now_iso(), form_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE forms SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, _now_iso(), form_id),
+                )
+            db.commit()
+            return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
+        if status == "closed":
+            return None, "作成中のフォームは受付終了できません。受付は申請受付の窓口で終了します。"
         if status == "published":
-            definition = _definition(row)
-            normalized, err = spec.validate_definition(
-                definition, visibility=row["visibility"]
-            )
-            if err or normalized is None:
-                return None, err
-            if not normalized["components"]:
-                return None, "部品が無いフォームは公開できません"
-            next_ver = db.execute(
-                "SELECT COALESCE(MAX(version), 0) + 1 AS n FROM form_versions WHERE form_id = ?",
-                (form_id,),
-            ).fetchone()["n"]
-            version_id = str(uuid.uuid4())
-            now = _now_iso()
+            return None, "受付は手続きを公開して開始します。"
+        if status == "draft":
+            next_locked = 1 if locked is True else 0
+            if next_locked:
+                definition = _definition(row)
+                normalized, err = spec.validate_definition(
+                    definition, visibility=row["visibility"]
+                )
+                if err or normalized is None:
+                    return None, err
+                if not normalized["components"]:
+                    return None, "部品が無いフォームは作成完了できません"
             db.execute(
-                "INSERT INTO form_versions (id, form_id, version, definition_json, "
-                "published_at, published_by) VALUES (?,?,?,?,?,?)",
-                (
-                    version_id,
-                    form_id,
-                    next_ver,
-                    json.dumps(normalized, ensure_ascii=False),
-                    now,
-                    actor_user_id,
-                ),
+                "UPDATE forms SET status = 'draft', locked = ?, updated_at = ? WHERE id = ?",
+                (next_locked, _now_iso(), form_id),
             )
+            db.commit()
+            return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
         db.execute(
-            "UPDATE forms SET status = ?, published_version_id = ?, updated_at = ? WHERE id = ?",
-            (status, version_id, _now_iso(), form_id),
+            "UPDATE forms SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _now_iso(), form_id),
         )
         db.commit()
     return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
@@ -701,6 +1160,15 @@ def delete_form(
             return "フォームが見つかりません"
         if not _can_delete(row, actor_user_id, actor_groups):
             return "このフォームを削除する権限がありません"
+        if not _is_reception(row):
+            child = db.execute(
+                "SELECT id FROM forms WHERE source_form_id = ? LIMIT 1", (form_id,)
+            ).fetchone()
+            if child:
+                return "受付の窓口があるため削除できません。先に窓口を終了して削除してください。"
+        used_name = _procedure_using_form(db, form_id)
+        if used_name:
+            return used_name
         db.execute("DELETE FROM forms WHERE id = ?", (form_id,))
         db.commit()
     files.remove_form_dir(form_id)
@@ -975,6 +1443,7 @@ def submit_answers(
     pin: str | None = None,
     is_draft: bool = False,
     resume_token: str | None = None,
+    application_token: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     db = connect()
     with _lock:
@@ -1055,18 +1524,25 @@ def submit_answers(
                     return None, "このフォームにはすでに回答しています"
         cleaned = crypto.protect_answers(definition, cleaned)
         now = _now_iso()
+        linked_app_id, link_err = _resolve_application_id(
+            db, row["id"], application_token
+        )
+        if link_err:
+            return None, link_err
         if existing:
             sid = existing["id"]
             receipt = existing["receipt_code"]
             db.execute(
                 "UPDATE submissions SET version_id = ?, submitter_user_id = ?, submitter_name = ?, "
-                "answers_json = ?, is_draft = ?, updated_at = ? WHERE id = ?",
+                "answers_json = ?, is_draft = ?, application_id = COALESCE(?, application_id), "
+                "updated_at = ? WHERE id = ?",
                 (
                     version_id,
                     stored_id,
                     stored_name,
                     json.dumps(cleaned, ensure_ascii=False),
                     1 if is_draft else 0,
+                    linked_app_id,
                     now,
                     sid,
                 ),
@@ -1076,8 +1552,9 @@ def submit_answers(
             receipt = secrets.token_urlsafe(10)
             db.execute(
                 "INSERT INTO submissions (id, form_id, version_id, receipt_code, "
-                "submitter_user_id, submitter_name, answers_json, is_draft, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "submitter_user_id, submitter_name, answers_json, is_draft, "
+                "application_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     sid,
                     row["id"],
@@ -1087,6 +1564,7 @@ def submit_answers(
                     stored_name,
                     json.dumps(cleaned, ensure_ascii=False),
                     1 if is_draft else 0,
+                    linked_app_id,
                     now,
                     now,
                 ),
@@ -1095,13 +1573,34 @@ def submit_answers(
         if bind_err:
             db.rollback()
             return None, bind_err
+        opened = None
+        notify_proc = None
+        if not is_draft:
+            opened = _open_application_from_guide(db, row["id"], sid, cleaned)
+            if opened:
+                notify_proc = db.execute(
+                    "SELECT name, notify_emails_json FROM procedures WHERE id = ?",
+                    (opened.get("procedure_id"),),
+                ).fetchone()
         db.commit()
-    return {
+    if opened:
+        try:
+            notify.notify_new_application(
+                opened,
+                recipients=_emails_from_row(notify_proc) if notify_proc else [],
+                procedure_name=notify_proc["name"] if notify_proc else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[patchform] notify skipped: {exc}")
+    out: dict[str, Any] = {
         "id": sid,
         "receipt_code": receipt,
         "is_draft": is_draft,
         "message": "下書きを保存しました" if is_draft else "回答を受け付けました",
-    }, None
+    }
+    if opened:
+        out["application"] = opened
+    return out, None
 
 
 def get_draft(
@@ -1492,6 +1991,8 @@ def delete_old_forms(retention_days: int | None = None) -> int:
             except ValueError:
                 continue
             if now - created > timedelta(days=days):
+                if _form_used_by_procedure(db, row["id"]):
+                    continue
                 db.execute("DELETE FROM forms WHERE id = ?", (row["id"],))
                 expired.append(row["id"])
                 deleted += 1
@@ -1508,3 +2009,1048 @@ def delete_old_forms(retention_days: int | None = None) -> int:
     for form_id in expired:
         files.remove_form_dir(form_id)
     return deleted
+
+
+def _form_used_by_procedure(db: sqlite3.Connection, form_id: str) -> bool:
+    return _procedure_using_form(db, form_id) is not None
+
+
+def _procedure_using_form(db: sqlite3.Connection, form_id: str) -> str | None:
+    def_id = _as_definition_id(db, form_id) or form_id
+    for proc in db.execute("SELECT name, guide_form_id, mapping_json FROM procedures").fetchall():
+        guide_def = _as_definition_id(db, proc["guide_form_id"]) or proc["guide_form_id"]
+        if guide_def == def_id or proc["guide_form_id"] == form_id:
+            return f"手続き「{proc['name']}」の案内に使われているため削除できません"
+        mapping, _err = procedure.normalize_mapping(proc["mapping_json"])
+        for rule in mapping.get("rules") or []:
+            for fid in rule.get("form_ids") or []:
+                mapped_def = _as_definition_id(db, fid) or fid
+                if mapped_def == def_id or fid == form_id:
+                    return f"手続き「{proc['name']}」の様式に使われているため削除できません"
+    return None
+
+
+def _can_edit_procedure(
+    row: sqlite3.Row, actor_user_id: str | None, groups: list[str] | None
+) -> bool:
+    if _is_admin(groups):
+        return True
+    return bool(actor_user_id) and row["creator_user_id"] == actor_user_id
+
+
+def _guide_definition(db: sqlite3.Connection, guide_form_id: str) -> dict[str, Any] | None:
+    published = published_definition(guide_form_id)
+    if published:
+        return published
+    row = db.execute("SELECT * FROM forms WHERE id = ?", (guide_form_id,)).fetchone()
+    return _definition(row) if row else None
+
+
+def _row_to_procedure(
+    db: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    actor_user_id: str | None = None,
+    actor_groups: list[str] | None = None,
+) -> dict[str, Any]:
+    mapping, _err = procedure.normalize_mapping(row["mapping_json"])
+    guide = db.execute("SELECT * FROM forms WHERE id = ?", (row["guide_form_id"],)).fetchone()
+    opening = _published_reception_row(db, row["guide_form_id"]) if guide else None
+    closed = _closed_reception_row(db, row["guide_form_id"]) if guide and not opening else None
+    definition = _guide_definition(db, row["guide_form_id"]) if guide else None
+    opening_or_guide = opening or closed or guide
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "guide_form_id": row["guide_form_id"],
+        "guide_title": guide["title"] if guide else None,
+        "guide_status": opening_or_guide["status"] if opening_or_guide else None,
+        "guide_guest_token": opening["guest_token"]
+        if opening
+        else (guide["guest_token"] if guide else None),
+        "guide_public_url": public_url_for(opening["guest_token"])
+        if opening
+        else (public_url_for(guide["guest_token"]) if guide else None),
+        "guide_reception_id": opening["id"] if opening else None,
+        "guide_visibility": (opening or guide)["visibility"] if (opening or guide) else None,
+        "mapping": mapping,
+        "status": row["status"],
+        "creator_user_id": row["creator_user_id"],
+        "creator_name": row["creator_name"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "choice_fields": procedure.choice_fields(definition),
+        "warnings": procedure.mapping_warnings(mapping, definition),
+        "can_edit": _can_edit_procedure(row, actor_user_id, actor_groups),
+        "notify_emails": _emails_from_row(row),
+    }
+
+
+def list_procedures(
+    *, actor_user_id: str, actor_groups: list[str] | None = None
+) -> list[dict[str, Any]]:
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT * FROM procedures ORDER BY updated_at DESC").fetchall()
+        return [
+            _row_to_procedure(db, row, actor_user_id=actor_user_id, actor_groups=actor_groups)
+            for row in rows
+        ]
+
+
+def get_procedure(
+    procedure_id: str,
+    *,
+    actor_user_id: str | None = None,
+    actor_groups: list[str] | None = None,
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
+        if not row:
+            return None
+        return _row_to_procedure(
+            db, row, actor_user_id=actor_user_id, actor_groups=actor_groups
+        )
+
+
+def _safe_origin(origin: str) -> str | None:
+    parsed = urlparse((origin or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _qr_svg(url: str) -> str:
+    import qrcode
+    from qrcode.image.svg import SvgPathImage
+
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(image_factory=SvgPathImage)
+    buf = io.BytesIO()
+    img.save(buf)
+    return buf.getvalue().decode("utf-8")
+
+
+def procedure_share(
+    procedure_id: str,
+    *,
+    origin: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    base = _safe_origin(origin)
+    if not base:
+        return None, "origin が不正です"
+    proc = get_procedure(
+        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    )
+    if not proc:
+        return None, "手続きが見つかりません"
+    if proc["status"] != "published" or not proc.get("guide_reception_id"):
+        return None, "この手続きは受付していません"
+    internal_url = f"{base}/patchform/apply/{proc['id']}"
+    vis = proc.get("guide_visibility")
+    external_url = proc.get("guide_public_url") if vis in ("both", "public") else None
+    return {
+        "id": proc["id"],
+        "name": proc["name"],
+        "internal_url": internal_url,
+        "external_url": external_url,
+        "internal_qr_svg": _qr_svg(internal_url),
+        "external_qr_svg": _qr_svg(external_url) if external_url else None,
+    }, None
+
+
+def _catalog_form(db: sqlite3.Connection, form_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        "SELECT id, title, status, visibility, guest_token FROM forms WHERE id = ?",
+        (form_id,),
+    ).fetchone()
+    if not row:
+        return None
+    opening = _published_reception_row(db, form_id)
+    shown = opening or row
+    out: dict[str, Any] = {
+        "id": row["id"],
+        "title": row["title"],
+        "status": shown["status"],
+    }
+    if shown["status"] == "published" and shown["visibility"] in ("both", "external"):
+        out["public_url"] = public_url_for(shown["guest_token"])
+    return out
+
+
+def _inspect_published(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    mapping, _err = procedure.normalize_mapping(row["mapping_json"])
+    definition = _guide_definition(db, row["guide_form_id"])
+    fields = procedure.choice_fields(definition)
+    field_by_id = {f["id"]: f for f in fields}
+    forms_seen: dict[str, dict[str, Any]] = {}
+    rules_out: list[dict[str, Any]] = []
+    for rule in mapping.get("rules") or []:
+        field = field_by_id.get(rule["component_id"])
+        forms: list[dict[str, Any]] = []
+        for fid in rule.get("form_ids") or []:
+            item = _catalog_form(db, fid)
+            if item:
+                forms.append(item)
+                forms_seen[fid] = item
+        rules_out.append(
+            {
+                "component_id": rule["component_id"],
+                "component_label": (field or {}).get("label") or rule["component_id"],
+                "option": rule["option"],
+                "forms": forms,
+                "notes": rule.get("notes") or "",
+                "prepare": rule.get("prepare") or [],
+                "refs": rule.get("refs") or [],
+            }
+        )
+    guide = db.execute("SELECT * FROM forms WHERE id = ?", (row["guide_form_id"],)).fetchone()
+    opening = _published_reception_row(db, row["guide_form_id"]) if guide else None
+    shown = opening or guide
+    guide_out: dict[str, Any] | None = None
+    if guide and shown:
+        guide_out = {
+            "id": guide["id"],
+            "title": guide["title"],
+            "status": shown["status"],
+            "choice_fields": fields,
+        }
+        if shown["status"] == "published" and shown["visibility"] in ("both", "external"):
+            guide_out["public_url"] = public_url_for(shown["guest_token"])
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "updated_at": row["updated_at"],
+        "guide": guide_out,
+        "rules": rules_out,
+        "forms": list(forms_seen.values()),
+        "warnings": procedure.mapping_warnings(mapping, definition),
+    }
+
+
+def list_published_procedures(*, query: str | None = None) -> list[dict[str, Any]]:
+    needle = (query or "").strip().lower()
+    db = connect()
+    with _lock:
+        rows = db.execute(
+            "SELECT id, name, description, updated_at FROM procedures "
+            "WHERE status = 'published' ORDER BY updated_at DESC"
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            hay = f"{row['name']} {row['description'] or ''}".lower()
+            if needle and needle not in hay:
+                continue
+            out.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "description": row["description"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+
+def find_published_procedure(ref: str) -> tuple[dict[str, Any] | None, str | None]:
+    key = (ref or "").strip()
+    if not key:
+        return None, "手続きの指定は必須です"
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM procedures WHERE id = ? AND status = 'published'", (key,)
+        ).fetchone()
+        if row:
+            return _inspect_published(db, row), None
+        rows = db.execute(
+            "SELECT * FROM procedures WHERE status = 'published' ORDER BY updated_at DESC"
+        ).fetchall()
+        exact = [r for r in rows if r["name"] == key]
+        if len(exact) == 1:
+            return _inspect_published(db, exact[0]), None
+        if len(exact) > 1:
+            return None, "同じ名前の公開手続きが複数あります"
+        lowered = key.lower()
+        partial = [r for r in rows if lowered in (r["name"] or "").lower()]
+        if len(partial) == 1:
+            return _inspect_published(db, partial[0]), None
+        if len(partial) > 1:
+            names = " / ".join(r["name"] for r in partial[:5])
+            return None, f"複数の手続きに当たります: {names}"
+        return None, "公開中の手続きが見つかりません"
+
+
+def resolve_published_bundle(
+    ref: str, answers: Any
+) -> tuple[dict[str, Any] | None, str | None]:
+    detail, err = find_published_procedure(ref)
+    if err or detail is None:
+        return None, err
+    fields = ((detail.get("guide") or {}).get("choice_fields") or [])
+    normalized, answer_notes = procedure.normalize_answers(fields, answers)
+    mapping = {
+        "rules": [
+            {
+                "component_id": rule["component_id"],
+                "option": rule["option"],
+                "form_ids": [f["id"] for f in (rule.get("forms") or [])],
+                "notes": rule.get("notes") or "",
+                "prepare": rule.get("prepare") or [],
+                "refs": rule.get("refs") or [],
+            }
+            for rule in (detail.get("rules") or [])
+        ]
+    }
+    resolved = procedure.resolve_bundle(mapping, normalized)
+    form_by_id = {item["id"]: item for item in (detail.get("forms") or [])}
+    return {
+        "procedure_id": detail["id"],
+        "procedure_name": detail["name"],
+        "answers": normalized,
+        "answer_notes": answer_notes,
+        "forms": [form_by_id[fid] for fid in resolved["form_ids"] if fid in form_by_id],
+        "notes": resolved["notes"],
+        "prepare": resolved["prepare"],
+        "refs": resolved["refs"],
+    }, None
+
+
+def _emails_from_row(row: sqlite3.Row) -> list[str]:
+    if "notify_emails_json" not in row.keys():
+        return []
+    emails, _err = notify.parse_notify_emails(row["notify_emails_json"])
+    return emails or []
+
+
+def _validate_mapping_forms(
+    db: sqlite3.Connection, mapping: dict[str, Any], guide_form_id: str
+) -> str | None:
+    for rule in mapping.get("rules") or []:
+        for fid in rule.get("form_ids") or []:
+            if fid == guide_form_id:
+                return "案内フォーム自身を様式に足すことはできません"
+            form = db.execute("SELECT id FROM forms WHERE id = ?", (fid,)).fetchone()
+            if not form:
+                return f"様式フォームが見つかりません（{fid}）"
+    return None
+
+
+def create_procedure(
+    *,
+    name: str,
+    description: str | None,
+    guide_form_id: str,
+    mapping: Any = None,
+    notify_emails: Any = None,
+    creator_user_id: str,
+    creator_name: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    title = (name or "").strip()
+    if not title:
+        return None, "名前は必須です"
+    mapping_norm, err = procedure.normalize_mapping(mapping)
+    if err:
+        return None, err
+    emails, email_err = notify.parse_notify_emails(notify_emails)
+    if email_err:
+        return None, email_err
+    db = connect()
+    with _lock:
+        guide = db.execute("SELECT * FROM forms WHERE id = ?", (guide_form_id,)).fetchone()
+        if not guide:
+            return None, "案内フォームが見つかりません"
+        stored_guide = _definition_id(guide)
+        form_err = _validate_mapping_forms(db, mapping_norm, stored_guide)
+        if form_err:
+            return None, form_err
+        now = _now_iso()
+        pid = str(uuid.uuid4())
+        db.execute(
+            "INSERT INTO procedures (id, name, description, guide_form_id, mapping_json, "
+            "notify_emails_json, status, creator_user_id, creator_name, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                pid,
+                title,
+                (description or "").strip() or None,
+                stored_guide,
+                json.dumps(mapping_norm, ensure_ascii=False),
+                json.dumps(emails or [], ensure_ascii=False),
+                "draft",
+                creator_user_id,
+                creator_name,
+                now,
+                now,
+            ),
+        )
+        db.commit()
+    return get_procedure(pid, actor_user_id=creator_user_id), None
+
+
+def create_procedure_from_draft(
+    draft: dict[str, Any],
+    *,
+    creator_user_id: str,
+    creator_name: str | None = None,
+    visibility: str = "internal",
+) -> tuple[dict[str, Any] | None, str | None]:
+    """AI / テンプレートの第1版から、未公開の案内・様式・手続きを作る。"""
+    name = str((draft or {}).get("name") or "").strip()
+    if not name:
+        return None, "手続き名は必須です"
+    guide_def = draft.get("guide")
+    if not isinstance(guide_def, dict):
+        return None, "案内フォームがありません"
+    extra = []
+    if draft.get("missing"):
+        extra.append("文書に無し: " + " / ".join(str(x) for x in draft["missing"]))
+    if draft.get("notes"):
+        extra.append(str(draft["notes"]))
+    desc = str(draft.get("description") or "").strip()
+    if extra:
+        desc = (desc + "\n\n" if desc else "") + "【確認】" + " ".join(extra)
+    case_tag = name[:MAX_FORM_TAG_LEN]
+    guide, err = create_form(
+        title=str((guide_def.get("metadata") or {}).get("title") or f"{name}の案内"),
+        description=str((guide_def.get("metadata") or {}).get("description") or "") or None,
+        creator_user_id=creator_user_id,
+        creator_name=creator_name,
+        visibility=visibility,
+        definition=guide_def,
+        tags=[NAVIGATION_TAG, case_tag],
+    )
+    if err or guide is None:
+        return None, err or "案内フォームを作れませんでした"
+    created = [{"id": guide["id"], "title": guide["title"], "role": "guide"}]
+    key_to_id: dict[str, str] = {}
+    for item in draft.get("forms") or []:
+        if not isinstance(item, dict):
+            continue
+        definition = item.get("definition")
+        if not isinstance(definition, dict):
+            continue
+        form, ferr = create_form(
+            title=str((definition.get("metadata") or {}).get("title") or "様式"),
+            description=str((definition.get("metadata") or {}).get("description") or "") or None,
+            creator_user_id=creator_user_id,
+            creator_name=creator_name,
+            visibility=visibility,
+            definition=definition,
+            tags=[case_tag],
+        )
+        if ferr or form is None:
+            return None, ferr or "様式フォームを作れませんでした"
+        key = str(item.get("key") or form["id"])
+        key_to_id[key] = form["id"]
+        created.append({"id": form["id"], "title": form["title"], "role": "form"})
+    rules = []
+    for rule in draft.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        form_ids = [key_to_id[k] for k in (rule.get("form_keys") or []) if k in key_to_id]
+        rules.append(
+            {
+                "component_id": rule.get("component_id"),
+                "option": rule.get("option"),
+                "form_ids": form_ids,
+                "notes": rule.get("notes") or "",
+                "prepare": rule.get("prepare") or [],
+                "refs": [],
+            }
+        )
+    detail, perr = create_procedure(
+        name=name,
+        description=desc or None,
+        guide_form_id=guide["id"],
+        mapping={"rules": rules},
+        creator_user_id=creator_user_id,
+        creator_name=creator_name,
+    )
+    if perr or detail is None:
+        return None, perr
+    detail = {**detail, "created_forms": created}
+    return detail, None
+
+
+def update_procedure(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    guide_form_id: str | None = None,
+    mapping: Any = None,
+    notify_emails: Any = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
+        if not row:
+            return None, "手続きが見つかりません"
+        if not _can_edit_procedure(row, actor_user_id, actor_groups):
+            return None, "この手続きを変更する権限がありません"
+        next_name = (name if name is not None else row["name"]).strip()
+        if not next_name:
+            return None, "名前は必須です"
+        next_desc = row["description"] if description is None else ((description or "").strip() or None)
+        next_guide = guide_form_id or row["guide_form_id"]
+        guide = db.execute("SELECT * FROM forms WHERE id = ?", (next_guide,)).fetchone()
+        if not guide:
+            return None, "案内フォームが見つかりません"
+        next_guide = _definition_id(guide)
+        if mapping is None:
+            next_mapping, err = procedure.normalize_mapping(row["mapping_json"])
+        else:
+            next_mapping, err = procedure.normalize_mapping(mapping)
+        if err:
+            return None, err
+        form_err = _validate_mapping_forms(db, next_mapping, next_guide)
+        if form_err:
+            return None, form_err
+        if notify_emails is None:
+            next_emails = _emails_from_row(row)
+        else:
+            next_emails, email_err = notify.parse_notify_emails(notify_emails)
+            if email_err:
+                return None, email_err
+        db.execute(
+            "UPDATE procedures SET name = ?, description = ?, guide_form_id = ?, "
+            "mapping_json = ?, notify_emails_json = ?, updated_at = ? WHERE id = ?",
+            (
+                next_name,
+                next_desc,
+                next_guide,
+                json.dumps(next_mapping, ensure_ascii=False),
+                json.dumps(next_emails or [], ensure_ascii=False),
+                _now_iso(),
+                procedure_id,
+            ),
+        )
+        db.commit()
+    return get_procedure(
+        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    ), None
+
+
+def set_procedure_status(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    status: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if status not in ("draft", "published"):
+        return None, "状態が不正です"
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
+        if not row:
+            return None, "手続きが見つかりません"
+        if not _can_edit_procedure(row, actor_user_id, actor_groups):
+            return None, "この手続きを変更する権限がありません"
+        if status == "draft":
+            _close_procedure_receptions(db, row)
+        if status == "published":
+            guide = _form_row(db, row["guide_form_id"])
+            if not guide:
+                return None, "案内フォームが見つかりません"
+            guide_id, guide_err = _ensure_reception(
+                db, row["guide_form_id"], actor_user_id=actor_user_id
+            )
+            if guide_err or not guide_id:
+                return None, guide_err or "案内の受付を開始できませんでした"
+            mapping, _merr = procedure.normalize_mapping(row["mapping_json"])
+            for rule in mapping.get("rules") or []:
+                for fid in rule.get("form_ids") or []:
+                    _rid, form_err = _ensure_reception(db, fid, actor_user_id=actor_user_id)
+                    if form_err:
+                        return None, form_err
+            guide_def = _definition_id(guide)
+            for other in db.execute(
+                "SELECT id, guide_form_id FROM procedures WHERE status = 'published' AND id != ?",
+                (procedure_id,),
+            ).fetchall():
+                other_def = _as_definition_id(db, other["guide_form_id"]) or other["guide_form_id"]
+                if other_def == guide_def:
+                    return None, "この案内フォームは、すでに別の公開中手続きで使われています"
+        db.execute(
+            "UPDATE procedures SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _now_iso(), procedure_id),
+        )
+        db.commit()
+    return get_procedure(
+        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    ), None
+
+
+def delete_procedure(
+    procedure_id: str, *, actor_user_id: str, actor_groups: list[str] | None = None
+) -> str | None:
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
+        if not row:
+            return "手続きが見つかりません"
+        if not _can_edit_procedure(row, actor_user_id, actor_groups):
+            return "この手続きを削除する権限がありません"
+        if row["status"] == "published":
+            return "公開中の手続きは削除できません。先に公開を取り下げてください。"
+        apps = db.execute(
+            "SELECT 1 FROM applications WHERE procedure_id = ? LIMIT 1", (procedure_id,)
+        ).fetchone()
+        if apps:
+            return "すでに申請があるため削除できません"
+        db.execute("DELETE FROM procedures WHERE id = ?", (procedure_id,))
+        db.commit()
+    return None
+
+
+def _form_progress(db: sqlite3.Connection, application_id: str, form_id: str) -> str:
+    rows = db.execute(
+        "SELECT is_draft, withdrawn_at FROM submissions "
+        "WHERE application_id = ? AND form_id = ? ORDER BY updated_at DESC",
+        (application_id, form_id),
+    ).fetchall()
+    has_submitted = False
+    has_draft = False
+    has_withdrawn = False
+    for r in rows:
+        withdrawn = _is_withdrawn(r)
+        if r["is_draft"]:
+            has_draft = True
+        elif withdrawn:
+            has_withdrawn = True
+        else:
+            has_submitted = True
+    if has_submitted:
+        return "submitted"
+    if has_draft:
+        return "draft"
+    if has_withdrawn:
+        return "withdrawn"
+    return "none"
+
+
+def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        form_ids = json.loads(row["form_ids_json"])
+    except (TypeError, json.JSONDecodeError):
+        form_ids = []
+    if not isinstance(form_ids, list):
+        form_ids = []
+    try:
+        notice = json.loads(row["notice_json"])
+    except (TypeError, json.JSONDecodeError):
+        notice = {"notes": [], "prepare": [], "refs": []}
+    proc = db.execute(
+        "SELECT name, description FROM procedures WHERE id = ?", (row["procedure_id"],)
+    ).fetchone()
+    forms: list[dict[str, Any]] = []
+    for fid in form_ids:
+        form = db.execute("SELECT * FROM forms WHERE id = ?", (fid,)).fetchone()
+        if not form:
+            forms.append(
+                {
+                    "id": fid,
+                    "title": "(削除済み)",
+                    "guest_token": None,
+                    "public_url": None,
+                    "visibility": None,
+                    "status": "none",
+                }
+            )
+            continue
+        item = {
+            "id": form["id"],
+            "title": form["title"],
+            "guest_token": form["guest_token"],
+            "public_url": public_url_for(form["guest_token"]),
+            "visibility": form["visibility"],
+            "status": _form_progress(db, row["id"], fid),
+        }
+        sub = db.execute(
+            "SELECT s.answers_json, s.receipt_code, s.submitter_name, s.created_at, "
+            "s.withdrawn_at, v.definition_json "
+            "FROM submissions s "
+            "LEFT JOIN form_versions v ON v.id = s.version_id "
+            "WHERE s.application_id = ? AND s.form_id = ? AND s.is_draft = 0 "
+            "ORDER BY s.created_at DESC",
+            (row["id"], fid),
+        ).fetchone()
+        if sub:
+            try:
+                answers = json.loads(sub["answers_json"])
+            except (TypeError, json.JSONDecodeError):
+                answers = {}
+            definition = _definition(form)
+            if sub["definition_json"]:
+                try:
+                    parsed = json.loads(sub["definition_json"])
+                    if isinstance(parsed, dict):
+                        definition = parsed
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            item["answers"] = crypto.reveal_answers(definition, answers, mask=True)
+            item["definition"] = definition
+            item["receipt_code"] = sub["receipt_code"]
+            item["respondent_label"] = sub["submitter_name"]
+            item["submitted_at"] = sub["created_at"]
+        forms.append(item)
+    return {
+        "id": row["id"],
+        "token": row["token"],
+        "procedure_id": row["procedure_id"],
+        "procedure_name": proc["name"] if proc else "",
+        "procedure_description": proc["description"] if proc else None,
+        "guide_form_id": row["guide_form_id"],
+        "guide_submission_id": row["guide_submission_id"],
+        "form_ids": form_ids,
+        "notice": notice,
+        "forms": forms,
+        "public_url": public_application_url_for(row["token"]),
+        "created_at": row["created_at"],
+    }
+
+
+def _resolve_application_id(
+    db: sqlite3.Connection, form_id: str, application_token: str | None
+) -> tuple[str | None, str | None]:
+    token = (application_token or "").strip()
+    if not token:
+        return None, None
+    row = db.execute("SELECT * FROM applications WHERE token = ?", (token,)).fetchone()
+    if not row:
+        return None, "申請束が見つかりません"
+    try:
+        form_ids = json.loads(row["form_ids_json"])
+    except (TypeError, json.JSONDecodeError):
+        form_ids = []
+    if form_id not in form_ids:
+        return None, "この様式はこの申請に含まれていません"
+    return row["id"], None
+
+
+def _open_application_from_guide(
+    db: sqlite3.Connection,
+    form_id: str,
+    submission_id: str,
+    answers: dict[str, Any],
+) -> dict[str, Any] | None:
+    submitted = _form_row(db, form_id)
+    if not submitted or submitted["status"] != "published":
+        return None
+    submitted_def = _definition_id(submitted)
+    proc = None
+    for row in db.execute(
+        "SELECT * FROM procedures WHERE status = 'published'"
+    ).fetchall():
+        guide_def = _as_definition_id(db, row["guide_form_id"]) or row["guide_form_id"]
+        if row["guide_form_id"] in (form_id, submitted_def) or guide_def == submitted_def:
+            proc = row
+            break
+    if not proc:
+        return None
+    mapping, err = procedure.normalize_mapping(proc["mapping_json"])
+    if err:
+        return None
+    resolved = procedure.resolve_bundle(mapping, answers)
+    reception_ids: list[str] = [submitted["id"]]
+    for fid in resolved["form_ids"]:
+        rec = _published_reception_row(db, fid)
+        if rec and rec["id"] not in reception_ids:
+            reception_ids.append(rec["id"])
+    now = _now_iso()
+    aid = str(uuid.uuid4())
+    token = secrets.token_urlsafe(10)
+    notice = {
+        "notes": resolved["notes"],
+        "prepare": resolved["prepare"],
+        "refs": resolved["refs"],
+    }
+    db.execute(
+        "INSERT INTO applications (id, token, procedure_id, guide_form_id, "
+        "guide_submission_id, form_ids_json, notice_json, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            aid,
+            token,
+            proc["id"],
+            form_id,
+            submission_id,
+            json.dumps(reception_ids, ensure_ascii=False),
+            json.dumps(notice, ensure_ascii=False),
+            now,
+        ),
+    )
+    db.execute(
+        "UPDATE submissions SET application_id = ? WHERE id = ?",
+        (aid, submission_id),
+    )
+    row = db.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
+    return _application_payload(db, row) if row else None
+
+
+def list_inbox(
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    procedure_id: str | None = None,
+) -> dict[str, Any]:
+    """公開中または申請がある手続きと、届いた申請束。"""
+    pid = (procedure_id or "").strip() or None
+    db = connect()
+    with _lock:
+        app_sql = "SELECT * FROM applications"
+        app_args: tuple[Any, ...] = ()
+        if pid:
+            app_sql += " WHERE procedure_id = ?"
+            app_args = (pid,)
+        app_sql += " ORDER BY created_at DESC"
+        app_rows = db.execute(app_sql, app_args).fetchall()
+        applications = [_application_payload(db, row) for row in app_rows]
+        items: list[dict[str, Any]] = []
+        counts: dict[str, int] = {}
+        for app in applications:
+            submitted = sum(1 for f in app["forms"] if f.get("status") == "submitted")
+            items.append(
+                {
+                    "kind": "bundle",
+                    "id": app["id"],
+                    "created_at": app["created_at"],
+                    "title": app["procedure_name"],
+                    "label": app["token"],
+                    "procedure_id": app["procedure_id"],
+                    "submitted": submitted,
+                    "total": len(app["forms"]),
+                    "public_url": app["public_url"],
+                }
+            )
+            counts[app["procedure_id"]] = counts.get(app["procedure_id"], 0) + 1
+        if not pid:
+            for row in db.execute(
+                "SELECT procedure_id, COUNT(*) AS n FROM applications GROUP BY procedure_id"
+            ).fetchall():
+                counts[row["procedure_id"]] = row["n"]
+        procedures: list[dict[str, Any]] = []
+        openings: list[dict[str, Any]] = []
+        for proc in db.execute("SELECT * FROM procedures ORDER BY updated_at DESC").fetchall():
+            if pid and proc["id"] != pid:
+                continue
+            n = counts.get(proc["id"], 0)
+            if proc["status"] != "published" and n == 0:
+                continue
+            guide = db.execute("SELECT * FROM forms WHERE id = ?", (proc["guide_form_id"],)).fetchone()
+            opening = _published_reception_row(db, proc["guide_form_id"])
+            shown = opening or guide
+            public_url = (
+                public_url_for(shown["guest_token"])
+                if shown
+                and proc["status"] == "published"
+                and shown["status"] == "published"
+                and shown["visibility"] in ("both", "public")
+                else None
+            )
+            item = {
+                "id": proc["id"],
+                "name": proc["name"],
+                "title": proc["name"],
+                "status": proc["status"],
+                "guide_title": guide["title"] if guide else None,
+                "public_url": public_url,
+                "bundle_count": n,
+                "can_edit": _can_edit_procedure(proc, actor_user_id, actor_groups),
+                "updated_at": proc["updated_at"],
+            }
+            procedures.append(item)
+            if proc["status"] == "published":
+                openings.append(
+                    {
+                        "kind": "procedure",
+                        "id": proc["id"],
+                        "title": proc["name"],
+                        "guide_title": guide["title"] if guide else None,
+                        "public_url": public_url,
+                    }
+                )
+        return {
+            "items": items,
+            "procedures": procedures,
+            "openings": openings,
+            "bundle_count": len(applications),
+            "form_count": 0,
+        }
+
+
+def list_applications(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    db = connect()
+    with _lock:
+        proc = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        rows = db.execute(
+            "SELECT * FROM applications WHERE procedure_id = ? ORDER BY created_at DESC",
+            (procedure_id,),
+        ).fetchall()
+        return [_application_payload(db, row) for row in rows], None
+
+
+def get_application(
+    application_id: str | None = None,
+    *,
+    token: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        if token:
+            row = db.execute("SELECT * FROM applications WHERE token = ?", (token,)).fetchone()
+        else:
+            row = db.execute("SELECT * FROM applications WHERE id = ?", (application_id,)).fetchone()
+        if not row:
+            return None
+        return _application_payload(db, row)
+
+
+def public_application(token: str) -> tuple[dict[str, Any] | None, str | None]:
+    data = get_application(token=token)
+    if not data:
+        return None, "申請が見つかりません"
+    return data, None
+
+
+def _export_cell(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, list):
+        return ";".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _submitted_fields(form: dict[str, Any]) -> list[tuple[str, str, Any]]:
+    if form.get("status") != "submitted":
+        return []
+    answers = form.get("answers") or {}
+    definition = form.get("definition") or {}
+    title = form.get("title") or ""
+    out: list[tuple[str, str, Any]] = []
+    for comp in definition.get("components") or []:
+        if comp.get("type") in spec.DISPLAY_TYPES:
+            continue
+        cid = str(comp.get("id") or "")
+        if not cid:
+            continue
+        label = str(comp.get("label") or cid)
+        out.append((f"{title}/{label}", cid, answers.get(cid, "")))
+    return out
+
+
+def export_application(
+    application_id: str,
+    *,
+    fmt: str = "csv",
+) -> tuple[str | None, str | None]:
+    data = get_application(application_id)
+    if not data:
+        return None, "申請が見つかりません"
+    kind = (fmt or "csv").lower()
+    if kind in ("json", "jsonl"):
+        payload = json.dumps(data, ensure_ascii=False, indent=2 if kind == "json" else None)
+        if kind == "jsonl" and not payload.endswith("\n"):
+            payload += "\n"
+        return payload, None
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["様式", "控え番号", "回答者", "提出日時", "状態", "項目", "値"])
+    for form in data.get("forms") or []:
+        fields = _submitted_fields(form)
+        if not fields:
+            writer.writerow(
+                [
+                    form.get("title") or "",
+                    form.get("receipt_code") or "",
+                    form.get("respondent_label") or "",
+                    form.get("submitted_at") or "",
+                    form.get("status") or "",
+                    "",
+                    "",
+                ]
+            )
+            continue
+        for header, _cid, value in fields:
+            label = header.split("/", 1)[-1]
+            writer.writerow(
+                [
+                    form.get("title") or "",
+                    form.get("receipt_code") or "",
+                    form.get("respondent_label") or "",
+                    form.get("submitted_at") or "",
+                    form.get("status") or "",
+                    label,
+                    _export_cell(value),
+                ]
+            )
+    return buf.getvalue(), None
+
+
+def export_procedure_applications(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    fmt: str = "csv",
+) -> tuple[str | None, str | None]:
+    items, err = list_applications(
+        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    )
+    if err or items is None:
+        return None, err
+    kind = (fmt or "csv").lower()
+    if kind == "jsonl":
+        return "\n".join(json.dumps(item, ensure_ascii=False) for item in items) + (
+            "\n" if items else ""
+        ), None
+    columns: list[str] = []
+    seen: set[str] = set()
+    for app in items:
+        for form in app.get("forms") or []:
+            for header, _cid, _value in _submitted_fields(form):
+                if header not in seen:
+                    seen.add(header)
+                    columns.append(header)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["案内番号", "申請日時", "提出数", "様式数", *columns])
+    for app in items:
+        values: dict[str, str] = {}
+        submitted = 0
+        for form in app.get("forms") or []:
+            if form.get("status") == "submitted":
+                submitted += 1
+            for header, _cid, value in _submitted_fields(form):
+                values[header] = _export_cell(value)
+        writer.writerow(
+            [
+                app.get("token") or "",
+                app.get("created_at") or "",
+                submitted,
+                len(app.get("forms") or []),
+                *[values.get(col, "") for col in columns],
+            ]
+        )
+    return buf.getvalue(), None

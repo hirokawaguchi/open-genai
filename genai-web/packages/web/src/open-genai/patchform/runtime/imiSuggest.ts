@@ -17,6 +17,7 @@ export const IMI_PRESETS = [
   'ic:生年月日',
   'ic:法人番号',
   'ic:法人',
+  'ic:名称',
   'ic:口座',
 ];
 
@@ -46,7 +47,11 @@ export const DEFAULT_IMI_SUBFIELDS: Record<string, Record<string, string>> = {
     gender: 'ic:性別',
     birth_date: 'ic:生年月日',
   },
-  company_info_composite: { corporate_number: 'ic:法人番号' },
+  company_info_composite: {
+    company_name: 'ic:名称',
+    corporate_number: 'ic:法人番号',
+    representative: 'ic:氏名',
+  },
 };
 
 export const COMPOSITE_SUBFIELDS: Record<string, string[]> = {

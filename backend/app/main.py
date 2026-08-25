@@ -4012,6 +4012,21 @@ async def patchform_extract(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/patchform/assist/procedure")
+async def patchform_assist_procedure(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url("/assist/procedure"),
+        headers,
+        body,
+        timeout=180,
+    )
+
+
 @app.post("/patchform/assist/invite")
 async def patchform_assist_invite(request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)
@@ -4040,6 +4055,175 @@ async def patchform_carrier(form_id: str, request: Request) -> JSONResponse:
         "GET",
         _patchform_app_url(f"/forms/{form_id}/carrier") + f"?format={quote(fmt)}",
         headers,
+    )
+
+
+@app.get("/patchform/procedures")
+async def patchform_list_procedures(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url("/procedures"), headers)
+
+
+@app.post("/patchform/procedures")
+async def patchform_create_procedure(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform("POST", _patchform_app_url("/procedures"), headers, body)
+
+
+@app.get("/patchform/procedures/{procedure_id}")
+async def patchform_get_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/procedures/{procedure_id}"), headers
+    )
+
+
+@app.get("/patchform/procedures/{procedure_id}/share")
+async def patchform_procedure_share(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    qs = request.url.query
+    path = f"/procedures/{procedure_id}/share"
+    if qs:
+        path = f"{path}?{qs}"
+    return await _proxy_patchform("GET", _patchform_app_url(path), headers)
+
+
+@app.put("/patchform/procedures/{procedure_id}")
+async def patchform_update_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "PUT", _patchform_app_url(f"/procedures/{procedure_id}"), headers, body
+    )
+
+
+@app.post("/patchform/procedures/{procedure_id}/status")
+async def patchform_set_procedure_status(
+    procedure_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/procedures/{procedure_id}/status"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/patchform/procedures/{procedure_id}")
+async def patchform_delete_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE", _patchform_app_url(f"/procedures/{procedure_id}"), headers
+    )
+
+
+@app.get("/patchform/inbox")
+async def patchform_inbox(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    qs = request.url.query
+    path = f"/inbox?{qs}" if qs else "/inbox"
+    return await _proxy_patchform("GET", _patchform_app_url(path), headers)
+
+
+@app.get("/patchform/procedures/{procedure_id}/applications")
+async def patchform_list_applications(
+    procedure_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url(f"/procedures/{procedure_id}/applications"),
+        headers,
+    )
+
+
+@app.get("/patchform/applications/{application_id}")
+async def patchform_get_application(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/applications/{application_id}"), headers
+    )
+
+
+async def _proxy_patchform_export(path: str, request: Request, fallback_name: str) -> Response:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    fmt = (request.query_params.get("format") or "csv").strip() or "csv"
+    qs = f"?format={quote(fmt)}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(_patchform_app_url(path) + qs, headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"フォームサービスに接続できませんでした: {e}",
+                "enabled": False,
+            },
+        )
+    ctype = res.headers.get("content-type", "")
+    if res.status_code == 200 and (
+        ctype.startswith("text/csv") or "ndjson" in ctype
+    ):
+        ext = "jsonl" if fmt == "jsonl" else "csv"
+        return Response(
+            content=res.content,
+            media_type=ctype or "text/csv",
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="{fallback_name}.{ext}"',
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/patchform/procedures/{procedure_id}/export")
+async def patchform_export_procedure(procedure_id: str, request: Request) -> Response:
+    return await _proxy_patchform_export(
+        f"/procedures/{procedure_id}/export",
+        request,
+        f"procedure_{procedure_id}",
+    )
+
+
+@app.get("/patchform/applications/{application_id}/export")
+async def patchform_export_application(application_id: str, request: Request) -> Response:
+    return await _proxy_patchform_export(
+        f"/applications/{application_id}/export",
+        request,
+        f"application_{application_id}",
     )
 
 

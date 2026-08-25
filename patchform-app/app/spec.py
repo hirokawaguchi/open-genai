@@ -109,6 +109,58 @@ COMPOSITE_SUBFIELDS: dict[str, list[str]] = {
     ],
 }
 
+DEFAULT_IMI: dict[str, str] = {
+    "email": "ic:電子メール",
+    "phone": "ic:電話番号",
+    "address_composite": "ic:住所",
+    "user_info_composite": "ic:氏名",
+    "company_info_composite": "ic:法人",
+    "financial_institution_composite": "ic:口座",
+}
+
+DEFAULT_IMI_SUBFIELDS: dict[str, dict[str, str]] = {
+    "address_composite": {
+        "postal_code": "ic:郵便番号",
+        "prefecture": "ic:都道府県",
+        "city": "ic:市区町村",
+        "building": "ic:建物名",
+    },
+    "user_info_composite": {
+        "last_name": "ic:氏",
+        "first_name": "ic:名",
+        "last_name_kana": "ic:氏読み",
+        "first_name_kana": "ic:名読み",
+        "gender": "ic:性別",
+        "birth_date": "ic:生年月日",
+    },
+    "company_info_composite": {
+        "company_name": "ic:名称",
+        "corporate_number": "ic:法人番号",
+        "representative": "ic:氏名",
+    },
+}
+
+
+def fill_default_imi(comp: dict[str, Any]) -> dict[str, Any]:
+    """空の語彙だけ、型から決まる既定を入れる。明示値は上書きしない。"""
+    if not isinstance(comp, dict):
+        return comp
+    out = dict(comp)
+    ctype = str(out.get("type") or "")
+    if not str(out.get("imi_type") or "").strip() and ctype in DEFAULT_IMI:
+        out["imi_type"] = DEFAULT_IMI[ctype]
+    defaults = DEFAULT_IMI_SUBFIELDS.get(ctype) or {}
+    current = out.get("imi_subfields") if isinstance(out.get("imi_subfields"), dict) else {}
+    merged: dict[str, str] = dict(defaults)
+    for key, val in current.items():
+        text = str(val or "").strip()
+        if text:
+            merged[str(key)] = text
+    if merged:
+        out["imi_subfields"] = merged
+    return out
+
+
 COMPOSITE_REQUIRED_SUBFIELDS: dict[str, list[str]] = {
     "address_composite": ["prefecture", "city", "street"],
     "user_info_composite": ["last_name", "first_name"],

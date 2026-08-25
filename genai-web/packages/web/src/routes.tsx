@@ -29,9 +29,14 @@ import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
+import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
+import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
 import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
+import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
 import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
+import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProcedureEditPage';
+import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -91,6 +96,12 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。
     { path: 'patchform', element: <PatchformPage /> },
+    { path: 'patchform/inbox', element: <PatchformInboxPage /> },
+    { path: 'patchform/inbox/:procedureId', element: <PatchformInboxPage /> },
+    { path: 'patchform/procedures', element: <PatchformProceduresPage /> },
+    { path: 'patchform/procedures/:procedureId', element: <PatchformProcedureEditPage /> },
+    { path: 'patchform/apply/:procedureId', element: <PatchformApplyPage /> },
+    { path: 'patchform/applications/:applicationId', element: <PatchformApplicationPage /> },
     { path: 'patchform/:formId', element: <PatchformDetailPage /> },
     { path: 'patchform/:formId/edit', element: <PatchformEditPage /> },
     { path: 'apps/:teamId/patchform', element: <Navigate to='/patchform' replace /> },

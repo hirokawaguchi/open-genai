@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { PiEyeBold, PiNotePencilBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
@@ -10,6 +11,7 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { CatalogPalette } from './builder/CatalogPalette';
 import { CatalogTypeIcon } from './builder/CatalogTypeIcon';
 import { ComponentSettings } from './builder/ComponentSettings';
+import { FormTagsField } from './FormTagsField';
 import { PATCHFORM_LABEL, catalogTypeHelp } from './labels';
 import { FillForm } from './runtime/FillForm';
 import { DEFAULT_IMI, DEFAULT_IMI_SUBFIELDS } from './runtime/imiSuggest';
@@ -22,6 +24,7 @@ import {
   usePatchformAssist,
   usePatchformConfig,
   usePatchformDetail,
+  usePatchformList,
 } from './usePatchform';
 
 const newId = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -58,8 +61,11 @@ const blankComponent = (type: string, catalog: CatalogItem[]): FormComponent => 
 export const PatchformEditPage = () => {
   const { formId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const asGuide = searchParams.get('intent') === 'guide';
   const { config } = usePatchformConfig();
   const { form, isLoading, loadError } = usePatchformDetail(formId);
+  const { forms } = usePatchformList();
   const { update, submitting, error, setError } = usePatchformActions();
   const {
     generate,
@@ -85,6 +91,7 @@ export const PatchformEditPage = () => {
   const [aiNotes, setAiNotes] = useState<string | null>(null);
   const [pane, setPane] = useState<'edit' | 'preview'>('edit');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
 
   useEffect(() => {
     if (!form) return;
@@ -99,6 +106,7 @@ export const PatchformEditPage = () => {
     setViewerIds((form.viewer_user_ids ?? []).join('\n'));
     setComponents(form.definition.components);
     setSelectedId(form.definition.components[0]?.id ?? null);
+    setTags(form.tags || []);
   }, [form]);
 
   const addComponent = (type: string) => {
@@ -125,8 +133,10 @@ export const PatchformEditPage = () => {
     components,
   });
 
+  const definitionLocked = Boolean(form && form.kind !== 'reception' && form.locked);
+
   const onSave = async () => {
-    if (!formId) return;
+    if (!formId || definitionLocked) return;
     setError(null);
     const detail = await update(formId, {
       title,
@@ -138,6 +148,7 @@ export const PatchformEditPage = () => {
       allow_draft: allowDraft,
       allow_multiple: allowMultiple,
       identity_mode: identityMode,
+      tags,
       ...(form?.role === 'owner' || form?.role === 'admin'
         ? {
             editor_user_ids: editorIds.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
@@ -161,9 +172,26 @@ export const PatchformEditPage = () => {
           ]}
         />
         <h1 className='text-std-20B-160 lg:text-std-24B-150'>フォームを編集</h1>
+        {asGuide ? (
+          <p className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-std-16N-170 text-solid-gray-800'>
+            ナビゲーションフォームです。ラジオやプルダウンを追加してください。作り終わったら
+            <Link
+              to='/patchform/procedures'
+              className='mx-1 text-blue-900 underline-offset-2 hover:underline'
+            >
+              手続き
+            </Link>
+            に戻り、答えごとに申請用紙を指定します。
+          </p>
+        ) : null}
         {form && form.can_edit === false && (
           <p className='text-error-1' role='alert'>
             このフォームを編集する権限がありません。
+          </p>
+        )}
+        {form && form.kind !== 'reception' && form.locked && (
+          <p className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-std-16N-170 text-solid-gray-800'>
+            作成完了しています。部品を直すには詳細画面で「作成に戻す」してください。既存の受付窓口はそのまま残ります。
           </p>
         )}
         {form && (form.status === 'published' || form.status === 'closed') && (
@@ -187,25 +215,29 @@ export const PatchformEditPage = () => {
             <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label='編集とプレビュー'>
               {(
                 [
-                  { id: 'edit', label: '編集' },
-                  { id: 'preview', label: 'プレビュー' },
+                  { id: 'edit', label: '編集', icon: PiNotePencilBold },
+                  { id: 'preview', label: 'プレビュー', icon: PiEyeBold },
                 ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type='button'
-                  role='tab'
-                  aria-selected={pane === t.id}
-                  onClick={() => setPane(t.id)}
-                  className={`-mb-px border-b-2 px-4 py-2 text-oln-16B-100 ${
-                    pane === t.id
-                      ? 'border-blue-900 text-blue-900'
-                      : 'border-transparent text-solid-gray-600 hover:text-solid-gray-900'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
+              ).map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type='button'
+                    role='tab'
+                    aria-selected={pane === t.id}
+                    onClick={() => setPane(t.id)}
+                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-oln-16B-100 ${
+                      pane === t.id
+                        ? 'border-blue-900 text-blue-900'
+                        : 'border-transparent text-solid-gray-600 hover:text-solid-gray-900'
+                    }`}
+                  >
+                    <Icon aria-hidden={true} className='size-5' />
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
 
             {pane === 'edit' && (
@@ -255,6 +287,13 @@ export const PatchformEditPage = () => {
                         onChange={(e) => setDescription(e.target.value)}
                       />
                     </div>
+                    <FormTagsField
+                      id='pf-edit-tags'
+                      value={tags}
+                      onChange={setTags}
+                      suggestions={[...new Set(forms.flatMap((f) => f.tags || []))]}
+                      disabled={!form.can_edit || definitionLocked}
+                    />
                     <div className='grid gap-4 md:grid-cols-2'>
                       <div>
                         <Label htmlFor='pf-pin' size='sm'>
@@ -572,7 +611,13 @@ export const PatchformEditPage = () => {
               </p>
             )}
             <div className='flex flex-wrap gap-2'>
-              <Button type='button' variant='solid-fill' size='md' aria-disabled={submitting} onClick={onSave}>
+              <Button
+                type='button'
+                variant='solid-fill'
+                size='md'
+                aria-disabled={submitting || definitionLocked}
+                onClick={onSave}
+              >
                 {submitting ? '保存中...' : '保存する'}
               </Button>
               <Link to={formId ? `/patchform/${formId}` : '/patchform'} className='inline-flex'>

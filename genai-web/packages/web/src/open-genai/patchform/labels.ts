@@ -1,6 +1,9 @@
 /** 画面上の日本語名。後で差し替えやすいよう定数化。 */
 export const PATCHFORM_LABEL = 'フォーム';
 
+/** 最初に答えるフォームを示すタグ。通常の申請用紙と区別する。 */
+export const NAVIGATION_TAG = 'ナビゲーション';
+
 export const CATALOG_CATEGORY_LABEL: Record<string, string> = {
   basic: '基本',
   selection: '選択',

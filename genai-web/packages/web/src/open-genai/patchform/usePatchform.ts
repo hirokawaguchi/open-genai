@@ -5,6 +5,7 @@ import { lookupPostalDirect } from './runtime/postalLookup';
 import type {
   AssistGenerateResult,
   AssistInviteResult,
+  AssistProcedureResult,
   AuditEvent,
   FormConfig,
   FormDefinition,
@@ -12,6 +13,10 @@ import type {
   FormSummary,
   FormVisibility,
   IdentityMode,
+  Application,
+  Inbox,
+  Procedure,
+  ProcedureShare,
   Submission,
   UploadedFile,
 } from './types';
@@ -108,6 +113,7 @@ export const usePatchformActions = () => {
       visibility?: FormVisibility;
       definition?: FormDefinition;
       pin?: string;
+      tags?: string[];
     }): Promise<FormDetail | null> => {
       setSubmitting(true);
       setError(null);
@@ -139,6 +145,7 @@ export const usePatchformActions = () => {
         identity_mode?: IdentityMode;
         editor_user_ids?: string[];
         viewer_user_ids?: string[];
+        tags?: string[];
       },
     ): Promise<FormDetail | null> => {
       setSubmitting(true);
@@ -159,13 +166,17 @@ export const usePatchformActions = () => {
     [],
   );
 
-  const setStatus = useCallback(async (formId: string, status: string): Promise<FormDetail | null> => {
+  const setStatus = useCallback(async (
+    formId: string,
+    status: string,
+    extra?: { locked?: boolean },
+  ): Promise<FormDetail | null> => {
     setSubmitting(true);
     setError(null);
     try {
       const res = await teamApi.post<FormDetail>(
         `patchform/forms/${encodeURIComponent(formId)}/status`,
-        { status },
+        { status, ...(extra?.locked === undefined ? {} : { locked: extra.locked }) },
       );
       return res.data ?? null;
     } catch (e) {
@@ -198,12 +209,17 @@ export const usePatchformActions = () => {
         submitter_name?: string;
         is_draft?: boolean;
         resume_token?: string;
+        application_token?: string;
       },
-    ): Promise<{ receipt_code?: string; is_draft?: boolean } | null> => {
+    ): Promise<{ receipt_code?: string; is_draft?: boolean; application?: Application } | null> => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<{ receipt_code?: string; is_draft?: boolean }>(
+        const res = await teamApi.post<{
+          receipt_code?: string;
+          is_draft?: boolean;
+          application?: Application;
+        }>(
           `patchform/forms/${encodeURIComponent(formId)}/submissions`,
           input,
         );
@@ -306,6 +322,15 @@ const parseFilename = (disposition: string | null): string | null => {
   return ascii?.[1] ?? null;
 };
 
+const saveBlob = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+};
+
 export const downloadPatchformCsv = async (
   formId: string,
   format: 'csv' | 'jsonl' = 'csv',
@@ -315,13 +340,29 @@ export const downloadPatchformCsv = async (
     `patchform/forms/${encodeURIComponent(formId)}/export`,
     { params: { format, ...(reveal ? { reveal: '1' } : {}) } },
   );
-  const filename = parseFilename(disposition) ?? `patchform_${formId}.${format}`;
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  saveBlob(blob, parseFilename(disposition) ?? `patchform_${formId}.${format}`);
+};
+
+export const downloadProcedureExport = async (
+  procedureId: string,
+  format: 'csv' | 'jsonl' = 'csv',
+): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/procedures/${encodeURIComponent(procedureId)}/export`,
+    { params: { format } },
+  );
+  saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}.${format}`);
+};
+
+export const downloadApplicationExport = async (
+  applicationId: string,
+  format: 'csv' | 'jsonl' = 'csv',
+): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/applications/${encodeURIComponent(applicationId)}/export`,
+    { params: { format } },
+  );
+  saveBlob(blob, parseFilename(disposition) ?? `application_${applicationId}.${format}`);
 };
 
 export const usePatchformAssist = () => {
@@ -349,6 +390,23 @@ export const usePatchformAssist = () => {
     [],
   );
 
+  const draftProcedure = useCallback(
+    async (input: { text: string; visibility?: FormVisibility }): Promise<AssistProcedureResult | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<AssistProcedureResult>('patchform/assist/procedure', input);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの第1版を作れませんでした。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
   const draftInvite = useCallback(
     async (input: { title: string; public_url: string; tone?: string }): Promise<AssistInviteResult | null> => {
       setBusy(true);
@@ -366,7 +424,7 @@ export const usePatchformAssist = () => {
     [],
   );
 
-  return { generate, draftInvite, busy, error, setError };
+  return { generate, draftInvite, draftProcedure, busy, error, setError };
 };
 
 const fileToDataUrl = (file: File): Promise<string> =>
@@ -413,13 +471,13 @@ export const lookupPatchformCorporate = async (
 export const extractPatchformFile = async (
   kind: 'image' | 'document',
   file: File,
-): Promise<{ extracted: string }> => {
+): Promise<{ extracted: string; notes?: string }> => {
   const data = await fileToDataUrl(file);
   const res = await teamApi.post<{ extracted?: string; notes?: string }>(
     'patchform/extract',
     { kind, filename: file.name, data },
   );
-  return { extracted: res.data?.extracted || '' };
+  return { extracted: res.data?.extracted || '', notes: res.data?.notes };
 };
 
 export const uploadPatchformFile = async (
@@ -456,6 +514,59 @@ export const downloadPatchformFile = async (
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 };
 
+export const downloadProcedureLinkFile = (
+  name: string,
+  urls: { internal?: string | null; external?: string | null },
+) => {
+  const lines = [`手続き: ${name}`, ''];
+  if (urls.internal) {
+    lines.push('庁内から申請するURL:', urls.internal, '');
+  }
+  if (urls.external) {
+    lines.push(
+      '外部から回答するURL:',
+      urls.external,
+      '',
+      'LGWAN 端末から外部 URL を開けない場合は、このファイルを持ち出してインターネット接続端末で開いてください。',
+      '',
+    );
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const href = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = `${name}_patchform_link.txt`;
+  a.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(href), 1000);
+};
+
+export const downloadProcedureQr = (filename: string, svg: string) => {
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const href = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(href), 1000);
+};
+
+export const usePatchformProcedureShare = (procedureId: string | undefined, enabled: boolean) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const key =
+    procedureId && enabled && origin
+      ? `patchform/procedures/${encodeURIComponent(procedureId)}/share?origin=${encodeURIComponent(origin)}`
+      : null;
+  const { data, error, isLoading } = useSWR<ProcedureShare>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    share: data,
+    isLoading,
+    loadError: error ? errorMessage(error, '申請用リンクの取得に失敗しました。') : null,
+  };
+};
+
 export const downloadPatchformCarrier = async (
   formId: string,
   format: 'txt' | 'html' = 'txt',
@@ -475,4 +586,156 @@ export const downloadPatchformCarrier = async (
   a.download = data.filename;
   a.click();
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+};
+
+export const usePatchformProcedures = () => {
+  const { data, error, isLoading, mutate } = useSWR<{ procedures: Procedure[] }>(
+    'patchform/procedures',
+    teamApiFetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  return {
+    procedures: data?.procedures ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, '手続き一覧の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const usePatchformProcedure = (procedureId: string | undefined) => {
+  const key = procedureId ? `patchform/procedures/${encodeURIComponent(procedureId)}` : null;
+  const { data, error, isLoading, mutate } = useSWR<Procedure>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    procedure: data,
+    isLoading,
+    loadError: error ? errorMessage(error, '手続きの取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const usePatchformInbox = (procedureId?: string) => {
+  const qs = procedureId ? `?procedure_id=${encodeURIComponent(procedureId)}` : '';
+  const { data, error, isLoading, mutate } = useSWR<Inbox>(`patchform/inbox${qs}`, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    inbox: data,
+    items: data?.items ?? [],
+    openings: data?.openings ?? [],
+    procedures: data?.procedures ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, '申請受付の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const usePatchformApplications = (procedureId: string | undefined) => {
+  const key = procedureId
+    ? `patchform/procedures/${encodeURIComponent(procedureId)}/applications`
+    : null;
+  const { data, error, isLoading, mutate } = useSWR<{ applications: Application[] }>(
+    key,
+    teamApiFetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  return {
+    applications: data?.applications ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, '申請一覧の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const usePatchformApplication = (applicationId: string | undefined) => {
+  const key = applicationId ? `patchform/applications/${encodeURIComponent(applicationId)}` : null;
+  const { data, error, isLoading, mutate } = useSWR<Application>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    application: data,
+    isLoading,
+    loadError: error ? errorMessage(error, '申請の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const usePatchformProcedureActions = () => {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = useCallback(
+    async (input: {
+      name: string;
+      description?: string;
+      guide_form_id: string;
+    }): Promise<Procedure | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Procedure>('patchform/procedures', input);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの作成に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const save = useCallback(async (procedureId: string, input: Partial<Procedure>) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await teamApi.put<Procedure>(
+        `patchform/procedures/${encodeURIComponent(procedureId)}`,
+        input,
+      );
+      return res.data ?? null;
+    } catch (e) {
+      setError(errorMessage(e, '手続きの保存に失敗しました。'));
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  const setStatus = useCallback(async (procedureId: string, status: 'draft' | 'published') => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await teamApi.post<Procedure>(
+        `patchform/procedures/${encodeURIComponent(procedureId)}/status`,
+        { status },
+      );
+      return res.data ?? null;
+    } catch (e) {
+      setError(errorMessage(e, '手続きの公開状態を変更できませんでした。'));
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  const remove = useCallback(async (procedureId: string) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await teamApi.delete(`patchform/procedures/${encodeURIComponent(procedureId)}`);
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, '手続きの削除に失敗しました。'));
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  return { create, save, setStatus, remove, submitting, error, setError };
 };
