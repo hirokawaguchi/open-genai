@@ -306,17 +306,16 @@ export const PatchformProceduresPage = () => {
                   表示させるフォームを選んでください。
                 </p>
                 {selectableForms.length === 0 ? (
-                  <p className='mt-2 text-dns-16N-130 text-solid-gray-700'>
-                    {omitNav
-                      ? '選べる申請フォームがありません。'
-                      : '選べるナビゲーションフォームがありません。'}
-                    <Link
-                      to='/patchform?tab=new'
-                      className='ml-1 text-blue-900 underline-offset-2 hover:underline'
-                    >
-                      フォームを作成する
-                    </Link>
-                  </p>
+                  <div className='mt-2 flex flex-col items-start gap-2'>
+                    <p className='text-dns-16N-130 text-solid-gray-700'>
+                      {omitNav
+                        ? '選べる申請フォームがありません。'
+                        : '選べるナビゲーションフォームがありません。'}
+                    </p>
+                    <Button asChild variant='outline' size='sm' className='inline-flex items-center justify-center'>
+                      <Link to='/patchform?tab=new'>フォームを作成する</Link>
+                    </Button>
+                  </div>
                 ) : null}
               </div>
               {error && (
