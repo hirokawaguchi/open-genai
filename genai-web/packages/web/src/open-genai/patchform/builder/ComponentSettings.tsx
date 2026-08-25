@@ -1,5 +1,6 @@
 import { Label } from '@/components/ui/dads/Label';
 import { catalogTypeHelp } from '../labels';
+import { parseOptionLines, serializeOptions } from '../runtime/choiceOptions';
 import {
   COMPOSITE_SUBFIELD_LABELS,
   COMPOSITE_SUBFIELDS,
@@ -319,17 +320,20 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           <textarea
             className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
             rows={3}
-            value={(c.properties?.options || []).join('\n')}
+            value={serializeOptions(c.properties?.options)}
             onChange={(e) =>
               onChange({
                 ...c,
                 properties: {
                   ...c.properties,
-                  options: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
+                  options: parseOptionLines(e.target.value),
                 },
               })
             }
           />
+          <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+            表示だけ変えたいときは「表示文|値」と書きます。値は手続きの対応で使います。
+          </p>
         </div>
       )}
     </div>

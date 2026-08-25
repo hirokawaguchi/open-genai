@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { FillForm } from '../runtime/FillForm';
 import { answerRows } from '../runtime/formatAnswer';
+import { sourcesFromApplication } from '../runtime/imiSuggest';
 import { lookupPostalDirect } from '../runtime/postalLookup';
 import { missingRequired } from '../runtime/visibility';
 import type { Application, FormDefinition, UploadedFile } from '../types';
@@ -87,6 +88,7 @@ const GuestForm = () => {
   const [resumeToken, setResumeToken] = useState('');
   const [withdrawCode, setWithdrawCode] = useState('');
   const [openedApp, setOpenedApp] = useState<Application | null>(null);
+  const [bundle, setBundle] = useState<Application | null>(null);
 
   const onWithdraw = async (code: string) => {
     const receiptCode = code.trim();
@@ -155,6 +157,16 @@ const GuestForm = () => {
         setPhase('error');
       });
   }, [token]);
+
+  useEffect(() => {
+    if (!applicationToken) {
+      setBundle(null);
+      return;
+    }
+    api<Application>(`/public/api/applications/${encodeURIComponent(applicationToken)}`)
+      .then(setBundle)
+      .catch(() => setBundle(null));
+  }, [applicationToken]);
 
   const onExtract = async (kind: 'image' | 'document', file: File) => {
     const data = await fileToDataUrl(file);
@@ -348,6 +360,11 @@ const GuestForm = () => {
               onPostalLookup={onPostalLookup}
               onCorporateLookup={onCorporateLookup}
               onWizardChange={(info) => setWizardLast(info.isLast)}
+              imiSources={sourcesFromApplication(
+                bundle,
+                bundle?.forms.find((f) => f.guest_token === token)?.id,
+              )}
+              prepareItems={bundle?.notice?.prepare || []}
             />
           </div>
           {error && (

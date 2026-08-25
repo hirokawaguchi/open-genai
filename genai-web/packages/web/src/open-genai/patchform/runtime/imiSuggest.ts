@@ -110,6 +110,12 @@ export type SuggestSlot = { componentId: string; subkey?: string };
 
 export type SuggestOption = { value: string; sourceLabel: string };
 
+export type ImiSource = {
+  title?: string;
+  components: FormComponent[];
+  answers: Record<string, unknown>;
+};
+
 const asRecord = (value: unknown): Record<string, string> =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(
@@ -143,10 +149,39 @@ const scalarText = (value: unknown): string => {
   return String(value).trim();
 };
 
+const collectFrom = (
+  components: FormComponent[],
+  answers: Record<string, unknown>,
+  slot: SuggestSlot,
+  key: string,
+  prefix: string,
+  skipSelf: boolean,
+  push: (value: string, label: string) => void,
+) => {
+  for (const c of components) {
+    const subs = COMPOSITE_SUBFIELDS[c.type];
+    if (subs) {
+      const rec = asRecord(answers[c.id]);
+      for (const sub of subs) {
+        if (skipSelf && c.id === slot.componentId && sub === slot.subkey) continue;
+        if (imiKey(c, sub) !== key) continue;
+        const label = sourceLabel(c, sub);
+        push(String(rec[sub] || '').trim(), prefix ? `${prefix} / ${label}` : label);
+      }
+      continue;
+    }
+    if (skipSelf && c.id === slot.componentId && !slot.subkey) continue;
+    if (imiKey(c) !== key) continue;
+    const label = sourceLabel(c);
+    push(scalarText(answers[c.id]), prefix ? `${prefix} / ${label}` : label);
+  }
+};
+
 export const suggestFor = (
   components: FormComponent[],
   answers: Record<string, unknown>,
   slot: SuggestSlot,
+  extras: ImiSource[] = [],
 ): SuggestOption[] => {
   const target = components.find((c) => c.id === slot.componentId);
   if (!target) return [];
@@ -161,20 +196,38 @@ export const suggestFor = (
     out.push({ value, sourceLabel: label });
   };
 
-  for (const c of components) {
-    const subs = COMPOSITE_SUBFIELDS[c.type];
-    if (subs) {
-      const rec = asRecord(answers[c.id]);
-      for (const sub of subs) {
-        if (c.id === slot.componentId && sub === slot.subkey) continue;
-        if (imiKey(c, sub) !== key) continue;
-        push(String(rec[sub] || '').trim(), sourceLabel(c, sub));
-      }
-      continue;
-    }
-    if (c.id === slot.componentId && !slot.subkey) continue;
-    if (imiKey(c) !== key) continue;
-    push(scalarText(answers[c.id]), sourceLabel(c));
+  collectFrom(components, answers, slot, key, '', true, push);
+  for (const extra of extras) {
+    collectFrom(extra.components, extra.answers, slot, key, extra.title || '', false, push);
   }
   return out;
 };
+
+export const sourcesFromApplication = (
+  application:
+    | {
+        forms?: Array<{
+          id: string;
+          title?: string;
+          status?: string;
+          definition?: { components?: FormComponent[] } | null;
+          answers?: Record<string, unknown> | null;
+        }>;
+      }
+    | null
+    | undefined,
+  currentFormId?: string,
+): ImiSource[] =>
+  (application?.forms || [])
+    .filter(
+      (f) =>
+        f.status === 'submitted' &&
+        f.definition?.components &&
+        f.answers &&
+        f.id !== currentFormId,
+    )
+    .map((f) => ({
+      title: f.title,
+      components: f.definition?.components || [],
+      answers: f.answers || {},
+    }));

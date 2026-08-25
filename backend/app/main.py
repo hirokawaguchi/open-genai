@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import html
 import json
 import os
@@ -114,6 +115,10 @@ DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rs
 # フォーム（Compose profiles: ["patchform"]）。実 API は /patchform/* プロキシ。
 PATCHFORM_APP_URL = os.environ.get("PATCHFORM_APP_URL", "http://patchform-app:8012/invoke")
 PATCHFORM_PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
+PATCHFORM_SERVICE_USER = "service"
+_PATCHFORM_SERVICE_PATHS = re.compile(
+    r"^/patchform/(?:procedures(?:/[^/]+(?:/(?:applications|export))?)?|applications/[^/]+(?:/export)?)$"
+)
 
 # 管理者(SystemAdminGroup)のみに一覧表示・実行を許可する exApp
 # （共有ナレッジの管理系は共通チーム上だが管理者限定）
@@ -1029,6 +1034,9 @@ async def auth_middleware(request: Request, call_next):
             return await call_next(request)
         except Exception:  # noqa: BLE001 - トークン不正は 401 に集約
             pass
+
+    if _patchform_service_request(request):
+        return await call_next(request)
 
     return JSONResponse(
         status_code=401,
@@ -3661,14 +3669,37 @@ def _patchform_app_url(path: str) -> str:
     return base + path
 
 
+def _patchform_service_key() -> str:
+    return (os.environ.get("PATCHFORM_SERVICE_KEY") or "").strip()
+
+
+def _patchform_service_ok(request: Request) -> bool:
+    expected = _patchform_service_key()
+    offered = (request.headers.get("x-service-key") or "").strip()
+    if not expected or not offered:
+        return False
+    return hmac.compare_digest(expected, offered)
+
+
+def _patchform_service_request(request: Request) -> bool:
+    if request.method != "GET":
+        return False
+    if not _PATCHFORM_SERVICE_PATHS.match(request.url.path):
+        return False
+    return _patchform_service_ok(request)
+
+
 def _patchform_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
-    if not user_id:
-        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
     groups_str = ",".join(claims.get("groups") or [])
-    team_ids = _user_team_ids_str(user_id)
-    teams_hdr = _user_teams_header(user_id)
+    if not user_id:
+        if not _patchform_service_request(request):
+            return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+        user_id = PATCHFORM_SERVICE_USER
+        groups_str = "SystemAdminGroup"
+    team_ids = _user_team_ids_str(user_id) if user_id != PATCHFORM_SERVICE_USER else ""
+    teams_hdr = _user_teams_header(user_id) if user_id != PATCHFORM_SERVICE_USER else ""
     headers = {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
@@ -4151,11 +4182,11 @@ async def patchform_list_applications(
     err, headers = _patchform_headers(request)
     if err:
         return err
-    return await _proxy_patchform(
-        "GET",
-        _patchform_app_url(f"/procedures/{procedure_id}/applications"),
-        headers,
-    )
+    qs = request.url.query
+    path = f"/procedures/{procedure_id}/applications"
+    if qs:
+        path += f"?{qs}"
+    return await _proxy_patchform("GET", _patchform_app_url(path), headers)
 
 
 @app.get("/patchform/applications/{application_id}")
@@ -4176,6 +4207,9 @@ async def _proxy_patchform_export(path: str, request: Request, fallback_name: st
         return err
     fmt = (request.query_params.get("format") or "csv").strip() or "csv"
     qs = f"?format={quote(fmt)}"
+    since = (request.query_params.get("since") or "").strip()
+    if since:
+        qs += f"&since={quote(since)}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.get(_patchform_app_url(path) + qs, headers=headers)

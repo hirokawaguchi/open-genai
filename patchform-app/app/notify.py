@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 def _truthy(name: str, default: str = "0") -> bool:
@@ -20,8 +23,27 @@ def smtp_from() -> str:
     return (os.environ.get("PATCHFORM_SMTP_FROM") or "").strip()
 
 
+def dump_dir() -> Path | None:
+    raw = (os.environ.get("PATCHFORM_MAIL_DUMP_DIR") or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
 def smtp_configured() -> bool:
     return bool(smtp_host() and smtp_from())
+
+
+def mail_configured() -> bool:
+    return smtp_configured() or dump_dir() is not None
+
+
+def mail_status() -> dict[str, bool]:
+    return {
+        "configured": mail_configured(),
+        "smtp": smtp_configured(),
+        "dump": dump_dir() is not None,
+    }
 
 
 def staff_base_url() -> str:
@@ -98,10 +120,43 @@ def build_staff_message(
     )
     msg = EmailMessage()
     msg["Subject"] = f"【フォーム】申請が届きました（{title}）"
-    msg["From"] = smtp_from()
+    msg["From"] = smtp_from() or "patchform@localhost"
     msg["To"] = ", ".join(recipients)
     msg.set_content("\n".join(lines))
     return msg
+
+
+def message_as_text(message: EmailMessage) -> str:
+    parts = [
+        f"From: {message.get('From') or ''}",
+        f"To: {message.get('To') or ''}",
+        f"Subject: {message.get('Subject') or ''}",
+        "",
+        message.get_content(),
+    ]
+    text = "\n".join(parts)
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
+    return (cleaned or "mail")[:80]
+
+
+def dump_email(message: EmailMessage, *, token: str = "", application_id: str = "") -> Path:
+    dest = dump_dir()
+    if dest is None:
+        raise RuntimeError("PATCHFORM_MAIL_DUMP_DIR が未設定です")
+    dest.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name = _safe_name(token or application_id or "application")
+    path = dest / f"{stamp}_{name}.txt"
+    text = message_as_text(message)
+    path.write_text(text, encoding="utf-8")
+    print(f"[patchform] mail dump: {path}\n{text}")
+    return path
 
 
 def send_email(message: EmailMessage) -> None:
@@ -135,11 +190,11 @@ def notify_new_application(
 ) -> dict[str, Any]:
     if not application:
         return {"sent": False, "reason": "no_application"}
-    if not smtp_configured():
-        return {"sent": False, "reason": "smtp_unconfigured"}
     dest = [addr for addr in (recipients or []) if addr]
     if not dest:
         return {"sent": False, "reason": "no_recipients"}
+    if not mail_configured():
+        return {"sent": False, "reason": "smtp_unconfigured"}
     message = build_staff_message(
         procedure_name=str(
             procedure_name or application.get("procedure_name") or ""
@@ -148,9 +203,25 @@ def notify_new_application(
         application_id=str(application.get("id") or ""),
         recipients=dest,
     )
-    try:
-        send_email(message)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[patchform] notify failed: {exc}")
-        return {"sent": False, "reason": "send_failed"}
-    return {"sent": True, "recipients": dest}
+    dumped: str | None = None
+    if dump_dir() is not None:
+        try:
+            dumped = str(
+                dump_email(
+                    message,
+                    token=str(application.get("token") or ""),
+                    application_id=str(application.get("id") or ""),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[patchform] mail dump failed: {exc}")
+            if not smtp_configured():
+                return {"sent": False, "reason": "dump_failed"}
+    if smtp_configured():
+        try:
+            send_email(message)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[patchform] notify failed: {exc}")
+            return {"sent": False, "reason": "send_failed", "dumped": dumped}
+        return {"sent": True, "recipients": dest, "dumped": dumped}
+    return {"sent": False, "reason": "dumped", "dumped": dumped, "recipients": dest}

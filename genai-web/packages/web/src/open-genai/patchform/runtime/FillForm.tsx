@@ -7,7 +7,9 @@ import type { FormComponent, FormDefinition, UploadedFile } from '../types';
 import { FilePickButton } from './FilePickButton';
 import { evaluateFormula, formatCalculated } from './formula';
 import { GENDERS, PREFECTURES, yuuchoToBranch } from './japan';
-import { suggestFor, type SuggestOption } from './imiSuggest';
+import { choiceOptions } from './choiceOptions';
+import { suggestFor, type ImiSource, type SuggestOption } from './imiSuggest';
+import { seedPrepare } from './prepareSeed';
 import { COMPOSITE_NORMALIZE, normalizeInput, type NormalizeKind } from './normalizeInput';
 import { nextFilledPage, splitPages } from './pages';
 import { isVisible, missingRequired } from './visibility';
@@ -26,12 +28,11 @@ type Props = {
   onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
   wizard?: boolean;
   onWizardChange?: (info: { page: number; total: number; isLast: boolean }) => void;
+  imiSources?: ImiSource[];
+  prepareItems?: string[];
 };
 
-const optionsOf = (c: FormComponent): string[] => {
-  const raw = c.properties?.options ?? [];
-  return raw.map((o) => String(o));
-};
+const optionsOf = (c: FormComponent) => choiceOptions(c.properties?.options);
 
 const blurNorm = (kind: NormalizeKind, current: string, apply: (next: string) => void) => {
   const next = normalizeInput(current, kind);
@@ -66,7 +67,7 @@ const ImiPicks = ({
   if (shown.length === 0 || disabled) return null;
   return (
     <div className='mt-1 flex flex-col gap-1'>
-      <p className='text-dns-14N-130 text-solid-gray-600'>このフォームの候補</p>
+      <p className='text-dns-14N-130 text-solid-gray-600'>同じ語彙の候補</p>
       <div className='flex flex-wrap gap-2'>
         {shown.map((o) => (
           <button
@@ -160,6 +161,7 @@ const Field = ({
   onCorporateLookup,
   components,
   values,
+  imiSources,
 }: {
   component: FormComponent;
   value: unknown;
@@ -171,9 +173,11 @@ const Field = ({
   onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
   components: FormComponent[];
   values: Record<string, unknown>;
+  imiSources?: ImiSource[];
 }) => {
   const id = `pf-${c.id}`;
-  const slot = (subkey?: string) => suggestFor(components, values, { componentId: c.id, subkey });
+  const slot = (subkey?: string) =>
+    suggestFor(components, values, { componentId: c.id, subkey }, imiSources);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -955,8 +959,8 @@ const Field = ({
       >
         <option value=''>選択してください</option>
         {optionsOf(c).map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -967,15 +971,15 @@ const Field = ({
       <div className='mt-1 flex flex-col'>
         {optionsOf(c).map((o) => (
           <Radio
-            key={o}
+            key={o.value}
             size='md'
             name={c.id}
-            value={o}
-            checked={value === o}
+            value={o.value}
+            checked={value === o.value}
             disabled={disabled}
-            onChange={() => onChange(o)}
+            onChange={() => onChange(o.value)}
           >
-            {o}
+            {o.label}
           </Radio>
         ))}
       </div>
@@ -987,16 +991,20 @@ const Field = ({
       <div className='mt-1 flex flex-col'>
         {optionsOf(c).map((o) => (
           <Checkbox
-            key={o}
+            key={o.value}
             size='md'
-            value={o}
-            checked={selected.includes(o)}
+            value={o.value}
+            checked={selected.includes(o.value)}
             disabled={disabled}
             onChange={() =>
-              onChange(selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o])
+              onChange(
+                selected.includes(o.value)
+                  ? selected.filter((x) => x !== o.value)
+                  : [...selected, o.value],
+              )
             }
           >
-            {o}
+            {o.label}
           </Checkbox>
         ))}
       </div>
@@ -1077,6 +1085,8 @@ export const FillForm = ({
   onCorporateLookup,
   wizard = true,
   onWizardChange,
+  imiSources,
+  prepareItems,
 }: Props) => {
   const pages = useMemo(() => splitPages(definition.components), [definition.components]);
   const useWizard = wizard && pages.length > 1;
@@ -1088,6 +1098,14 @@ export const FillForm = ({
     setPage(0);
     setPageError(null);
   }, [shape]);
+
+  const prepareKey = (prepareItems || []).join('\n');
+  useEffect(() => {
+    const seeded = seedPrepare(definition.components, values, prepareItems || []);
+    for (const [id, value] of Object.entries(seeded)) {
+      onChange(id, value);
+    }
+  }, [prepareKey, shape]);
 
   useEffect(() => {
     const next = { ...values };
@@ -1174,6 +1192,7 @@ export const FillForm = ({
               onCorporateLookup={onCorporateLookup}
               components={definition.components}
               values={values}
+              imiSources={imiSources}
             />
           </div>
         );

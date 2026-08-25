@@ -22,7 +22,7 @@ export type FormComponent = {
   required?: boolean;
   hide_label?: boolean;
   placeholder?: string;
-  properties?: { options?: string[]; [key: string]: unknown };
+  properties?: { options?: Array<string | { label?: string; value?: string }>; [key: string]: unknown };
   visibleWhen?: VisibleWhenRule | VisibleWhenRule[];
   imi_type?: string;
   imi_subfields?: Record<string, string>;
@@ -103,7 +103,7 @@ export type FormConfig = {
   spec_version?: string;
   catalog?: CatalogItem[];
   llm?: { model?: string; base_url?: string };
-  mail?: { configured?: boolean };
+  mail?: { configured?: boolean; smtp?: boolean; dump?: boolean };
 };
 
 export type AssistGenerateResult = {
@@ -152,6 +152,7 @@ export type ProcedureChoiceField = {
   type: string;
   label: string;
   options: string[];
+  option_items?: { value: string; label: string }[];
 };
 
 /** 答えで様式を足さない手続き（申請用紙1枚。ナビゲーションは使わない）。 */
@@ -210,6 +211,7 @@ export type Application = {
   forms: ApplicationForm[];
   public_url: string;
   created_at: string;
+  updated_at?: string;
 };
 
 export type InboxItem = {

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import procedure
+from app import procedure, spec
 
 
 def test_resolve_union_and_dedupe() -> None:
@@ -123,9 +123,40 @@ def test_normalize_answers_label_and_free_text() -> None:
     assert free_notes == []
 
 
+def test_option_label_and_value() -> None:
+    items = spec.option_items(["転入の届出|tennyu", "転居"])
+    assert items == [
+        {"value": "tennyu", "label": "転入の届出"},
+        {"value": "転居", "label": "転居"},
+    ]
+    definition = {
+        "components": [
+            {
+                "id": "event",
+                "type": "radio",
+                "label": "事由",
+                "properties": {"options": items},
+            }
+        ]
+    }
+    fields = procedure.choice_fields(definition)
+    assert fields[0]["options"] == ["tennyu", "転居"]
+    answers, notes = procedure.normalize_answers(fields, {"事由": "転入の届出"})
+    assert answers == {"event": "tennyu"}
+    assert notes == []
+    mapping, err = procedure.normalize_mapping(
+        {"rules": [{"component_id": "event", "option": "tennyu", "form_ids": ["f1"]}]}
+    )
+    assert err is None
+    resolved = procedure.resolve_bundle(mapping, {"event": "tennyu"})
+    assert resolved["form_ids"] == ["f1"]
+    assert procedure.mapping_warnings(mapping, definition) == []
+
+
 if __name__ == "__main__":
     test_resolve_union_and_dedupe()
     test_resolve_checkbox()
     test_mapping_warnings()
     test_normalize_answers_label_and_free_text()
+    test_option_label_and_value()
     print("ok")

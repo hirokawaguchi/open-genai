@@ -31,6 +31,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def now_iso() -> str:
+    return _now_iso()
+
+
+def parse_since(value: str | None) -> tuple[datetime | None, str | None]:
+    raw = (value or "").strip()
+    if not raw:
+        return None, None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None, "since は ISO 8601 の日時で指定してください"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed, None
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    parsed, _err = parse_since(value)
+    return parsed
+
+
 def hash_pin(pin: str) -> str:
     return bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
@@ -2705,6 +2727,11 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
             item["respondent_label"] = sub["submitter_name"]
             item["submitted_at"] = sub["created_at"]
         forms.append(item)
+    stamps = [str(row["created_at"] or "")]
+    for form in forms:
+        submitted = form.get("submitted_at")
+        if submitted:
+            stamps.append(str(submitted))
     return {
         "id": row["id"],
         "token": row["token"],
@@ -2718,6 +2745,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "forms": forms,
         "public_url": public_application_url_for(row["token"]),
         "created_at": row["created_at"],
+        "updated_at": max(stamps),
     }
 
 
@@ -2895,7 +2923,11 @@ def list_applications(
     *,
     actor_user_id: str,
     actor_groups: list[str] | None = None,
+    since: str | None = None,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
+    cutoff, err = parse_since(since)
+    if err:
+        return None, err
     db = connect()
     with _lock:
         proc = db.execute("SELECT * FROM procedures WHERE id = ?", (procedure_id,)).fetchone()
@@ -2905,7 +2937,15 @@ def list_applications(
             "SELECT * FROM applications WHERE procedure_id = ? ORDER BY created_at DESC",
             (procedure_id,),
         ).fetchall()
-        return [_application_payload(db, row) for row in rows], None
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            payload = _application_payload(db, row)
+            if cutoff:
+                touched = _parse_iso(str(payload.get("updated_at") or ""))
+                if not touched or touched < cutoff:
+                    continue
+            items.append(payload)
+        return items, None
 
 
 def get_application(
@@ -3014,9 +3054,13 @@ def export_procedure_applications(
     actor_user_id: str,
     actor_groups: list[str] | None = None,
     fmt: str = "csv",
+    since: str | None = None,
 ) -> tuple[str | None, str | None]:
     items, err = list_applications(
-        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+        procedure_id,
+        actor_user_id=actor_user_id,
+        actor_groups=actor_groups,
+        since=since,
     )
     if err or items is None:
         return None, err

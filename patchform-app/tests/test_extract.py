@@ -98,6 +98,35 @@ def test_extract_docx() -> None:
     asyncio.run(_run())
 
 
+def test_extract_pptx() -> None:
+    import io
+
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(2))
+    box.text_frame.text = "転入の手引き"
+    buf = io.BytesIO()
+    prs.save(buf)
+    payload = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    async def _run() -> None:
+        result = await extract.extract_payload(
+            kind="document",
+            filename="guide.pptx",
+            data=(
+                "data:application/vnd.openxmlformats-officedocument.presentationml.presentation;"
+                f"base64,{payload}"
+            ),
+        )
+        assert result["source"] == "docextract"
+        assert "転入" in result["extracted"]
+
+    asyncio.run(_run())
+
+
 def test_extract_legacy_doc_unavailable() -> None:
     payload = base64.b64encode(b"\xd0\xcf\x11\xe0").decode("ascii")
 
@@ -120,6 +149,7 @@ if __name__ == "__main__":
     test_pages_to_guide_text_keeps_short_plain()
     test_pages_to_guide_text_uses_headings()
     test_extract_docx()
+    test_extract_pptx()
     test_extract_legacy_doc_unavailable()
     print("ok")
 

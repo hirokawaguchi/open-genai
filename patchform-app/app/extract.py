@@ -160,8 +160,9 @@ async def extract_payload(
                 "filename": name,
                 "notes": (
                     "この形式は自動読取できません。"
-                    "txt / md / pdf / docx / xlsx を選んでください。"
-                    "古い Word（doc）や PowerPoint、スキャン画像だけの PDF は読めません。"
+                    "txt / md / pdf / docx / xlsx / pptx / xls を選んでください。"
+                    "古い Word（doc）と PowerPoint（ppt）は取れる範囲だけ読みます。"
+                    "スキャン画像だけの PDF は読めません。"
                 ),
             }
         text = pages_to_guide_text(pages)

@@ -82,12 +82,39 @@ def test_staff_message_has_no_answers() -> None:
 def test_notify_skips_without_smtp() -> None:
     os.environ.pop("PATCHFORM_SMTP_HOST", None)
     os.environ.pop("PATCHFORM_SMTP_FROM", None)
+    os.environ.pop("PATCHFORM_MAIL_DUMP_DIR", None)
     result = notify.notify_new_application(
         {"id": "a1", "token": "t1", "procedure_name": "x"},
         recipients=["staff@example.lg.jp"],
     )
     assert result["sent"] is False
     assert result["reason"] == "smtp_unconfigured"
+
+
+def test_notify_dumps_to_text() -> None:
+    dump = tempfile.mkdtemp(prefix="pf-mail-")
+    os.environ.pop("PATCHFORM_SMTP_HOST", None)
+    os.environ.pop("PATCHFORM_SMTP_FROM", None)
+    os.environ["PATCHFORM_MAIL_DUMP_DIR"] = dump
+    os.environ["PATCHFORM_STAFF_BASE_URL"] = "http://localhost"
+    try:
+        result = notify.notify_new_application(
+            {"id": "app-1", "token": "guide-token", "procedure_name": "転入の手続き"},
+            recipients=["staff@example.lg.jp"],
+        )
+        assert result["reason"] == "dumped"
+        assert result["sent"] is False
+        path = Path(result["dumped"])
+        text = path.read_text(encoding="utf-8")
+        assert "転入の手続き" in text
+        assert "guide-token" in text
+        assert "staff@example.lg.jp" in text
+        assert "山田" not in text
+        assert "/patchform/applications/app-1" in text
+    finally:
+        os.environ.pop("PATCHFORM_MAIL_DUMP_DIR", None)
+        os.environ.pop("PATCHFORM_STAFF_BASE_URL", None)
+        shutil.rmtree(dump, ignore_errors=True)
 
 
 def test_notify_on_new_application() -> None:
@@ -163,5 +190,6 @@ if __name__ == "__main__":
     test_parse_notify_emails()
     test_staff_message_has_no_answers()
     test_notify_skips_without_smtp()
+    test_notify_dumps_to_text()
     test_notify_on_new_application()
     print("ok")
