@@ -294,9 +294,11 @@ export const PatchformProcedureEditPage = () => {
                 />
                 <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
                   案内が提出されたとき、職員へ知らせます。1行に1件、またはカンマ区切り。本文に回答は入れません。
-                  {config?.mail?.configured
+                  {config?.mail?.smtp
                     ? ' 庁内のメールサーバに送ります。'
-                    : ' いまはメールサーバ未設定のため、宛先を書いても送られません。'}
+                    : config?.mail?.dump
+                      ? ' いまはメールサーバの代わりに、サーバ上のテキストに書き出します。'
+                      : ' いまはメールサーバ未設定のため、宛先を書いても送られません。'}
                 </p>
               </div>
               <div>
@@ -396,11 +398,18 @@ export const PatchformProcedureEditPage = () => {
                   <div key={field.id} className='rounded-8 border border-solid-gray-300 p-4'>
                     <h3 className='text-std-16B-150'>{field.label}</h3>
                     <div className='mt-3 flex flex-col gap-4'>
-                      {field.options.map((option) => {
+                      {(field.option_items?.length
+                        ? field.option_items
+                        : field.options.map((option) => ({ value: option, label: option }))
+                      ).map((item) => {
+                        const option = item.value;
                         const rule = ruleMap.get(ruleKey(field.id, option));
                         return (
                           <div key={option} className='border-t border-solid-gray-300 pt-3'>
-                            <p className='text-std-16B-150'>{option}</p>
+                            <p className='text-std-16B-150'>
+                              {item.label}
+                              {item.label !== item.value ? `（${item.value}）` : ''}
+                            </p>
                             <fieldset className='mt-2'>
                               <legend className='text-dns-14N-130 text-solid-gray-700'>足す様式</legend>
                               <div className='mt-1 flex flex-col gap-1'>

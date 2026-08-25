@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import spec
+
 CHOICE_TYPES = ("select", "radio", "checkbox")
 
 
@@ -90,13 +92,14 @@ def choice_fields(definition: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not cid:
             continue
         props = comp.get("properties") if isinstance(comp.get("properties"), dict) else {}
-        options = _as_str_list((props or {}).get("options"))
+        items = spec.option_items((props or {}).get("options"))
         out.append(
             {
                 "id": cid,
                 "type": comp.get("type"),
                 "label": str(comp.get("label") or cid),
-                "options": options,
+                "options": [item["value"] for item in items],
+                "option_items": items,
             }
         )
     return out
@@ -114,7 +117,10 @@ def mapping_warnings(
                 f"部品「{rule['component_id']}」が案内フォームにありません"
             )
             continue
-        if rule["option"] not in field["options"]:
+        allowed = {item["value"] for item in (field.get("option_items") or [])}
+        allowed.update(field.get("options") or [])
+        allowed.update(item["label"] for item in (field.get("option_items") or []))
+        if rule["option"] not in allowed:
             warnings.append(
                 f"「{field['label']}」に選択肢「{rule['option']}」がありません"
             )
@@ -191,8 +197,17 @@ def normalize_answers(
         return by_label.get(nk)
 
     def _match_options(field: dict[str, Any], values: list[str]) -> list[str]:
-        options = field.get("options") or []
-        canon = {_norm_text(opt).lower(): opt for opt in options}
+        items = field.get("option_items") or [
+            {"value": opt, "label": opt} for opt in (field.get("options") or [])
+        ]
+        canon: dict[str, str] = {}
+        for item in items:
+            value = str(item.get("value") or "").strip()
+            label = str(item.get("label") or value).strip()
+            if value:
+                canon[_norm_text(value).lower()] = value
+            if label:
+                canon[_norm_text(label).lower()] = value or label
         matched: list[str] = []
         for value in values:
             found = canon.get(_norm_text(value).lower())
@@ -216,18 +231,23 @@ def normalize_answers(
             out[field["id"]] = values if len(values) > 1 else values[0]
 
     for value in free_values:
-        hits = [
-            field
-            for field in fields
-            if _norm_text(value).lower() in {_norm_text(opt).lower() for opt in (field.get("options") or [])}
-        ]
+        def _field_tokens(field: dict[str, Any]) -> set[str]:
+            items = field.get("option_items") or [
+                {"value": opt, "label": opt} for opt in (field.get("options") or [])
+            ]
+            tokens: set[str] = set()
+            for item in items:
+                tokens.add(_norm_text(item.get("value")).lower())
+                tokens.add(_norm_text(item.get("label")).lower())
+            return {t for t in tokens if t}
+
+        hits = [field for field in fields if _norm_text(value).lower() in _field_tokens(field)]
         if len(hits) == 1:
             field = hits[0]
-            canon = next(
-                opt
-                for opt in (field.get("options") or [])
-                if _norm_text(opt).lower() == _norm_text(value).lower()
-            )
+            matched = _match_options(field, [value])
+            if not matched:
+                continue
+            canon = matched[0]
             if field.get("type") == "checkbox":
                 current = out.get(field["id"]) or []
                 if not isinstance(current, list):

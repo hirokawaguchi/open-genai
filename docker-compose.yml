@@ -71,6 +71,7 @@ services:
       # フォーム（profiles: ["patchform"] で起動。未起動時は専用ページが案内を表示）
       - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
       - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -489,6 +490,8 @@ services:
       - PATCHFORM_SMTP_SSL=${PATCHFORM_SMTP_SSL:-0}
       - PATCHFORM_SMTP_FROM=${PATCHFORM_SMTP_FROM:-}
       - PATCHFORM_STAFF_BASE_URL=${PATCHFORM_STAFF_BASE_URL:-${PUBLIC_URL:-http://localhost}}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
+      - PATCHFORM_MAIL_DUMP_DIR=${PATCHFORM_MAIL_DUMP_DIR:-/data/mail}
     volumes:
       - patchform_app_data:/data
     ports:

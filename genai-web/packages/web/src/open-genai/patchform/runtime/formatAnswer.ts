@@ -1,4 +1,5 @@
 import type { FormComponent } from '../types';
+import { optionLabel } from './choiceOptions';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -37,8 +38,14 @@ export const answerRows = (
 ): Array<{ id: string; label: string; value: string }> =>
   components
     .filter((c) => !['text_display', 'image_display', 'divider', 'page_break'].includes(c.type))
-    .map((c) => ({
-      id: c.id,
-      label: c.label || c.id,
-      value: formatAnswerValue(c.type, answers[c.id]),
-    }));
+    .map((c) => {
+      const raw = answers[c.id];
+      const shown =
+        c.type === 'select' || c.type === 'radio'
+          ? optionLabel(c.properties?.options, raw) || formatAnswerValue(c.type, raw)
+          : c.type === 'checkbox' && Array.isArray(raw)
+            ? raw.map((v) => optionLabel(c.properties?.options, v) || String(v)).join('、') ||
+              '（未入力）'
+            : formatAnswerValue(c.type, raw);
+      return { id: c.id, label: c.label || c.id, value: shown };
+    });

@@ -625,6 +625,125 @@ def test_application_and_procedure_export() -> None:
         _teardown(path)
 
 
+def test_service_key_and_since() -> None:
+    client, path = _setup()
+    previous = os.environ.get("PATCHFORM_SERVICE_KEY")
+    os.environ["PATCHFORM_SERVICE_KEY"] = "svc-test"
+    try:
+        guide_def = _create_form(client, "転入案内", ["転入", "転居"])
+        style_a_def = _create_form(client, "転入届")
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={
+                "name": "転入の手続き",
+                "guide_form_id": guide_def["id"],
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "転入",
+                            "form_ids": [style_a_def["id"]],
+                            "notes": [],
+                            "prepare": [],
+                        }
+                    ]
+                },
+            },
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        guide = _reception_of(client, guide_def["id"])
+        style_a = _reception_of(client, style_a_def["id"])
+        res = client.post(
+            f"/public/api/forms/{guide['guest_token']}/submissions",
+            json={"answers": {"name": "山田", "event": "転入"}, "submitter_name": "山田"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+
+        service = {"x-api-key": "test-key", "x-service-key": "svc-test"}
+        res = client.get("/procedures", headers=service)
+        assert res.status_code == 200, res.text
+        assert any(item["id"] == proc["id"] for item in res.json()["procedures"])
+
+        res = client.get(f"/procedures/{proc['id']}/applications", headers=service)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["as_of"]
+        assert body["applications"][0]["id"] == opened["id"]
+        assert body["applications"][0]["updated_at"]
+
+        res = client.get(
+            f"/procedures/{proc['id']}/applications",
+            headers=service,
+            params={"since": "not-a-date"},
+        )
+        assert res.status_code == 400
+
+        res = client.get(
+            f"/procedures/{proc['id']}/applications",
+            headers=service,
+            params={"since": "2099-01-01T00:00:00+00:00"},
+        )
+        assert res.status_code == 200
+        assert res.json()["applications"] == []
+
+        res = client.get(
+            f"/procedures/{proc['id']}/applications",
+            headers=service,
+            params={"since": opened["created_at"]},
+        )
+        assert res.status_code == 200
+        assert res.json()["applications"][0]["id"] == opened["id"]
+
+        res = client.post(
+            "/forms",
+            headers=service,
+            json={"title": "書けない", "visibility": "both", "definition": _form("書けない")},
+        )
+        assert res.status_code == 401
+
+        res = client.get("/procedures", headers={"x-api-key": "test-key", "x-service-key": "wrong"})
+        assert res.status_code == 401
+
+        res = client.post(
+            f"/public/api/forms/{style_a['guest_token']}/submissions",
+            json={
+                "answers": {"name": "山田"},
+                "submitter_name": "山田",
+                "application_token": opened["token"],
+            },
+        )
+        assert res.status_code == 201, res.text
+        res = client.get(f"/applications/{opened['id']}", headers=service)
+        assert res.status_code == 200, res.text
+        detail = res.json()
+        assert detail["updated_at"] >= detail["created_at"]
+        assert any(form.get("submitted_at") for form in detail["forms"] if form["id"] == style_a["id"])
+
+        res = client.get(
+            f"/procedures/{proc['id']}/export",
+            headers=service,
+            params={"format": "jsonl", "since": opened["created_at"]},
+        )
+        assert res.status_code == 200, res.text
+        line = res.content.decode("utf-8").strip().split("\n")[0]
+        assert json.loads(line)["id"] == opened["id"]
+    finally:
+        if previous is None:
+            os.environ.pop("PATCHFORM_SERVICE_KEY", None)
+        else:
+            os.environ["PATCHFORM_SERVICE_KEY"] = previous
+        _teardown(path)
+
+
 if __name__ == "__main__":
     test_procedure_bundle_from_guide()
     test_publish_requires_guide_published()
@@ -633,4 +752,5 @@ if __name__ == "__main__":
     test_catalog_published_only()
     test_procedure_share_links()
     test_application_and_procedure_export()
+    test_service_key_and_since()
     print("ok")

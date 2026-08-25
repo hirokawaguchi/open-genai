@@ -235,15 +235,42 @@ def validate_pin(pin: str | None) -> str | None:
     return None
 
 
-def _options_of(comp: dict[str, Any]) -> list[str]:
-    raw = (comp.get("properties") or {}).get("options") or []
-    out: list[str] = []
+def option_items(raw: Any) -> list[dict[str, str]]:
+    """選択肢を {value, label} に揃える。文字列は両方同じ。"""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.replace("\r\n", "\n").split("\n") if part.strip()]
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
     for item in raw:
-        if isinstance(item, str) and item.strip():
-            out.append(item.strip())
-        elif isinstance(item, dict) and (item.get("value") or item.get("label")):
-            out.append(str(item.get("value") or item["label"]).strip())
+        value = ""
+        label = ""
+        if isinstance(item, str):
+            text = item.strip()
+            if "|" in text:
+                label, _, value = text.partition("|")
+                label, value = label.strip(), value.strip()
+            else:
+                label = value = text
+        elif isinstance(item, dict):
+            value = str(item.get("value") or item.get("label") or "").strip()
+            label = str(item.get("label") or item.get("value") or "").strip()
+        if not value and label:
+            value = label
+        if not label and value:
+            label = value
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append({"value": value, "label": label})
     return out
+
+
+def _options_of(comp: dict[str, Any]) -> list[str]:
+    return [item["value"] for item in option_items((comp.get("properties") or {}).get("options"))]
 
 
 def validate_definition(

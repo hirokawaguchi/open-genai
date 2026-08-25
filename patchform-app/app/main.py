@@ -9,6 +9,7 @@ Compose では profiles: ["patchform"] でオプション起動する。
 
 from __future__ import annotations
 
+import hmac
 import os
 import threading
 import time
@@ -25,6 +26,7 @@ API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
 RETENTION_DAYS = int(os.environ.get("PATCHFORM_RETENTION_DAYS", "365"))
 CLEANUP_HOUR = int(os.environ.get("PATCHFORM_CLEANUP_HOUR", "2"))
+SERVICE_USER_ID = "service"
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
 
@@ -41,6 +43,18 @@ def _groups(x_user_groups: str | None) -> list[str]:
     return [g.strip() for g in (x_user_groups or "").split(",") if g.strip()]
 
 
+def _service_key() -> str:
+    return (os.environ.get("PATCHFORM_SERVICE_KEY") or "").strip()
+
+
+def _service_ok(x_service_key: str | None) -> bool:
+    expected = _service_key()
+    offered = (x_service_key or "").strip()
+    if not expected or not offered:
+        return False
+    return hmac.compare_digest(expected, offered)
+
+
 def _verify_internal(
     x_api_key: str | None,
     x_user_id: str | None,
@@ -49,10 +63,15 @@ def _verify_internal(
     x_user_ts: str | None,
     x_user_sig: str | None,
     x_user_tags: str | None,
+    x_service_key: str | None = None,
+    *,
+    allow_service: bool = False,
 ) -> tuple[JSONResponse | None, str]:
     err = _check_key(x_api_key)
     if err:
         return err, ""
+    if allow_service and _service_ok(x_service_key):
+        return None, SERVICE_USER_ID
     if not intauth.verify(
         x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
     ):
@@ -60,6 +79,20 @@ def _verify_internal(
     if not x_user_id:
         return JSONResponse(status_code=401, content={"error": "認証が必要です"}), ""
     return None, x_user_id
+
+
+def _groups_for(uid: str, x_user_groups: str | None) -> list[str]:
+    if uid == SERVICE_USER_ID:
+        return ["SystemAdminGroup"]
+    return _groups(x_user_groups)
+
+
+def _query_error(msg: str | None) -> JSONResponse:
+    text = msg or "不正な要求です"
+    if text.startswith("since"):
+        return JSONResponse(status_code=400, content={"error": text})
+    code = 404 if "見つかりません" in text else 403
+    return JSONResponse(status_code=code, content={"error": text})
 
 
 def _cleanup_loop() -> None:
@@ -120,7 +153,7 @@ def get_config(
                 "model": llm.PATCHFORM_MODEL,
                 "base_url": llm.OPENAI_BASE_URL,
             },
-            "mail": {"configured": notify.smtp_configured()},
+            "mail": notify.mail_status(),
         }
     )
 
@@ -311,14 +344,27 @@ def list_procedures(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> JSONResponse:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err
     return JSONResponse(
-        content={"procedures": store.list_procedures(actor_user_id=uid, actor_groups=_groups(x_user_groups))}
+        content={
+            "procedures": store.list_procedures(
+                actor_user_id=uid, actor_groups=_groups_for(uid, x_user_groups)
+            )
+        }
     )
 
 
@@ -363,14 +409,23 @@ def get_procedure(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> JSONResponse:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err
     detail = store.get_procedure(
-        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+        procedure_id, actor_user_id=uid, actor_groups=_groups_for(uid, x_user_groups)
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
@@ -523,6 +578,7 @@ def get_inbox(
 @app.get("/procedures/{procedure_id}/applications")
 def list_procedure_applications(
     procedure_id: str,
+    since: str | None = None,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -530,18 +586,36 @@ def list_procedure_applications(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> JSONResponse:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err
     items, msg = store.list_applications(
-        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+        procedure_id,
+        actor_user_id=uid,
+        actor_groups=_groups_for(uid, x_user_groups),
+        since=since,
     )
     if msg or items is None:
-        return JSONResponse(status_code=404, content={"error": msg})
-    return JSONResponse(content={"applications": items})
+        return _query_error(msg)
+    return JSONResponse(
+        content={
+            "applications": items,
+            "since": (since or "").strip() or None,
+            "as_of": store.now_iso(),
+        }
+    )
 
 
 @app.get("/applications/{application_id}")
@@ -554,13 +628,24 @@ def get_application(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> JSONResponse:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err
     detail = store.get_application(application_id, actor_user_id=uid)
+    if not detail:
+        detail = store.get_application(token=application_id, actor_user_id=uid)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "申請が見つかりません"})
     return JSONResponse(content=detail)
@@ -582,6 +667,7 @@ def _export_attachment(body: str | None, msg: str | None, *, filename: str, medi
 def export_procedure_applications(
     procedure_id: str,
     format: str = "csv",
+    since: str | None = None,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -589,9 +675,18 @@ def export_procedure_applications(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> Response:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err
@@ -599,9 +694,12 @@ def export_procedure_applications(
     body, msg = store.export_procedure_applications(
         procedure_id,
         actor_user_id=uid,
-        actor_groups=_groups(x_user_groups),
+        actor_groups=_groups_for(uid, x_user_groups),
         fmt=fmt,
+        since=since,
     )
+    if msg and msg.startswith("since"):
+        return JSONResponse(status_code=400, content={"error": msg})
     if fmt == "jsonl":
         return _export_attachment(
             body,
@@ -630,9 +728,18 @@ def export_application(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
 ) -> Response:
     err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
     )
     if err:
         return err

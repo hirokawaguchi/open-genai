@@ -20,8 +20,10 @@ import {
   lookupPatchformPostal,
   uploadPatchformFile,
   usePatchformActions,
+  usePatchformApplication,
   usePatchformDetail,
 } from './usePatchform';
+import { sourcesFromApplication } from './runtime/imiSuggest';
 
 const statusLabel: Record<string, string> = {
   draft: '下書き',
@@ -45,6 +47,7 @@ export const PatchformDetailPage = () => {
   const [searchParams] = useSearchParams();
   const applicationToken = searchParams.get('app') || '';
   const { form, isLoading, loadError, mutate } = usePatchformDetail(formId);
+  const { application } = usePatchformApplication(applicationToken || undefined);
   const {
     setStatus,
     remove,
@@ -328,6 +331,8 @@ export const PatchformDetailPage = () => {
                   onPostalLookup={lookupPatchformPostal}
                   onCorporateLookup={lookupPatchformCorporate}
                   onWizardChange={(info) => setWizardLast(info.isLast)}
+                  imiSources={sourcesFromApplication(application, form.id)}
+                  prepareItems={application?.notice?.prepare || []}
                 />
                 {error && (
                   <p className='text-error-1' role='alert'>

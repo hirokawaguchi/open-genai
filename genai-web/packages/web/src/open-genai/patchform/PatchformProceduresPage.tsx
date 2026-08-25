@@ -345,7 +345,7 @@ export const PatchformProceduresPage = () => {
             <div className='mt-4'>
               <FilePickButton
                 id='pf-proc-guide-file'
-                accept='.txt,.md,.pdf,.docx,.xlsx,.csv,.html,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                accept='.txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.csv,.html,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation'
                 disabled={readingFile || assistBusy}
                 busy={readingFile}
                 busyLabel='読み取り中...'
