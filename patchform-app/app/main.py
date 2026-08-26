@@ -311,6 +311,36 @@ async def set_status(
     return JSONResponse(content=detail)
 
 
+@app.post("/forms/{form_id}/tags")
+async def set_form_tags(
+    form_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    detail, msg = store.set_tags(
+        form_id,
+        actor_user_id=uid,
+        tags=body.get("tags"),
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg:
+        code = 404 if "見つかりません" in msg else 403 if "権限" in msg else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
 @app.delete("/forms/{form_id}")
 def delete_form(
     form_id: str,

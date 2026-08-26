@@ -644,6 +644,7 @@ def list_forms_for_user(user_id: str, *, actor_groups: list[str] | None = None) 
             item = _row_to_form(row, include_definition=False)
             item["role"] = role or "respondent"
             item["can_edit"] = role in ("admin", "owner", "editor")
+            item["can_delete"] = role in ("admin", "owner")
             item["can_view_submissions"] = role in ("admin", "owner", "editor", "viewer")
             item["reception_count"] = db.execute(
                 "SELECT COUNT(*) AS n FROM forms WHERE source_form_id = ?",
@@ -1105,6 +1106,35 @@ def _close_procedure_receptions(db: sqlite3.Connection, row: sqlite3.Row) -> Non
                 "UPDATE forms SET status = 'closed', updated_at = ? WHERE id = ?",
                 (now, rec["id"]),
             )
+
+
+def set_tags(
+    form_id: str,
+    *,
+    actor_user_id: str,
+    tags: list[str] | str | None,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM forms WHERE id = ?", (form_id,)).fetchone()
+        if not row:
+            return None, "フォームが見つかりません"
+        if not _can_edit(row, actor_user_id, actor_groups):
+            return None, "このフォームを編集する権限がありません"
+        if _is_reception(row):
+            return None, "受付の窓口ではタグを変更できません"
+        if row["status"] in ("archived",):
+            return None, "ゴミ箱のフォームはタグを変更できません"
+        tag_list, tag_err = normalize_tags(tags)
+        if tag_err or tag_list is None:
+            return None, tag_err
+        db.execute(
+            "UPDATE forms SET tags = ?, updated_at = ? WHERE id = ?",
+            (_tags_json(tag_list), _now_iso(), form_id),
+        )
+        db.commit()
+    return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
 
 
 def set_status(
@@ -2629,7 +2659,7 @@ def set_procedure_status(
     status: str,
     actor_groups: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    if status not in ("draft", "published"):
+    if status not in ("draft", "published", "archived"):
         return None, "状態が不正です"
     db = connect()
     with _lock:
@@ -2638,6 +2668,10 @@ def set_procedure_status(
             return None, "手続きが見つかりません"
         if not _can_edit_procedure(row, actor_user_id, actor_groups):
             return None, "この手続きを変更する権限がありません"
+        if status == "archived":
+            if row["status"] == "published":
+                return None, "公開中の手続きはゴミ箱へ移せません。先に受付を終了してください。"
+            _close_procedure_receptions(db, row)
         if status == "draft":
             _close_procedure_receptions(db, row)
         if status == "published":

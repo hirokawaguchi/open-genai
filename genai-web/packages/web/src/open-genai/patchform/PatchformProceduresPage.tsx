@@ -25,6 +25,7 @@ import {
 const statusLabel: Record<string, string> = {
   draft: '下書き',
   published: '公開中',
+  archived: 'ゴミ箱',
 };
 
 export const PatchformProceduresPage = () => {
@@ -34,7 +35,8 @@ export const PatchformProceduresPage = () => {
   const { config } = usePatchformConfig();
   const { forms, mutate: mutateForms } = usePatchformList();
   const { procedures, isLoading, loadError, mutate } = usePatchformProcedures();
-  const { create, setStatus, submitting, error, setError } = usePatchformProcedureActions();
+  const { create, setStatus, setStatusMany, removeMany, submitting, error, setError } =
+    usePatchformProcedureActions();
   const {
     previewProcedure,
     applyProcedureDraft,
@@ -49,12 +51,122 @@ export const PatchformProceduresPage = () => {
   const [guideText, setGuideText] = useState('');
   const [readingFile, setReadingFile] = useState(false);
   const [guideFileName, setGuideFileName] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [bulkAction, setBulkAction] = useState('');
+  const [trashView, setTrashView] = useState(false);
+
+  const activeCount = procedures.filter((p) => p.status !== 'archived').length;
+  const trashCount = procedures.filter((p) => p.status === 'archived').length;
+  const visibleProcs = procedures.filter((p) =>
+    trashView ? p.status === 'archived' : p.status !== 'archived',
+  );
+  const selectableVisible = visibleProcs.filter((p) => p.can_edit);
+  const selectedCount = selectableVisible.filter((p) => selected.has(p.id)).length;
+  const allSelected = selectableVisible.length > 0 && selectedCount === selectableVisible.length;
+  const selectedProcs = selectableVisible.filter((p) => selected.has(p.id));
+  const nameOf = (id: string) => procedures.find((p) => p.id === id)?.name || id;
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const p of selectableVisible) next.delete(p.id);
+      } else {
+        for (const p of selectableVisible) next.add(p.id);
+      }
+      return next;
+    });
+
+  const switchView = (trash: boolean) => {
+    setTrashView(trash);
+    setSelected(new Set());
+    setBulkResult(null);
+    setBulkAction('');
+  };
+
+  const summarize = (
+    results: { id: string; ok: boolean; error?: string }[],
+    okLabel: string,
+  ) => {
+    const ok = results.filter((r) => r.ok);
+    const ng = results.filter((r) => !r.ok);
+    const parts: string[] = [];
+    if (ok.length) parts.push(`${ok.length} 件を${okLabel}。`);
+    if (ng.length) {
+      parts.push(
+        `${ng.length} 件は変更できませんでした（` +
+          ng.map((r) => `「${nameOf(r.id)}」: ${r.error}`).join(' / ') +
+          '）。',
+      );
+    }
+    setBulkResult(parts.join(''));
+  };
+
+  const runBulk = async () => {
+    const ids = selectedProcs.map((p) => p.id);
+    if (ids.length === 0 || !bulkAction) return;
+    setBulkResult(null);
+    if (bulkAction === 'close') {
+      if (
+        !window.confirm(
+          `選択した ${ids.length} 件の受付を終了します。新しい申請は止まりますが、届いている申請は残ります。`,
+        )
+      )
+        return;
+      summarize(await setStatusMany(ids, 'draft'), '受付を終了しました');
+    } else if (bulkAction === 'archive') {
+      if (
+        !window.confirm(
+          `選択した ${ids.length} 件をゴミ箱へ移します。公開中のものは先に受付終了が必要です。あとで復元できます。`,
+        )
+      )
+        return;
+      summarize(await setStatusMany(ids, 'archived'), 'ゴミ箱へ移しました');
+    }
+    await mutate();
+    setSelected(new Set());
+    setBulkAction('');
+  };
+
+  const onRestore = async () => {
+    const ids = selectedProcs.map((p) => p.id);
+    if (ids.length === 0) return;
+    setBulkResult(null);
+    summarize(await setStatusMany(ids, 'draft'), '復元しました');
+    await mutate();
+    setSelected(new Set());
+  };
+
+  const onPurge = async () => {
+    const ids = selectedProcs.map((p) => p.id);
+    if (ids.length === 0) return;
+    const typed = window.prompt(
+      `完全に削除すると元に戻せません。\n選択した ${ids.length} 件を削除するには「削除」と入力してください。`,
+      '',
+    );
+    if (typed !== '削除') return;
+    setBulkResult(null);
+    summarize(await removeMany(ids), '完全に削除しました');
+    await mutate();
+    setSelected(new Set());
+  };
 
   const draftProc = procedures.find((p) => p.status === 'draft');
   const publishedProc = procedures.find((p) => p.status === 'published');
   const omitNav = startMode === 'omit';
   const isNavForm = (f: (typeof forms)[number]) => (f.tags || []).includes(NAVIGATION_TAG);
-  const selectableForms = forms.filter((f) => (omitNav ? !isNavForm(f) : isNavForm(f)));
+  const selectableForms = forms.filter(
+    (f) => f.status !== 'archived' && (omitNav ? !isNavForm(f) : isNavForm(f)),
+  );
 
   const chooseStartMode = (mode: 'omit' | 'navigate') => {
     setStartMode(mode);
@@ -136,7 +248,7 @@ export const PatchformProceduresPage = () => {
           label='手続きの作成と一覧'
           current={pane}
           tabs={[
-            { id: 'list', label: `一覧（${procedures.length}）`, to: '/patchform/procedures', icon: PiListBold },
+            { id: 'list', label: `一覧（${activeCount}）`, to: '/patchform/procedures', icon: PiListBold },
             { id: 'new', label: '作成', to: '/patchform/procedures?tab=new', icon: PiNotePencilBold },
           ]}
         />
@@ -361,69 +473,196 @@ export const PatchformProceduresPage = () => {
               </Button>
             </Link>
           </div>
+          <div className='flex flex-wrap gap-2' role='group' aria-label='表示の切り替え'>
+            <button
+              type='button'
+              onClick={() => switchView(false)}
+              className={`rounded-4 border px-3 py-1 text-dns-16N-130 ${
+                !trashView
+                  ? 'border-blue-900 bg-blue-50 text-blue-900'
+                  : 'border-solid-gray-420 text-solid-gray-700'
+              }`}
+            >
+              一覧（{activeCount}）
+            </button>
+            <button
+              type='button'
+              onClick={() => switchView(true)}
+              className={`rounded-4 border px-3 py-1 text-dns-16N-130 ${
+                trashView
+                  ? 'border-blue-900 bg-blue-50 text-blue-900'
+                  : 'border-solid-gray-420 text-solid-gray-700'
+              }`}
+            >
+              ゴミ箱（{trashCount}）
+            </button>
+          </div>
           {isLoading ? (
             <p className='text-solid-gray-600'>読み込み中...</p>
           ) : loadError ? (
             <p className='text-error-1' role='alert'>
               {loadError}
             </p>
-          ) : procedures.length === 0 ? (
+          ) : visibleProcs.length === 0 ? (
             <p className='text-solid-gray-600'>
-              まだ手続きがありません。
-              <Link
-                to='/patchform/procedures?tab=new'
-                className='ml-1 text-blue-900 underline-offset-2 hover:underline'
-              >
-                作成タブから作る
-              </Link>
+              {trashView ? (
+                'ゴミ箱は空です。'
+              ) : procedures.length === 0 ? (
+                <>
+                  まだ手続きがありません。
+                  <Link
+                    to='/patchform/procedures?tab=new'
+                    className='ml-1 text-blue-900 underline-offset-2 hover:underline'
+                  >
+                    作成タブから作る
+                  </Link>
+                </>
+              ) : (
+                '表示できる手続きはありません。'
+              )}
             </p>
           ) : (
-            <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
-              {procedures.map((p) => (
-                <li key={p.id} className='py-3'>
-                  <Link
-                    to={`/patchform/procedures/${p.id}`}
-                    className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
-                  >
-                    {p.name}
-                  </Link>
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    {statusLabel[p.status] || p.status}
-                    {p.guide_title
-                      ? ` / ${omitsNavigation(p) ? '申請フォーム' : '案内'}: ${p.guide_title}`
-                      : ''}
-                    {' / '}
-                    {new Date(p.updated_at).toLocaleString('ja-JP')}
-                  </p>
-                  <div className='mt-2'>
-                    <ProcedureReceptionActions
-                      procedureId={p.id}
-                      name={p.name}
-                      status={p.status}
-                      publicUrl={p.status === 'published' ? p.guide_public_url : null}
-                      canEdit={p.can_edit}
-                      submitting={submitting}
-                      republish={p.guide_status === 'closed'}
-                      onPublish={async () => {
-                        const next = await setStatus(p.id, 'published');
-                        if (next) await mutate();
+            <>
+              {selectableVisible.length > 0 ? (
+                <div className='flex flex-wrap items-center gap-3 rounded-4 border border-solid-gray-300 bg-solid-gray-50 px-3 py-2'>
+                  <label className='flex items-center gap-2 text-dns-16N-130 text-solid-gray-700'>
+                    <input
+                      type='checkbox'
+                      className='size-5'
+                      checked={allSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = selectedCount > 0 && !allSelected;
                       }}
-                      onClose={async () => {
-                        if (
-                          !window.confirm(
-                            '受付を終了しますか。新しい申請は止まります。届いている申請は残ります。',
-                          )
-                        ) {
-                          return;
-                        }
-                        const next = await setStatus(p.id, 'draft');
-                        if (next) await mutate();
-                      }}
+                      onChange={toggleAll}
                     />
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    すべて選択
+                  </label>
+                  <span className='text-dns-14N-130 text-solid-gray-600'>
+                    {selectedCount > 0 ? `${selectedCount} 件を選択中` : '選択して一括処理できます'}
+                  </span>
+                  {trashView ? (
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        aria-disabled={submitting || selectedCount === 0}
+                        onClick={() => void onRestore()}
+                      >
+                        {submitting ? '処理中...' : `復元する${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        className='border-error-1 text-error-1'
+                        aria-disabled={submitting || selectedCount === 0}
+                        onClick={() => void onPurge()}
+                      >
+                        {submitting ? '処理中...' : '完全に削除'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <select
+                        className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130'
+                        value={bulkAction}
+                        onChange={(e) => setBulkAction(e.target.value)}
+                        aria-label='一括処理を選ぶ'
+                      >
+                        <option value=''>一括処理を選ぶ…</option>
+                        <option value='close'>受付を終了する</option>
+                        <option value='archive'>ゴミ箱へ移す</option>
+                      </select>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        aria-disabled={submitting || selectedCount === 0 || !bulkAction}
+                        onClick={() => void runBulk()}
+                      >
+                        {submitting ? '処理中...' : '実行'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+              {bulkResult ? (
+                <p className='text-dns-14N-130 text-solid-gray-700' role='status'>
+                  {bulkResult}
+                </p>
+              ) : null}
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                {trashView
+                  ? '削除は「ゴミ箱へ移す」で退避してから、ここで完全に削除します。申請のある手続きは完全削除できません。'
+                  : '削除は「ゴミ箱へ移す」で退避します。公開中の手続きは先に受付を終了してください。'}
+              </p>
+              <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
+                {visibleProcs.map((p) => (
+                  <li key={p.id} className='flex items-start gap-3 py-3'>
+                    {p.can_edit ? (
+                      <input
+                        type='checkbox'
+                        className='mt-0.5 size-5 flex-none'
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        aria-label={`「${p.name}」を選択`}
+                      />
+                    ) : (
+                      <span className='mt-0.5 size-5 flex-none' aria-hidden='true' />
+                    )}
+                    <div className='min-w-0 flex-1'>
+                      {trashView ? (
+                        <span className='text-std-16B-150 text-solid-gray-800'>{p.name}</span>
+                      ) : (
+                        <Link
+                          to={`/patchform/procedures/${p.id}`}
+                          className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
+                        >
+                          {p.name}
+                        </Link>
+                      )}
+                      <p className='text-dns-14N-130 text-solid-gray-600'>
+                        {statusLabel[p.status] || p.status}
+                        {p.guide_title
+                          ? ` / ${omitsNavigation(p) ? '申請フォーム' : '案内'}: ${p.guide_title}`
+                          : ''}
+                        {' / '}
+                        {new Date(p.updated_at).toLocaleString('ja-JP')}
+                      </p>
+                      {trashView ? null : (
+                        <div className='mt-2'>
+                          <ProcedureReceptionActions
+                            procedureId={p.id}
+                            name={p.name}
+                            status={p.status}
+                            publicUrl={p.status === 'published' ? p.guide_public_url : null}
+                            canEdit={p.can_edit}
+                            submitting={submitting}
+                            republish={p.guide_status === 'closed'}
+                            onPublish={async () => {
+                              const next = await setStatus(p.id, 'published');
+                              if (next) await mutate();
+                            }}
+                            onClose={async () => {
+                              if (
+                                !window.confirm(
+                                  '受付を終了しますか。新しい申請は止まります。届いている申請は残ります。',
+                                )
+                              ) {
+                                return;
+                              }
+                              const next = await setStatus(p.id, 'draft');
+                              if (next) await mutate();
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </section>
         )}
