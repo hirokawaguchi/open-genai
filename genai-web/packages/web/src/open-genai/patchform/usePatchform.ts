@@ -18,6 +18,7 @@ import type {
   Application,
   Inbox,
   Procedure,
+  ProcedureCatalog,
   ProcedureShare,
   Submission,
   UploadedFile,
@@ -212,6 +213,7 @@ export const usePatchformActions = () => {
         is_draft?: boolean;
         resume_token?: string;
         application_token?: string;
+        application_item_id?: string;
       },
     ): Promise<{ receipt_code?: string; is_draft?: boolean; application?: Application } | null> => {
       setSubmitting(true);
@@ -347,13 +349,14 @@ export const downloadPatchformCsv = async (
 
 export const downloadProcedureExport = async (
   procedureId: string,
-  format: 'csv' | 'jsonl' = 'csv',
+  format: 'csv' | 'jsonl' | 'aligned' = 'csv',
 ): Promise<void> => {
   const { blob, disposition } = await teamApi.getBlob(
     `patchform/procedures/${encodeURIComponent(procedureId)}/export`,
     { params: { format } },
   );
-  saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}.${format}`);
+  const ext = format === 'jsonl' ? 'jsonl' : 'csv';
+  saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
 };
 
 export const downloadApplicationExport = async (
@@ -686,6 +689,98 @@ export const usePatchformApplication = (applicationId: string | undefined) => {
     loadError: error ? errorMessage(error, '申請の取得に失敗しました。') : null,
     mutate,
   };
+};
+
+export const usePatchformProcedureCatalog = (procedureId: string | undefined) => {
+  const key = procedureId
+    ? `patchform/procedures/${encodeURIComponent(procedureId)}/catalog`
+    : null;
+  const { data, error, isLoading } = useSWR<ProcedureCatalog>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    catalog: data,
+    slots: data?.slots ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, '手続きの枠一覧を取得できませんでした。') : null,
+  };
+};
+
+export const usePatchformApplicationItems = () => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const addItem = useCallback(
+    async (
+      applicationId: string,
+      input: {
+        duplicate_of?: string;
+        form_id?: string;
+        slot_id?: string;
+        title?: string;
+        kind?: string;
+      },
+    ): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items`,
+          input,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '枠を足せませんでした。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const fulfillWithFile = useCallback(
+    async (applicationId: string, itemId: string, file: File): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const data = await fileToDataUrl(file);
+        const res = await teamApi.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
+          { filename: file.name, data },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'ファイルの添付に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const clearFile = useCallback(
+    async (applicationId: string, itemId: string): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.delete<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '添付の取消に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  return { addItem, fulfillWithFile, clearFile, busy, error, setError };
 };
 
 export const usePatchformProcedureActions = () => {

@@ -433,9 +433,114 @@ def test_scenario_wrong_option_does_not_add_forms() -> None:
         _teardown(path, mail_dir)
 
 
+def test_scenario_workbench_bundle_grows() -> None:
+    """申請束は閉じない。申請者が複製・添付し、他システムへは記入必須だけ揃える。"""
+    import base64
+
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "許可申請案内",
+            [
+                {"id": "name", "type": "text", "label": "氏名", "required": True, "imi_type": "ic:氏名"},
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "申請",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                },
+            ],
+        )
+        keireki = _create_form(
+            client,
+            "役員経歴書",
+            [{"id": "name", "type": "text", "label": "役員氏名", "required": True}],
+        )
+        proc = _publish(
+            client,
+            "許可の手続き",
+            guide["id"],
+            mapping={
+                "rules": [
+                    {
+                        "component_id": "kind",
+                        "option": "新規",
+                        "form_ids": [keireki["id"]],
+                        "prepare": ["住民票の写し"],
+                    }
+                ]
+            },
+        )
+        guide_rec = _reception(client, guide["id"])
+        keireki_rec = _reception(client, keireki["id"])
+
+        res = client.post(
+            f"/public/api/forms/{guide_rec['guest_token']}/submissions",
+            json={"answers": {"name": "田中一郎", "kind": "新規"}, "submitter_name": "田中一郎"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        keireki_item = next(it for it in opened["items"] if it["kind"] == "yoshiki")
+        juminhyo_item = next(it for it in opened["items"] if it["kind"] == "attach")
+
+        # 役員が2人。経歴書を人数分に複製する
+        res = client.post(
+            f"/public/api/applications/{opened['token']}/items",
+            json={"duplicate_of": keireki_item["id"]},
+        )
+        assert res.status_code == 201, res.text
+        grown = res.json()
+        keireki_items = [it for it in grown["items"] if it.get("form_id") == keireki_rec["id"]]
+        assert len(keireki_items) == 2
+
+        # 住民票はファイル添付で満たす
+        blob = base64.b64encode(b"pdf-bytes").decode()
+        res = client.post(
+            f"/public/api/applications/{opened['token']}/items/{juminhyo_item['id']}/file",
+            json={"filename": "juminhyo.pdf", "data": blob},
+        )
+        assert res.status_code == 200, res.text
+
+        # 経歴書は2件ともオンライン記入
+        for idx, item in enumerate(keireki_items):
+            res = client.post(
+                f"/public/api/forms/{keireki_rec['guest_token']}/submissions",
+                json={
+                    "answers": {"name": f"役員{idx}"},
+                    "submitter_name": "田中一郎",
+                    "application_token": opened["token"],
+                    "application_item_id": item["id"],
+                },
+            )
+            assert res.status_code == 201, res.text
+
+        res = client.get(f"/public/api/applications/{opened['token']}")
+        final = res.json()
+        by_id = {it["id"]: it for it in final["items"]}
+        assert by_id[juminhyo_item["id"]]["status"] == "submitted"
+        assert all(by_id[it["id"]]["status"] == "submitted" for it in keireki_items)
+
+        # 記入必須だけ揃える書き出しは、記入必須（案内）の氏名だけ。様式ファイルは混ざらない
+        res = client.get(
+            f"/procedures/{proc['id']}/export",
+            headers=_staff(),
+            params={"format": "aligned"},
+        )
+        assert res.status_code == 200, res.text
+        aligned = res.content.decode("utf-8-sig")
+        assert "許可申請案内::ic:氏名" in aligned
+        assert "田中一郎" in aligned
+        assert "役員経歴書" not in aligned
+    finally:
+        _teardown(path, mail_dir)
+
+
 if __name__ == "__main__":
     test_scenario_single_form_inquiry_and_staff_mail_dump()
     test_scenario_option_value_opens_bundle_and_imi_carries()
     test_scenario_service_reads_only_the_diff()
     test_scenario_wrong_option_does_not_add_forms()
+    test_scenario_workbench_bundle_grows()
     print("ok")

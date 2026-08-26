@@ -212,7 +212,9 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("submissions", "withdrawn_at", "TEXT"),
         ("submissions", "withdrawn_by", "TEXT"),
         ("submissions", "application_id", "TEXT"),
+        ("submissions", "application_item_id", "TEXT"),
         ("procedures", "notify_emails_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("applications", "items_json", "TEXT NOT NULL DEFAULT '[]'"),
     )
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -1466,6 +1468,7 @@ def submit_answers(
     is_draft: bool = False,
     resume_token: str | None = None,
     application_token: str | None = None,
+    application_item_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     db = connect()
     with _lock:
@@ -1551,12 +1554,16 @@ def submit_answers(
         )
         if link_err:
             return None, link_err
+        linked_item_id = _resolve_application_item_id(
+            db, linked_app_id, row["id"], application_item_id
+        )
         if existing:
             sid = existing["id"]
             receipt = existing["receipt_code"]
             db.execute(
                 "UPDATE submissions SET version_id = ?, submitter_user_id = ?, submitter_name = ?, "
                 "answers_json = ?, is_draft = ?, application_id = COALESCE(?, application_id), "
+                "application_item_id = COALESCE(?, application_item_id), "
                 "updated_at = ? WHERE id = ?",
                 (
                     version_id,
@@ -1565,6 +1572,7 @@ def submit_answers(
                     json.dumps(cleaned, ensure_ascii=False),
                     1 if is_draft else 0,
                     linked_app_id,
+                    linked_item_id,
                     now,
                     sid,
                 ),
@@ -1575,8 +1583,8 @@ def submit_answers(
             db.execute(
                 "INSERT INTO submissions (id, form_id, version_id, receipt_code, "
                 "submitter_user_id, submitter_name, answers_json, is_draft, "
-                "application_id, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "application_id, application_item_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     sid,
                     row["id"],
@@ -1587,6 +1595,7 @@ def submit_answers(
                     json.dumps(cleaned, ensure_ascii=False),
                     1 if is_draft else 0,
                     linked_app_id,
+                    linked_item_id,
                     now,
                     now,
                 ),
@@ -2712,6 +2721,160 @@ def _form_progress(db: sqlite3.Connection, application_id: str, form_id: str) ->
     return "none"
 
 
+def _new_item(
+    *,
+    slot_id: str,
+    title: str,
+    kind: str,
+    required: str = "recommended",
+    cardinality: str = "one",
+    form_id: str = "",
+    template_file_id: str = "",
+    fulfillment: str = "",
+    file_id: str = "",
+    file_name: str = "",
+    copy_index: int = 0,
+    added_by: str = "system",
+) -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "slot_id": slot_id,
+        "title": title or "",
+        "kind": kind if kind in procedure.SLOT_KINDS else "yoshiki",
+        "required": required if required in procedure.SLOT_REQUIRED else "recommended",
+        "cardinality": cardinality if cardinality in procedure.SLOT_CARDINALITY else "one",
+        "form_id": form_id or "",
+        "template_file_id": template_file_id or "",
+        "fulfillment": fulfillment if fulfillment in ("form", "file") else "",
+        "file_id": file_id or "",
+        "file_name": file_name or "",
+        "copy_index": int(copy_index or 0),
+        "added_by": added_by or "system",
+    }
+
+
+def _application_items(row: sqlite3.Row) -> list[dict[str, Any]]:
+    if "items_json" not in row.keys() or not row["items_json"]:
+        return []
+    try:
+        data = json.loads(row["items_json"])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _items_from_form_ids(db: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, Any]]:
+    """items_json を持たない旧束は、form_ids から枠アイテムに読み替える。"""
+    try:
+        form_ids = json.loads(row["form_ids_json"])
+    except (TypeError, json.JSONDecodeError):
+        form_ids = []
+    if not isinstance(form_ids, list):
+        form_ids = []
+    items: list[dict[str, Any]] = []
+    for idx, fid in enumerate(form_ids):
+        form = _form_row(db, fid)
+        items.append(
+            _new_item(
+                slot_id="" if idx == 0 else f"yoshiki:{fid}",
+                title=form["title"] if form else "(削除済み)",
+                kind="data" if idx == 0 else "yoshiki",
+                required="required" if idx == 0 else "recommended",
+                form_id=fid,
+                fulfillment="form" if idx == 0 else "",
+                added_by="system",
+            )
+        )
+    return items
+
+
+def _item_status(db: sqlite3.Connection, application_id: str, item: dict[str, Any]) -> str:
+    if item.get("fulfillment") == "file" and item.get("file_id"):
+        return "submitted"
+    form_id = item.get("form_id") or ""
+    if not form_id:
+        return "none"
+    item_id = item.get("id") or ""
+    tagged = db.execute(
+        "SELECT is_draft, withdrawn_at FROM submissions "
+        "WHERE application_id = ? AND application_item_id = ? AND form_id = ?",
+        (application_id, item_id, form_id),
+    ).fetchall()
+    if tagged:
+        has_submitted = any(not r["is_draft"] and not _is_withdrawn(r) for r in tagged)
+        has_draft = any(r["is_draft"] for r in tagged)
+        if has_submitted:
+            return "submitted"
+        if has_draft:
+            return "draft"
+        return "withdrawn"
+    return _form_progress(db, application_id, form_id)
+
+
+def _item_payload(
+    db: sqlite3.Connection, app_row: sqlite3.Row, item: dict[str, Any]
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": item.get("id"),
+        "slot_id": item.get("slot_id") or "",
+        "title": item.get("title") or "",
+        "kind": item.get("kind") or "yoshiki",
+        "required": item.get("required") or "recommended",
+        "cardinality": item.get("cardinality") or "one",
+        "form_id": item.get("form_id") or None,
+        "fulfillment": item.get("fulfillment") or "",
+        "file_id": item.get("file_id") or None,
+        "file_name": item.get("file_name") or None,
+        "copy_index": int(item.get("copy_index") or 0),
+        "added_by": item.get("added_by") or "system",
+        "guest_token": None,
+        "public_url": None,
+        "visibility": None,
+        "can_fill_online": bool(item.get("form_id")),
+        "status": "none",
+    }
+    form_id = item.get("form_id") or ""
+    if form_id:
+        form = _form_row(db, form_id)
+        if form:
+            out["title"] = out["title"] or form["title"]
+            out["guest_token"] = form["guest_token"]
+            out["public_url"] = public_url_for(form["guest_token"])
+            out["visibility"] = form["visibility"]
+    out["status"] = _item_status(db, app_row["id"], item)
+    if form_id and out["status"] == "submitted" and item.get("fulfillment") != "file":
+        sub = db.execute(
+            "SELECT s.answers_json, s.receipt_code, s.submitter_name, s.created_at, "
+            "v.definition_json FROM submissions s "
+            "LEFT JOIN form_versions v ON v.id = s.version_id "
+            "WHERE s.application_id = ? AND s.form_id = ? AND s.is_draft = 0 "
+            "ORDER BY s.created_at DESC",
+            (app_row["id"], form_id),
+        ).fetchone()
+        if sub:
+            try:
+                answers = json.loads(sub["answers_json"])
+            except (TypeError, json.JSONDecodeError):
+                answers = {}
+            definition = None
+            if sub["definition_json"]:
+                try:
+                    parsed = json.loads(sub["definition_json"])
+                    if isinstance(parsed, dict):
+                        definition = parsed
+                except (TypeError, json.JSONDecodeError):
+                    definition = None
+            if definition is None:
+                form = _form_row(db, form_id)
+                definition = _definition(form) if form else {}
+            out["answers"] = crypto.reveal_answers(definition, answers, mask=True)
+            out["definition"] = definition
+            out["receipt_code"] = sub["receipt_code"]
+            out["respondent_label"] = sub["submitter_name"]
+            out["submitted_at"] = sub["created_at"]
+    return out
+
+
 def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     try:
         form_ids = json.loads(row["form_ids_json"])
@@ -2777,9 +2940,17 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
             item["respondent_label"] = sub["submitter_name"]
             item["submitted_at"] = sub["created_at"]
         forms.append(item)
+    raw_items = _application_items(row)
+    if not raw_items:
+        raw_items = _items_from_form_ids(db, row)
+    items = [_item_payload(db, row, item) for item in raw_items]
     stamps = [str(row["created_at"] or "")]
     for form in forms:
         submitted = form.get("submitted_at")
+        if submitted:
+            stamps.append(str(submitted))
+    for item in items:
+        submitted = item.get("submitted_at")
         if submitted:
             stamps.append(str(submitted))
     return {
@@ -2793,6 +2964,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "form_ids": form_ids,
         "notice": notice,
         "forms": forms,
+        "items": items,
         "public_url": public_application_url_for(row["token"]),
         "created_at": row["created_at"],
         "updated_at": max(stamps),
@@ -2812,9 +2984,47 @@ def _resolve_application_id(
         form_ids = json.loads(row["form_ids_json"])
     except (TypeError, json.JSONDecodeError):
         form_ids = []
-    if form_id not in form_ids:
+    item_form_ids = {
+        str(it.get("form_id"))
+        for it in _application_items(row)
+        if it.get("form_id")
+    }
+    if form_id not in form_ids and form_id not in item_form_ids:
         return None, "この様式はこの申請に含まれていません"
     return row["id"], None
+
+
+def _resolve_application_item_id(
+    db: sqlite3.Connection,
+    application_id: str | None,
+    form_id: str,
+    application_item_id: str | None,
+) -> str | None:
+    if not application_id:
+        return None
+    app = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    if not app:
+        return None
+    items = _application_items(app)
+    wanted = (application_item_id or "").strip()
+    if wanted:
+        for it in items:
+            if it.get("id") == wanted and (it.get("form_id") or "") == form_id:
+                return wanted
+    # 指定が無いときは、同じ様式の未充足アイテムを1つ選ぶ
+    for it in items:
+        if (it.get("form_id") or "") != form_id:
+            continue
+        if it.get("fulfillment") == "file":
+            continue
+        if _item_status(db, application_id, it) in ("none", "draft"):
+            return it.get("id")
+    for it in items:
+        if (it.get("form_id") or "") == form_id:
+            return it.get("id")
+    return None
 
 
 def _open_application_from_guide(
@@ -2841,6 +3051,7 @@ def _open_application_from_guide(
     if err:
         return None
     resolved = procedure.resolve_bundle(mapping, answers)
+    slots = procedure.resolve_slots(mapping, answers)
     reception_ids: list[str] = [submitted["id"]]
     for fid in resolved["form_ids"]:
         rec = _published_reception_row(db, fid)
@@ -2854,10 +3065,52 @@ def _open_application_from_guide(
         "prepare": resolved["prepare"],
         "refs": resolved["refs"],
     }
+    items: list[dict[str, Any]] = [
+        _new_item(
+            slot_id="",
+            title=submitted["title"],
+            kind="data",
+            required="required",
+            cardinality="one",
+            form_id=submitted["id"],
+            fulfillment="form",
+            added_by="system",
+        )
+    ]
+    seen_forms = {submitted["id"]}
+    for slot in slots["slots"]:
+        if slot["kind"] == "attach":
+            items.append(
+                _new_item(
+                    slot_id=slot["slot_id"],
+                    title=slot["title"],
+                    kind="attach",
+                    required=slot["required"],
+                    cardinality=slot["cardinality"],
+                    form_id="",
+                    added_by="system",
+                )
+            )
+            continue
+        rec = _published_reception_row(db, slot["form_id"])
+        if not rec or rec["id"] in seen_forms:
+            continue
+        seen_forms.add(rec["id"])
+        items.append(
+            _new_item(
+                slot_id=slot["slot_id"],
+                title=rec["title"],
+                kind="yoshiki",
+                required=slot["required"],
+                cardinality=slot["cardinality"],
+                form_id=rec["id"],
+                added_by="system",
+            )
+        )
     db.execute(
         "INSERT INTO applications (id, token, procedure_id, guide_form_id, "
-        "guide_submission_id, form_ids_json, notice_json, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
+        "guide_submission_id, form_ids_json, notice_json, items_json, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
         (
             aid,
             token,
@@ -2866,12 +3119,13 @@ def _open_application_from_guide(
             submission_id,
             json.dumps(reception_ids, ensure_ascii=False),
             json.dumps(notice, ensure_ascii=False),
+            json.dumps(items, ensure_ascii=False),
             now,
         ),
     )
     db.execute(
-        "UPDATE submissions SET application_id = ? WHERE id = ?",
-        (aid, submission_id),
+        "UPDATE submissions SET application_id = ?, application_item_id = ? WHERE id = ?",
+        (aid, items[0]["id"], submission_id),
     )
     row = db.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
     return _application_payload(db, row) if row else None
@@ -3022,6 +3276,224 @@ def public_application(token: str) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
+def _app_row(
+    db: sqlite3.Connection,
+    application_id: str | None,
+    token: str | None,
+) -> sqlite3.Row | None:
+    if token:
+        return db.execute("SELECT * FROM applications WHERE token = ?", (token,)).fetchone()
+    return db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+
+
+def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """手続きが持つ枠のカタログ（申請束に足せる様式・添付の種）。"""
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        mapping, err = procedure.normalize_mapping(proc["mapping_json"])
+        if err:
+            return None, err
+        slots: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for rule in mapping.get("rules") or []:
+            for fid in rule.get("form_ids") or []:
+                key = f"yoshiki:{fid}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                rec = _published_reception_row(db, fid) or _form_row(db, fid)
+                if not rec:
+                    continue
+                slots.append(
+                    {
+                        "slot_id": key,
+                        "title": rec["title"],
+                        "kind": "yoshiki",
+                        "form_id": rec["id"],
+                    }
+                )
+            for item in rule.get("prepare") or []:
+                text = str(item).strip()
+                if not text:
+                    continue
+                key = f"attach:{text}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                slots.append(
+                    {"slot_id": key, "title": text, "kind": "attach", "form_id": None}
+                )
+        return {"procedure_id": procedure_id, "slots": slots}, None
+
+
+def add_application_item(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    duplicate_of: str | None = None,
+    form_id: str | None = None,
+    slot_id: str | None = None,
+    title: str | None = None,
+    kind: str | None = None,
+    added_by: str = "guest",
+) -> tuple[dict[str, Any] | None, str | None]:
+    """申請束に枠アイテムを1件足す（複製・カタログ追加・任意の添付）。"""
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        new_item: dict[str, Any] | None = None
+        if duplicate_of:
+            src = next((it for it in items if it.get("id") == duplicate_of), None)
+            if not src:
+                return None, "複製元のアイテムが見つかりません"
+            copies = [it for it in items if it.get("slot_id") and it.get("slot_id") == src.get("slot_id")]
+            new_item = _new_item(
+                slot_id=src.get("slot_id") or "",
+                title=src.get("title") or "",
+                kind=src.get("kind") or "yoshiki",
+                required="optional",
+                cardinality="many",
+                form_id=src.get("form_id") or "",
+                template_file_id=src.get("template_file_id") or "",
+                copy_index=len(copies),
+                added_by=added_by,
+            )
+        elif form_id:
+            rec = _published_reception_row(db, form_id) or _form_row(db, form_id)
+            if not rec:
+                return None, "様式が見つかりません"
+            new_item = _new_item(
+                slot_id=slot_id or f"yoshiki:{rec['id']}",
+                title=title or rec["title"],
+                kind=kind or "yoshiki",
+                required="optional",
+                cardinality="one",
+                form_id=rec["id"],
+                added_by=added_by,
+            )
+        else:
+            text = (title or "").strip()
+            if not text:
+                return None, "足す様式か添付の名前が必要です"
+            new_item = _new_item(
+                slot_id=slot_id or "",
+                title=text,
+                kind="attach",
+                required="optional",
+                cardinality="one",
+                form_id="",
+                added_by=added_by,
+            )
+        items.append(new_item)
+        db.execute(
+            "UPDATE applications SET items_json = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), app["id"]),
+        )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
+def _store_item_file(
+    db: sqlite3.Connection, bucket_form_id: str, filename: str, data: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    name = files.safe_filename(filename)
+    try:
+        blob, mime = files.decode_upload(data, filename=name, kind="file")
+    except ValueError as e:
+        return None, str(e)
+    file_id = str(uuid.uuid4())
+    files.write_blob(bucket_form_id, file_id, blob)
+    db.execute(
+        "INSERT INTO uploaded_files (id, form_id, submission_id, component_id, "
+        "filename, mime, size, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (file_id, bucket_form_id, None, None, name, mime, len(blob), _now_iso()),
+    )
+    return {"file_id": file_id, "filename": name, "mime": mime, "size": len(blob)}, None
+
+
+def fulfill_item_with_file(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
+    filename: str,
+    data: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """様式・添付の枠を、記入済みファイルの添付で満たす。"""
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        target = next((it for it in items if it.get("id") == item_id), None)
+        if not target:
+            return None, "アイテムが見つかりません"
+        if target.get("kind") == "data":
+            return None, "この枠はオンライン記入のみです"
+        bucket = target.get("form_id") or app["guide_form_id"]
+        saved, err = _store_item_file(db, bucket, filename, data)
+        if err or saved is None:
+            return None, err
+        target["fulfillment"] = "file"
+        target["file_id"] = saved["file_id"]
+        target["file_name"] = saved["filename"]
+        target["file_bucket"] = bucket
+        db.execute(
+            "UPDATE applications SET items_json = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), app["id"]),
+        )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
+def clear_item_fulfillment(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """ファイル添付を外して、未充足（またはオンライン記入）に戻す。"""
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        target = next((it for it in items if it.get("id") == item_id), None)
+        if not target:
+            return None, "アイテムが見つかりません"
+        target["fulfillment"] = ""
+        target["file_id"] = ""
+        target["file_name"] = ""
+        target.pop("file_bucket", None)
+        db.execute(
+            "UPDATE applications SET items_json = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), app["id"]),
+        )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
 def _export_cell(value: Any) -> str:
     if value is None or value == "":
         return ""
@@ -3030,6 +3502,59 @@ def _export_cell(value: Any) -> str:
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
+
+
+def _data_item_fields(item: dict[str, Any]) -> list[tuple[str, str, Any]]:
+    """記入必須（kind=data）の提出済み項目を、揃えやすいキーで返す。
+
+    キーは様式名 + imi_type（無ければ部品ラベル）で、申請をまたいで一致させる。
+    """
+    if item.get("kind") != "data":
+        return []
+    if item.get("status") != "submitted" or item.get("fulfillment") == "file":
+        return []
+    answers = item.get("answers") or {}
+    definition = item.get("definition") or {}
+    title = item.get("title") or ""
+    out: list[tuple[str, str, Any]] = []
+    for comp in definition.get("components") or []:
+        if comp.get("type") in spec.DISPLAY_TYPES:
+            continue
+        cid = str(comp.get("id") or "")
+        if not cid:
+            continue
+        key_tail = str(comp.get("imi_type") or "").strip() or str(comp.get("label") or cid)
+        out.append((f"{title}::{key_tail}", cid, answers.get(cid, "")))
+    return out
+
+
+def _export_aligned(items: list[dict[str, Any]]) -> str:
+    columns: list[str] = []
+    seen: set[str] = set()
+    for app in items:
+        for item in app.get("items") or []:
+            for header, _cid, _value in _data_item_fields(item):
+                if header not in seen:
+                    seen.add(header)
+                    columns.append(header)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["案内番号", "様式", "複製番号", *columns])
+    for app in items:
+        for item in app.get("items") or []:
+            fields = _data_item_fields(item)
+            if not fields:
+                continue
+            values = {header: _export_cell(value) for header, _cid, value in fields}
+            writer.writerow(
+                [
+                    app.get("token") or "",
+                    item.get("title") or "",
+                    int(item.get("copy_index") or 0),
+                    *[values.get(col, "") for col in columns],
+                ]
+            )
+    return buf.getvalue()
 
 
 def _submitted_fields(form: dict[str, Any]) -> list[tuple[str, str, Any]]:
@@ -3119,6 +3644,8 @@ def export_procedure_applications(
         return "\n".join(json.dumps(item, ensure_ascii=False) for item in items) + (
             "\n" if items else ""
         ), None
+    if kind == "aligned":
+        return _export_aligned(items), None
     columns: list[str] = []
     seen: set[str] = set()
     for app in items:

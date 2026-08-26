@@ -42,6 +42,7 @@ const tokenFromPath = () => {
 };
 
 const appTokenFromQuery = () => new URLSearchParams(location.search).get('app') || '';
+const appItemFromQuery = () => new URLSearchParams(location.search).get('item') || '';
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -73,6 +74,7 @@ export const GuestApp = () => {
 const GuestForm = () => {
   const token = tokenFromPath();
   const applicationToken = appTokenFromQuery();
+  const applicationItemId = appItemFromQuery();
   const [phase, setPhase] = useState<
     'load' | 'pin' | 'form' | 'confirm' | 'done' | 'withdrawn' | 'error'
   >('load');
@@ -267,6 +269,7 @@ const GuestForm = () => {
             answers: values,
             resume_token: resumeToken || undefined,
             application_token: applicationToken || undefined,
+            application_item_id: applicationItemId || undefined,
           }),
         },
       );
@@ -396,6 +399,7 @@ const GuestForm = () => {
                               is_draft: true,
                               resume_token: resumeToken || undefined,
                               application_token: applicationToken || undefined,
+                              application_item_id: applicationItemId || undefined,
                             }),
                           },
                         );

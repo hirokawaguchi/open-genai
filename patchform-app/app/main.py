@@ -791,11 +791,128 @@ async def submit_internal(
         is_draft=bool(body.get("is_draft")),
         resume_token=(body.get("resume_token") or None),
         application_token=(body.get("application_token") or None),
+        application_item_id=(body.get("application_item_id") or None),
     )
     if msg or result is None:
         code = 404 if "見つかりません" in (msg or "") else 403 if "公開" in (msg or "") else 400
         return JSONResponse(status_code=code, content={"error": msg})
     return JSONResponse(status_code=201, content=result)
+
+
+def _item_error(msg: str | None) -> JSONResponse:
+    code = 404 if msg and "見つかりません" in msg else 400
+    return JSONResponse(status_code=code, content={"error": msg})
+
+
+@app.get("/procedures/{procedure_id}/catalog")
+def procedure_catalog(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags,
+        x_service_key, allow_service=True,
+    )
+    if err:
+        return err
+    data, msg = store.procedure_catalog(procedure_id)
+    if msg or data is None:
+        return _item_error(msg)
+    return JSONResponse(content=data)
+
+
+@app.post("/applications/{application_id}/items")
+async def add_application_item_internal(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.add_application_item(
+        application_id=application_id,
+        duplicate_of=(body.get("duplicate_of") or None),
+        form_id=(body.get("form_id") or None),
+        slot_id=(body.get("slot_id") or None),
+        title=(body.get("title") or None),
+        kind=(body.get("kind") or None),
+        added_by="staff",
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/applications/{application_id}/items/{item_id}/file")
+async def fulfill_item_internal(
+    application_id: str,
+    item_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.fulfill_item_with_file(
+        application_id=application_id,
+        item_id=item_id,
+        filename=str(body.get("filename") or "file"),
+        data=str(body.get("data") or ""),
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/applications/{application_id}/items/{item_id}/file")
+def clear_item_internal(
+    application_id: str,
+    item_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    result, msg = store.clear_item_fulfillment(
+        application_id=application_id, item_id=item_id
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
 
 
 @app.get("/forms/{form_id}/submissions")
@@ -1549,6 +1666,7 @@ async def public_submit(guest_token: str, request: Request) -> JSONResponse:
         is_draft=bool(body.get("is_draft")),
         resume_token=(body.get("resume_token") or None),
         application_token=(body.get("application_token") or None),
+        application_item_id=(body.get("application_item_id") or None),
     )
     if msg or result is None:
         code = 404 if "見つかりません" in (msg or "") else 403 if "公開" in (msg or "") or "暗証" in (msg or "") else 400
@@ -1562,6 +1680,65 @@ def public_get_application(token: str) -> JSONResponse:
     if msg or data is None:
         return JSONResponse(status_code=404, content={"error": msg})
     return JSONResponse(content=data)
+
+
+@app.get("/public/api/applications/{token}/catalog")
+def public_application_catalog(token: str) -> JSONResponse:
+    data, msg = store.public_application(token)
+    if msg or data is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    catalog, cmsg = store.procedure_catalog(str(data.get("procedure_id") or ""))
+    if cmsg or catalog is None:
+        return JSONResponse(status_code=404, content={"error": cmsg})
+    return JSONResponse(content=catalog)
+
+
+@app.post("/public/api/applications/{token}/items")
+async def public_add_application_item(token: str, request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.add_application_item(
+        token=token,
+        duplicate_of=(body.get("duplicate_of") or None),
+        form_id=(body.get("form_id") or None),
+        slot_id=(body.get("slot_id") or None),
+        title=(body.get("title") or None),
+        kind=(body.get("kind") or None),
+        added_by="guest",
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/public/api/applications/{token}/items/{item_id}/file")
+async def public_fulfill_item(token: str, item_id: str, request: Request) -> JSONResponse:
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"item-pub:{ip}", limit=40):
+        return JSONResponse(status_code=429, content={"error": "添付の回数制限に達しました"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.fulfill_item_with_file(
+        token=token,
+        item_id=item_id,
+        filename=str(body.get("filename") or "file"),
+        data=str(body.get("data") or ""),
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/public/api/applications/{token}/items/{item_id}/file")
+def public_clear_item(token: str, item_id: str) -> JSONResponse:
+    result, msg = store.clear_item_fulfillment(token=token, item_id=item_id)
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
 
 
 @app.get("/public/f/{guest_token}", response_model=None)

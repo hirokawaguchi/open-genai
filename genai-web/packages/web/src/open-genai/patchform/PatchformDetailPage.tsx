@@ -46,6 +46,7 @@ export const PatchformDetailPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const applicationToken = searchParams.get('app') || '';
+  const applicationItemId = searchParams.get('item') || '';
   const { form, isLoading, loadError, mutate } = usePatchformDetail(formId);
   const { application } = usePatchformApplication(applicationToken || undefined);
   const {
@@ -112,6 +113,7 @@ export const PatchformDetailPage = () => {
       submitter_name: submitterName.trim() || undefined,
       is_draft: true,
       application_token: applicationToken || undefined,
+      application_item_id: applicationItemId || undefined,
     });
     if (ok) {
       setDraftNote('下書きを保存しました。あとから続きを入力できます。');
@@ -129,6 +131,7 @@ export const PatchformDetailPage = () => {
       answers,
       submitter_name: submitterName.trim() || undefined,
       application_token: applicationToken || undefined,
+      application_item_id: applicationItemId || undefined,
     });
     if (ok) {
       setAnswers({});

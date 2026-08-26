@@ -190,7 +190,7 @@ export const PatchformGuideAssist = ({
                   <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
                     {preview.preview.forms.length
                       ? preview.preview.forms.every((f) => f.title_only)
-                        ? '様式名だけの下書きです。中身はあとから足してください。'
+                        ? '様式名だけの下書きです。空フォームは作らず、記入でもファイル添付でも満たせる枠になります。中身はあとから足せます。'
                         : '申請用紙の下書きを作ります。あとから部品を直せます。'
                       : 'この文書からは様式を読み取れませんでした。'}
                   </span>
