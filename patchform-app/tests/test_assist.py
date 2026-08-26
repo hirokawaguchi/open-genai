@@ -193,6 +193,42 @@ def test_extract_form_titles_from_handbook() -> None:
     assert all(item["title_only"] for item in preview["forms"])
 
 
+def test_clean_heading_keeps_katakana_long_vowel() -> None:
+    # 「ー」を潰さない（チェックシート/ページ/サービスが壊れない）
+    assert assist.clean_heading("申請書提出前チェックシート") == "申請書提出前チェックシート"
+    assert assist.clean_heading("このページの先頭へ") == "このページの先頭へ"
+    # ダッシュ区切りは従来どおり空白に潰す
+    assert assist.clean_heading("指定申請の手引き － 目次 －").startswith("指定申請の手引き")
+    assert "目次" not in assist.clean_heading("指定申請の手引き － 目次 －")
+
+
+def test_extract_form_titles_cleans_table_rows() -> None:
+    # 実在の手引き（群馬県・建設業許可）に近い markdown 表の行
+    text = (
+        "| 3 | 第2号 | 工事経歴書 ※業種別に作成、実績なしでも作成 | "
+        "様式第2号（Excelファイル：16KB） | 様式第2号（PDFファイル：39KB） | 要 | 要 | 要 | 要 | 省略可 |\n"
+        "| 11 | 第20号 | 営業の沿革 | 様式第20号（Excelファイル：48KB） | "
+        "様式第20号（PDFファイル：72KB） | 要 | 要 | 省略可 |\n"
+    )
+    titles = assist.extract_form_titles(text)
+    joined = "\n".join(titles)
+    # ゴミ（パイプ・ファイルサイズ・要否）が名前に混ざらない
+    assert "|" not in joined
+    assert "KB" not in joined
+    assert "ファイル" not in joined
+    assert "要" not in joined and "省略可" not in joined
+    # 様式番号 + 説明名だけが残る
+    assert any(t.replace(" ", "") == "様式第2号工事経歴書" for t in titles)
+    assert any(t.replace(" ", "") == "様式第20号営業の沿革" for t in titles)
+
+
+def test_extract_form_titles_drops_footnote_legend() -> None:
+    # 注記凡例に紛れた様式番号は様式名にしない
+    text = "（注5）様式第11号に該当者無しであれば省略可 （注6）身分証明書について\n"
+    titles = assist.extract_form_titles(text)
+    assert all("該当者無し" not in t for t in titles)
+
+
 def test_split_and_select_guide_chapters() -> None:
     text = """## 障害福祉サービス等 指定申請の手引き － 目次 －
 1 はじめに ........ 1
@@ -298,6 +334,9 @@ if __name__ == "__main__":
     test_invite_fallback()
     test_fallback_procedure_move()
     test_extract_form_titles_from_handbook()
+    test_clean_heading_keeps_katakana_long_vowel()
+    test_extract_form_titles_cleans_table_rows()
+    test_extract_form_titles_drops_footnote_legend()
     test_split_and_select_guide_chapters()
     test_fallback_generic_does_not_invent()
     test_normalize_allows_missing_choice()

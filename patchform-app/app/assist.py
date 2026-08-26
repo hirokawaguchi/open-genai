@@ -11,7 +11,8 @@ from . import llm, spec
 
 _HEADING_MARK = re.compile(r"^#{1,6}\s*")
 _TOC_MARK = re.compile(r"[［\[\s]*目次[］\]\s]*")
-_DASH_RUN = re.compile(r"[－—\-ー]{1,}")
+# 見出しの区切りに使われるダッシュ類のみ潰す。片仮名の長音符「ー」は語の一部なので除く。
+_DASH_RUN = re.compile(r"[－—―‐\-]{1,}")
 _SPACES = re.compile(r"\s+")
 
 
@@ -338,6 +339,47 @@ _QUOTED_FORM = re.compile(
 _LIST_PREFIX = re.compile(r"^[0-9０-９]+[\.．、.\s]+")
 _ZEN_DIGIT = str.maketrans("０１２３４５６７８９", "0123456789")
 
+# 様式名のゴミ取り（決定的な整形のみ。意味の判断はしない）。
+_FILE_META = re.compile(
+    r"[（(][^（()）]*(?:ファイル|Excel|EXCEL|PDF|Word|WORD|KB|MB|ダウンロード)[^（()）]*[）)]"
+)
+_NOTE_TAIL = re.compile(r"[（(]\s*注.*$")
+_RECAP = re.compile(r"[（(]\s*(?:再掲|表|裏)\s*[）)]")
+_ONLY_NUM_CELL = re.compile(r"^[0-9０-９()（）.\-\s]+$")
+_NUM_ONLY = re.compile(
+    r"^(?:別記|別紙)?(?:様式)?第?\s*[0-9０-９一二三四五六七八九十]+号(?:の[0-9０-９]+)?$"
+)
+# 表の要否・注記セル（要 / 不要 / 省略可 / 注3 / 要 注3 など）
+_DROP_CELL = re.compile(r"(?:要|不要|省略可)(?:\s*注\s*[0-9０-９]+)?|注\s*[0-9０-９]+")
+_CELL_META_KEYS = ("ファイル", "KB", "MB", "ダウンロード", "Excel", "PDF", "Word")
+
+
+def _form_title_cell(line: str) -> str:
+    """様式名の行を整える。
+
+    markdown 表なら説明的なセルを選び、ファイルサイズ・注記凡例・要否（要/不要/省略可）
+    などの定型的なゴミを落とす。分岐や区分の判断はしない（それは人とモデルに任せる）。
+    """
+    s = line
+    if "|" in s:
+        picks: list[str] = []
+        for cell in (c.strip() for c in s.split("|")):
+            cell = _RECAP.sub("", cell).strip()
+            if not cell or _ONLY_NUM_CELL.match(cell):
+                continue
+            if _DROP_CELL.fullmatch(cell) or _NUM_ONLY.match(cell):
+                continue
+            if any(k in cell for k in _CELL_META_KEYS):
+                continue
+            picks.append(cell)
+        s = " ".join(picks)
+    s = _FILE_META.sub("", s)
+    s = _NOTE_TAIL.sub("", s)
+    s = _RECAP.sub("", s)
+    s = s.split("※", 1)[0]
+    # 余った開き括弧・区切りだけを落とす（閉じ括弧は名前の一部なので残す）
+    return _SPACES.sub(" ", s).strip(" ・|（(")
+
 
 def _line_at(text: str, index: int) -> str:
     start = text.rfind("\n", 0, index) + 1
@@ -356,7 +398,7 @@ def extract_form_titles(text: str, *, limit: int = MAX_PROCEDURE_FORMS) -> list[
     extras: list[str] = []
     for match in _FORM_MARK.finditer(q):
         mark = re.sub(r"\s+", "", match.group(0))
-        line = _LIST_PREFIX.sub("", clean_heading(_line_at(q, match.start())))
+        line = _LIST_PREFIX.sub("", clean_heading(_form_title_cell(_line_at(q, match.start()))))
         titled = line
         wrapped = re.search(
             rf"^(.+?)[（(]\s*{re.escape(match.group(0))}\s*[）)]\s*$", line
