@@ -1067,7 +1067,7 @@ async def select_chapters_llm(chapters: list[dict[str, Any]]) -> list[str] | Non
             },
         ],
         temperature=0,
-        max_tokens=512,
+        max_tokens=2_048,
         think=False,
     )
     parsed = llm.extract_json(raw)
@@ -1112,7 +1112,7 @@ async def refine_chapter_llm(
             },
         ],
         temperature=0,
-        max_tokens=4_096,
+        max_tokens=8_192,
         think=False,
     )
     parsed = llm.extract_json(raw)
@@ -1151,27 +1151,50 @@ _NAV_TITLE_HINTS: tuple[str, ...] = (
 )
 
 
+# 分岐に効く見出し語の重み。区分・申請区分・流れが最も効く。
+_NAV_WEIGHTS: tuple[tuple[str, int], ...] = (
+    ("申請区分", 6),
+    ("区分", 6),
+    ("流れ", 5),
+    ("必要な書類", 4),
+    ("提出書類", 4),
+    ("申請書類", 3),
+    ("要件", 3),
+    ("対象", 3),
+    ("許可", 2),
+    ("手続き", 1),
+    ("有効期間", 1),
+)
+
+
+def _nav_score(chapter: dict[str, Any]) -> int:
+    flat = _SPACES.sub("", str(chapter.get("title") or ""))
+    score = sum(w for hint, w in _NAV_WEIGHTS if _SPACES.sub("", hint) in flat)
+    # 巨大な章は分岐の密度が低いので後回しにする。
+    if len(str(chapter.get("body") or "")) > 20_000:
+        score -= 3
+    return score
+
+
 def select_nav_chapters(
     chapters: list[dict[str, Any]], *, limit: int = MAX_NAV_CHAPTERS
 ) -> list[dict[str, Any]]:
     """申請区分・要件など、分岐の判断に効く章を見出しから選ぶ。
 
     PDF 由来の見出しは「許 可 の 区 分」のように文字間へ空白が入ることがある。
-    空白を潰してからヒント語を照合する。
+    空白を潰してヒント語を照合し、分岐に効く章ほど前に来るよう重みで並べる。
     """
-    picks: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for chapter in chapters:
         if chapter.get("kind") == "toc":
             continue
-        body = str(chapter.get("body") or "")
-        if not body.strip():
+        if not str(chapter.get("body") or "").strip():
             continue
         flat = _SPACES.sub("", str(chapter.get("title") or ""))
         if any(_SPACES.sub("", hint) in flat for hint in _NAV_TITLE_HINTS):
-            picks.append(chapter)
-        if len(picks) >= limit:
-            break
-    return picks
+            candidates.append(chapter)
+    candidates.sort(key=_nav_score, reverse=True)
+    return candidates[:limit]
 
 
 async def draft_navigation_llm(
@@ -1210,8 +1233,12 @@ async def draft_navigation_llm(
                 "role": "system",
                 "content": (
                     "あなたは日本の自治体手続きの設計者です。"
-                    "手引きを読み、申請者が最初に答えるべき設問（申請区分・許可区分・"
-                    "法人/個人など、提出物が変わる分かれ目）を読み取ってください。"
+                    "手引きを読み、申請者が最初に答えるべき設問（提出物・要否が変わる分かれ目）"
+                    "を漏れなく読み取ってください。"
+                    "次の観点は、文書に根拠があれば必ず設問にしてください: "
+                    "申請の種類・区分（新規/更新/業種追加/廃業 等）、許可・管轄の区分"
+                    "（都道府県知事/大臣、所在地）、規模や金額のしきい値（一般/特定 等）、"
+                    "申請者の別（法人/個人）。文書に無い観点は作らないでください。"
                     "JSON オブジェクトだけを返します。"
                     'キーは questions と rules。'
                     'questions は [{"label":"設問文","options":["選択肢1","選択肢2"]}] の配列。'
@@ -1232,7 +1259,9 @@ async def draft_navigation_llm(
             },
         ],
         temperature=0,
-        max_tokens=8_192,
+        # 推論モデル（deepseek 等）は think:false でも推論に 1〜2 万字を使うため、
+        # 枠が小さいと本文が空のまま length で切れる。広めに確保して安定させる。
+        max_tokens=24_000,
         think=False,
     )
     parsed = llm.extract_json(raw)
