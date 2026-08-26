@@ -235,6 +235,14 @@ export type SlotRequired = 'required' | 'recommended' | 'optional';
 export type SlotCardinality = 'one' | 'many';
 export type ItemFulfillment = '' | 'form' | 'file';
 
+/** 自治体が配布する様式ひな型（Word/PDF/Excel）。申請者はダウンロードして記入・添付する。 */
+export type SlotTemplate = {
+  file_id: string;
+  filename: string;
+  mime?: string;
+  size?: number;
+};
+
 /** 申請束のアイテム（枠のインスタンス）。オンライン記入でもファイル添付でも満たせる。 */
 export type ApplicationItem = {
   id: string;
@@ -253,6 +261,7 @@ export type ApplicationItem = {
   public_url?: string | null;
   visibility?: FormVisibility | null;
   can_fill_online: boolean;
+  template?: SlotTemplate | null;
   status: ApplicationFormStatus;
   answers?: Record<string, unknown>;
   definition?: FormDefinition;
@@ -266,6 +275,7 @@ export type ProcedureCatalogSlot = {
   title: string;
   kind: SlotKind;
   form_id?: string | null;
+  template?: SlotTemplate | null;
 };
 
 export type ProcedureCatalog = {

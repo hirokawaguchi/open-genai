@@ -20,6 +20,7 @@ import type {
   Procedure,
   ProcedureCatalog,
   ProcedureShare,
+  SlotTemplate,
   Submission,
   UploadedFile,
 } from './types';
@@ -357,6 +358,17 @@ export const downloadProcedureExport = async (
   );
   const ext = format === 'jsonl' ? 'jsonl' : 'csv';
   saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
+};
+
+/** 職員が手続きの様式ひな型をダウンロードする（庁内用）。 */
+export const downloadProcedureTemplate = async (
+  procedureId: string,
+  file: SlotTemplate,
+): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/procedures/${encodeURIComponent(procedureId)}/templates/${encodeURIComponent(file.file_id)}/download`,
+  );
+  saveBlob(blob, parseFilename(disposition) ?? file.filename);
 };
 
 export const downloadApplicationExport = async (
@@ -781,6 +793,74 @@ export const usePatchformApplicationItems = () => {
   );
 
   return { addItem, fulfillWithFile, clearFile, busy, error, setError };
+};
+
+/** 手続き編集で枠ごとの様式ひな型を登録・削除する（職員のみ）。 */
+export const usePatchformProcedureTemplates = (procedureId: string | undefined) => {
+  const key = procedureId
+    ? `patchform/procedures/${encodeURIComponent(procedureId)}/templates`
+    : null;
+  const { data, isLoading, mutate } = useSWR<{
+    procedure_id: string;
+    templates: Record<string, SlotTemplate>;
+  }>(key, teamApiFetcher, { revalidateOnFocus: false, shouldRetryOnError: false });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = useCallback(
+    async (slotId: string, file: File): Promise<boolean> => {
+      if (!procedureId) return false;
+      setBusy(true);
+      setError(null);
+      try {
+        const data = await fileToDataUrl(file);
+        await teamApi.post(
+          `patchform/procedures/${encodeURIComponent(procedureId)}/templates`,
+          { slot_id: slotId, filename: file.name, data },
+        );
+        await mutate();
+        return true;
+      } catch (e) {
+        setError(errorMessage(e, 'ひな型の登録に失敗しました。'));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [procedureId, mutate],
+  );
+
+  const remove = useCallback(
+    async (fileId: string): Promise<boolean> => {
+      if (!procedureId) return false;
+      setBusy(true);
+      setError(null);
+      try {
+        await teamApi.delete(
+          `patchform/procedures/${encodeURIComponent(procedureId)}/templates/${encodeURIComponent(fileId)}`,
+        );
+        await mutate();
+        return true;
+      } catch (e) {
+        setError(errorMessage(e, 'ひな型の削除に失敗しました。'));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [procedureId, mutate],
+  );
+
+  return {
+    templates: data?.templates ?? {},
+    isLoading,
+    upload,
+    remove,
+    busy,
+    error,
+    setError,
+    mutate,
+  };
 };
 
 export const usePatchformProcedureActions = () => {

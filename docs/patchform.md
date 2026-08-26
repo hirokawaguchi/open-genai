@@ -110,6 +110,18 @@ DELETE /public/api/applications/{token}/items/{item_id}/file   # 添付を外す
 
 庁内は `POST /patchform/applications/{id}/items`、`.../items/{item_id}/file`（職員の補正）で同じアイテムを操作します。フォーム提出時は `application_item_id` を付けると、その枠（複製した各件）に紐づきます。
 
+### 様式ひな型（ダウンロード配布）
+
+オンライン記入しない様式や添付は、自治体側が Word/PDF/Excel のひな型を配ることが多いです。職員は手続き編集の「様式ひな型」で枠（様式・添付）ごとにひな型を1つ登録します（差し替え可）。申請者は作業台の各枠から「様式ひな型をダウンロード」で受け取り、記入して「記入済みファイルを添付する」で満たします。ひな型の実体は案内フォームのバケットに置き、枠は `slot_id`（`yoshiki:{form_id}` / `attach:{名称}`）で対応づけます。`slot_id` は下書き・公開で変わらないので、複製した枠にも同じひな型が付きます。アイテムとカタログの各枠には `template`（`file_id`・`filename`・`mime`・`size`）が入ります。
+
+```
+GET    /patchform/procedures/{id}/templates                      # 枠→ひな型の一覧（職員）
+POST   /patchform/procedures/{id}/templates                      # 枠にひな型を登録（職員・slot_id指定）
+DELETE /patchform/procedures/{id}/templates/{file_id}            # ひな型を削除（職員）
+GET    /patchform/procedures/{id}/templates/{file_id}/download   # 庁内ダウンロード
+GET    /public/api/applications/{token}/templates/{file_id}      # 申請者ダウンロード（トークンが鍵）
+```
+
 各様式の下書き・提出・取下げは今までどおりフォーム単位です。持ち物の文言が添付台紙のチェックボックスと一致するときは、空欄なら自動で付けます。下書きがある欄は触りません。
 
 公開済みの手続きは読み取り専用 MCP（`procedure-mcp`）でも配れます。ツールは `list_procedures` / `inspect_procedure` / `resolve_bundle` です。下書き・提出本文・申請束トークンは出しません。詳細は [procedure-mcp.md](procedure-mcp.md)。デジタル庁の行政手続等調査 MCP とは別物です。

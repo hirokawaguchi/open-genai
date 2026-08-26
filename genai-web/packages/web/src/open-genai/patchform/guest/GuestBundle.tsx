@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
+type SlotTemplate = {
+  file_id: string;
+  filename: string;
+  mime?: string;
+  size?: number;
+};
+
 type BundleItem = {
   id: string;
   slot_id: string;
@@ -14,6 +21,7 @@ type BundleItem = {
   public_url?: string | null;
   visibility?: string | null;
   can_fill_online: boolean;
+  template?: SlotTemplate | null;
   status: string;
 };
 
@@ -240,6 +248,16 @@ export const GuestBundle = () => {
                     {filled && f.file_name ? ` / 添付: ${f.file_name}` : ''}
                     {!guestOk && f.can_fill_online ? ' / 庁内のみ' : ''}
                   </p>
+                  {f.template ? (
+                    <p className='mt-1'>
+                      <a
+                        href={`/public/api/applications/${encodeURIComponent(bundle.token)}/templates/${encodeURIComponent(f.template.file_id)}`}
+                        className='text-blue-900 underline-offset-2 hover:underline'
+                      >
+                        様式ひな型をダウンロード（{f.template.filename}）
+                      </a>
+                    </p>
+                  ) : null}
                   {f.kind !== 'data' && (
                     <div className='mt-2 flex flex-wrap gap-2'>
                       {filled ? (
