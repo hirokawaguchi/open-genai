@@ -10,6 +10,7 @@ import { answerRows } from './runtime/formatAnswer';
 import type { ApplicationItem } from './types';
 import {
   downloadApplicationExport,
+  downloadProcedureTemplate,
   usePatchformApplication,
   usePatchformApplicationItems,
   usePatchformProcedureCatalog,
@@ -247,6 +248,19 @@ export const PatchformApplicationPage = () => {
                           {f.receipt_code ? ` / 控え番号 ${f.receipt_code}` : ''}
                           {f.submitted_at ? ` / ${new Date(f.submitted_at).toLocaleString('ja-JP')}` : ''}
                         </p>
+                        {f.template && application.procedure_id && (
+                          <p className='mt-1 text-dns-14N-130'>
+                            <button
+                              type='button'
+                              className='text-blue-900 underline-offset-2 hover:underline'
+                              onClick={() =>
+                                void downloadProcedureTemplate(application.procedure_id, f.template!)
+                              }
+                            >
+                              様式ひな型をダウンロード（{f.template.filename}）
+                            </button>
+                          </p>
+                        )}
                         {rows.length > 0 ? (
                           <dl className='mt-2 grid gap-1 text-std-16N-170'>
                             {rows.map((row) => (

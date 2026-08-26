@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
@@ -11,15 +11,121 @@ import { PatchformSubnav } from './PatchformSubnav';
 import { omitsNavigation, type ProcedureRule } from './types';
 import { ProcedureSharePanel } from './ProcedureSharePanel';
 import {
+  downloadProcedureTemplate,
   usePatchformConfig,
   usePatchformList,
   usePatchformProcedure,
   usePatchformProcedureActions,
+  usePatchformProcedureCatalog,
+  usePatchformProcedureTemplates,
 } from './usePatchform';
 
 const statusLabel: Record<string, string> = {
   draft: '下書き',
   published: '公開中',
+};
+
+const templateKindLabel: Record<string, string> = {
+  yoshiki: '様式',
+  attach: '添付',
+};
+
+const ProcedureTemplatePanel = ({
+  procedureId,
+  canEdit,
+}: {
+  procedureId: string;
+  canEdit: boolean;
+}) => {
+  const { slots } = usePatchformProcedureCatalog(procedureId);
+  const { templates, upload, remove, busy, error } = usePatchformProcedureTemplates(procedureId);
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const targets = slots.filter((s) => s.kind === 'yoshiki' || s.kind === 'attach');
+
+  if (targets.length === 0) {
+    return (
+      <p className='text-solid-gray-600'>
+        先に上の対応で様式や「準備するもの」を設定して保存すると、ここに枠が並びます。
+      </p>
+    );
+  }
+
+  return (
+    <div className='flex flex-col gap-3'>
+      <p className='text-std-16N-170 text-solid-gray-700'>
+        自治体が配布する様式ひな型（Word / PDF / Excel）を枠ごとに登録します。申請者は作業台からダウンロードして記入し、記入済みを添付で提出できます。枠は保存済みの対応から並びます。
+      </p>
+      {error && (
+        <p className='text-error-1' role='alert'>
+          {error}
+        </p>
+      )}
+      <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
+        {targets.map((s) => {
+          const t = templates[s.slot_id];
+          return (
+            <li key={s.slot_id} className='flex flex-col gap-2 py-3'>
+              <div className='flex flex-wrap items-baseline gap-2'>
+                <span className='text-std-16B-150'>{s.title}</span>
+                <span className='rounded bg-solid-gray-100 px-2 py-0.5 text-dns-14N-130 text-solid-gray-700'>
+                  {templateKindLabel[s.kind] || s.kind}
+                </span>
+              </div>
+              {t ? (
+                <div className='flex flex-wrap items-center gap-3'>
+                  <button
+                    type='button'
+                    className='text-dns-14N-130 text-blue-900 underline-offset-2 hover:underline'
+                    onClick={() => void downloadProcedureTemplate(procedureId, t)}
+                  >
+                    現在のひな型: {t.filename}
+                  </button>
+                  {canEdit && (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      aria-disabled={busy}
+                      onClick={() => void remove(t.file_id)}
+                    >
+                      ひな型を削除
+                    </Button>
+                  )}
+                </div>
+              ) : canEdit ? (
+                <div>
+                  <input
+                    ref={(el) => {
+                      inputs.current[s.slot_id] = el;
+                    }}
+                    type='file'
+                    className='hidden'
+                    accept='.pdf,.doc,.docx,.xls,.xlsx'
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void upload(s.slot_id, file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-disabled={busy}
+                    onClick={() => inputs.current[s.slot_id]?.click()}
+                  >
+                    ひな型をアップロード
+                  </Button>
+                </div>
+              ) : (
+                <p className='text-dns-14N-130 text-solid-gray-600'>ひな型は未登録です。</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 };
 
 const ruleKey = (componentId: string, option: string) => `${componentId}\t${option}`;
@@ -546,6 +652,11 @@ export const PatchformProcedureEditPage = () => {
               )}
               </>
               )}
+            </section>
+
+            <section className='flex flex-col gap-4'>
+              <h2 className='text-std-18B-160'>様式ひな型（ダウンロード配布）</h2>
+              <ProcedureTemplatePanel procedureId={procedure.id} canEdit={Boolean(procedure.can_edit)} />
             </section>
 
             {error && (

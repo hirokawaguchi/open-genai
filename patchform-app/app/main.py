@@ -915,6 +915,119 @@ def clear_item_internal(
     return JSONResponse(content=result)
 
 
+@app.get("/procedures/{procedure_id}/templates")
+def list_procedure_templates(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags,
+        x_service_key, allow_service=True,
+    )
+    if err:
+        return err
+    data, msg = store.list_procedure_templates(procedure_id)
+    if msg or data is None:
+        return _item_error(msg)
+    return JSONResponse(content=data)
+
+
+@app.post("/procedures/{procedure_id}/templates")
+async def add_procedure_template(
+    procedure_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.add_procedure_template(
+        procedure_id=procedure_id,
+        slot_id=str(body.get("slot_id") or ""),
+        filename=str(body.get("filename") or "template"),
+        data=str(body.get("data") or ""),
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.delete("/procedures/{procedure_id}/templates/{file_id}")
+def delete_procedure_template(
+    procedure_id: str,
+    file_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    msg = store.delete_procedure_template(
+        procedure_id=procedure_id,
+        file_id=file_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg:
+        return _item_error(msg)
+    return JSONResponse(content={"message": "ひな型を削除しました"})
+
+
+@app.get("/procedures/{procedure_id}/templates/{file_id}/download")
+def download_procedure_template(
+    procedure_id: str,
+    file_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> Response:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags,
+        x_service_key, allow_service=True,
+    )
+    if err:
+        return err
+    meta, msg = store.get_procedure_template_file(procedure_id, file_id)
+    if msg or meta is None:
+        code = 404 if "見つかりません" in (msg or "") else 403
+        return JSONResponse(status_code=code, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
 @app.get("/forms/{form_id}/submissions")
 def list_submissions(
     form_id: str,
@@ -1739,6 +1852,18 @@ def public_clear_item(token: str, item_id: str) -> JSONResponse:
     if msg or result is None:
         return _item_error(msg)
     return JSONResponse(content=result)
+
+
+@app.get("/public/api/applications/{token}/templates/{file_id}", response_model=None)
+def public_download_template(token: str, file_id: str) -> Response:
+    meta, msg = store.get_application_template_file(token, file_id)
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
 
 
 @app.get("/public/f/{guest_token}", response_model=None)

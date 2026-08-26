@@ -2811,8 +2811,37 @@ def _item_status(db: sqlite3.Connection, application_id: str, item: dict[str, An
     return _form_progress(db, application_id, form_id)
 
 
+_TEMPLATE_PREFIX = "template:"
+
+
+def _procedure_templates(
+    db: sqlite3.Connection, guide_form_id: str
+) -> dict[str, dict[str, Any]]:
+    """枠ごとの様式ひな型を案内フォームのバケットから引く。{slot_id: メタ}。"""
+    if not guide_form_id:
+        return {}
+    rows = db.execute(
+        "SELECT id, component_id, filename, mime, size FROM uploaded_files "
+        "WHERE form_id = ? AND component_id LIKE 'template:%'",
+        (guide_form_id,),
+    ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        slot_id = str(r["component_id"])[len(_TEMPLATE_PREFIX) :]
+        out[slot_id] = {
+            "file_id": r["id"],
+            "filename": r["filename"],
+            "mime": r["mime"] or "",
+            "size": int(r["size"] or 0),
+        }
+    return out
+
+
 def _item_payload(
-    db: sqlite3.Connection, app_row: sqlite3.Row, item: dict[str, Any]
+    db: sqlite3.Connection,
+    app_row: sqlite3.Row,
+    item: dict[str, Any],
+    templates: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": item.get("id"),
@@ -2831,6 +2860,7 @@ def _item_payload(
         "public_url": None,
         "visibility": None,
         "can_fill_online": bool(item.get("form_id")),
+        "template": (templates or {}).get(item.get("slot_id") or ""),
         "status": "none",
     }
     form_id = item.get("form_id") or ""
@@ -2887,7 +2917,8 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
     except (TypeError, json.JSONDecodeError):
         notice = {"notes": [], "prepare": [], "refs": []}
     proc = db.execute(
-        "SELECT name, description FROM procedures WHERE id = ?", (row["procedure_id"],)
+        "SELECT name, description, guide_form_id FROM procedures WHERE id = ?",
+        (row["procedure_id"],),
     ).fetchone()
     forms: list[dict[str, Any]] = []
     for fid in form_ids:
@@ -2943,7 +2974,9 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
     raw_items = _application_items(row)
     if not raw_items:
         raw_items = _items_from_form_ids(db, row)
-    items = [_item_payload(db, row, item) for item in raw_items]
+    template_bucket = proc["guide_form_id"] if proc else row["guide_form_id"]
+    templates = _procedure_templates(db, template_bucket)
+    items = [_item_payload(db, row, item, templates) for item in raw_items]
     stamps = [str(row["created_at"] or "")]
     for form in forms:
         submitted = form.get("submitted_at")
@@ -3300,6 +3333,7 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
         mapping, err = procedure.normalize_mapping(proc["mapping_json"])
         if err:
             return None, err
+        templates = _procedure_templates(db, proc["guide_form_id"])
         slots: list[dict[str, Any]] = []
         seen: set[str] = set()
         for rule in mapping.get("rules") or []:
@@ -3317,6 +3351,7 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
                         "title": rec["title"],
                         "kind": "yoshiki",
                         "form_id": rec["id"],
+                        "template": templates.get(key),
                     }
                 )
             for item in rule.get("prepare") or []:
@@ -3328,9 +3363,165 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
                     continue
                 seen.add(key)
                 slots.append(
-                    {"slot_id": key, "title": text, "kind": "attach", "form_id": None}
+                    {
+                        "slot_id": key,
+                        "title": text,
+                        "kind": "attach",
+                        "form_id": None,
+                        "template": templates.get(key),
+                    }
                 )
         return {"procedure_id": procedure_id, "slots": slots}, None
+
+
+def add_procedure_template(
+    *,
+    procedure_id: str,
+    slot_id: str,
+    filename: str,
+    data: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """枠（slot_id）に様式ひな型を登録する。同じ枠の既存ひな型は差し替える。"""
+    slot = (slot_id or "").strip()
+    if not slot:
+        return None, "枠が指定されていません"
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        if not _can_edit_procedure(proc, actor_user_id, actor_groups):
+            return None, "この手続きを変更する権限がありません"
+        name = files.safe_filename(filename)
+        try:
+            blob, mime = files.decode_upload(data, filename=name, kind="file")
+        except ValueError as e:
+            return None, str(e)
+        guide_id = proc["guide_form_id"]
+        comp = _TEMPLATE_PREFIX + slot
+        for old in db.execute(
+            "SELECT id FROM uploaded_files WHERE form_id = ? AND component_id = ?",
+            (guide_id, comp),
+        ).fetchall():
+            files.remove_blob(guide_id, old["id"])
+            db.execute("DELETE FROM uploaded_files WHERE id = ?", (old["id"],))
+        file_id = str(uuid.uuid4())
+        files.write_blob(guide_id, file_id, blob)
+        db.execute(
+            "INSERT INTO uploaded_files (id, form_id, submission_id, component_id, "
+            "filename, mime, size, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (file_id, guide_id, None, comp, name, mime, len(blob), _now_iso()),
+        )
+        db.commit()
+        return {
+            "slot_id": slot,
+            "file_id": file_id,
+            "filename": name,
+            "mime": mime,
+            "size": len(blob),
+        }, None
+
+
+def list_procedure_templates(
+    procedure_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        return {
+            "procedure_id": procedure_id,
+            "templates": _procedure_templates(db, proc["guide_form_id"]),
+        }, None
+
+
+def delete_procedure_template(
+    *,
+    procedure_id: str,
+    file_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> str | None:
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return "手続きが見つかりません"
+        if not _can_edit_procedure(proc, actor_user_id, actor_groups):
+            return "この手続きを変更する権限がありません"
+        guide_id = proc["guide_form_id"]
+        row = db.execute(
+            "SELECT id FROM uploaded_files WHERE id = ? AND form_id = ? "
+            "AND component_id LIKE 'template:%'",
+            (file_id, guide_id),
+        ).fetchone()
+        if not row:
+            return "ひな型が見つかりません"
+        files.remove_blob(guide_id, file_id)
+        db.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
+        db.commit()
+        return None
+
+
+def _template_file_at(
+    db: sqlite3.Connection, guide_form_id: str, file_id: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    row = db.execute(
+        "SELECT * FROM uploaded_files WHERE id = ? AND form_id = ? "
+        "AND component_id LIKE 'template:%'",
+        (file_id, guide_form_id),
+    ).fetchone()
+    if not row:
+        return None, "ひな型が見つかりません"
+    try:
+        path = files.stored_path(guide_form_id, file_id)
+    except ValueError:
+        return None, "ひな型が見つかりません"
+    if not path.is_file():
+        return None, "ひな型が見つかりません"
+    return {
+        "filename": row["filename"],
+        "mime": row["mime"] or "application/octet-stream",
+        "path": str(path),
+        "size": row["size"],
+    }, None
+
+
+def get_procedure_template_file(
+    procedure_id: str, file_id: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT guide_form_id FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        return _template_file_at(db, proc["guide_form_id"], file_id)
+
+
+def get_application_template_file(
+    token: str, file_id: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        app = db.execute(
+            "SELECT p.guide_form_id AS guide_form_id FROM applications a "
+            "JOIN procedures p ON p.id = a.procedure_id WHERE a.token = ?",
+            (token,),
+        ).fetchone()
+        if not app:
+            return None, "申請が見つかりません"
+        return _template_file_at(db, app["guide_form_id"], file_id)
 
 
 def add_application_item(

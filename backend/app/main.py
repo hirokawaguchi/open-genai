@@ -4228,6 +4228,87 @@ async def patchform_procedure_catalog(
     )
 
 
+@app.get("/patchform/procedures/{procedure_id}/templates")
+async def patchform_list_templates(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/procedures/{procedure_id}/templates"), headers
+    )
+
+
+@app.post("/patchform/procedures/{procedure_id}/templates")
+async def patchform_add_template(procedure_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/procedures/{procedure_id}/templates"),
+        headers,
+        body,
+        timeout=60,
+    )
+
+
+@app.delete("/patchform/procedures/{procedure_id}/templates/{file_id}")
+async def patchform_delete_template(
+    procedure_id: str, file_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE",
+        _patchform_app_url(f"/procedures/{procedure_id}/templates/{file_id}"),
+        headers,
+    )
+
+
+@app.get("/patchform/procedures/{procedure_id}/templates/{file_id}/download")
+async def patchform_download_template(
+    procedure_id: str, file_id: str, request: Request
+) -> Response:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                _patchform_app_url(
+                    f"/procedures/{procedure_id}/templates/{file_id}/download"
+                ),
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"フォームサービスに接続できませんでした: {e}",
+                "enabled": False,
+            },
+        )
+    ctype = res.headers.get("content-type", "")
+    if res.status_code == 200 and ctype and not ctype.startswith("application/json"):
+        return Response(
+            content=res.content,
+            media_type=ctype,
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition",
+                    f'attachment; filename="patchform_{file_id}"',
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
 @app.post("/patchform/applications/{application_id}/items")
 async def patchform_add_application_item(
     application_id: str, request: Request
