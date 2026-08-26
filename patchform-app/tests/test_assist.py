@@ -187,10 +187,14 @@ def test_extract_form_titles_from_handbook() -> None:
     assert draft["guide"]["components"][0]["type"] == "radio"
     assert assist.ALL_FORMS_OPTION in str(draft["guide"])
     assert len(draft["forms"]) >= 3
-    assert all(not f["definition"]["components"] for f in draft["forms"])
+    # タイトルのみ様式には「様式ファイル添付」枠を1つ持たせ、公開できるようにする。
+    assert all(
+        [c["type"] for c in f["definition"]["components"]] == ["file"]
+        for f in draft["forms"]
+    )
     preview = assist.preview_procedure_draft(draft)
     assert preview["navigation"]["found"] is True
-    assert all(item["title_only"] for item in preview["forms"])
+    assert all(item["field_count"] == 1 for item in preview["forms"])
 
 
 def test_clean_heading_keeps_katakana_long_vowel() -> None:
@@ -312,6 +316,111 @@ def test_draft_procedure_reads_titles_past_toc() -> None:
     asyncio.run(_run())
 
 
+def test_procedure_name_prefers_cover_over_org() -> None:
+    # 表紙の「◯◯申請のしおり」を優先し、組織名の見出しは避ける。
+    text = (
+        "建設業許可申請のしおり （令和７年２月改訂版）\n\n"
+        "このしおりは申請の手引きです。\n\n"
+        "### 群馬県県土整備部建設企画課\n"
+        "Ⅰ 建設業を営むには許可が必要\n"
+    )
+    assert assist.procedure_name_from_text(text) == "建設業許可申請の手続き"
+
+
+def test_split_guide_chapters_deep_headings() -> None:
+    # #### / ##### の見出しも章として拾う（官公庁 PDF に多い）。
+    text = (
+        "# 表紙\n序文です。\n"
+        "##### Ⅱ 許 可 の 区 分\n知事許可と大臣許可。\n"
+        "#### 必要な書類\n様式第1号　建設業許可申請書\n"
+    )
+    chapters = assist.split_guide_chapters(text)
+    flats = ["".join(c["title"].split()) for c in chapters]
+    assert any("許可の区分" in f for f in flats)
+    assert any("必要な書類" in f for f in flats)
+
+
+def test_select_nav_chapters_ignores_spacing() -> None:
+    # 見出しの文字間に空白があってもヒント語を拾う。
+    text = "##### Ⅱ 許 可 の 区 分\n知事許可と大臣許可の違い。\n"
+    chapters = assist.split_guide_chapters(text)
+    picks = assist.select_nav_chapters(chapters)
+    assert picks and "".join(picks[0]["title"].split()).find("許可の区分") >= 0
+
+
+def test_draft_navigation_llm_normalizes() -> None:
+    import json as _json
+
+    payload = _json.dumps(
+        {
+            "questions": [
+                {"text": "申請の種類", "options": ["新規", "更新"]},
+                {"label": "申請者の区分", "options": ["法人", "個人"]},
+                {"label": "選択肢が足りない", "options": ["ひとつ"]},
+            ],
+            "rules": [
+                {
+                    "question": "申請者の区分",
+                    "option": "法人",
+                    "form_titles": ["様式第1号 建設業許可申請書"],
+                    "prepare": ["登記事項証明書"],
+                    "notes": "法人は登記事項証明書が要ります",
+                },
+                {"question": "存在しない設問", "option": "x"},
+            ],
+        }
+    )
+    text = "#### Ⅱ 許可の区分\n知事許可と大臣許可。一般と特定。\n"
+    chapters = assist.split_guide_chapters(text)
+
+    async def _run() -> None:
+        with patch("app.assist.llm.chat", new=AsyncMock(return_value=payload)):
+            nav = await assist.draft_navigation_llm(chapters, ["様式第1号 建設業許可申請書"])
+        assert nav is not None
+        labels = [q["label"] for q in nav["questions"]]
+        assert "申請の種類" in labels
+        assert "申請者の区分" in labels
+        assert "選択肢が足りない" not in labels
+        assert len(nav["rules"]) == 1
+        assert nav["rules"][0]["question"] == "申請者の区分"
+        assert nav["rules"][0]["prepare"] == ["登記事項証明書"]
+
+    asyncio.run(_run())
+
+
+def test_draft_from_form_titles_builds_navigation() -> None:
+    nav = {
+        "questions": [{"label": "申請者の区分", "options": ["法人", "個人"]}],
+        "rules": [
+            {
+                "question": "申請者の区分",
+                "option": "法人",
+                "form_titles": ["様式第14号 株主調書"],
+                "prepare": ["登記事項証明書"],
+                "notes": "",
+            }
+        ],
+    }
+    raw = assist.draft_from_form_titles(
+        "建設業許可申請の手続き",
+        ["様式第1号 建設業許可申請書", "様式第14号 株主調書"],
+        navigation=nav,
+    )
+    comp = {c["id"]: c["type"] for c in raw["guide"]["components"]}
+    assert comp.get("event") == "radio"
+    nav_ids = [cid for cid in comp if cid.startswith("q")]
+    assert nav_ids, "ナビ設問の部品が作られていない"
+    matched = [
+        r
+        for r in raw["rules"]
+        if r["component_id"] in nav_ids and r["option"] == "法人" and r["form_keys"]
+    ]
+    assert matched, "区分の分岐ルールが様式に結びついていない"
+    draft, err = assist.normalize_procedure_draft(raw)
+    assert err is None and draft
+    assert assist.guide_has_choice(draft["guide"]) is True
+
+
 def test_draft_procedure_falls_back_without_llm() -> None:
     async def _run() -> None:
         with patch("app.assist.llm.chat", new=AsyncMock(side_effect=RuntimeError("down"))):
@@ -342,5 +451,10 @@ if __name__ == "__main__":
     test_normalize_allows_missing_choice()
     test_draft_procedure_reads_selected_chapters()
     test_draft_procedure_reads_titles_past_toc()
+    test_procedure_name_prefers_cover_over_org()
+    test_split_guide_chapters_deep_headings()
+    test_select_nav_chapters_ignores_spacing()
+    test_draft_navigation_llm_normalizes()
+    test_draft_from_form_titles_builds_navigation()
     test_draft_procedure_falls_back_without_llm()
     print("ok")
