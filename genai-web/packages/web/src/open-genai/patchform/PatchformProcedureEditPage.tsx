@@ -112,6 +112,15 @@ export const PatchformProcedureEditPage = () => {
 
   const fields = procedure?.choice_fields || [];
   const singleForm = Boolean(procedure && omitsNavigation(procedure));
+  const nameLooksDraft = /[#＃]|目次/.test(name);
+  const needsCopyReview = description.includes('【確認】') || nameLooksDraft;
+  const hasMappedForms = collectedRules().some((r) => r.form_ids.length > 0);
+  const scrollTo = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const guideForm = forms.find((f) => f.id === guideFormId);
+  const caseTags = (guideForm?.tags || []).filter((t) => t !== NAVIGATION_TAG);
+  const relatedStyles = styleForms.filter((f) => (f.tags || []).some((t) => caseTags.includes(t)));
+  const otherStyles = styleForms.filter((f) => !relatedStyles.some((r) => r.id === f.id));
   const knownKeys = new Set(
     fields.flatMap((f) => f.options.map((option) => ruleKey(f.id, option))),
   );
@@ -146,19 +155,63 @@ export const PatchformProcedureEditPage = () => {
               <p className='text-std-16N-170 text-solid-gray-700'>
                 {statusLabel[procedure.status] || procedure.status}
                 {singleForm
-                  ? '。ナビゲーションフォームは使いません。申請用紙はこの1枚です。'
-                  : '。下で、各答えに対して必要な申請用紙を選んでください。'}
+                  ? '。申請用紙はこの1枚です。'
+                  : needsCopyReview
+                    ? '。手引きから作った直後は下書きです。名前と対応を直してから、下の「保存する」「公開する」を使います。'
+                    : '。各答えのときに出す申請用紙を選んでから、保存または公開します。'}
               </p>
             </div>
 
+            {procedure.status === 'draft' ? (
+              <div className='rounded-8 border border-blue-900 bg-blue-50 px-4 py-4' role='region' aria-label='次にすること'>
+                <p className='text-std-16B-150'>いまここでやること</p>
+                <ol className='mt-3 flex list-decimal flex-col gap-2 pl-5 text-std-16N-170'>
+                  <li>
+                    <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-pe-name')}>
+                      名前を、庁内の一覧で使う短い手続き名に直す
+                    </button>
+                    {nameLooksDraft ? (
+                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-700'>
+                        いまは手引きの見出しが入っています。
+                      </span>
+                    ) : null}
+                  </li>
+                  <li>
+                    <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-pe-desc')}>
+                      説明の【確認】を読んで、残すか消すか決める
+                    </button>
+                  </li>
+                  {!singleForm ? (
+                    <li>
+                      <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-mapping')}>
+                        各答えのとき、申請者に出す用紙を確認する
+                      </button>
+                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-700'>
+                        「この手続きで作った用紙」にチェックします。サンプルは外して構いません。
+                      </span>
+                    </li>
+                  ) : null}
+                  <li>内容がよければ、この画面の下で保存し、公開する。</li>
+                </ol>
+              </div>
+            ) : null}
+
             <PatchformProcedureCoach
-              title='この画面でやること'
+              title='操作の流れ'
+              defaultOpen={needsCopyReview}
               lead={
                 singleForm
                   ? '申請用紙はこの1枚です。保存して公開すると受付が始まります。'
                   : 'チェックを付けた申請用紙だけが、申請者や回答者に出ます。'
               }
               steps={[
+                {
+                  id: 'review',
+                  label: '名前と説明を直す',
+                  done: !needsCopyReview,
+                  hint: '庁内の一覧で使う短い名前にします。説明の【確認】は読んで直すか消します。',
+                  action: { label: '名前の欄へ', onClick: () => scrollTo('pf-pe-name') },
+                },
                 {
                   id: 'choices',
                   label: singleForm ? '申請用紙を確認する' : '質問にラジオやプルダウンがある',
@@ -179,14 +232,11 @@ export const PatchformProcedureEditPage = () => {
                       {
                         id: 'map',
                         label: '答えごとに申請用紙を選ぶ',
-                        done: collectedRules().some((r) => r.form_ids.length > 0),
-                        hint: '例: 「転入」なら転入届と添付台紙。「転居」なら添付台紙だけ。',
+                        done: hasMappedForms,
+                        hint: '例: 「転入」なら転入届。「該当しない」なら用紙を付けない、など。',
                         action: {
                           label: '対応の欄へ',
-                          onClick: () =>
-                            document
-                              .getElementById('pf-mapping')
-                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+                          onClick: () => scrollTo('pf-mapping'),
                         },
                       },
                     ]),
@@ -194,21 +244,11 @@ export const PatchformProcedureEditPage = () => {
                   id: 'publish',
                   label: '保存して公開する',
                   done: procedure.status === 'published',
-                  hint: '公開すると、申請者や回答者が使える受付が始まります。',
+                  hint: '公開すると、申請者や回答者が使える受付が始まります。確認が残っているときは、先に直してください。',
                   action: procedure.can_edit
                     ? {
-                        label: procedure.status === 'draft' ? '保存して公開する' : '保存する',
-                        onClick: () => {
-                          void (async () => {
-                            await onSave();
-                            if (procedure.status === 'draft') {
-                              const next = await setStatus(procedure.id, 'published');
-                              if (next) {
-                                await mutate();
-                              }
-                            }
-                          })();
-                        },
+                        label: '保存・公開のボタンへ',
+                        onClick: () => scrollTo('pf-proc-actions'),
                       }
                     : undefined,
                 },
@@ -242,8 +282,16 @@ export const PatchformProcedureEditPage = () => {
               <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3' role='status'>
                 <p className='text-std-16B-150'>第1版の確認事項があります</p>
                 <p className='mt-1 text-std-16N-170 text-solid-gray-700'>
-                  手引きのファイルから下書きした内容です。説明欄の【確認】と、下の申請用紙の指定を直してから公開してください。
+                  手引きから自動で拾ったメモです。説明欄の【確認】を読んで直すか消し、下の用紙のチェックを確認してから公開してください。
                 </p>
+                <div className='mt-3 flex flex-wrap gap-2'>
+                  <Button type='button' variant='outline' size='sm' onClick={() => scrollTo('pf-pe-desc')}>
+                    説明を見る
+                  </Button>
+                  <Button type='button' variant='outline' size='sm' onClick={() => scrollTo('pf-mapping')}>
+                    用紙の対応を見る
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -375,7 +423,7 @@ export const PatchformProcedureEditPage = () => {
               ) : (
               <>
               <p className='text-std-16N-170 text-solid-gray-700'>
-                各答えについて、申請者や回答者に出したい申請用紙にチェックを付けてください。付けなかった用紙は、その答えのときは出ません。
+                申請者がその答えを選んだとき、追加で出す用紙にチェックします。チェックしない用紙は、その答えでは出ません。
               </p>
               {fields.length === 0 ? (
                 <div className='rounded-8 border border-solid-gray-300 px-4 py-3'>
@@ -396,7 +444,7 @@ export const PatchformProcedureEditPage = () => {
               ) : (
                 fields.map((field) => (
                   <div key={field.id} className='rounded-8 border border-solid-gray-300 p-4'>
-                    <h3 className='text-std-16B-150'>{field.label}</h3>
+                    <h3 className='text-std-16B-150'>質問「{field.label}」</h3>
                     <div className='mt-3 flex flex-col gap-4'>
                       {(field.option_items?.length
                         ? field.option_items
@@ -404,35 +452,50 @@ export const PatchformProcedureEditPage = () => {
                       ).map((item) => {
                         const option = item.value;
                         const rule = ruleMap.get(ruleKey(field.id, option));
+                        const formGroups = [
+                          { heading: 'この手続きで作った用紙', items: relatedStyles },
+                          { heading: 'ほかのフォーム（サンプルなど）', items: otherStyles },
+                        ].filter((group) => group.items.length > 0);
+                        const groups = formGroups.length ? formGroups : [{ heading: '申請用紙', items: styleForms }];
                         return (
                           <div key={option} className='border-t border-solid-gray-300 pt-3'>
                             <p className='text-std-16B-150'>
-                              {item.label}
+                              答えが「{item.label}」
                               {item.label !== item.value ? `（${item.value}）` : ''}
+                              のとき
                             </p>
                             <fieldset className='mt-2'>
-                              <legend className='text-dns-14N-130 text-solid-gray-700'>足す様式</legend>
-                              <div className='mt-1 flex flex-col gap-1'>
-                                {styleForms.map((f) => {
-                                  const checked = Boolean(rule?.form_ids.includes(f.id));
-                                  return (
-                                    <label key={f.id} className='flex items-center gap-2 text-std-16N-170'>
-                                      <input
-                                        type='checkbox'
-                                        checked={checked}
-                                        disabled={!procedure.can_edit}
-                                        onChange={(e) => {
-                                          const current = rule?.form_ids || [];
-                                          const next = e.target.checked
-                                            ? [...current, f.id]
-                                            : current.filter((id) => id !== f.id);
-                                          updateRule(field.id, option, { form_ids: next });
-                                        }}
-                                      />
-                                      {f.title}
-                                    </label>
-                                  );
-                                })}
+                              <legend className='text-dns-14N-130 text-solid-gray-700'>
+                                このとき出す申請用紙
+                              </legend>
+                              <div className='mt-1 flex flex-col gap-3'>
+                                {groups.map((group) => (
+                                  <div key={group.heading}>
+                                    <p className='text-dns-14N-130 text-solid-gray-600'>{group.heading}</p>
+                                    <div className='mt-1 flex flex-col gap-1'>
+                                      {group.items.map((f) => {
+                                        const checked = Boolean(rule?.form_ids.includes(f.id));
+                                        return (
+                                          <label key={f.id} className='flex items-center gap-2 text-std-16N-170'>
+                                            <input
+                                              type='checkbox'
+                                              checked={checked}
+                                              disabled={!procedure.can_edit}
+                                              onChange={(e) => {
+                                                const current = rule?.form_ids || [];
+                                                const next = e.target.checked
+                                                  ? [...current, f.id]
+                                                  : current.filter((id) => id !== f.id);
+                                                updateRule(field.id, option, { form_ids: next });
+                                              }}
+                                            />
+                                            {f.title}
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </fieldset>
                             <div className='mt-2'>
@@ -487,7 +550,10 @@ export const PatchformProcedureEditPage = () => {
               </p>
             )}
             {procedure.can_edit && (
-              <div className='flex flex-wrap gap-2'>
+              <div
+                id='pf-proc-actions'
+                className='sticky bottom-0 z-10 flex flex-wrap gap-2 border-t border-solid-gray-420 bg-white py-3'
+              >
                 <Button type='button' variant='outline' size='md' aria-disabled={submitting} onClick={() => void onSave()}>
                   {submitting ? '保存中...' : '保存する'}
                 </Button>
@@ -498,6 +564,14 @@ export const PatchformProcedureEditPage = () => {
                     size='md'
                     aria-disabled={submitting}
                     onClick={async () => {
+                      if (
+                        description.includes('【確認】') &&
+                        !window.confirm(
+                          '説明に【確認】が残っています。手引きのメモを直さずに公開しますか。',
+                        )
+                      ) {
+                        return;
+                      }
                       await onSave();
                       const next = await setStatus(procedure.id, 'published');
                       if (next) {
@@ -551,15 +625,15 @@ export const PatchformProcedureEditPage = () => {
             )}
 
             <p className='text-std-16N-170 text-solid-gray-700'>
-              届いた束は{' '}
-              <Link
-                to={`/patchform/inbox/${encodeURIComponent(procedure.id)}`}
-                className='text-blue-900 underline-offset-2 hover:underline'
-              >
-                申請受付
-              </Link>
-              で見ます。
+              届いた申請は申請受付で見ます。
             </p>
+            <div>
+              <Link to={`/patchform/inbox/${encodeURIComponent(procedure.id)}`} className='inline-flex'>
+                <Button type='button' variant='outline' size='sm'>
+                  申請受付を開く
+                </Button>
+              </Link>
+            </div>
           </>
         )}
       </div>

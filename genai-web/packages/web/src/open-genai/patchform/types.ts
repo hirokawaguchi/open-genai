@@ -113,13 +113,45 @@ export type AssistGenerateResult = {
   model?: string;
 };
 
-export type AssistProcedureResult = {
+export type AssistProcedureCreatedForm = { id: string; title: string; role: string };
+
+export type AssistProcedurePreview = {
   source: 'llm' | 'template';
   notes?: string;
   model?: string;
-  procedure: Procedure & {
-    created_forms?: { id: string; title: string; role: string }[];
+  draft: Record<string, unknown>;
+  preview: {
+    name: string;
+    warnings: string[];
+    navigation: {
+      found: boolean;
+      title: string;
+      questions: { label: string; options: string[] }[];
+    };
+    forms: { key: string; title: string; field_count: number; title_only?: boolean }[];
+    notice: {
+      name: string;
+      description: string;
+      rule_count: number;
+      missing: string[];
+    };
+    outline?: {
+      chapter_count: number;
+      read: { id?: string; title?: string; kind?: string; form_count?: number }[];
+    };
   };
+};
+
+export type AssistProcedureApply = {
+  forms?: boolean;
+  navigation?: boolean;
+  notice?: boolean;
+};
+
+export type AssistProcedureResult = {
+  procedure: (Procedure & { created_forms?: AssistProcedureCreatedForm[] }) | null;
+  created_forms: AssistProcedureCreatedForm[];
+  applied: { forms: boolean; navigation: boolean; notice: boolean };
 };
 
 export type AssistInviteResult = {

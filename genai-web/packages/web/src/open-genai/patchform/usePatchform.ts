@@ -5,6 +5,8 @@ import { lookupPostalDirect } from './runtime/postalLookup';
 import type {
   AssistGenerateResult,
   AssistInviteResult,
+  AssistProcedureApply,
+  AssistProcedurePreview,
   AssistProcedureResult,
   AuditEvent,
   FormConfig,
@@ -390,15 +392,37 @@ export const usePatchformAssist = () => {
     [],
   );
 
-  const draftProcedure = useCallback(
-    async (input: { text: string; visibility?: FormVisibility }): Promise<AssistProcedureResult | null> => {
+  const previewProcedure = useCallback(
+    async (input: { text: string; visibility?: FormVisibility }): Promise<AssistProcedurePreview | null> => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<AssistProcedureResult>('patchform/assist/procedure', input);
+        const res = await teamApi.post<AssistProcedurePreview>('patchform/assist/procedure', input);
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '手続きの第1版を作れませんでした。'));
+        setError(errorMessage(e, '手引きから候補を出せませんでした。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const applyProcedureDraft = useCallback(
+    async (input: {
+      draft: Record<string, unknown>;
+      apply: AssistProcedureApply;
+      form_keys?: string[];
+      visibility?: FormVisibility;
+    }): Promise<AssistProcedureResult | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<AssistProcedureResult>('patchform/assist/procedure/apply', input);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '選んだ候補を下書きできませんでした。'));
         return null;
       } finally {
         setBusy(false);
@@ -424,7 +448,7 @@ export const usePatchformAssist = () => {
     [],
   );
 
-  return { generate, draftInvite, draftProcedure, busy, error, setError };
+  return { generate, draftInvite, previewProcedure, applyProcedureDraft, busy, error, setError };
 };
 
 const fileToDataUrl = (file: File): Promise<string> =>

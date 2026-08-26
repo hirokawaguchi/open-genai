@@ -2423,14 +2423,43 @@ def create_procedure_from_draft(
     creator_user_id: str,
     creator_name: str | None = None,
     visibility: str = "internal",
+    apply_forms: bool = True,
+    apply_navigation: bool = True,
+    apply_notice: bool = True,
+    form_keys: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """AI / テンプレートの第1版から、未公開の案内・様式・手続きを作る。"""
-    name = str((draft or {}).get("name") or "").strip()
-    if not name:
-        return None, "手続き名は必須です"
-    guide_def = draft.get("guide")
-    if not isinstance(guide_def, dict):
-        return None, "案内フォームがありません"
+    """手引き候補から、選んだ様式・選択肢・案内だけを未公開で作る。"""
+    name = str((draft or {}).get("name") or "").strip() or "手続き（仮）"
+    apply_forms = bool(apply_forms)
+    apply_navigation = bool(apply_navigation)
+    apply_notice = bool(apply_notice)
+    if not (apply_forms or apply_navigation or apply_notice):
+        return None, "反映するものを1つ以上選んでください"
+
+    guide_def = draft.get("guide") if isinstance(draft.get("guide"), dict) else {}
+    wanted_keys = None
+    if form_keys is not None:
+        wanted_keys = {str(k).strip() for k in form_keys if str(k).strip()}
+
+    selected_forms: list[dict[str, Any]] = []
+    for item in draft.get("forms") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("definition"), dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if wanted_keys is not None and key not in wanted_keys:
+            continue
+        selected_forms.append(item)
+
+    if apply_navigation and not any(
+        isinstance(c, dict) and c.get("type") in ("select", "radio", "checkbox")
+        for c in (guide_def.get("components") or [])
+    ):
+        return None, "手続きの選択肢が読み取れていません。チェックを外すか、手作業でナビゲーションフォームを作ってください。"
+    if apply_forms and not selected_forms:
+        return None, "反映する様式がありません。様式を選ぶか、チェックを外してください。"
+    if apply_notice and not apply_navigation and not apply_forms:
+        return None, "手続きの案内には、選択肢か様式が必要です。"
+
     extra = []
     if draft.get("missing"):
         extra.append("文書に無し: " + " / ".join(str(x) for x in draft["missing"]))
@@ -2440,66 +2469,87 @@ def create_procedure_from_draft(
     if extra:
         desc = (desc + "\n\n" if desc else "") + "【確認】" + " ".join(extra)
     case_tag = name[:MAX_FORM_TAG_LEN]
-    guide, err = create_form(
-        title=str((guide_def.get("metadata") or {}).get("title") or f"{name}の案内"),
-        description=str((guide_def.get("metadata") or {}).get("description") or "") or None,
-        creator_user_id=creator_user_id,
-        creator_name=creator_name,
-        visibility=visibility,
-        definition=guide_def,
-        tags=[NAVIGATION_TAG, case_tag],
-    )
-    if err or guide is None:
-        return None, err or "案内フォームを作れませんでした"
-    created = [{"id": guide["id"], "title": guide["title"], "role": "guide"}]
-    key_to_id: dict[str, str] = {}
-    for item in draft.get("forms") or []:
-        if not isinstance(item, dict):
-            continue
-        definition = item.get("definition")
-        if not isinstance(definition, dict):
-            continue
-        form, ferr = create_form(
-            title=str((definition.get("metadata") or {}).get("title") or "様式"),
-            description=str((definition.get("metadata") or {}).get("description") or "") or None,
+    created: list[dict[str, str]] = []
+    guide = None
+    if apply_navigation:
+        guide, err = create_form(
+            title=str((guide_def.get("metadata") or {}).get("title") or f"{name}の案内"),
+            description=str((guide_def.get("metadata") or {}).get("description") or "") or None,
             creator_user_id=creator_user_id,
             creator_name=creator_name,
             visibility=visibility,
-            definition=definition,
-            tags=[case_tag],
+            definition=guide_def,
+            tags=[NAVIGATION_TAG, case_tag],
         )
-        if ferr or form is None:
-            return None, ferr or "様式フォームを作れませんでした"
-        key = str(item.get("key") or form["id"])
-        key_to_id[key] = form["id"]
-        created.append({"id": form["id"], "title": form["title"], "role": "form"})
-    rules = []
-    for rule in draft.get("rules") or []:
-        if not isinstance(rule, dict):
-            continue
-        form_ids = [key_to_id[k] for k in (rule.get("form_keys") or []) if k in key_to_id]
-        rules.append(
-            {
-                "component_id": rule.get("component_id"),
-                "option": rule.get("option"),
-                "form_ids": form_ids,
-                "notes": rule.get("notes") or "",
-                "prepare": rule.get("prepare") or [],
-                "refs": [],
-            }
+        if err or guide is None:
+            return None, err or "案内フォームを作れませんでした"
+        created.append({"id": guide["id"], "title": guide["title"], "role": "guide"})
+
+    key_to_id: dict[str, str] = {}
+    if apply_forms:
+        for item in selected_forms:
+            definition = item["definition"]
+            form, ferr = create_form(
+                title=str((definition.get("metadata") or {}).get("title") or "様式"),
+                description=str((definition.get("metadata") or {}).get("description") or "") or None,
+                creator_user_id=creator_user_id,
+                creator_name=creator_name,
+                visibility=visibility,
+                definition=definition,
+                tags=[case_tag],
+            )
+            if ferr or form is None:
+                return None, ferr or "様式フォームを作れませんでした"
+            key = str(item.get("key") or form["id"])
+            key_to_id[key] = form["id"]
+            created.append({"id": form["id"], "title": form["title"], "role": "form"})
+
+    detail = None
+    if apply_notice:
+        if guide is None:
+            first = next((item for item in created if item["role"] == "form"), None)
+            if first is None:
+                return None, "手続きの案内には、選択肢か様式が必要です。"
+            guide_id = first["id"]
+            rules: list[dict[str, Any]] = []
+        else:
+            guide_id = guide["id"]
+            rules = []
+            for rule in draft.get("rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                form_ids = [key_to_id[k] for k in (rule.get("form_keys") or []) if k in key_to_id]
+                rules.append(
+                    {
+                        "component_id": rule.get("component_id"),
+                        "option": rule.get("option"),
+                        "form_ids": form_ids,
+                        "notes": rule.get("notes") or "",
+                        "prepare": rule.get("prepare") or [],
+                        "refs": [],
+                    }
+                )
+        detail, perr = create_procedure(
+            name=name,
+            description=desc or None,
+            guide_form_id=guide_id,
+            mapping={"rules": rules},
+            creator_user_id=creator_user_id,
+            creator_name=creator_name,
         )
-    detail, perr = create_procedure(
-        name=name,
-        description=desc or None,
-        guide_form_id=guide["id"],
-        mapping={"rules": rules},
-        creator_user_id=creator_user_id,
-        creator_name=creator_name,
-    )
-    if perr or detail is None:
-        return None, perr
-    detail = {**detail, "created_forms": created}
-    return detail, None
+        if perr or detail is None:
+            return None, perr
+        detail = {**detail, "created_forms": created}
+
+    return {
+        "procedure": detail,
+        "created_forms": created,
+        "applied": {
+            "forms": apply_forms,
+            "navigation": apply_navigation,
+            "notice": apply_notice,
+        },
+    }, None
 
 
 def update_procedure(

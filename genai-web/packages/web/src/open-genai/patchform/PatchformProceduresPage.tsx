@@ -8,7 +8,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
 import { PatchformProcedureCoach } from './PatchformProcedureCoach';
-import { FilePickButton } from './runtime/FilePickButton';
+import { PatchformGuideAssist } from './PatchformGuideAssist';
 import { PatchformPaneTabs } from './PatchformPaneTabs';
 import { PatchformSubnav } from './PatchformSubnav';
 import { ProcedureReceptionActions } from './ProcedureReceptionActions';
@@ -32,11 +32,12 @@ export const PatchformProceduresPage = () => {
   const [searchParams] = useSearchParams();
   const pane = searchParams.get('tab') === 'new' ? 'new' : 'list';
   const { config } = usePatchformConfig();
-  const { forms } = usePatchformList();
+  const { forms, mutate: mutateForms } = usePatchformList();
   const { procedures, isLoading, loadError, mutate } = usePatchformProcedures();
   const { create, setStatus, submitting, error, setError } = usePatchformProcedureActions();
   const {
-    draftProcedure,
+    previewProcedure,
+    applyProcedureDraft,
     busy: assistBusy,
     error: assistError,
     setError: setAssistError,
@@ -46,7 +47,6 @@ export const PatchformProceduresPage = () => {
   const [guideFormId, setGuideFormId] = useState('');
   const [startMode, setStartMode] = useState<'omit' | 'navigate'>('omit');
   const [guideText, setGuideText] = useState('');
-  const [aiNotes, setAiNotes] = useState<string | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const [guideFileName, setGuideFileName] = useState('');
 
@@ -75,7 +75,6 @@ export const PatchformProceduresPage = () => {
   const onPickGuide = async (file: File | null) => {
     if (!file) return;
     setAssistError(null);
-    setAiNotes(null);
     setReadingFile(true);
     try {
       const res = await extractPatchformFile('document', file);
@@ -93,19 +92,6 @@ export const PatchformProceduresPage = () => {
     } finally {
       setReadingFile(false);
     }
-  };
-
-  const onDraftFromGuide = async () => {
-    setAssistError(null);
-    setAiNotes(null);
-    if (!guideText.trim()) {
-      setAssistError('手引きのファイルを選んでください。');
-      return;
-    }
-    const res = await draftProcedure({ text: guideText.trim(), visibility: 'internal' });
-    if (!res) return;
-    await mutate();
-    navigate(`/patchform/procedures/${res.procedure.id}`);
   };
 
   const onSubmit = async (e: FormEvent) => {
@@ -336,57 +322,33 @@ export const PatchformProceduresPage = () => {
             または
           </p>
 
-          <div id='pf-proc-ai' className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-4'>
-            <h3 className='text-std-16B-150'>手引きファイルで省略（任意）</h3>
-            <p className='mt-1 text-dns-16N-130 text-solid-gray-700'>
-              手引きや庁内マニュアルのファイルを選ぶと、質問・申請用紙・答えの対応をまとめて下書きします。公開はしません。あとから内容を確認してください。
-            </p>
-            <div className='mt-4'>
-              <FilePickButton
-                id='pf-proc-guide-file'
-                accept='.txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.csv,.html,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                disabled={readingFile || assistBusy}
-                busy={readingFile}
-                busyLabel='読み取り中...'
-                filename={guideFileName}
-                buttonLabel='手引きファイルを選ぶ'
-                onFile={(file) => {
-                  setGuideFileName(file?.name || '');
-                  void onPickGuide(file);
-                }}
-              />
-              <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                txt / md / pdf / Word（docx） / Excel（xlsx）を選べます。古い Word（doc）や PowerPoint、スキャン画像だけの PDF は読めません。
-              </p>
-              {guideText.trim() ? (
-                <p className='mt-2 text-dns-16N-130 text-solid-gray-700'>
-                  ファイルを読み込みました（{guideText.trim().length.toLocaleString('ja-JP')}文字）。下のボタンで下書きを作れます。
-                </p>
-              ) : null}
-            </div>
-            <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
-              自動作成に使います: {config?.llm?.model || '（未設定）'}。うまく作れないときはひな型を使います。
-            </p>
-            {(assistError || aiNotes) && (
-              <p
-                className={assistError ? 'mt-2 text-error-1' : 'mt-2 text-solid-gray-700'}
-                role={assistError ? 'alert' : undefined}
-              >
-                {assistError || aiNotes}
-              </p>
-            )}
-            <div className='mt-4'>
-              <Button
-                type='button'
-                variant='outline'
-                size='md'
-                aria-disabled={assistBusy || readingFile || !guideText.trim()}
-                onClick={() => void onDraftFromGuide()}
-              >
-                {assistBusy || readingFile ? '作成中...' : '第1版を作って編集する'}
-              </Button>
-            </div>
-          </div>
+          <PatchformGuideAssist
+            model={config?.llm?.model}
+            readingFile={readingFile}
+            guideFileName={guideFileName}
+            guideText={guideText}
+            busy={assistBusy}
+            error={assistError}
+            setError={setAssistError}
+            onPickFile={(file) => {
+              setGuideFileName(file?.name || '');
+              void onPickGuide(file);
+            }}
+            previewProcedure={previewProcedure}
+            applyProcedureDraft={applyProcedureDraft}
+            onApplied={async (res) => {
+              await Promise.all([mutate(), mutateForms()]);
+              if (res.procedure?.id) {
+                navigate(`/patchform/procedures/${res.procedure.id}`);
+                return;
+              }
+              const nav = res.created_forms.find((f) => f.role === 'guide');
+              const first = res.created_forms[0];
+              if (nav) navigate(`/patchform/${nav.id}`);
+              else if (first) navigate(`/patchform/${first.id}`);
+              else navigate('/patchform');
+            }}
+          />
         </section>
         </>
         ) : (

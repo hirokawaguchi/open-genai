@@ -1138,8 +1138,48 @@ async def assist_generate(
     return JSONResponse(content=result)
 
 
+def _apply_flags(body: dict) -> tuple[bool, bool, bool, list[str] | None]:
+    apply = body.get("apply") if isinstance(body.get("apply"), dict) else {}
+    form_keys = body.get("form_keys")
+    keys = [str(k).strip() for k in form_keys if str(k).strip()] if isinstance(form_keys, list) else None
+    return (
+        bool(apply.get("forms", False)),
+        bool(apply.get("navigation", False)),
+        bool(apply.get("notice", False)),
+        keys,
+    )
+
+
 @app.post("/assist/procedure")
 async def assist_procedure(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    visibility = (body.get("visibility") or "internal").strip() or "internal"
+    try:
+        generated = await assist.draft_procedure(text, visibility=visibility)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": f"手続きの候補を出せませんでした: {e}"})
+    return JSONResponse(content=assist.pack_procedure_preview(generated))
+
+
+@app.post("/assist/procedure/apply")
+async def assist_procedure_apply(
     request: Request,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
@@ -1155,31 +1195,24 @@ async def assist_procedure(
     if err:
         return err
     body = await request.json()
-    text = (body.get("text") or "").strip()
     visibility = (body.get("visibility") or "internal").strip() or "internal"
-    try:
-        generated = await assist.draft_procedure(text, visibility=visibility)
-        detail, msg = store.create_procedure_from_draft(
-            generated["draft"],
-            creator_user_id=uid,
-            creator_name=(body.get("creator_name") or None),
-            visibility=visibility,
-        )
-    except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:  # noqa: BLE001
-        return JSONResponse(status_code=502, content={"error": f"手続きの生成に失敗しました: {e}"})
-    if msg or detail is None:
-        return JSONResponse(status_code=400, content={"error": msg})
-    return JSONResponse(
-        status_code=201,
-        content={
-            "source": generated.get("source"),
-            "notes": generated.get("notes"),
-            "model": generated.get("model"),
-            "procedure": detail,
-        },
+    draft, derr = assist.normalize_procedure_draft(body.get("draft") or {}, visibility=visibility)
+    if derr or draft is None:
+        return JSONResponse(status_code=400, content={"error": derr or "手続き案の形式が不正です"})
+    apply_forms, apply_navigation, apply_notice, form_keys = _apply_flags(body)
+    result, msg = store.create_procedure_from_draft(
+        draft,
+        creator_user_id=uid,
+        creator_name=(body.get("creator_name") or None),
+        visibility=visibility,
+        apply_forms=apply_forms,
+        apply_navigation=apply_navigation,
+        apply_notice=apply_notice,
+        form_keys=form_keys,
     )
+    if msg or result is None:
+        return JSONResponse(status_code=400, content={"error": msg})
+    return JSONResponse(status_code=201, content=result)
 
 
 @app.post("/assist/invite")
