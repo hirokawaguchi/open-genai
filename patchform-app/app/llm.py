@@ -35,24 +35,10 @@ def _headers() -> dict[str, str]:
     }
 
 
-async def chat(
-    messages: list[dict[str, Any]],
-    *,
-    temperature: float = 0.2,
-    model: str | None = None,
-    max_tokens: int | None = None,
-) -> str:
-    used = model or PATCHFORM_MODEL
-    payload: dict[str, Any] = {
-        "model": used,
-        "messages": messages,
-        "stream": False,
-        "temperature": temperature,
-        "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
-    }
-    # gpt-oss は推論にトークンを使い、本文が空のまま切れることがある
-    if "gpt-oss" in used:
-        payload["think"] = False
+RETRY_MAX_TOKENS = int(os.environ.get("PATCHFORM_LLM_RETRY_MAX_TOKENS", "8192"))
+
+
+async def _post_chat(payload: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{OPENAI_BASE_URL}/chat/completions",
@@ -60,10 +46,60 @@ async def chat(
             headers=_headers(),
         )
         res.raise_for_status()
-        data = res.json()
+        return res.json()
+
+
+def _parse_choice(data: dict[str, Any]) -> tuple[str, str]:
+    """本文と finish_reason を返す。"""
     choices = data.get("choices") or [{}]
-    message = choices[0].get("message") or {}
+    choice = choices[0] or {}
+    message = choice.get("message") or {}
     content = str(message.get("content") or "").strip()
+    finish = str(choice.get("finish_reason") or "")
+    return content, finish
+
+
+async def chat(
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.2,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    think: bool | None = None,
+) -> str:
+    used = model or PATCHFORM_MODEL
+    budget = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
+    payload: dict[str, Any] = {
+        "model": used,
+        "messages": messages,
+        "stream": False,
+        "temperature": temperature,
+        "max_tokens": budget,
+    }
+    # gpt-oss / deepseek 等の推論モデルは推論トークンを先に消費し、
+    # max_tokens が小さいと本文（content）が空・または JSON が途中で切れる。
+    # JSON 抽出用途では think=False を渡して推論を抑制する。
+    if think is False or (think is None and "gpt-oss" in used):
+        payload["think"] = False
+
+    data = await _post_chat(payload)
+    content, finish = _parse_choice(data)
+
+    # 空本文かつ length 打ち切り＝推論でトークンを使い切った可能性。
+    # トークン枠を広げ、推論を抑制して一度だけ再試行する。
+    if not content and finish in ("length", ""):
+        retry = dict(payload)
+        retry["max_tokens"] = max(budget * 2, RETRY_MAX_TOKENS)
+        retry["think"] = False
+        try:
+            data = await _post_chat(retry)
+            content, finish = _parse_choice(data)
+        except httpx.HTTPStatusError:
+            # think 非対応モデルは 400 になり得るので枠拡大のみで再試行
+            retry.pop("think", None)
+            data = await _post_chat(retry)
+            content, finish = _parse_choice(data)
+
     if not content:
         raise ValueError("モデルの本文が空です")
     return content

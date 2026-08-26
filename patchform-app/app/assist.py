@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
 
 from . import llm, spec
+
+# ナビ（申請区分などの設問）抽出は推論モデルの応答が揺れるため、複数回試して
+# 最も設問が取れた結果を採用する。十分な件数が取れたら早めに打ち切る。
+NAV_ATTEMPTS = max(1, int(os.environ.get("PATCHFORM_NAV_ATTEMPTS", "2")))
+NAV_ENOUGH_QUESTIONS = max(1, int(os.environ.get("PATCHFORM_NAV_ENOUGH", "3")))
 
 _HEADING_MARK = re.compile(r"^#{1,6}\s*")
 _TOC_MARK = re.compile(r"[［\[\s]*目次[］\]\s]*")
@@ -315,7 +321,7 @@ MAX_SELECT_CHAPTERS = 8
 MAX_LLM_CHAPTERS = 4
 MAX_CHAPTER_CHARS = 2_500
 ALL_FORMS_OPTION = "一覧の様式をすべて出す"
-_CHAPTER_HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*$", re.MULTILINE)
+_CHAPTER_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _CHAPTER_HINTS: tuple[tuple[str, int], ...] = (
     ("様式一覧", 6),
     ("提出書類", 6),
@@ -436,18 +442,47 @@ def extract_form_titles(text: str, *, limit: int = MAX_PROCEDURE_FORMS) -> list[
     return uniq
 
 
+# 手続き名になりにくい行（組織名・連絡先・受付案内など）を弾く。
+_ORG_TAIL = re.compile(r"(?:部|課|室|係|センター|事務所|支所|局)$")
+_NAME_HINT = re.compile(r"(?:許可申請|申請|届出|認可|手続|しおり|手引き|手引|の案内|ガイド)")
+_VERSION_PAREN = re.compile(r"[（(][^）)]*(?:改訂|改定|版|令和|平成|年\s*\d|第\s*\d+\s*版)[^）)]*[）)]")
+
+
+def _tidy_procedure_name(name: str) -> str:
+    """「◯◯のしおり／手引き」を「◯◯の手続き」に寄せる。"""
+    name = _VERSION_PAREN.sub("", name).strip(" 　・")
+    for suf in ("のしおり", "の手引き", "の手引", "の手びき"):
+        if name.endswith(suf):
+            return name[: -len(suf)] + "の手続き"
+    if name.endswith("しおり"):
+        return name[: -len("しおり")].strip("　 ・") + "の手続き"
+    return name
+
+
 def procedure_name_from_text(text: str) -> str:
-    for match in re.finditer(r"^#{1,3}\s+(.+)$", text or "", re.MULTILINE):
+    lines = (text or "").splitlines()
+    # 1) 冒頭（目次より前）の本文行から、手続き名らしい行を優先して拾う。
+    #    表紙の「◯◯申請のしおり」等は無印テキストのことが多く、見出し優先だと
+    #    組織名を拾ってしまうため、まず本文行を見る。
+    for raw in lines[:40]:
+        s = clean_heading(raw)
+        if not s or "目次" in s or "目 次" in s:
+            continue
+        s = _VERSION_PAREN.sub("", s).strip(" 　・")
+        if len(s) < 4 or len(s) > 60:
+            continue
+        if _ORG_TAIL.search(s):
+            continue
+        if _NAME_HINT.search(s):
+            return _tidy_procedure_name(s)[:80]
+    # 2) 見出しから拾う（組織名だけの見出しは避ける）。
+    for match in re.finditer(r"^#{1,6}\s+(.+)$", text or "", re.MULTILINE):
         name = clean_heading(match.group(1))
-        if name and "目次" not in name:
-            if name.endswith("の手引き"):
-                name = name[: -len("の手引き")] + "の手続き"
-            return name
-    first = clean_heading((text or "").splitlines()[0] if text else "")
+        if name and "目次" not in name and not _ORG_TAIL.search(name):
+            return _tidy_procedure_name(name)
+    first = clean_heading(lines[0] if lines else "")
     if first and "目次" not in first:
-        if first.endswith("の手引き"):
-            first = first[: -len("の手引き")] + "の手続き"
-        return first
+        return _tidy_procedure_name(first)
     return "手続き（仮）"
 
 
@@ -561,10 +596,15 @@ def draft_from_form_titles(
     titles: list[str],
     *,
     conditions: list[dict[str, Any]] | None = None,
+    navigation: dict[str, Any] | None = None,
     missing: list[str] | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
-    """様式名だけの下書き。中身は空。一覧はまず全部必要とする。"""
+    """様式名だけの下書き。中身は空。一覧はまず全部必要とする。
+
+    navigation（手引きから読み取った申請区分などの設問と分岐）があれば、
+    案内フォームに設問を足し、選択肢ごとの準備物・様式の目安をルールにする。
+    """
     forms = []
     keys: list[str] = []
     for i, title in enumerate(titles[:MAX_PROCEDURE_FORMS]):
@@ -575,21 +615,28 @@ def draft_from_form_titles(
                 "key": key,
                 "definition": _simple_form(
                     title,
-                    "手引きの様式名から作りました。中身は未作成です。",
-                    [],
+                    "手引きの様式名から作りました。記入済みファイルの添付で提出できます。"
+                    "オンライン記入にする場合は項目を足してください。",
+                    # 部品0だと公開（受付開始）できないため、既定で「様式ファイルの添付」枠を1つ置く。
+                    # 作業台の前提（様式は記入でも添付でも可）に合わせた最小構成。
+                    [_c("attachment", "file", "様式ファイル（記入済み）を添付", False)],
                 ),
             }
         )
-    options = [ALL_FORMS_OPTION]
-    rules: list[dict[str, Any]] = [
-        {
-            "component_id": "event",
-            "option": ALL_FORMS_OPTION,
-            "form_keys": keys,
-            "notes": "様式一覧に出ていた用紙を、まず全部出す前提にしています。",
-            "prepare": [],
-        }
-    ]
+    components: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] = []
+    # 1) まず「全部出す」を既定にする様式選択の設問。
+    event_options = [ALL_FORMS_OPTION]
+    if keys:
+        rules.append(
+            {
+                "component_id": "event",
+                "option": ALL_FORMS_OPTION,
+                "form_keys": keys,
+                "notes": "様式一覧に出ていた用紙を、まず全部出す前提にしています。",
+                "prepare": [],
+            }
+        )
     for item in conditions or []:
         if not isinstance(item, dict):
             continue
@@ -599,7 +646,7 @@ def draft_from_form_titles(
         mapped = _match_form_keys(_title_list(item.get("form_titles") or item.get("titles") or []), forms)
         if not mapped:
             continue
-        options.append(when[:40])
+        event_options.append(when[:40])
         rules.append(
             {
                 "component_id": "event",
@@ -609,10 +656,60 @@ def draft_from_form_titles(
                 "prepare": [],
             }
         )
+    if keys:
+        components.append(
+            _c("event", "radio", "この手続きで出す様式", True, options=event_options)
+        )
+    # 2) 手引きから読み取った申請区分などの設問と分岐。
+    nav_questions = (navigation or {}).get("questions") or []
+    label_to_cid: dict[str, str] = {}
+    for j, q in enumerate(nav_questions):
+        if not isinstance(q, dict):
+            continue
+        label = clean_heading(str(q.get("label") or ""))
+        opts = []
+        seen_opt: set[str] = set()
+        for opt in q.get("options") or []:
+            text = _option_label(opt)
+            key_opt = _norm_title(text)
+            if not text or key_opt in seen_opt:
+                continue
+            seen_opt.add(key_opt)
+            opts.append(text[:60])
+        if not label or len(opts) < 2:
+            continue
+        cid = f"q{j + 1}"
+        label_to_cid[_norm_title(label)] = cid
+        components.append(_c(cid, "radio", label[:60], True, options=opts[:12]))
+    for r in (navigation or {}).get("rules") or []:
+        if not isinstance(r, dict):
+            continue
+        cid = label_to_cid.get(_norm_title(str(r.get("question") or r.get("label") or "")))
+        option = str(r.get("option") or "").strip()
+        if not cid or not option:
+            continue
+        mapped = _match_form_keys(_title_list(r.get("form_titles") or r.get("titles") or []), forms)
+        prepare = r.get("prepare") or []
+        if isinstance(prepare, str):
+            prepare = [p.strip() for p in prepare.splitlines() if p.strip()]
+        rules.append(
+            {
+                "component_id": cid,
+                "option": option[:40],
+                "form_keys": mapped,
+                "notes": str(r.get("notes") or "").strip(),
+                "prepare": [str(p).strip() for p in prepare if str(p).strip()],
+            }
+        )
+    has_nav = bool(nav_questions)
     guide = _simple_form(
         f"{name}の案内",
-        "一覧にある様式は、まず全部必要としています。条件で変わる場合はあとから分けてください。",
-        [_c("event", "radio", "この手続きで出す様式", True, options=options)],
+        (
+            "申請区分などの設問を手引きから読み取りました。選択肢ごとの準備物・様式は目安です。"
+            if has_nav
+            else "一覧にある様式は、まず全部必要としています。条件で変わる場合はあとから分けてください。"
+        ),
+        components,
     )
     return {
         "name": name,
@@ -969,7 +1066,9 @@ async def select_chapters_llm(chapters: list[dict[str, Any]]) -> list[str] | Non
                 "content": "次の目次から関連章の id を選んでください。\n" + "\n".join(lines),
             },
         ],
-        max_tokens=256,
+        temperature=0,
+        max_tokens=512,
+        think=False,
     )
     parsed = llm.extract_json(raw)
     if not isinstance(parsed, dict):
@@ -1008,11 +1107,13 @@ async def refine_chapter_llm(
                     f"章: {chapter.get('title')}\n"
                     f"既に拾った様式名:\n"
                     + ("\n".join(f"- {t}" for t in known_titles) or "（なし）")
-                    + f"\n\n# 本文\n{body}"
+                    +                     f"\n\n# 本文\n{body}"
                 ),
             },
         ],
-        max_tokens=768,
+        temperature=0,
+        max_tokens=4_096,
+        think=False,
     )
     parsed = llm.extract_json(raw)
     if not isinstance(parsed, dict):
@@ -1027,6 +1128,155 @@ async def refine_chapter_llm(
         if when and cond_titles:
             conditions.append({"when": when, "form_titles": cond_titles})
     return titles, conditions
+
+
+NAV_CONTEXT_CHARS = 9_000
+NAV_CHAPTER_CHARS = 2_400
+MAX_NAV_CHAPTERS = 6
+# 申請区分・許可区分・要否など、分岐に効く章の見出し語。
+_NAV_TITLE_HINTS: tuple[str, ...] = (
+    "区分",
+    "申請区分",
+    "対象",
+    "要件",
+    "必要な書類",
+    "提出書類",
+    "申請書類",
+    "流れ",
+    "Ｑ＆Ａ",
+    "Q&A",
+    "有効期間",
+    "手続き",
+    "許可",
+)
+
+
+def select_nav_chapters(
+    chapters: list[dict[str, Any]], *, limit: int = MAX_NAV_CHAPTERS
+) -> list[dict[str, Any]]:
+    """申請区分・要件など、分岐の判断に効く章を見出しから選ぶ。
+
+    PDF 由来の見出しは「許 可 の 区 分」のように文字間へ空白が入ることがある。
+    空白を潰してからヒント語を照合する。
+    """
+    picks: list[dict[str, Any]] = []
+    for chapter in chapters:
+        if chapter.get("kind") == "toc":
+            continue
+        body = str(chapter.get("body") or "")
+        if not body.strip():
+            continue
+        flat = _SPACES.sub("", str(chapter.get("title") or ""))
+        if any(_SPACES.sub("", hint) in flat for hint in _NAV_TITLE_HINTS):
+            picks.append(chapter)
+        if len(picks) >= limit:
+            break
+    return picks
+
+
+async def draft_navigation_llm(
+    chapters: list[dict[str, Any]], form_titles: list[str]
+) -> dict[str, Any] | None:
+    """手引きから申請区分などの設問（ナビ）と分岐ルールを読み取る。
+
+    フォーム定義は作らない。返すのは設問（ラベルと選択肢）と、選択肢ごとの
+    準備物・関連様式名・注意のみ。失敗したら None。
+    """
+    picks = select_nav_chapters(chapters)
+    if not picks:
+        return None
+    buf: list[str] = []
+    total = 0
+    for chapter in picks:
+        body = str(chapter.get("body") or "").strip()
+        if not body:
+            continue
+        seg = f"## {chapter.get('title')}\n{body[:NAV_CHAPTER_CHARS]}"
+        if total + len(seg) > NAV_CONTEXT_CHARS:
+            seg = seg[: max(0, NAV_CONTEXT_CHARS - total)]
+        if not seg:
+            break
+        buf.append(seg)
+        total += len(seg)
+        if total >= NAV_CONTEXT_CHARS:
+            break
+    context = "\n\n".join(buf).strip()
+    if not context:
+        return None
+    titles_block = "\n".join(f"- {t}" for t in form_titles[:40]) or "（なし）"
+    raw = await llm.chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "あなたは日本の自治体手続きの設計者です。"
+                    "手引きを読み、申請者が最初に答えるべき設問（申請区分・許可区分・"
+                    "法人/個人など、提出物が変わる分かれ目）を読み取ってください。"
+                    "JSON オブジェクトだけを返します。"
+                    'キーは questions と rules。'
+                    'questions は [{"label":"設問文","options":["選択肢1","選択肢2"]}] の配列。'
+                    "選択肢は2つ以上。文書から読み取れる分かれ目だけにし、推測で増やさない。"
+                    'rules は [{"question":"設問文","option":"選択肢",'
+                    '"form_titles":["様式一覧に載っている名称"],"prepare":["準備物"],'
+                    '"notes":"補足"}] の配列。'
+                    "form_titles は与えた様式一覧の名称のみを使い、無ければ空配列。"
+                    "分岐が読み取れなければ questions は空配列。説明文やコードフェンスは出力しない。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"# 様式一覧（この名称だけを form_titles に使う）\n{titles_block}\n\n"
+                    f"# 手引き抜粋\n{context}"
+                ),
+            },
+        ],
+        temperature=0,
+        max_tokens=8_192,
+        think=False,
+    )
+    parsed = llm.extract_json(raw)
+    if not isinstance(parsed, dict):
+        return None
+    questions: list[dict[str, Any]] = []
+    label_seen: set[str] = set()
+    for item in parsed.get("questions") or []:
+        if not isinstance(item, dict):
+            continue
+        label = clean_heading(
+            str(item.get("label") or item.get("question") or item.get("text") or item.get("title") or "")
+        )
+        options = [_option_label(o) for o in (item.get("options") or []) if _option_label(o)]
+        key = _norm_title(label)
+        if not label or len(options) < 2 or key in label_seen:
+            continue
+        label_seen.add(key)
+        questions.append({"label": label[:60], "options": options})
+    if not questions:
+        return None
+    valid_labels = {_norm_title(q["label"]) for q in questions}
+    rules: list[dict[str, Any]] = []
+    for item in parsed.get("rules") or []:
+        if not isinstance(item, dict):
+            continue
+        question = clean_heading(str(item.get("question") or item.get("label") or ""))
+        option = _option_label(item.get("option"))
+        if _norm_title(question) not in valid_labels or not option:
+            continue
+        rules.append(
+            {
+                "question": question,
+                "option": option,
+                "form_titles": _title_list(item.get("form_titles") or item.get("titles") or []),
+                "prepare": [
+                    str(p).strip()
+                    for p in (item.get("prepare") or [])
+                    if str(p).strip()
+                ],
+                "notes": str(item.get("notes") or "").strip(),
+            }
+        )
+    return {"questions": questions, "rules": rules}
 
 
 async def draft_procedure(text: str, *, visibility: str = "internal") -> dict[str, Any]:
@@ -1079,24 +1329,50 @@ async def draft_procedure(text: str, *, visibility: str = "internal") -> dict[st
 
     titles = merge_form_titles(found, llm_titles)
     name = procedure_name_from_text(full)
+
+    # ナビ（申請区分などの設問）抽出は章解析の失敗とは独立に試みる。
+    # 推論モデルの応答は揺れるので複数回試し、設問が最も取れた結果を採用する。
+    navigation: dict[str, Any] | None = None
+    nav_error = ""
+    for _ in range(NAV_ATTEMPTS):
+        try:
+            candidate = await draft_navigation_llm(chapters, titles)
+        except Exception as e:  # noqa: BLE001
+            nav_error = str(e)
+            candidate = None
+        if candidate:
+            cur = len((navigation or {}).get("questions") or [])
+            if len(candidate.get("questions") or []) > cur:
+                navigation = candidate
+                nav_error = ""
+        if navigation and len(navigation.get("questions") or []) >= NAV_ENOUGH_QUESTIONS:
+            break
+
+    nav_count = len((navigation or {}).get("questions") or [])
     outline = {
         "chapter_count": len(chapters),
         "read": read,
+        "navigation_questions": nav_count,
     }
     if titles:
         notes = (
             f"目次から{len(chapters)}章を切り、様式・提出に関する{len(selected)}章を読みました。"
             "様式名を拾い、一覧の様式はまず全部必要としています。中身は空です。"
         )
+        if nav_count:
+            notes += f" 申請区分などの設問を{nav_count}件読み取りました（分岐と準備物は目安です）。"
+        elif nav_error:
+            notes += f" 申請区分の設問は読み取れませんでした（{nav_error}）。"
         if llm_error:
             notes += f" 一部の章の LLM は使えませんでした（{llm_error}）。"
         raw_draft = draft_from_form_titles(
             name,
             titles,
             conditions=conditions,
+            navigation=navigation,
             notes=notes,
         )
-        source = "llm" if not llm_error else "template"
+        source = "llm" if (not llm_error or nav_count) else "template"
     else:
         raw_draft = fallback_procedure_draft(full)
         source = "template"
