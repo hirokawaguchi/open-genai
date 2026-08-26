@@ -443,6 +443,177 @@ def test_assist_procedure_apply_selected_parts() -> None:
         _teardown(path)
 
 
+def test_application_workbench_items() -> None:
+    import base64
+
+    client, path = _setup()
+    try:
+        guide_def = _create_form(client, "転入案内", ["転入", "転居"])
+        style_a_def = _create_form(client, "転入届")
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={
+                "name": "転入の手続き",
+                "guide_form_id": guide_def["id"],
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "転入",
+                            "form_ids": [style_a_def["id"]],
+                            "notes": "転入届を出してください",
+                            "prepare": ["住民票の写し"],
+                        }
+                    ]
+                },
+            },
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        guide = _reception_of(client, guide_def["id"])
+        style_a = _reception_of(client, style_a_def["id"])
+
+        res = client.post(
+            f"/public/api/forms/{guide['guest_token']}/submissions",
+            json={"answers": {"name": "山田", "event": "転入"}, "submitter_name": "山田"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        items = opened["items"]
+        kinds = [it["kind"] for it in items]
+        assert kinds[0] == "data"
+        assert "yoshiki" in kinds
+        assert "attach" in kinds
+        data_item = items[0]
+        assert data_item["status"] == "submitted"
+        yoshiki = next(it for it in items if it["kind"] == "yoshiki")
+        attach = next(it for it in items if it["kind"] == "attach")
+        assert yoshiki["form_id"] == style_a["id"]
+        assert yoshiki["status"] == "none"
+        assert attach["title"] == "住民票の写し"
+
+        # 添付枠を、記入済みファイルで満たす
+        blob = base64.b64encode(b"hello").decode()
+        res = client.post(
+            f"/public/api/applications/{opened['token']}/items/{attach['id']}/file",
+            json={"filename": "juminhyo.pdf", "data": blob},
+        )
+        assert res.status_code == 200, res.text
+        after = res.json()
+        attach_after = next(it for it in after["items"] if it["id"] == attach["id"])
+        assert attach_after["fulfillment"] == "file"
+        assert attach_after["status"] == "submitted"
+        assert attach_after["file_name"] == "juminhyo.pdf"
+
+        # 同じ様式をもう1件（複製）
+        res = client.post(
+            f"/public/api/applications/{opened['token']}/items",
+            json={"duplicate_of": yoshiki["id"]},
+        )
+        assert res.status_code == 201, res.text
+        dup = res.json()
+        copies = [it for it in dup["items"] if it.get("form_id") == style_a["id"]]
+        assert len(copies) == 2
+
+        # カタログから見えるか
+        res = client.get(f"/public/api/applications/{opened['token']}/catalog")
+        assert res.status_code == 200, res.text
+        catalog = res.json()
+        assert any(s["form_id"] == style_a["id"] for s in catalog["slots"])
+
+        # 1件目の様式をオンライン記入で満たす（アイテム指定）
+        res = client.post(
+            f"/public/api/forms/{style_a['guest_token']}/submissions",
+            json={
+                "answers": {"name": "山田"},
+                "submitter_name": "山田",
+                "application_token": opened["token"],
+                "application_item_id": yoshiki["id"],
+            },
+        )
+        assert res.status_code == 201, res.text
+        res = client.get(f"/public/api/applications/{opened['token']}")
+        final = res.json()
+        first_copy = next(it for it in final["items"] if it["id"] == yoshiki["id"])
+        assert first_copy["status"] == "submitted"
+    finally:
+        _teardown(path)
+
+
+def test_procedure_export_aligned() -> None:
+    client, path = _setup()
+    try:
+        guide_def = _create_form(client, "転入案内", ["転入", "転居"])
+        style_a_def = _create_form(client, "転入届")
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={
+                "name": "転入の手続き",
+                "guide_form_id": guide_def["id"],
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "転入",
+                            "form_ids": [style_a_def["id"]],
+                            "prepare": ["住民票の写し"],
+                        }
+                    ]
+                },
+            },
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        guide = _reception_of(client, guide_def["id"])
+        style_a = _reception_of(client, style_a_def["id"])
+        res = client.post(
+            f"/public/api/forms/{guide['guest_token']}/submissions",
+            json={"answers": {"name": "山田", "event": "転入"}, "submitter_name": "山田"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        yoshiki = next(it for it in opened["items"] if it["kind"] == "yoshiki")
+        res = client.post(
+            f"/public/api/forms/{style_a['guest_token']}/submissions",
+            json={
+                "answers": {"name": "花子"},
+                "submitter_name": "花子",
+                "application_token": opened["token"],
+                "application_item_id": yoshiki["id"],
+            },
+        )
+        assert res.status_code == 201, res.text
+
+        res = client.get(
+            f"/procedures/{proc['id']}/export",
+            headers=_headers(),
+            params={"format": "aligned"},
+        )
+        assert res.status_code == 200, res.text
+        text = res.content.decode("utf-8-sig")
+        # 記入必須（案内）の氏名は揃える対象。様式ファイルの欄は混ざらない
+        assert "転入案内::氏名" in text
+        assert "山田" in text
+        assert "転入届::氏名" not in text
+        assert "花子" not in text
+    finally:
+        _teardown(path)
+
+
 def test_catalog_published_only() -> None:
     client, path = _setup()
     try:
@@ -830,6 +1001,8 @@ if __name__ == "__main__":
     test_create_procedure_from_draft_stays_unpublished()
     test_assist_procedure_template()
     test_assist_procedure_apply_selected_parts()
+    test_application_workbench_items()
+    test_procedure_export_aligned()
     test_catalog_published_only()
     test_procedure_share_links()
     test_application_and_procedure_export()

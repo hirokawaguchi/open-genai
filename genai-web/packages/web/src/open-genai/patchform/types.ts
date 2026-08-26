@@ -230,6 +230,49 @@ export type ApplicationForm = {
   submitted_at?: string | null;
 };
 
+export type SlotKind = 'data' | 'yoshiki' | 'attach';
+export type SlotRequired = 'required' | 'recommended' | 'optional';
+export type SlotCardinality = 'one' | 'many';
+export type ItemFulfillment = '' | 'form' | 'file';
+
+/** 申請束のアイテム（枠のインスタンス）。オンライン記入でもファイル添付でも満たせる。 */
+export type ApplicationItem = {
+  id: string;
+  slot_id: string;
+  title: string;
+  kind: SlotKind;
+  required: SlotRequired;
+  cardinality: SlotCardinality;
+  form_id?: string | null;
+  fulfillment: ItemFulfillment;
+  file_id?: string | null;
+  file_name?: string | null;
+  copy_index: number;
+  added_by: string;
+  guest_token?: string | null;
+  public_url?: string | null;
+  visibility?: FormVisibility | null;
+  can_fill_online: boolean;
+  status: ApplicationFormStatus;
+  answers?: Record<string, unknown>;
+  definition?: FormDefinition;
+  receipt_code?: string | null;
+  respondent_label?: string | null;
+  submitted_at?: string | null;
+};
+
+export type ProcedureCatalogSlot = {
+  slot_id: string;
+  title: string;
+  kind: SlotKind;
+  form_id?: string | null;
+};
+
+export type ProcedureCatalog = {
+  procedure_id: string;
+  slots: ProcedureCatalogSlot[];
+};
+
 export type Application = {
   id: string;
   token: string;
@@ -241,6 +284,7 @@ export type Application = {
   form_ids: string[];
   notice: { notes?: string[]; prepare?: string[]; refs?: string[] };
   forms: ApplicationForm[];
+  items: ApplicationItem[];
   public_url: string;
   created_at: string;
   updated_at?: string;

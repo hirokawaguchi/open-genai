@@ -4216,6 +4216,65 @@ async def patchform_get_application(
     )
 
 
+@app.get("/patchform/procedures/{procedure_id}/catalog")
+async def patchform_procedure_catalog(
+    procedure_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET", _patchform_app_url(f"/procedures/{procedure_id}/catalog"), headers
+    )
+
+
+@app.post("/patchform/applications/{application_id}/items")
+async def patchform_add_application_item(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/items"),
+        headers,
+        body,
+    )
+
+
+@app.post("/patchform/applications/{application_id}/items/{item_id}/file")
+async def patchform_fulfill_application_item(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/items/{item_id}/file"),
+        headers,
+        body,
+        timeout=60,
+    )
+
+
+@app.delete("/patchform/applications/{application_id}/items/{item_id}/file")
+async def patchform_clear_application_item(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE",
+        _patchform_app_url(f"/applications/{application_id}/items/{item_id}/file"),
+        headers,
+    )
+
+
 async def _proxy_patchform_export(path: str, request: Request, fallback_name: str) -> Response:
     err, headers = _patchform_headers(request)
     if err:

@@ -27,10 +27,10 @@ export const PatchformInboxPage = () => {
   const procedureId = pathId || params.get('procedure') || undefined;
   const { items, procedures, inbox, isLoading, loadError } = usePatchformInbox(procedureId);
   const selected = procedures.find((p) => p.id === procedureId);
-  const [exporting, setExporting] = useState<'csv' | 'jsonl' | null>(null);
+  const [exporting, setExporting] = useState<'csv' | 'jsonl' | 'aligned' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const download = async (format: 'csv' | 'jsonl') => {
+  const download = async (format: 'csv' | 'jsonl' | 'aligned') => {
     if (!selected) return;
     setExporting(format);
     setExportError(null);
@@ -102,7 +102,20 @@ export const PatchformInboxPage = () => {
               >
                 {exporting === 'jsonl' ? '書き出し中...' : 'JSONLをまとめてダウンロード'}
               </Button>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                aria-disabled={exporting != null}
+                title='記入必須の項目だけを申請をまたいで揃えた表です。他システムへ渡す用です。'
+                onClick={() => void download('aligned')}
+              >
+                {exporting === 'aligned' ? '書き出し中...' : '記入必須だけ揃えて書き出す'}
+              </Button>
             </div>
+            <p className='text-dns-14N-130 text-solid-gray-600'>
+              CSV はざっと見る表です。連携契約には使いません。他システムへ渡すときは「記入必須だけ揃えて書き出す」を使ってください。
+            </p>
             {exportError && (
               <p className='text-error-1' role='alert'>
                 {exportError}

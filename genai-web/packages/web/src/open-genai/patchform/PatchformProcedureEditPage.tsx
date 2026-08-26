@@ -423,7 +423,11 @@ export const PatchformProcedureEditPage = () => {
               ) : (
               <>
               <p className='text-std-16N-170 text-solid-gray-700'>
-                申請者がその答えを選んだとき、追加で出す用紙にチェックします。チェックしない用紙は、その答えでは出ません。
+                申請者がその答えを選んだとき、推奨する枠にチェックします。チェックしない用紙は、その答えでは置きません。
+              </p>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                チェックした様式は「どちらでも可」の枠になり、申請者はオンライン記入でも、記入済みファイルの添付でも満たせます。
+                「準備するもの」は添付枠の種になり、申請者が作業台で足せます。束は閉じないので、申請者は複製や別枠の追加もできます。
               </p>
               {fields.length === 0 ? (
                 <div className='rounded-8 border border-solid-gray-300 px-4 py-3'>

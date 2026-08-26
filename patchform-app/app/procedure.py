@@ -8,6 +8,14 @@ from . import spec
 
 CHOICE_TYPES = ("select", "radio", "checkbox")
 
+# 枠（申請束のアイテムの型）。
+# - data   : 記入必須。オンライン記入のみ。他システムへ項目を揃えて渡せる
+# - yoshiki: 様式。フォーム記入でも事前の PDF/Word 添付でも満たせる
+# - attach : 添付。疎明・証明・写真。ファイルのみ
+SLOT_KINDS = ("data", "yoshiki", "attach")
+SLOT_REQUIRED = ("required", "recommended", "optional")
+SLOT_CARDINALITY = ("one", "many")
+
 
 def _as_str_list(raw: Any) -> list[str]:
     if raw is None:
@@ -294,6 +302,75 @@ def resolve_bundle(
                 refs.append(item)
     return {
         "form_ids": form_ids,
+        "notes": notes,
+        "prepare": prepare,
+        "refs": refs,
+    }
+
+
+def resolve_slots(
+    mapping: dict[str, Any], answers: dict[str, Any] | None
+) -> dict[str, Any]:
+    """答えに当たった枠（推奨アイテムの種）を1件ずつ返す。
+
+    様式フォームは記入・添付のどちらでも満たせる `yoshiki` 枠に、`prepare`
+    の持ち物は `attach` 枠にする。ここでは束を閉じず、推奨セットを置くだけ。
+    """
+    answers = answers or {}
+    slots: list[dict[str, Any]] = []
+    notes: list[str] = []
+    prepare: list[str] = []
+    refs: list[str] = []
+    seen: set[str] = set()
+
+    def _push(slot: dict[str, Any]) -> None:
+        key = slot["slot_id"]
+        if key in seen:
+            return
+        seen.add(key)
+        slots.append(slot)
+
+    for rule in mapping.get("rules") or []:
+        values = answer_values(answers.get(rule.get("component_id")))
+        if rule.get("option") not in values:
+            continue
+        for fid in rule.get("form_ids") or []:
+            _push(
+                {
+                    "slot_id": f"yoshiki:{fid}",
+                    "title": "",
+                    "kind": "yoshiki",
+                    "required": "recommended",
+                    "cardinality": "one",
+                    "form_id": fid,
+                    "template_file_id": "",
+                }
+            )
+        for item in rule.get("prepare") or []:
+            text = str(item).strip()
+            if not text:
+                continue
+            if text not in prepare:
+                prepare.append(text)
+            _push(
+                {
+                    "slot_id": f"attach:{text}",
+                    "title": text,
+                    "kind": "attach",
+                    "required": "recommended",
+                    "cardinality": "one",
+                    "form_id": "",
+                    "template_file_id": "",
+                }
+            )
+        note = str(rule.get("notes") or "").strip()
+        if note:
+            notes.append(note)
+        for item in rule.get("refs") or []:
+            if item not in refs:
+                refs.append(item)
+    return {
+        "slots": slots,
         "notes": notes,
         "prepare": prepare,
         "refs": refs,
