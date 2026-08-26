@@ -167,11 +167,113 @@ def test_fallback_procedure_move() -> None:
     assert draft["rules"][0]["form_keys"] == ["move_in", "attach"]
 
 
-def test_normalize_procedure_requires_choice() -> None:
-    raw = assist.fallback_procedure_draft("届出の手引き")
+def test_extract_form_titles_from_handbook() -> None:
+    text = """## 障害福祉サービス等 指定申請の手引き － 目次 －
+
+様式一覧
+様式第1号　指定申請書 ・・・・ 10
+様式第2号　付表（障害福祉サービス事業）
+様式第2号の2　付表（障害児通所支援事業）
+１ 指定申請書（様式第1号）
+「誓約書」
+"""
+    titles = assist.extract_form_titles(text)
+    assert any("指定申請書" in t and "様式第1号" in t.replace(" ", "") for t in titles)
+    assert any("付表" in t and "様式第2号" in t.replace(" ", "") for t in titles)
+    assert any("様式第2号の2" in t.replace(" ", "") for t in titles)
+    raw = assist.fallback_procedure_draft(text)
+    draft, err = assist.normalize_procedure_draft(raw)
+    assert err is None and draft
+    assert draft["guide"]["components"][0]["type"] == "radio"
+    assert assist.ALL_FORMS_OPTION in str(draft["guide"])
+    assert len(draft["forms"]) >= 3
+    assert all(not f["definition"]["components"] for f in draft["forms"])
+    preview = assist.preview_procedure_draft(draft)
+    assert preview["navigation"]["found"] is True
+    assert all(item["title_only"] for item in preview["forms"])
+
+
+def test_split_and_select_guide_chapters() -> None:
+    text = """## 障害福祉サービス等 指定申請の手引き － 目次 －
+1 はじめに ........ 1
+2 様式一覧 ........ 5
+## 第1 はじめに
+この手引きの使い方です。
+## 様式一覧
+様式第1号　指定申請書
+様式第2号　付表
+## 審査基準
+点数の付け方です。様式は出てきません。
+"""
+    chapters = assist.split_guide_chapters(text)
+    kinds = {c["title"]: c["kind"] for c in chapters}
+    assert any(c["kind"] == "toc" for c in chapters)
+    assert kinds.get("様式一覧") == "body"
+    selected = assist.select_guide_chapters(chapters)
+    titles = [c["title"] for c in selected]
+    assert any("様式" in t for t in titles)
+    assert all("審査基準" not in t for t in titles)
+    read = [assist.analyze_chapter(c) for c in selected]
+    found = assist.merge_form_titles(*(item["titles"] for item in read))
+    assert any("指定申請書" in t for t in found)
+
+
+def test_fallback_generic_does_not_invent() -> None:
+    raw = assist.fallback_procedure_draft("## 障害福祉サービス等 指定申請の手引き － 目次 －")
+    assert raw["forms"] == []
+    assert raw["rules"] == []
+    draft, err = assist.normalize_procedure_draft(raw)
+    assert err is None and draft
+    assert "目次" not in draft["name"]
+    assert "#" not in draft["name"]
+    preview = assist.preview_procedure_draft(draft)
+    assert preview["navigation"]["found"] is False
+    assert preview["forms"] == []
+
+
+def test_normalize_allows_missing_choice() -> None:
+    raw = assist.fallback_procedure_draft("転入届の手引き")
     raw["guide"]["components"] = [{"id": "note", "type": "textarea", "label": "内容"}]
-    _draft, err = assist.normalize_procedure_draft(raw)
-    assert err and "ラジオ" in err
+    draft, err = assist.normalize_procedure_draft(raw)
+    assert err is None and draft
+    assert assist.guide_has_choice(draft["guide"]) is False
+
+
+def test_draft_procedure_reads_selected_chapters() -> None:
+    async def _run() -> None:
+        text = """## 障害福祉サービス等 指定申請の手引き － 目次 －
+目次だけ
+## 第1 はじめに
+説明だけです。
+## 様式一覧
+様式第1号　指定申請書
+様式第3号　誓約書
+## 審査基準
+点数の話です。
+"""
+        with patch("app.assist.llm.chat", new=AsyncMock(side_effect=RuntimeError("down"))):
+            result = await assist.draft_procedure(text)
+        titles = [f["definition"]["metadata"]["title"] for f in result["draft"]["forms"]]
+        assert any("指定申請書" in t for t in titles)
+        assert any("誓約書" in t for t in titles)
+        read_titles = [c["title"] for c in result["outline"]["read"]]
+        assert any("様式" in t for t in read_titles)
+
+    asyncio.run(_run())
+
+
+def test_draft_procedure_reads_titles_past_toc() -> None:
+    async def _run() -> None:
+        text = "## 障害福祉サービス等 指定申請の手引き － 目次 －\n" + ("目次項目\n" * 800)
+        text += "様式一覧\n様式第1号　指定申請書\n様式第3号　誓約書\n"
+        with patch("app.assist.llm.chat", new=AsyncMock(side_effect=RuntimeError("down"))):
+            result = await assist.draft_procedure(text)
+        titles = [f["definition"]["metadata"]["title"] for f in result["draft"]["forms"]]
+        assert any("指定申請書" in t for t in titles)
+        assert any("誓約書" in t for t in titles)
+        assert result["draft"]["guide"]["components"][0]["type"] == "radio"
+
+    asyncio.run(_run())
 
 
 def test_draft_procedure_falls_back_without_llm() -> None:
@@ -195,6 +297,11 @@ if __name__ == "__main__":
     test_generate_uses_llm_when_valid()
     test_invite_fallback()
     test_fallback_procedure_move()
-    test_normalize_procedure_requires_choice()
+    test_extract_form_titles_from_handbook()
+    test_split_and_select_guide_chapters()
+    test_fallback_generic_does_not_invent()
+    test_normalize_allows_missing_choice()
+    test_draft_procedure_reads_selected_chapters()
+    test_draft_procedure_reads_titles_past_toc()
     test_draft_procedure_falls_back_without_llm()
     print("ok")

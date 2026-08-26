@@ -42,13 +42,17 @@ async def chat(
     model: str | None = None,
     max_tokens: int | None = None,
 ) -> str:
+    used = model or PATCHFORM_MODEL
     payload: dict[str, Any] = {
-        "model": model or PATCHFORM_MODEL,
+        "model": used,
         "messages": messages,
         "stream": False,
         "temperature": temperature,
         "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
+    # gpt-oss は推論にトークンを使い、本文が空のまま切れることがある
+    if "gpt-oss" in used:
+        payload["think"] = False
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{OPENAI_BASE_URL}/chat/completions",
@@ -58,7 +62,11 @@ async def chat(
         res.raise_for_status()
         data = res.json()
     choices = data.get("choices") or [{}]
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    message = choices[0].get("message") or {}
+    content = str(message.get("content") or "").strip()
+    if not content:
+        raise ValueError("モデルの本文が空です")
+    return content
 
 
 def _strip_fences(raw: str) -> str:

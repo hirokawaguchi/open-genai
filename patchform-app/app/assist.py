@@ -3,10 +3,41 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
 from . import llm, spec
+
+_HEADING_MARK = re.compile(r"^#{1,6}\s*")
+_TOC_MARK = re.compile(r"[［\[\s]*目次[］\]\s]*")
+_DASH_RUN = re.compile(r"[－—\-ー]{1,}")
+_SPACES = re.compile(r"\s+")
+
+
+def clean_heading(text: str) -> str:
+    """手引きの見出し記号や「目次」を落として、短い手続き名にする。"""
+    s = _HEADING_MARK.sub("", (text or "").strip())
+    s = _TOC_MARK.sub(" ", s)
+    s = _DASH_RUN.sub(" ", s)
+    s = _SPACES.sub(" ", s).strip(" ・")
+    if s.endswith("の手続きの手続き"):
+        s = s[: -len("の手続き")]
+    return s[:80]
+
+
+def _option_label(opt: Any) -> str:
+    if isinstance(opt, dict):
+        return str(opt.get("label") or opt.get("value") or "").strip()
+    raw = str(opt or "").strip()
+    return raw.split("|", 1)[0].strip()
+
+
+def guide_has_choice(guide: Any) -> bool:
+    comps = guide.get("components") if isinstance(guide, dict) else None
+    return any(
+        isinstance(c, dict) and c.get("type") in ("select", "radio", "checkbox") for c in (comps or [])
+    )
 
 
 def catalog_for_prompt() -> list[dict[str, Any]]:
@@ -277,8 +308,281 @@ async def draft_invite(title: str, public_url: str, tone: str = "丁寧") -> dic
         return {**fallback, "source": "template", "notes": str(e)}
 
 
-MAX_PROCEDURE_FORMS = 6
+MAX_PROCEDURE_FORMS = 24
 MAX_PROCEDURE_TEXT = 12_000
+MAX_SELECT_CHAPTERS = 8
+MAX_LLM_CHAPTERS = 4
+MAX_CHAPTER_CHARS = 2_500
+ALL_FORMS_OPTION = "一覧の様式をすべて出す"
+_CHAPTER_HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*$", re.MULTILINE)
+_CHAPTER_HINTS: tuple[tuple[str, int], ...] = (
+    ("様式一覧", 6),
+    ("提出書類", 6),
+    ("必要書類", 5),
+    ("申請書類", 4),
+    ("添付", 4),
+    ("様式", 3),
+    ("指定申請", 3),
+    ("持ち物", 3),
+    ("対象", 2),
+    ("要件", 2),
+    ("手続き", 2),
+    ("申請", 2),
+)
+_FORM_MARK = re.compile(
+    r"(?:別記|別紙)?様式\s*第\s*[0-9０-９一二三四五六七八九十百]+\s*号(?:の[0-9０-９]+)?"
+)
+_QUOTED_FORM = re.compile(
+    r"「([^」]{2,40}(?:申請書|届出書|申出書|報告書|調書|誓約書|同意書|請求書|届|台帳))」"
+)
+_LIST_PREFIX = re.compile(r"^[0-9０-９]+[\.．、.\s]+")
+_ZEN_DIGIT = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _line_at(text: str, index: int) -> str:
+    start = text.rfind("\n", 0, index) + 1
+    end = text.find("\n", index)
+    return text[start : end if end >= 0 else None].strip()
+
+
+def _norm_title(text: str) -> str:
+    return clean_heading(text).translate(_ZEN_DIGIT).replace(" ", "")
+
+
+def extract_form_titles(text: str, *, limit: int = MAX_PROCEDURE_FORMS) -> list[str]:
+    """手引き本文から様式名だけを拾う。中身は見ない。"""
+    q = text or ""
+    by_mark: dict[str, str] = {}
+    extras: list[str] = []
+    for match in _FORM_MARK.finditer(q):
+        mark = re.sub(r"\s+", "", match.group(0))
+        line = _LIST_PREFIX.sub("", clean_heading(_line_at(q, match.start())))
+        titled = line
+        wrapped = re.search(
+            rf"^(.+?)[（(]\s*{re.escape(match.group(0))}\s*[）)]\s*$", line
+        )
+        if wrapped:
+            titled = f"{mark} {wrapped.group(1).strip()}"
+        elif mark not in line.replace(" ", ""):
+            titled = f"{mark} {line}".strip()
+        titled = re.sub(r"[・…．.\s]+\d{1,3}\s*$", "", titled).strip()
+        if titled == mark or not titled:
+            continue
+        key = mark.translate(_ZEN_DIGIT)
+        prev = by_mark.get(key, "")
+        if len(titled) > len(prev):
+            by_mark[key] = titled
+    known = {_norm_title(v) for v in by_mark.values()}
+    for match in _QUOTED_FORM.finditer(q):
+        title = clean_heading(match.group(1))
+        if not title or _norm_title(title) in known:
+            continue
+        extras.append(title)
+        known.add(_norm_title(title))
+    out = list(by_mark.values()) + extras
+    # 同じ題名を落とす
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for title in out:
+        key = _norm_title(title)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        uniq.append(title[:80])
+        if len(uniq) >= limit:
+            break
+    return uniq
+
+
+def procedure_name_from_text(text: str) -> str:
+    for match in re.finditer(r"^#{1,3}\s+(.+)$", text or "", re.MULTILINE):
+        name = clean_heading(match.group(1))
+        if name and "目次" not in name:
+            if name.endswith("の手引き"):
+                name = name[: -len("の手引き")] + "の手続き"
+            return name
+    first = clean_heading((text or "").splitlines()[0] if text else "")
+    if first and "目次" not in first:
+        if first.endswith("の手引き"):
+            first = first[: -len("の手引き")] + "の手続き"
+        return first
+    return "手続き（仮）"
+
+
+def split_guide_chapters(text: str) -> list[dict[str, Any]]:
+    """見出しから章立てを切る。目次は kind=toc。"""
+    q = text or ""
+    matches = list(_CHAPTER_HEADING.finditer(q))
+    chapters: list[dict[str, Any]] = []
+    if not matches:
+        body = q.strip()
+        if body:
+            chapters.append(
+                {"id": "ch1", "title": "本文", "body": body, "kind": "body", "index": 1}
+            )
+        return chapters
+    preface = q[: matches[0].start()].strip()
+    if preface:
+        chapters.append(
+            {"id": "ch0", "title": "前文", "body": preface, "kind": "body", "index": 0}
+        )
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(q)
+        raw_title = match.group(2).strip()
+        title = clean_heading(raw_title) or raw_title
+        body = q[match.end() : end].strip()
+        kind = "toc" if "目次" in raw_title else "body"
+        chapters.append(
+            {
+                "id": f"ch{i + 1}",
+                "title": title,
+                "body": body,
+                "kind": kind,
+                "index": i + 1,
+            }
+        )
+    return chapters
+
+
+def score_chapter(chapter: dict[str, Any]) -> int:
+    title = str(chapter.get("title") or "")
+    body = str(chapter.get("body") or "")
+    if chapter.get("kind") == "toc":
+        return 2 if _FORM_MARK.search(body) else 1
+    score = 0
+    blob = f"{title}\n{body[:1200]}"
+    weak_body = {"様式", "申請", "手続き"}
+    for hint, weight in _CHAPTER_HINTS:
+        if hint in title:
+            score += weight * 2
+        elif hint in blob and hint not in weak_body:
+            score += weight
+    if _FORM_MARK.search(body):
+        score += 5
+    return score
+
+
+def select_guide_chapters(
+    chapters: list[dict[str, Any]], *, limit: int = MAX_SELECT_CHAPTERS
+) -> list[dict[str, Any]]:
+    """目次は必ず残し、様式・提出に効く章を点数で選ぶ。"""
+    toc = [c for c in chapters if c.get("kind") == "toc"]
+    ranked = sorted(
+        (c for c in chapters if c.get("kind") != "toc"),
+        key=score_chapter,
+        reverse=True,
+    )
+    chosen: list[dict[str, Any]] = []
+    for chapter in ranked:
+        if score_chapter(chapter) <= 0:
+            continue
+        chosen.append(chapter)
+        if len(chosen) >= limit:
+            break
+    return toc + chosen
+
+
+def analyze_chapter(chapter: dict[str, Any]) -> dict[str, Any]:
+    """1章を機械的に読む。様式名だけ拾う。"""
+    titles = extract_form_titles(str(chapter.get("body") or ""))
+    return {
+        "id": chapter.get("id"),
+        "title": chapter.get("title"),
+        "kind": chapter.get("kind"),
+        "titles": titles,
+    }
+
+
+def _match_form_keys(want: list[str], forms: list[dict[str, Any]]) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for title in want:
+        need = _norm_title(title)
+        if not need:
+            continue
+        for item in forms:
+            definition = item.get("definition") if isinstance(item.get("definition"), dict) else {}
+            meta = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
+            have = _norm_title(str(meta.get("title") or item.get("title") or ""))
+            key = str(item.get("key") or "")
+            if not key or key in seen:
+                continue
+            if need == have or need in have or have in need:
+                keys.append(key)
+                seen.add(key)
+                break
+    return keys
+
+
+def draft_from_form_titles(
+    name: str,
+    titles: list[str],
+    *,
+    conditions: list[dict[str, Any]] | None = None,
+    missing: list[str] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """様式名だけの下書き。中身は空。一覧はまず全部必要とする。"""
+    forms = []
+    keys: list[str] = []
+    for i, title in enumerate(titles[:MAX_PROCEDURE_FORMS]):
+        key = f"form{i + 1}"
+        keys.append(key)
+        forms.append(
+            {
+                "key": key,
+                "definition": _simple_form(
+                    title,
+                    "手引きの様式名から作りました。中身は未作成です。",
+                    [],
+                ),
+            }
+        )
+    options = [ALL_FORMS_OPTION]
+    rules: list[dict[str, Any]] = [
+        {
+            "component_id": "event",
+            "option": ALL_FORMS_OPTION,
+            "form_keys": keys,
+            "notes": "様式一覧に出ていた用紙を、まず全部出す前提にしています。",
+            "prepare": [],
+        }
+    ]
+    for item in conditions or []:
+        if not isinstance(item, dict):
+            continue
+        when = clean_heading(str(item.get("when") or item.get("option") or ""))
+        if not when or when == ALL_FORMS_OPTION:
+            continue
+        mapped = _match_form_keys(_title_list(item.get("form_titles") or item.get("titles") or []), forms)
+        if not mapped:
+            continue
+        options.append(when[:40])
+        rules.append(
+            {
+                "component_id": "event",
+                "option": when[:40],
+                "form_keys": mapped,
+                "notes": str(item.get("notes") or "章の記載から仮に分けました。").strip(),
+                "prepare": [],
+            }
+        )
+    guide = _simple_form(
+        f"{name}の案内",
+        "一覧にある様式は、まず全部必要としています。条件で変わる場合はあとから分けてください。",
+        [_c("event", "radio", "この手続きで出す様式", True, options=options)],
+    )
+    return {
+        "name": name,
+        "description": "様式の中身は作っていません。条件がある場合は、この仮の選択肢を分けてください。",
+        "guide": guide,
+        "forms": forms,
+        "rules": rules,
+        "missing": missing
+        or ["条件で様式が変わる場合は、あとから選択肢を分けてください"],
+        "notes": notes
+        or "様式名を文書から拾いました。中身は空です。一覧の様式は、まず全部必要としています。",
+    }
 
 
 def _simple_form(title: str, description: str, comps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -292,6 +596,9 @@ def _simple_form(title: str, description: str, comps: list[dict[str, Any]]) -> d
 def fallback_procedure_draft(text: str) -> dict[str, Any]:
     """LLM なしでも手続き第1版を組めるテンプレート。公開はしない。"""
     q = (text or "").strip()
+    titles = extract_form_titles(q)
+    if titles:
+        return draft_from_form_titles(procedure_name_from_text(q), titles)
     if any(k in q for k in ("転入", "転居", "引越", "引っ越し")):
         name = "転入・転居の手続き"
         guide_opts = ["転入", "転居"]
@@ -368,39 +675,22 @@ def fallback_procedure_draft(text: str) -> dict[str, Any]:
         ]
         missing = ["審査基準はマスタに載せていません"]
     else:
-        name = (q[:30] or "手続き") + ("の手続き" if "手続" not in q[:30] else "")
-        guide_opts = ["該当する", "該当しない"]
-        forms = [
-            {
-                "key": "main",
-                "definition": _simple_form(
-                    "届出",
-                    "",
-                    [
-                        _c("applicant", "user_info_composite", "届出人", True),
-                        _c("note", "textarea", "内容", True),
-                    ],
-                ),
-            }
-        ]
-        rules = [
-            {
-                "component_id": "event",
-                "option": "該当する",
-                "form_keys": ["main"],
-                "notes": "届出を出してください。",
-                "prepare": ["本人確認書類"],
-            }
-        ]
-        missing = ["文書から分岐を読み取れなかったため、仮の選択肢です"]
+        name = clean_heading(q.splitlines()[0] if q else "") or "手続き（仮）"
+        guide_opts = []
+        forms = []
+        rules = []
+        missing = ["文書から様式も分岐も読み取れませんでした"]
 
-    guide = _simple_form(
-        f"{name}の案内",
-        "状況を選んでください。",
-        [
-            _c("event", "radio", "該当するもの", True, options=guide_opts),
-        ],
-    )
+    if guide_opts:
+        guide = _simple_form(
+            f"{name}の案内",
+            "状況を選んでください。",
+            [
+                _c("event", "radio", "該当するもの", True, options=guide_opts),
+            ],
+        )
+    else:
+        guide = _simple_form(f"{name}の案内", "", [])
     return {
         "name": name,
         "description": q[:400] or None,
@@ -408,7 +698,7 @@ def fallback_procedure_draft(text: str) -> dict[str, Any]:
         "forms": forms,
         "rules": rules,
         "missing": missing,
-        "notes": "テンプレートによる第1版です。公開前に内容を確認してください。",
+        "notes": "テンプレートによる候補です。読み取れたものだけを選んで反映してください。",
     }
 
 
@@ -432,18 +722,17 @@ def normalize_procedure_draft(
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(raw, dict):
         return None, "手続き案の形式が不正です"
-    name = str(raw.get("name") or raw.get("title") or "").strip()
+    name = clean_heading(str(raw.get("name") or raw.get("title") or ""))
     if not name:
-        return None, "手続き名がありません"
+        name = "手続き（仮）"
     guide, gerr = _definition_from_part(raw.get("guide") or {}, f"{name}の案内", visibility)
     if gerr or guide is None:
         return None, gerr or "案内フォームの生成に失敗しました"
-    has_choice = any(
-        isinstance(c, dict) and c.get("type") in ("select", "radio", "checkbox")
-        for c in (guide.get("components") or [])
-    )
-    if not has_choice:
-        return None, "案内にラジオ・セレクト・チェックボックスがありません"
+    gmeta = guide.get("metadata") if isinstance(guide.get("metadata"), dict) else {}
+    guide["metadata"] = {
+        **gmeta,
+        "title": clean_heading(str(gmeta.get("title") or f"{name}の案内")) or f"{name}の案内",
+    }
     forms_out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for i, item in enumerate(raw.get("forms") or []):
@@ -455,13 +744,22 @@ def normalize_procedure_draft(
         if key in seen:
             continue
         seen.add(key)
-        title = str(item.get("title") or (item.get("metadata") or {}).get("title") or f"様式{i + 1}")
-        definition, ferr = _definition_from_part(item.get("definition") or item, title, visibility)
+        incoming = item.get("definition") if isinstance(item.get("definition"), dict) else item
+        incoming_meta = incoming.get("metadata") if isinstance(incoming, dict) and isinstance(incoming.get("metadata"), dict) else {}
+        title = clean_heading(
+            str(
+                item.get("title")
+                or incoming_meta.get("title")
+                or (item.get("metadata") or {}).get("title")
+                or f"様式{i + 1}"
+            )
+        ) or f"様式{i + 1}"
+        definition, ferr = _definition_from_part(incoming if isinstance(incoming, dict) else item, title, visibility)
         if ferr or definition is None:
             return None, ferr or f"様式「{title}」の生成に失敗しました"
+        fmeta = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
+        definition["metadata"] = {**fmeta, "title": title}
         forms_out.append({"key": key, "definition": definition})
-    if not forms_out:
-        return None, "足す様式が1つもありません"
     keys = {f["key"] for f in forms_out}
     rules: list[dict[str, Any]] = []
     for item in raw.get("rules") or []:
@@ -503,51 +801,275 @@ def normalize_procedure_draft(
     }, None
 
 
-async def draft_procedure(text: str, *, visibility: str = "internal") -> dict[str, Any]:
-    q = (text or "").strip()
-    if not q:
-        raise ValueError("手引きや案内の本文は必須です")
-    q = q[:MAX_PROCEDURE_TEXT]
-    allowed = json.dumps(catalog_for_prompt(), ensure_ascii=False)
-    system = (
-        "あなたは日本の自治体向け手続き設計者です。"
-        "手引きや庁内マニュアルから、未公開の手続き第1版を JSON だけで作ってください。"
-        "例規から手順を作らないでください。文書に無い分岐は missing に書き、勝手に補完した箇所は notes に書いてください。"
-        "キー: name, description, guide, forms, rules, missing, notes。"
-        "guide と forms[].definition はフォーム定義です。"
-        f"$version は {spec.SPEC_VERSION}。components は id, type, label, required, properties。"
-        f"type は次だけ: {allowed}。"
-        "guide には状況を聞く radio または select を必ず1つ以上入れてください。"
-        "forms は最大6件。各要素は key, title, definition。"
-        "rules は component_id, option, form_keys, notes, prepare。"
-        "form_keys は forms[].key を指します。"
+def preview_procedure_draft(draft: dict[str, Any]) -> dict[str, Any]:
+    """職員が反映対象を選ぶための要約。まだ何も作らない。"""
+    name = str((draft or {}).get("name") or "")
+    guide = draft.get("guide") if isinstance(draft.get("guide"), dict) else {}
+    questions: list[dict[str, Any]] = []
+    for comp in guide.get("components") or []:
+        if not isinstance(comp, dict) or comp.get("type") not in ("select", "radio", "checkbox"):
+            continue
+        props = comp.get("properties") if isinstance(comp.get("properties"), dict) else {}
+        questions.append(
+            {
+                "label": str(comp.get("label") or ""),
+                "options": [_option_label(opt) for opt in (props.get("options") or []) if _option_label(opt)],
+            }
+        )
+    warnings: list[str] = []
+    if not name or name == "手続き（仮）":
+        warnings.append("手続き名を読み取れませんでした。案内に反映する前に付けてください。")
+    if not questions:
+        warnings.append("手続きの選択肢（ラジオ・セレクト）は読み取れていません。")
+    if not (draft.get("forms") or []):
+        warnings.append("様式は読み取れていません。")
+    for item in draft.get("missing") or []:
+        text = str(item).strip()
+        if text:
+            warnings.append(text)
+    forms = []
+    for item in draft.get("forms") or []:
+        if not isinstance(item, dict):
+            continue
+        definition = item.get("definition") if isinstance(item.get("definition"), dict) else {}
+        meta = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
+        field_count = len(definition.get("components") or [])
+        forms.append(
+            {
+                "key": str(item.get("key") or ""),
+                "title": str(meta.get("title") or item.get("title") or item.get("key") or "様式"),
+                "field_count": field_count,
+                "title_only": field_count == 0,
+            }
+        )
+    desc = str(draft.get("description") or "").strip()
+    return {
+        "name": name,
+        "warnings": warnings,
+        "navigation": {
+            "found": bool(questions),
+            "title": str((guide.get("metadata") or {}).get("title") or ""),
+            "questions": questions,
+        },
+        "forms": forms,
+        "notice": {
+            "name": name,
+            "description": desc[:240],
+            "rule_count": len(draft.get("rules") or []),
+            "missing": [str(m).strip() for m in (draft.get("missing") or []) if str(m).strip()],
+        },
+    }
+
+
+def pack_procedure_preview(generated: dict[str, Any]) -> dict[str, Any]:
+    draft = generated.get("draft") if isinstance(generated.get("draft"), dict) else {}
+    preview = preview_procedure_draft(draft)
+    if isinstance(generated.get("outline"), dict):
+        preview["outline"] = generated["outline"]
+    return {
+        "source": generated.get("source"),
+        "notes": generated.get("notes"),
+        "model": generated.get("model"),
+        "draft": draft,
+        "preview": preview,
+    }
+
+
+def _title_list(raw: Any) -> list[str]:
+    items = raw if isinstance(raw, list) else []
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            title = clean_heading(item)
+        elif isinstance(item, dict):
+            title = clean_heading(str(item.get("title") or item.get("name") or ""))
+        else:
+            title = ""
+        if title:
+            out.append(title[:80])
+    return out
+
+
+def merge_form_titles(*groups: list[str]) -> list[str]:
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for title in group:
+            key = _norm_title(title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            uniq.append(title[:80])
+            if len(uniq) >= MAX_PROCEDURE_FORMS:
+                return uniq
+    return uniq
+
+
+async def select_chapters_llm(chapters: list[dict[str, Any]]) -> list[str] | None:
+    """目次から、様式・提出に効く章だけを選ぶ。失敗したら None。"""
+    if len(chapters) <= 2:
+        return None
+    lines = [f"- {c['id']}: {c.get('title') or ''} ({c.get('kind')})" for c in chapters[:40]]
+    raw = await llm.chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "あなたは手引きの目次から関連章を選ぶアシスタントです。"
+                    "JSON オブジェクトだけを返してください。"
+                    '形式: {"selected":["ch1","ch2"]}'
+                    "様式一覧・提出書類・対象・要件など、手続きの作成に効く章だけを選んでください。"
+                    "目次そのものは selected に入れないでください。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "次の目次から関連章の id を選んでください。\n" + "\n".join(lines),
+            },
+        ],
+        max_tokens=256,
     )
-    user = f"次の文書から手続き第1版を作ってください。\n{q}"
+    parsed = llm.extract_json(raw)
+    if not isinstance(parsed, dict):
+        return None
+    valid = {c["id"] for c in chapters}
+    selected = [str(x) for x in (parsed.get("selected") or []) if str(x) in valid]
+    return selected or None
+
+
+async def refine_chapter_llm(
+    chapter: dict[str, Any], known_titles: list[str]
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """1章だけ読んで、様式名と条件を足す。"""
+    if chapter.get("kind") == "toc":
+        return [], []
+    body = str(chapter.get("body") or "").strip()[:MAX_CHAPTER_CHARS]
+    if not body:
+        return [], []
+    raw = await llm.chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "あなたは日本の自治体向け手続き設計者です。"
+                    "この章だけを読み、JSON オブジェクトだけを返してください。"
+                    "フォーム定義は作らないでください。文書に無い様式名は足さないでください。"
+                    "キー: form_titles, conditions。"
+                    "form_titles は文字列の配列。"
+                    'conditions は {"when":"法人の場合","form_titles":["様式第3号 誓約書"]} の配列。'
+                    "条件が無ければ conditions は空配列です。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"章: {chapter.get('title')}\n"
+                    f"既に拾った様式名:\n"
+                    + ("\n".join(f"- {t}" for t in known_titles) or "（なし）")
+                    + f"\n\n# 本文\n{body}"
+                ),
+            },
+        ],
+        max_tokens=768,
+    )
+    parsed = llm.extract_json(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("章の解析結果の形式が不正です")
+    titles = _title_list(parsed.get("form_titles") or parsed.get("titles") or [])
+    conditions: list[dict[str, Any]] = []
+    for item in parsed.get("conditions") or []:
+        if not isinstance(item, dict):
+            continue
+        when = clean_heading(str(item.get("when") or ""))
+        cond_titles = _title_list(item.get("form_titles") or item.get("titles") or [])
+        if when and cond_titles:
+            conditions.append({"when": when, "form_titles": cond_titles})
+    return titles, conditions
+
+
+async def draft_procedure(text: str, *, visibility: str = "internal") -> dict[str, Any]:
+    full = (text or "").strip()
+    if not full:
+        raise ValueError("手引きや案内の本文は必須です")
+    chapters = split_guide_chapters(full)
+    selected = select_guide_chapters(chapters)
+    llm_error = ""
     try:
-        raw = await llm.chat(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            max_tokens=max(llm.DEFAULT_MAX_TOKENS, 3072),
-        )
-        parsed = llm.extract_json(raw)
-        draft, err = normalize_procedure_draft(parsed, visibility=visibility)
-        if err or draft is None:
-            raise ValueError(err or "手続き案の検証に失敗しました")
-        return {
-            "source": "llm",
-            "draft": draft,
-            "notes": draft.get("notes")
-            or "AI が作った第1版です。公開せず、内容を確認してください。",
-            "model": llm.PATCHFORM_MODEL,
-        }
+        picked = await select_chapters_llm(chapters)
+        if picked:
+            by_id = {c["id"]: c for c in chapters}
+            extra = [by_id[i] for i in picked if i in by_id]
+            seen = {c["id"] for c in selected}
+            for chapter in extra:
+                if chapter["id"] not in seen:
+                    selected.append(chapter)
+                    seen.add(chapter["id"])
     except Exception as e:  # noqa: BLE001
-        draft, err = normalize_procedure_draft(
-            fallback_procedure_draft(q), visibility=visibility
+        llm_error = str(e)
+
+    found: list[str] = []
+    read: list[dict[str, Any]] = []
+    for chapter in selected:
+        local = analyze_chapter(chapter)
+        found = merge_form_titles(found, local["titles"])
+        read.append(
+            {
+                "id": local["id"],
+                "title": local["title"],
+                "kind": local["kind"],
+                "form_count": len(local["titles"]),
+            }
         )
-        if err or draft is None:
-            raise ValueError(err or "テンプレートの検証に失敗しました") from e
-        return {
-            "source": "template",
-            "draft": draft,
-            "notes": f"LLM を使えなかったためテンプレートを使いました（{e}）。公開前に確認してください。",
-            "model": llm.PATCHFORM_MODEL,
-        }
+    found = merge_form_titles(found, extract_form_titles(full))
+
+    llm_titles: list[str] = []
+    conditions: list[dict[str, Any]] = []
+    llm_targets = [c for c in selected if c.get("kind") != "toc"][:MAX_LLM_CHAPTERS]
+    if not llm_error:
+        for chapter in llm_targets:
+            try:
+                extra_titles, extra_conds = await refine_chapter_llm(chapter, found)
+                llm_titles = merge_form_titles(llm_titles, extra_titles)
+                conditions.extend(extra_conds)
+            except Exception as e:  # noqa: BLE001
+                llm_error = str(e)
+                break
+
+    titles = merge_form_titles(found, llm_titles)
+    name = procedure_name_from_text(full)
+    outline = {
+        "chapter_count": len(chapters),
+        "read": read,
+    }
+    if titles:
+        notes = (
+            f"目次から{len(chapters)}章を切り、様式・提出に関する{len(selected)}章を読みました。"
+            "様式名を拾い、一覧の様式はまず全部必要としています。中身は空です。"
+        )
+        if llm_error:
+            notes += f" 一部の章の LLM は使えませんでした（{llm_error}）。"
+        raw_draft = draft_from_form_titles(
+            name,
+            titles,
+            conditions=conditions,
+            notes=notes,
+        )
+        source = "llm" if not llm_error else "template"
+    else:
+        raw_draft = fallback_procedure_draft(full)
+        source = "template"
+        if llm_error:
+            raw_draft["notes"] = (
+                f"LLM を使えなかったためテンプレートを使いました（{llm_error}）。"
+                "読み取れた候補だけを選んでください。"
+            )
+    draft, err = normalize_procedure_draft(raw_draft, visibility=visibility)
+    if err or draft is None:
+        raise ValueError(err or "手続き案の検証に失敗しました")
+    return {
+        "source": source,
+        "draft": draft,
+        "notes": draft.get("notes") or raw_draft.get("notes"),
+        "model": llm.PATCHFORM_MODEL,
+        "outline": outline,
+    }

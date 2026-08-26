@@ -42,10 +42,12 @@ export const PatchformProcedureCoach = ({
   title,
   lead,
   steps,
+  defaultOpen = false,
 }: {
   title: string;
   lead?: string;
   steps: CoachStep[];
+  defaultOpen?: boolean;
 }) => {
   const next = steps.find((s) => !s.done);
 
@@ -53,6 +55,7 @@ export const PatchformProcedureCoach = ({
     <Disclosure
       className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'
       aria-labelledby='pf-proc-coach-title'
+      defaultOpen={defaultOpen}
     >
       <DisclosureSummary>
         <span className='flex flex-col gap-0.5 text-left'>

@@ -4058,6 +4058,21 @@ async def patchform_assist_procedure(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/patchform/assist/procedure/apply")
+async def patchform_assist_procedure_apply(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url("/assist/procedure/apply"),
+        headers,
+        body,
+        timeout=180,
+    )
+
+
 @app.post("/patchform/assist/invite")
 async def patchform_assist_invite(request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)

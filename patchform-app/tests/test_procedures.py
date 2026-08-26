@@ -315,14 +315,15 @@ def test_create_procedure_from_draft_stays_unpublished() -> None:
         raw = assist.fallback_procedure_draft("転入届の手引き")
         draft, err = assist.normalize_procedure_draft(raw)
         assert err is None and draft
-        detail, msg = store.create_procedure_from_draft(
+        result, msg = store.create_procedure_from_draft(
             draft,
             creator_user_id="u1",
             creator_name="職員",
             visibility="internal",
         )
-        assert msg is None and detail
-        assert detail["status"] == "draft"
+        assert msg is None and result
+        detail = result["procedure"]
+        assert detail and detail["status"] == "draft"
         assert "【確認】" in (detail.get("description") or "")
         created = detail["created_forms"]
         assert {item["role"] for item in created} == {"guide", "form"}
@@ -348,17 +349,96 @@ def test_assist_procedure_template() -> None:
                 headers=_headers(),
                 json={"text": "転入届の手引き。転入と転居。", "visibility": "internal"},
             )
-        assert res.status_code == 201, res.text
+        assert res.status_code == 200, res.text
         body = res.json()
         assert body["source"] == "template"
-        assert body["procedure"]["status"] == "draft"
-        assert body["procedure"]["name"] == "転入・転居の手続き"
-        res = client.get(f"/procedures/{body['procedure']['id']}", headers=_headers())
+        assert body["preview"]["name"] == "転入・転居の手続き"
+        assert body["preview"]["navigation"]["found"] is True
+        assert {f["key"] for f in body["preview"]["forms"]} == {"move_in", "attach"}
+        listed = client.get("/procedures", headers=_headers())
+        assert listed.status_code == 200
+        assert listed.json()["procedures"] == []
+
+        applied = client.post(
+            "/assist/procedure/apply",
+            headers=_headers(),
+            json={
+                "draft": body["draft"],
+                "visibility": "internal",
+                "apply": {"forms": True, "navigation": True, "notice": True},
+            },
+        )
+        assert applied.status_code == 201, applied.text
+        created = applied.json()
+        assert created["procedure"]["status"] == "draft"
+        assert created["procedure"]["name"] == "転入・転居の手続き"
+        res = client.get(f"/procedures/{created['procedure']['id']}", headers=_headers())
         assert res.status_code == 200
         assert res.json()["status"] == "draft"
 
         res = client.post("/assist/procedure", headers=_headers(), json={"text": "  "})
         assert res.status_code == 400
+    finally:
+        _teardown(path)
+
+
+def test_assist_procedure_apply_selected_parts() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    client, path = _setup()
+    try:
+        with patch("app.assist.llm.chat", new=AsyncMock(side_effect=RuntimeError("down"))):
+            preview = client.post(
+                "/assist/procedure",
+                headers=_headers(),
+                json={"text": "転入届の手引き。転入と転居。", "visibility": "internal"},
+            )
+        draft = preview.json()["draft"]
+
+        forms_only = client.post(
+            "/assist/procedure/apply",
+            headers=_headers(),
+            json={
+                "draft": draft,
+                "visibility": "internal",
+                "apply": {"forms": True, "navigation": False, "notice": False},
+                "form_keys": ["move_in"],
+            },
+        )
+        assert forms_only.status_code == 201, forms_only.text
+        body = forms_only.json()
+        assert body["procedure"] is None
+        assert [item["role"] for item in body["created_forms"]] == ["form"]
+        assert body["created_forms"][0]["title"] == "転入届"
+        listed = client.get("/procedures", headers=_headers())
+        assert listed.json()["procedures"] == []
+
+        nav_missing = client.post(
+            "/assist/procedure/apply",
+            headers=_headers(),
+            json={
+                "draft": {**draft, "guide": {"metadata": {"title": "案内"}, "components": []}},
+                "visibility": "internal",
+                "apply": {"forms": False, "navigation": True, "notice": False},
+            },
+        )
+        assert nav_missing.status_code == 400
+        assert "選択肢" in nav_missing.json()["error"]
+
+        toc = assist.fallback_procedure_draft("## 指定申請の手引き － 目次 －")
+        toc_draft, err = assist.normalize_procedure_draft(toc)
+        assert err is None and toc_draft
+        empty = client.post(
+            "/assist/procedure/apply",
+            headers=_headers(),
+            json={
+                "draft": toc_draft,
+                "visibility": "internal",
+                "apply": {"forms": True, "navigation": False, "notice": False},
+            },
+        )
+        assert empty.status_code == 400
+        assert "様式" in empty.json()["error"]
     finally:
         _teardown(path)
 
@@ -749,6 +829,7 @@ if __name__ == "__main__":
     test_publish_requires_guide_published()
     test_create_procedure_from_draft_stays_unpublished()
     test_assist_procedure_template()
+    test_assist_procedure_apply_selected_parts()
     test_catalog_published_only()
     test_procedure_share_links()
     test_application_and_procedure_export()
