@@ -1104,7 +1104,115 @@ def test_procedure_templates() -> None:
         _teardown(path)
 
 
+def test_form_tags_endpoint_ignores_locked() -> None:
+    client, path = _setup()
+    try:
+        form = _create_form(client, "タグ対象")
+        # 作成完了(ロック)にしてもタグは変更できる
+        res = client.post(
+            f"/forms/{form['id']}/status",
+            headers=_headers(),
+            json={"status": "draft", "locked": True},
+        )
+        assert res.status_code == 200, res.text
+        res = client.post(
+            f"/forms/{form['id']}/tags",
+            headers=_headers(),
+            json={"tags": ["転入", "急ぎ"]},
+        )
+        assert res.status_code == 200, res.text
+        assert set(res.json().get("tags") or []) == {"転入", "急ぎ"}
+        # タグを外す
+        res = client.post(
+            f"/forms/{form['id']}/tags",
+            headers=_headers(),
+            json={"tags": ["転入"]},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json().get("tags") == ["転入"]
+    finally:
+        _teardown(path)
+
+
+def test_form_archive_and_restore() -> None:
+    client, path = _setup()
+    try:
+        form = _create_form(client, "退避対象")
+        res = client.post(
+            f"/forms/{form['id']}/status",
+            headers=_headers(),
+            json={"status": "archived"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "archived"
+        # 一覧に残る（庁内は状態で振り分ける）
+        res = client.get("/forms", headers=_headers())
+        assert res.status_code == 200, res.text
+        found = next(f for f in res.json()["forms"] if f["id"] == form["id"])
+        assert found["status"] == "archived"
+        # 復元すると作成中に戻る
+        res = client.post(
+            f"/forms/{form['id']}/status",
+            headers=_headers(),
+            json={"status": "draft"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "draft"
+    finally:
+        _teardown(path)
+
+
+def test_procedure_archive_and_restore() -> None:
+    client, path = _setup()
+    try:
+        guide_def = _create_form(client, "案内フォーム", ["A", "B"])
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "退避手続き", "guide_form_id": guide_def["id"]},
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        # 下書きはゴミ箱へ移せる
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "archived"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "archived"
+        res = client.get("/procedures", headers=_headers())
+        found = next(p for p in res.json()["procedures"] if p["id"] == proc["id"])
+        assert found["status"] == "archived"
+        # 復元
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "draft"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "draft"
+        # 公開中はゴミ箱へ移せない
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "archived"},
+        )
+        assert res.status_code == 400, res.text
+    finally:
+        _teardown(path)
+
+
 if __name__ == "__main__":
+    test_form_tags_endpoint_ignores_locked()
+    test_form_archive_and_restore()
+    test_procedure_archive_and_restore()
     test_procedure_bundle_from_guide()
     test_publish_requires_guide_published()
     test_create_procedure_from_draft_stays_unpublished()

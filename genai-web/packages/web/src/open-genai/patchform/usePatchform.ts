@@ -205,6 +205,85 @@ export const usePatchformActions = () => {
     }
   }, []);
 
+  const removeMany = useCallback(
+    async (
+      formIds: string[],
+    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+      setSubmitting(true);
+      setError(null);
+      const results: { id: string; ok: boolean; error?: string }[] = [];
+      try {
+        for (const id of formIds) {
+          try {
+            await teamApi.delete(`patchform/forms/${encodeURIComponent(id)}`);
+            results.push({ id, ok: true });
+          } catch (e) {
+            results.push({ id, ok: false, error: errorMessage(e, '削除できませんでした。') });
+          }
+        }
+        return results;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const setStatusMany = useCallback(
+    async (
+      formIds: string[],
+      status: string,
+      extra?: { locked?: boolean },
+    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+      setSubmitting(true);
+      setError(null);
+      const results: { id: string; ok: boolean; error?: string }[] = [];
+      try {
+        for (const id of formIds) {
+          try {
+            await teamApi.post(`patchform/forms/${encodeURIComponent(id)}/status`, {
+              status,
+              ...(extra?.locked === undefined ? {} : { locked: extra.locked }),
+            });
+            results.push({ id, ok: true });
+          } catch (e) {
+            results.push({ id, ok: false, error: errorMessage(e, '変更できませんでした。') });
+          }
+        }
+        return results;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const applyTagsMany = useCallback(
+    async (
+      entries: { id: string; tags: string[] }[],
+    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+      setSubmitting(true);
+      setError(null);
+      const results: { id: string; ok: boolean; error?: string }[] = [];
+      try {
+        for (const entry of entries) {
+          try {
+            await teamApi.post(`patchform/forms/${encodeURIComponent(entry.id)}/tags`, {
+              tags: entry.tags,
+            });
+            results.push({ id: entry.id, ok: true });
+          } catch (e) {
+            results.push({ id: entry.id, ok: false, error: errorMessage(e, 'タグを変更できませんでした。') });
+          }
+        }
+        return results;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   const submitAnswers = useCallback(
     async (
       formId: string,
@@ -288,7 +367,10 @@ export const usePatchformActions = () => {
     create,
     update,
     setStatus,
+    setStatusMany,
+    applyTagsMany,
     remove,
+    removeMany,
     submitAnswers,
     loadDraft,
     setWithdrawn,
@@ -905,22 +987,52 @@ export const usePatchformProcedureActions = () => {
     }
   }, []);
 
-  const setStatus = useCallback(async (procedureId: string, status: 'draft' | 'published') => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await teamApi.post<Procedure>(
-        `patchform/procedures/${encodeURIComponent(procedureId)}/status`,
-        { status },
-      );
-      return res.data ?? null;
-    } catch (e) {
-      setError(errorMessage(e, '手続きの公開状態を変更できませんでした。'));
-      return null;
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
+  const setStatus = useCallback(
+    async (procedureId: string, status: 'draft' | 'published' | 'archived') => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Procedure>(
+          `patchform/procedures/${encodeURIComponent(procedureId)}/status`,
+          { status },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの公開状態を変更できませんでした。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const setStatusMany = useCallback(
+    async (
+      procedureIds: string[],
+      status: 'draft' | 'published' | 'archived',
+    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+      setSubmitting(true);
+      setError(null);
+      const results: { id: string; ok: boolean; error?: string }[] = [];
+      try {
+        for (const id of procedureIds) {
+          try {
+            await teamApi.post(`patchform/procedures/${encodeURIComponent(id)}/status`, {
+              status,
+            });
+            results.push({ id, ok: true });
+          } catch (e) {
+            results.push({ id, ok: false, error: errorMessage(e, '変更できませんでした。') });
+          }
+        }
+        return results;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
 
   const remove = useCallback(async (procedureId: string) => {
     setSubmitting(true);
@@ -936,5 +1048,29 @@ export const usePatchformProcedureActions = () => {
     }
   }, []);
 
-  return { create, save, setStatus, remove, submitting, error, setError };
+  const removeMany = useCallback(
+    async (
+      procedureIds: string[],
+    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+      setSubmitting(true);
+      setError(null);
+      const results: { id: string; ok: boolean; error?: string }[] = [];
+      try {
+        for (const id of procedureIds) {
+          try {
+            await teamApi.delete(`patchform/procedures/${encodeURIComponent(id)}`);
+            results.push({ id, ok: true });
+          } catch (e) {
+            results.push({ id, ok: false, error: errorMessage(e, '削除できませんでした。') });
+          }
+        }
+        return results;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  return { create, save, setStatus, setStatusMany, remove, removeMany, submitting, error, setError };
 };

@@ -3822,6 +3822,17 @@ async def patchform_set_status(form_id: str, request: Request) -> JSONResponse:
     )
 
 
+@app.post("/patchform/forms/{form_id}/tags")
+async def patchform_set_form_tags(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/forms/{form_id}/tags"), headers, body
+    )
+
+
 @app.post("/patchform/forms/{form_id}/submissions")
 async def patchform_submit(form_id: str, request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)

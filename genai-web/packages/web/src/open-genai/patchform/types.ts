@@ -168,7 +168,7 @@ export type UploadedFile = {
   size?: number;
 };
 
-export type ProcedureStatus = 'draft' | 'published';
+export type ProcedureStatus = 'draft' | 'published' | 'archived';
 
 export type ProcedureRule = {
   component_id: string;

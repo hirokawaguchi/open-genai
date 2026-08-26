@@ -234,6 +234,11 @@ export const PatchformDetailPage = () => {
               ) : null}
             </div>
             )}
+            {applicationToken ? null : error && (
+              <p className='text-error-1' role='alert'>
+                {error}
+              </p>
+            )}
             {applicationToken || !(canFill || alreadySubmitted) ? null : (
             <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label='詳細の表示'>
               {(
