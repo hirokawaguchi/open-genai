@@ -1,7 +1,12 @@
 import { Link } from 'react-router';
-import { PiNotePencilBold, PiTrayBold, PiTreeStructureBold } from 'react-icons/pi';
+import {
+  PiFoldersBold,
+  PiNotePencilBold,
+  PiTrayBold,
+  PiTreeStructureBold,
+} from 'react-icons/pi';
 
-type Tab = 'forms' | 'procedures' | 'inbox';
+type Tab = 'my' | 'forms' | 'procedures' | 'inbox';
 
 const tabs: {
   id: Tab;
@@ -10,6 +15,13 @@ const tabs: {
   description: string;
   icon: typeof PiNotePencilBold;
 }[] = [
+  {
+    id: 'my',
+    to: '/patchform/my',
+    label: 'マイ手続き',
+    description: '自分の手続きを進める',
+    icon: PiFoldersBold,
+  },
   {
     id: 'forms',
     to: '/patchform',

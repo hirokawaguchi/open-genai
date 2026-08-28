@@ -16,6 +16,8 @@ import {
   usePatchformAssist,
   usePatchformConfig,
   usePatchformList,
+  usePatchformTagActions,
+  usePatchformTags,
 } from './usePatchform';
 
 const workLabel = (locked?: boolean, workStatus?: string | null) =>
@@ -32,6 +34,14 @@ export const PatchformPage = () => {
   const pane = searchParams.get('tab') === 'new' || fromGuideLink ? 'new' : 'list';
   const { config, isLoading: configLoading, unavailable } = usePatchformConfig();
   const { forms, isLoading, loadError, mutate } = usePatchformList();
+  const { tags: tagUsage, mutate: mutateTags } = usePatchformTags();
+  const {
+    rename: renameTag,
+    remove: removeTag,
+    busy: tagBusy,
+    error: tagActionError,
+  } = usePatchformTagActions();
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const {
     create,
     setStatusMany,
@@ -67,6 +77,36 @@ export const PatchformPage = () => {
   const activeCount = forms.filter((f) => f.status !== 'archived').length;
   const trashCount = forms.filter((f) => f.status === 'archived').length;
   const trashView = statusFilter === 'trash';
+
+  const refreshAfterTagChange = async () => {
+    await Promise.all([mutate(), mutateTags()]);
+  };
+
+  const onRenameTag = async (tag: string) => {
+    const next = window.prompt(`タグ「${tag}」の新しい名前`, tag);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === tag) return;
+    const changed = await renameTag(tag, trimmed);
+    if (changed != null) {
+      setTagFilter((cur) => (cur === tag ? '' : cur));
+      await refreshAfterTagChange();
+    }
+  };
+
+  const onDeleteTag = async (tag: string, count: number) => {
+    if (
+      !window.confirm(
+        `タグ「${tag}」を ${count} 件のフォームからすべて外します（ゴミ箱内のフォームも対象）。フォーム自体は消えません。よろしいですか？`,
+      )
+    )
+      return;
+    const changed = await removeTag(tag);
+    if (changed != null) {
+      setTagFilter((cur) => (cur === tag ? '' : cur));
+      await refreshAfterTagChange();
+    }
+  };
 
   const visibleForms = forms.filter((f) => {
     if (trashView) return f.status === 'archived';
@@ -511,7 +551,7 @@ export const PatchformPage = () => {
                 ))}
               </div>
               {!trashView && knownTags.length > 0 ? (
-                <div className='flex flex-wrap gap-2' role='group' aria-label='タグで絞り込み'>
+                <div className='flex flex-wrap items-center gap-2' role='group' aria-label='タグで絞り込み'>
                   <button
                     type='button'
                     onClick={() => setTagFilter('')}
@@ -537,6 +577,67 @@ export const PatchformPage = () => {
                       {tag}
                     </button>
                   ))}
+                  <button
+                    type='button'
+                    onClick={() => setTagManagerOpen((v) => !v)}
+                    className='ml-1 rounded-4 border border-dashed border-solid-gray-420 px-3 py-1 text-dns-16N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                    aria-expanded={tagManagerOpen}
+                  >
+                    {tagManagerOpen ? 'タグ管理を閉じる' : 'タグを管理'}
+                  </button>
+                </div>
+              ) : null}
+
+              {!trashView && tagManagerOpen ? (
+                <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
+                  <h3 className='text-std-16B-150'>タグの管理</h3>
+                  <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                    タグは各フォームに付いたラベルの集まりです（マスタはありません）。改名・削除は編集権限のある全フォーム（ゴミ箱内も含む）へまとめて反映されます。あるタグが付いたフォームが0件になると、そのタグは自動的に消えます。
+                  </p>
+                  {tagActionError && (
+                    <p className='mt-2 text-dns-14N-130 text-error-1' role='alert'>
+                      {tagActionError}
+                    </p>
+                  )}
+                  {tagUsage.length === 0 ? (
+                    <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
+                      管理できるタグはありません。
+                    </p>
+                  ) : (
+                    <ul className='mt-3 divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
+                      {tagUsage.map((t) => (
+                        <li
+                          key={t.tag}
+                          className='flex flex-wrap items-center justify-between gap-2 py-2'
+                        >
+                          <span className='text-std-16N-170'>
+                            {t.tag}
+                            <span className='ml-2 text-dns-14N-130 text-solid-gray-500'>
+                              {t.count} 件
+                            </span>
+                          </span>
+                          <span className='flex gap-1'>
+                            <button
+                              type='button'
+                              className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700'
+                              aria-disabled={tagBusy}
+                              onClick={() => void onRenameTag(t.tag)}
+                            >
+                              改名
+                            </button>
+                            <button
+                              type='button'
+                              className='rounded-4 border border-error-1 bg-red-50 px-2 py-1 text-dns-14N-130 text-error-1'
+                              aria-disabled={tagBusy}
+                              onClick={() => void onDeleteTag(t.tag, t.count)}
+                            >
+                              削除
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ) : null}
               {isLoading ? (

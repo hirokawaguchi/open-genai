@@ -311,6 +311,80 @@ async def set_status(
     return JSONResponse(content=detail)
 
 
+@app.get("/tags")
+def list_tags(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    tags = store.list_all_tags(actor_user_id=uid, actor_groups=_groups(x_user_groups))
+    return JSONResponse(content={"tags": tags})
+
+
+@app.post("/tags/rename")
+async def rename_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.rename_tag(
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        old=str(body.get("from") or ""),
+        new=str(body.get("to") or ""),
+    )
+    if msg or result is None:
+        return JSONResponse(status_code=400, content={"error": msg or "操作に失敗しました"})
+    return JSONResponse(content=result)
+
+
+@app.post("/tags/delete")
+async def delete_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.delete_tag(
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        tag=str(body.get("tag") or ""),
+    )
+    if msg or result is None:
+        return JSONResponse(status_code=400, content={"error": msg or "操作に失敗しました"})
+    return JSONResponse(content=result)
+
+
 @app.post("/forms/{form_id}/tags")
 async def set_form_tags(
     form_id: str,
@@ -648,6 +722,177 @@ def list_procedure_applications(
     )
 
 
+def _application_error(msg: str | None) -> JSONResponse:
+    text = msg or "操作に失敗しました"
+    if "見つかりません" in text:
+        code = 404
+    elif "権限" in text:
+        code = 403
+    else:
+        code = 400
+    return JSONResponse(status_code=code, content={"error": text})
+
+
+@app.get("/applications/mine")
+def list_my_applications(
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    items = store.list_my_applications(owner_kind="internal", owner_key=uid)
+    return JSONResponse(content={"applications": items})
+
+
+@app.post("/applications")
+async def create_project(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.create_project(
+        procedure_id=str(body.get("procedure_id") or ""),
+        owner_kind="internal",
+        owner_key=uid,
+        title=(body.get("title") or None),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/applications/{application_id}/status")
+async def set_application_status(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.set_application_status(
+        application_id=application_id,
+        owner_kind="internal",
+        owner_key=uid,
+        status=str(body.get("status") or ""),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.patch("/applications/{application_id}")
+async def update_application_meta(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    # 送られてきたキーのみ更新（None は変更しない）
+    kwargs: dict[str, str] = {}
+    for key in ("title", "assignee", "deadline", "next_action_date"):
+        if key in body:
+            kwargs[key] = str(body.get(key) or "")
+    result, msg = store.update_application_meta(
+        application_id=application_id,
+        owner_kind="internal",
+        owner_key=uid,
+        **kwargs,
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/applications/{application_id}")
+def delete_application(
+    application_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    msg = store.delete_application(
+        application_id=application_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg:
+        return _application_error(msg)
+    return JSONResponse(content={"message": "申請を削除しました"})
+
+
+@app.get("/applications/{application_id}/imi-sources")
+def application_imi_sources(
+    application_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    result, msg = store.application_imi_sources(
+        application_id=application_id, owner_kind="internal", owner_key=uid
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
 @app.get("/applications/{application_id}")
 def get_application(
     application_id: str,
@@ -945,9 +1190,69 @@ def clear_item_internal(
     return JSONResponse(content=result)
 
 
-@app.get("/procedures/{procedure_id}/templates")
-def list_procedure_templates(
+@app.post("/applications/{application_id}/items/{item_id}/source")
+async def set_item_source_internal(
+    application_id: str,
+    item_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.set_item_source(
+        application_id=application_id,
+        item_id=item_id,
+        source=str(body.get("source") or ""),
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/applications/{application_id}/items/order")
+async def reorder_items_internal(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    order = body.get("order")
+    if not isinstance(order, list):
+        return _item_error("order には並び順のIDリストが必要です")
+    result, msg = store.reorder_application_items(
+        application_id=application_id,
+        order=[str(x) for x in order],
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/procedures/{procedure_id}/resolve")
+async def resolve_procedure_preview(
     procedure_id: str,
+    request: Request,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -963,15 +1268,21 @@ def list_procedure_templates(
     )
     if err:
         return err
-    data, msg = store.list_procedure_templates(procedure_id)
-    if msg or data is None:
-        return _item_error(msg)
-    return JSONResponse(content=data)
+    body = await request.json()
+    answers = body.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    result, msg = store.resolve_procedure_preview(
+        procedure_id=procedure_id, answers=answers
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
 
 
-@app.post("/procedures/{procedure_id}/templates")
-async def add_procedure_template(
-    procedure_id: str,
+@app.post("/forms/{form_id}/template")
+async def set_form_template(
+    form_id: str,
     request: Request,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
@@ -987,9 +1298,8 @@ async def add_procedure_template(
     if err:
         return err
     body = await request.json()
-    result, msg = store.add_procedure_template(
-        procedure_id=procedure_id,
-        slot_id=str(body.get("slot_id") or ""),
+    result, msg = store.set_form_template(
+        form_id=form_id,
         filename=str(body.get("filename") or "template"),
         data=str(body.get("data") or ""),
         actor_user_id=uid,
@@ -1000,10 +1310,9 @@ async def add_procedure_template(
     return JSONResponse(status_code=201, content=result)
 
 
-@app.delete("/procedures/{procedure_id}/templates/{file_id}")
-def delete_procedure_template(
-    procedure_id: str,
-    file_id: str,
+@app.delete("/forms/{form_id}/template")
+def delete_form_template(
+    form_id: str,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -1017,9 +1326,8 @@ def delete_procedure_template(
     )
     if err:
         return err
-    msg = store.delete_procedure_template(
-        procedure_id=procedure_id,
-        file_id=file_id,
+    msg = store.delete_form_template(
+        form_id=form_id,
         actor_user_id=uid,
         actor_groups=_groups(x_user_groups),
     )
@@ -1028,9 +1336,9 @@ def delete_procedure_template(
     return JSONResponse(content={"message": "ひな型を削除しました"})
 
 
-@app.get("/procedures/{procedure_id}/templates/{file_id}/download")
-def download_procedure_template(
-    procedure_id: str,
+@app.get("/forms/{form_id}/templates/{file_id}/download")
+def download_form_template(
+    form_id: str,
     file_id: str,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
@@ -1047,10 +1355,39 @@ def download_procedure_template(
     )
     if err:
         return err
-    meta, msg = store.get_procedure_template_file(procedure_id, file_id)
+    meta, msg = store.get_form_template_file(form_id, file_id)
     if msg or meta is None:
         code = 404 if "見つかりません" in (msg or "") else 403
         return JSONResponse(status_code=code, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
+@app.get("/applications/{application_id}/items/{item_id}/template")
+def download_item_template_internal(
+    application_id: str,
+    item_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> Response:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags,
+        x_service_key, allow_service=True,
+    )
+    if err:
+        return err
+    meta, msg = store.get_item_template_file(application_id=application_id, item_id=item_id)
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
     return FileResponse(
         meta["path"],
         media_type=meta["mime"],
@@ -1884,9 +2221,40 @@ def public_clear_item(token: str, item_id: str) -> JSONResponse:
     return JSONResponse(content=result)
 
 
-@app.get("/public/api/applications/{token}/templates/{file_id}", response_model=None)
-def public_download_template(token: str, file_id: str) -> Response:
-    meta, msg = store.get_application_template_file(token, file_id)
+@app.post("/public/api/applications/{token}/items/{item_id}/source")
+async def public_set_item_source(token: str, item_id: str, request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.set_item_source(
+        token=token, item_id=item_id, source=str(body.get("source") or "")
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/public/api/applications/{token}/items/order")
+async def public_reorder_items(token: str, request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    order = body.get("order")
+    if not isinstance(order, list):
+        return _item_error("order には並び順のIDリストが必要です")
+    result, msg = store.reorder_application_items(
+        token=token, order=[str(x) for x in order]
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.get("/public/api/applications/{token}/items/{item_id}/template", response_model=None)
+def public_download_item_template(token: str, item_id: str) -> Response:
+    meta, msg = store.get_item_template_file(token=token, item_id=item_id)
     if msg or meta is None:
         return JSONResponse(status_code=404, content={"error": msg})
     return FileResponse(

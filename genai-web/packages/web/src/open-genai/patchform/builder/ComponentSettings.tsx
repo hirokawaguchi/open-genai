@@ -180,7 +180,7 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
       <div>
         <Label size='sm'>IMI 語彙（任意）</Label>
         <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>
-          同じ語彙の欄には、このフォームで今入力中の値を候補として出します。他の申請からは出しません。
+          同じ語彙の欄には、この申請の他の様式や、マイ手続きの本人の他プロジェクトで入力済みの値を候補として出します。氏名・住所・メール・電話などは型から自動で補完されるので、空欄のままで構いません。
         </p>
         <input
           className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'

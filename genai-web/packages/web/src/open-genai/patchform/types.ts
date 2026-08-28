@@ -28,9 +28,11 @@ export type FormComponent = {
   imi_subfields?: Record<string, string>;
 };
 
+export type DocRole = 'yoshiki' | 'attachment';
+
 export type FormDefinition = {
   $version: string;
-  metadata: { title: string; description?: string };
+  metadata: { title: string; description?: string; doc_role?: DocRole };
   components: FormComponent[];
 };
 
@@ -84,6 +86,7 @@ export type FormSummary = {
 export type FormDetail = FormSummary & {
   definition: FormDefinition;
   fill_definition?: FormDefinition;
+  template?: SlotTemplate | null;
 };
 
 export type AuditEvent = {
@@ -263,6 +266,9 @@ export type ApplicationItem = {
   can_fill_online: boolean;
   template?: SlotTemplate | null;
   status: ApplicationFormStatus;
+  // 記入と添付が併存しているかどうか（採用ソース切替UIの表示判定）
+  form_submitted?: boolean;
+  file_attached?: boolean;
   answers?: Record<string, unknown>;
   definition?: FormDefinition;
   receipt_code?: string | null;
@@ -283,12 +289,25 @@ export type ProcedureCatalog = {
   slots: ProcedureCatalogSlot[];
 };
 
+export type ApplicationStatus = {
+  auto: string;
+  override: string;
+  effective: string;
+};
+
 export type Application = {
   id: string;
   token: string;
   procedure_id: string;
   procedure_name: string;
   procedure_description?: string | null;
+  title?: string;
+  assignee?: string;
+  deadline?: string;
+  next_action_date?: string;
+  owner_kind?: string;
+  owner_key?: string;
+  status?: ApplicationStatus;
   guide_form_id: string;
   guide_submission_id: string;
   form_ids: string[];
@@ -298,6 +317,41 @@ export type Application = {
   public_url: string;
   created_at: string;
   updated_at?: string;
+};
+
+/** マイ手続き一覧の1件（プロジェクトの要約）。 */
+export type MyApplication = {
+  id: string;
+  token: string;
+  title: string;
+  procedure_id: string;
+  procedure_name: string;
+  status: ApplicationStatus;
+  assignee: string;
+  deadline: string;
+  next_action_date: string;
+  created_at: string;
+  updated_at: string;
+  done: number;
+  total: number;
+  public_url: string;
+};
+
+/** 作成ウィザードの必要書類プレビュー（dry-run 解決）。 */
+export type ProcedureResolvePreviewItem = {
+  slot_id: string;
+  title: string;
+  kind: SlotKind;
+  required: SlotRequired;
+  cardinality: SlotCardinality;
+  has_template: boolean;
+  can_fill_online: boolean;
+};
+
+export type ProcedureResolvePreview = {
+  notice: { notes?: string[]; prepare?: string[]; refs?: string[] };
+  items: ProcedureResolvePreviewItem[];
+  count: number;
 };
 
 export type InboxItem = {

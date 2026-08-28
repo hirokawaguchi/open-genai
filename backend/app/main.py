@@ -3833,6 +3833,36 @@ async def patchform_set_form_tags(form_id: str, request: Request) -> JSONRespons
     )
 
 
+@app.get("/patchform/tags")
+async def patchform_list_tags(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url("/tags"), headers)
+
+
+@app.post("/patchform/tags/rename")
+async def patchform_rename_tag(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/tags/rename"), headers, body
+    )
+
+
+@app.post("/patchform/tags/delete")
+async def patchform_delete_tag(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/tags/delete"), headers, body
+    )
+
+
 @app.post("/patchform/forms/{form_id}/submissions")
 async def patchform_submit(form_id: str, request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)
@@ -4215,6 +4245,77 @@ async def patchform_list_applications(
     return await _proxy_patchform("GET", _patchform_app_url(path), headers)
 
 
+@app.get("/patchform/applications/mine")
+async def patchform_list_my_applications(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url("/applications/mine"), headers)
+
+
+@app.post("/patchform/applications")
+async def patchform_create_project(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/applications"), headers, body
+    )
+
+
+@app.post("/patchform/applications/{application_id}/status")
+async def patchform_set_application_status(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/applications/{application_id}/status"), headers, body
+    )
+
+
+@app.patch("/patchform/applications/{application_id}")
+async def patchform_rename_application(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "PATCH", _patchform_app_url(f"/applications/{application_id}"), headers, body
+    )
+
+
+@app.delete("/patchform/applications/{application_id}")
+async def patchform_delete_application(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE", _patchform_app_url(f"/applications/{application_id}"), headers
+    )
+
+
+@app.get("/patchform/applications/{application_id}/imi-sources")
+async def patchform_application_imi_sources(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "GET",
+        _patchform_app_url(f"/applications/{application_id}/imi-sources"),
+        headers,
+    )
+
+
 @app.get("/patchform/applications/{application_id}")
 async def patchform_get_application(
     application_id: str, request: Request
@@ -4239,67 +4340,30 @@ async def patchform_procedure_catalog(
     )
 
 
-@app.get("/patchform/procedures/{procedure_id}/templates")
-async def patchform_list_templates(procedure_id: str, request: Request) -> JSONResponse:
-    err, headers = _patchform_headers(request)
-    if err:
-        return err
-    return await _proxy_patchform(
-        "GET", _patchform_app_url(f"/procedures/{procedure_id}/templates"), headers
-    )
-
-
-@app.post("/patchform/procedures/{procedure_id}/templates")
-async def patchform_add_template(procedure_id: str, request: Request) -> JSONResponse:
+@app.post("/patchform/procedures/{procedure_id}/resolve")
+async def patchform_resolve_procedure(
+    procedure_id: str, request: Request
+) -> JSONResponse:
     err, headers = _patchform_headers(request)
     if err:
         return err
     body = await request.json()
     return await _proxy_patchform(
-        "POST",
-        _patchform_app_url(f"/procedures/{procedure_id}/templates"),
-        headers,
-        body,
-        timeout=60,
+        "POST", _patchform_app_url(f"/procedures/{procedure_id}/resolve"), headers, body
     )
 
 
-@app.delete("/patchform/procedures/{procedure_id}/templates/{file_id}")
-async def patchform_delete_template(
-    procedure_id: str, file_id: str, request: Request
-) -> JSONResponse:
-    err, headers = _patchform_headers(request)
-    if err:
-        return err
-    return await _proxy_patchform(
-        "DELETE",
-        _patchform_app_url(f"/procedures/{procedure_id}/templates/{file_id}"),
-        headers,
-    )
-
-
-@app.get("/patchform/procedures/{procedure_id}/templates/{file_id}/download")
-async def patchform_download_template(
-    procedure_id: str, file_id: str, request: Request
-) -> Response:
+async def _patchform_binary_get(path: str, request: Request, fallback_name: str) -> Response:
     err, headers = _patchform_headers(request)
     if err:
         return err
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.get(
-                _patchform_app_url(
-                    f"/procedures/{procedure_id}/templates/{file_id}/download"
-                ),
-                headers=headers,
-            )
+            res = await client.get(_patchform_app_url(path), headers=headers)
     except httpx.HTTPError as e:
         return JSONResponse(
             status_code=503,
-            content={
-                "error": f"フォームサービスに接続できませんでした: {e}",
-                "enabled": False,
-            },
+            content={"error": f"フォームサービスに接続できませんでした: {e}", "enabled": False},
         )
     ctype = res.headers.get("content-type", "")
     if res.status_code == 200 and ctype and not ctype.startswith("application/json"):
@@ -4308,8 +4372,7 @@ async def patchform_download_template(
             media_type=ctype,
             headers={
                 "Content-Disposition": res.headers.get(
-                    "content-disposition",
-                    f'attachment; filename="patchform_{file_id}"',
+                    "content-disposition", f'attachment; filename="{fallback_name}"'
                 )
             },
         )
@@ -4318,6 +4381,51 @@ async def patchform_download_template(
     except ValueError:
         payload = {"error": "フォームサービスから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.post("/patchform/forms/{form_id}/template")
+async def patchform_set_form_template(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/forms/{form_id}/template"),
+        headers,
+        body,
+        timeout=60,
+    )
+
+
+@app.delete("/patchform/forms/{form_id}/template")
+async def patchform_delete_form_template(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE", _patchform_app_url(f"/forms/{form_id}/template"), headers
+    )
+
+
+@app.get("/patchform/forms/{form_id}/templates/{file_id}/download")
+async def patchform_download_form_template(
+    form_id: str, file_id: str, request: Request
+) -> Response:
+    return await _patchform_binary_get(
+        f"/forms/{form_id}/templates/{file_id}/download", request, f"patchform_{file_id}"
+    )
+
+
+@app.get("/patchform/applications/{application_id}/items/{item_id}/template")
+async def patchform_download_item_template(
+    application_id: str, item_id: str, request: Request
+) -> Response:
+    return await _patchform_binary_get(
+        f"/applications/{application_id}/items/{item_id}/template",
+        request,
+        f"patchform_{item_id}",
+    )
 
 
 @app.post("/patchform/applications/{application_id}/items")
@@ -4364,6 +4472,38 @@ async def patchform_clear_application_item(
         "DELETE",
         _patchform_app_url(f"/applications/{application_id}/items/{item_id}/file"),
         headers,
+    )
+
+
+@app.post("/patchform/applications/{application_id}/items/{item_id}/source")
+async def patchform_set_application_item_source(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/items/{item_id}/source"),
+        headers,
+        body,
+    )
+
+
+@app.post("/patchform/applications/{application_id}/items/order")
+async def patchform_reorder_application_items(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/items/order"),
+        headers,
+        body,
     )
 
 

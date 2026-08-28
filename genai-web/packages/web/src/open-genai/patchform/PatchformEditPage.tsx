@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { PiEyeBold, PiNotePencilBold } from 'react-icons/pi';
+import {
+  PiDownloadSimpleBold,
+  PiEyeBold,
+  PiNotePencilBold,
+  PiPaperclipBold,
+} from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
@@ -17,6 +22,7 @@ import { FillForm } from './runtime/FillForm';
 import { DEFAULT_IMI, DEFAULT_IMI_SUBFIELDS } from './runtime/imiSuggest';
 import type { CatalogItem, FormComponent, FormDefinition, IdentityMode } from './types';
 import {
+  downloadFormTemplate,
   extractPatchformFile,
   lookupPatchformCorporate,
   lookupPatchformPostal,
@@ -24,6 +30,7 @@ import {
   usePatchformAssist,
   usePatchformConfig,
   usePatchformDetail,
+  usePatchformFormTemplate,
   usePatchformList,
 } from './usePatchform';
 
@@ -64,9 +71,16 @@ export const PatchformEditPage = () => {
   const [searchParams] = useSearchParams();
   const asGuide = searchParams.get('intent') === 'guide';
   const { config } = usePatchformConfig();
-  const { form, isLoading, loadError } = usePatchformDetail(formId);
+  const { form, isLoading, loadError, mutate } = usePatchformDetail(formId);
   const { forms } = usePatchformList();
   const { update, submitting, error, setError } = usePatchformActions();
+  const {
+    setTemplate,
+    removeTemplate,
+    busy: tplBusy,
+    error: tplError,
+  } = usePatchformFormTemplate();
+  const templateInput = useRef<HTMLInputElement | null>(null);
   const {
     generate,
     busy: assistBusy,
@@ -134,6 +148,29 @@ export const PatchformEditPage = () => {
   });
 
   const definitionLocked = Boolean(form && form.kind !== 'reception' && form.locked);
+
+  const displayTypes = new Set(
+    catalog.filter((c) => c.category === 'display').map((c) => c.type),
+  );
+  const hasFillable = components.some(
+    (c) => c.type !== 'file' && !displayTypes.has(c.type),
+  );
+  const docRole =
+    form?.definition.metadata.doc_role ?? (hasFillable ? 'yoshiki' : 'attachment');
+  const template = form?.template ?? null;
+
+  const onPickTemplate = async (file: File | undefined) => {
+    if (!file || !formId) return;
+    const res = await setTemplate(formId, file);
+    if (res) await mutate();
+  };
+
+  const onRemoveTemplate = async () => {
+    if (!formId) return;
+    if (!window.confirm('登録済みのひな型を削除します。よろしいですか？')) return;
+    const ok = await removeTemplate(formId);
+    if (ok) await mutate();
+  };
 
   const onSave = async () => {
     if (!formId || definitionLocked) return;
@@ -412,6 +449,91 @@ export const PatchformEditPage = () => {
                     ) : null}
                   </div>
                 </Disclosure>
+
+                {!asGuide && (
+                  <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 px-4 py-3'>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <PiPaperclipBold aria-hidden={true} className='size-5 text-blue-900' />
+                      <span className='text-std-16B-150'>ひな型ファイル（申請者がダウンロード）</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-dns-14N-130 ${
+                          docRole === 'attachment'
+                            ? 'bg-yellow-100 text-yellow-900'
+                            : 'bg-blue-100 text-blue-900'
+                        }`}
+                      >
+                        {docRole === 'attachment' ? '添付専用（ファイルのみ）' : '記入様式'}
+                      </span>
+                    </div>
+                    <p className='text-dns-14N-130 text-solid-gray-700'>
+                      {docRole === 'attachment'
+                        ? 'このフォームは入力欄がなくファイル添付だけです。住民票の写しなど、様式が配布されている場合はここにひな型を登録できます。'
+                        : 'この様式のWord/PDFのひな型を登録しておくと、申請者は記入・ひな型DL・記入済みファイルの添付を選べます。枠あたり1つです。'}
+                    </p>
+                    {template ? (
+                      <div className='flex flex-wrap items-center gap-2 rounded-8 border border-solid-gray-300 bg-white px-3 py-2'>
+                        <span className='min-w-0 flex-1 truncate text-std-16N-170 text-solid-gray-900'>
+                          {template.filename}
+                        </span>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={() =>
+                            formId ? void downloadFormTemplate(formId, template) : undefined
+                          }
+                        >
+                          <PiDownloadSimpleBold aria-hidden={true} className='mr-1 size-4' />
+                          ダウンロード
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          aria-disabled={tplBusy || !form.can_edit}
+                          onClick={() => templateInput.current?.click()}
+                        >
+                          差し替え
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='text'
+                          size='sm'
+                          aria-disabled={tplBusy || !form.can_edit}
+                          onClick={() => void onRemoveTemplate()}
+                        >
+                          削除
+                        </Button>
+                      </div>
+                    ) : (
+                      <div>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          aria-disabled={tplBusy || !form.can_edit}
+                          onClick={() => templateInput.current?.click()}
+                        >
+                          {tplBusy ? '登録中...' : 'ひな型を登録'}
+                        </Button>
+                      </div>
+                    )}
+                    <input
+                      ref={templateInput}
+                      type='file'
+                      className='hidden'
+                      onChange={(e) => {
+                        void onPickTemplate(e.target.files?.[0] ?? undefined);
+                        e.target.value = '';
+                      }}
+                    />
+                    {tplError && (
+                      <p className='text-dns-14N-130 text-error-1' role='alert'>
+                        {tplError}
+                      </p>
+                    )}
+                  </section>
+                )}
 
                 <Disclosure className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-3'>
                   <DisclosureSummary>

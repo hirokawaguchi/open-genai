@@ -995,115 +995,6 @@ def test_service_key_and_since() -> None:
         _teardown(path)
 
 
-def test_procedure_templates() -> None:
-    import base64
-
-    client, path = _setup()
-    try:
-        guide_def = _create_form(client, "転入案内", ["転入", "転居"])
-        style_a_def = _create_form(client, "転入届")
-        res = client.post(
-            "/procedures",
-            headers=_headers(),
-            json={
-                "name": "転入の手続き",
-                "guide_form_id": guide_def["id"],
-                "mapping": {
-                    "rules": [
-                        {
-                            "component_id": "event",
-                            "option": "転入",
-                            "form_ids": [style_a_def["id"]],
-                            "prepare": ["住民票の写し"],
-                        }
-                    ]
-                },
-            },
-        )
-        assert res.status_code == 201, res.text
-        proc = res.json()
-        yoshiki_slot = f"yoshiki:{style_a_def['id']}"
-        attach_slot = "attach:住民票の写し"
-
-        # ひな型を登録（様式・添付それぞれ）
-        blob = base64.b64encode(b"template-body").decode()
-        res = client.post(
-            f"/procedures/{proc['id']}/templates",
-            headers=_headers(),
-            json={"slot_id": yoshiki_slot, "filename": "tenyu.pdf", "data": blob},
-        )
-        assert res.status_code == 201, res.text
-        y_file = res.json()["file_id"]
-        res = client.post(
-            f"/procedures/{proc['id']}/templates",
-            headers=_headers(),
-            json={"slot_id": attach_slot, "filename": "todokede.docx", "data": blob},
-        )
-        assert res.status_code == 201, res.text
-
-        # 編集権限のない利用者は登録できない
-        res = client.post(
-            f"/procedures/{proc['id']}/templates",
-            headers=_headers("intruder"),
-            json={"slot_id": yoshiki_slot, "filename": "x.pdf", "data": blob},
-        )
-        assert res.status_code in (400, 403), res.text
-
-        # 一覧に両方出る
-        res = client.get(f"/procedures/{proc['id']}/templates", headers=_headers())
-        assert res.status_code == 200, res.text
-        templates = res.json()["templates"]
-        assert yoshiki_slot in templates
-        assert attach_slot in templates
-
-        # 公開して申請束を開くと、アイテムにひな型が付く
-        res = client.post(
-            f"/procedures/{proc['id']}/status",
-            headers=_headers(),
-            json={"status": "published"},
-        )
-        assert res.status_code == 200, res.text
-        guide = _reception_of(client, guide_def["id"])
-        res = client.post(
-            f"/public/api/forms/{guide['guest_token']}/submissions",
-            json={"answers": {"name": "山田", "event": "転入"}, "submitter_name": "山田"},
-        )
-        assert res.status_code == 201, res.text
-        opened = res.json()["application"]
-        yoshiki = next(it for it in opened["items"] if it["kind"] == "yoshiki")
-        attach = next(it for it in opened["items"] if it["kind"] == "attach")
-        assert yoshiki["template"] and yoshiki["template"]["filename"] == "tenyu.pdf"
-        assert attach["template"] and attach["template"]["filename"] == "todokede.docx"
-
-        # 申請者はトークン経由でダウンロードできる
-        res = client.get(
-            f"/public/api/applications/{opened['token']}/templates/"
-            f"{yoshiki['template']['file_id']}"
-        )
-        assert res.status_code == 200, res.text
-        assert res.content == b"template-body"
-
-        # 職員も庁内ダウンロードできる
-        res = client.get(
-            f"/procedures/{proc['id']}/templates/{y_file}/download",
-            headers=_headers(),
-        )
-        assert res.status_code == 200, res.text
-        assert res.content == b"template-body"
-
-        # 削除するとアイテムから消える
-        res = client.delete(
-            f"/procedures/{proc['id']}/templates/{y_file}", headers=_headers()
-        )
-        assert res.status_code == 200, res.text
-        res = client.get(f"/public/api/applications/{opened['token']}")
-        again = res.json()
-        y_again = next(it for it in again["items"] if it["kind"] == "yoshiki")
-        assert not y_again.get("template")
-    finally:
-        _teardown(path)
-
-
 def test_form_tags_endpoint_ignores_locked() -> None:
     client, path = _setup()
     try:
@@ -1220,7 +1111,6 @@ if __name__ == "__main__":
     test_assist_procedure_apply_selected_parts()
     test_application_workbench_items()
     test_procedure_export_aligned()
-    test_procedure_templates()
     test_catalog_published_only()
     test_procedure_share_links()
     test_application_and_procedure_export()

@@ -227,6 +227,29 @@ def empty_definition(title: str = "", description: str = "") -> dict[str, Any]:
     }
 
 
+# 書類としての役割。フォーム自身が「記入様式」か「添付専用」かを自己記述する。
+DOC_ROLES = ("yoshiki", "attachment")
+
+
+def doc_role_of(definition: Any) -> str:
+    """定義の部品構成から役割を推定する。
+
+    実入力欄（表示部品・ファイル以外）が1つでもあれば「記入様式(yoshiki)」、
+    ファイル/表示のみ（＝実質アップロードだけ）なら「添付専用(attachment)」。
+    """
+    comps = (definition or {}).get("components") if isinstance(definition, dict) else None
+    if not isinstance(comps, list):
+        return "attachment"
+    for c in comps:
+        if not isinstance(c, dict):
+            continue
+        ctype = str(c.get("type") or "")
+        if ctype in DISPLAY_TYPES or ctype == "file":
+            continue
+        return "yoshiki"
+    return "attachment"
+
+
 def validate_pin(pin: str | None) -> str | None:
     if not pin:
         return None
@@ -343,11 +366,15 @@ def validate_definition(
                 "imi_subfields": _imi_subfields(ctype, raw.get("imi_subfields")),
             }
         )
+    role = str(meta.get("doc_role") or "").strip()
+    if role not in DOC_ROLES:
+        role = doc_role_of({"components": normalized})
     return {
         "$version": SPEC_VERSION,
         "metadata": {
             "title": str(meta.get("title") or ""),
             "description": str(meta.get("description") or ""),
+            "doc_role": role,
         },
         "components": normalized,
     }, None
