@@ -163,7 +163,7 @@ export const PatchformProcedureEditPage = () => {
             </div>
 
             {procedure.status === 'draft' ? (
-              <div className='rounded-8 border border-blue-900 bg-blue-50 px-4 py-4' role='region' aria-label='次にすること'>
+              <section className='rounded-8 border border-blue-900 bg-blue-50 px-4 py-4' aria-label='次にすること'>
                 <p className='text-std-16B-150'>いまここでやること</p>
                 <ol className='mt-3 flex list-decimal flex-col gap-2 pl-5 text-std-16N-170'>
                   <li>
@@ -193,7 +193,7 @@ export const PatchformProcedureEditPage = () => {
                   ) : null}
                   <li>内容がよければ、この画面の下で保存し、公開する。</li>
                 </ol>
-              </div>
+              </section>
             ) : null}
 
             <PatchformProcedureCoach

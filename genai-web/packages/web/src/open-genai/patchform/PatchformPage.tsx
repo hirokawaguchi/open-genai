@@ -525,7 +525,7 @@ export const PatchformPage = () => {
                   </Button>
                 </Link>
               </div>
-              <div className='flex flex-wrap gap-2' role='group' aria-label='状態で絞り込み'>
+              <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='状態で絞り込み'>
                 {(
                   [
                     { id: '', label: `すべて（${activeCount}）` },
@@ -549,9 +549,9 @@ export const PatchformPage = () => {
                     {t.label}
                   </button>
                 ))}
-              </div>
+              </fieldset>
               {!trashView && knownTags.length > 0 ? (
-                <div className='flex flex-wrap items-center gap-2' role='group' aria-label='タグで絞り込み'>
+                <fieldset className='m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0' aria-label='タグで絞り込み'>
                   <button
                     type='button'
                     onClick={() => setTagFilter('')}
@@ -585,7 +585,7 @@ export const PatchformPage = () => {
                   >
                     {tagManagerOpen ? 'タグ管理を閉じる' : 'タグを管理'}
                   </button>
-                </div>
+                </fieldset>
               ) : null}
 
               {!trashView && tagManagerOpen ? (

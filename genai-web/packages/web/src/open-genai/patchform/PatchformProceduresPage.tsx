@@ -430,9 +430,7 @@ export const PatchformProceduresPage = () => {
             )}
           </div>
 
-          <p className='text-center text-std-16B-150 text-solid-gray-700' role='separator'>
-            または
-          </p>
+          <p className='text-center text-std-16B-150 text-solid-gray-700'>または</p>
 
           <PatchformGuideAssist
             model={config?.llm?.model}
@@ -473,7 +471,7 @@ export const PatchformProceduresPage = () => {
               </Button>
             </Link>
           </div>
-          <div className='flex flex-wrap gap-2' role='group' aria-label='表示の切り替え'>
+          <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='表示の切り替え'>
             <button
               type='button'
               onClick={() => switchView(false)}
@@ -496,7 +494,7 @@ export const PatchformProceduresPage = () => {
             >
               ゴミ箱（{trashCount}）
             </button>
-          </div>
+          </fieldset>
           {isLoading ? (
             <p className='text-solid-gray-600'>読み込み中...</p>
           ) : loadError ? (
