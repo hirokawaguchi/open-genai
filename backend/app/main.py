@@ -3949,57 +3949,6 @@ async def patchform_get_draft(form_id: str, request: Request) -> JSONResponse:
     return await _proxy_patchform("GET", _patchform_app_url(f"/forms/{form_id}/draft"), headers)
 
 
-@app.get("/patchform/forms/{form_id}/audit")
-async def patchform_list_audit(form_id: str, request: Request) -> JSONResponse:
-    err, headers = _patchform_headers(request)
-    if err:
-        return err
-    return await _proxy_patchform("GET", _patchform_app_url(f"/forms/{form_id}/audit"), headers)
-
-
-@app.get("/patchform/forms/{form_id}/export")
-async def patchform_export(form_id: str, request: Request) -> Response:
-    err, headers = _patchform_headers(request)
-    if err:
-        return err
-    fmt = (request.query_params.get("format") or "csv").strip() or "csv"
-    reveal = (request.query_params.get("reveal") or "").strip()
-    qs = f"?format={quote(fmt)}"
-    if reveal:
-        qs += f"&reveal={quote(reveal)}"
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.get(
-                _patchform_app_url(f"/forms/{form_id}/export") + qs,
-                headers=headers,
-            )
-    except httpx.HTTPError as e:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": f"フォームサービスに接続できませんでした: {e}",
-                "enabled": False,
-            },
-        )
-    ctype = res.headers.get("content-type", "")
-    if ctype.startswith("text/csv") or "ndjson" in ctype:
-        return Response(
-            content=res.content,
-            media_type=ctype or "text/csv",
-            headers={
-                "Content-Disposition": res.headers.get(
-                    "content-disposition",
-                    f'attachment; filename="patchform_{form_id}.{"jsonl" if fmt == "jsonl" else "csv"}"',
-                )
-            },
-        )
-    try:
-        payload = res.json()
-    except ValueError:
-        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
-    return JSONResponse(status_code=res.status_code, content=payload)
-
-
 @app.post("/patchform/forms/{form_id}/files")
 async def patchform_upload_file(form_id: str, request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)
@@ -4156,19 +4105,6 @@ async def patchform_assist_invite(request: Request) -> JSONResponse:
         headers,
         body,
         timeout=120,
-    )
-
-
-@app.get("/patchform/forms/{form_id}/carrier")
-async def patchform_carrier(form_id: str, request: Request) -> JSONResponse:
-    err, headers = _patchform_headers(request)
-    if err:
-        return err
-    fmt = request.query_params.get("format") or "txt"
-    return await _proxy_patchform(
-        "GET",
-        _patchform_app_url(f"/forms/{form_id}/carrier") + f"?format={quote(fmt)}",
-        headers,
     )
 
 
