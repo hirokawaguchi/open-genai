@@ -4,7 +4,7 @@ import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { PATCHFORM_LABEL } from './labels';
+import { DOCMAKER_LABEL } from '../docmaker/labels';
 import { usePatchformMyApplications, usePatchformProcedure } from './usePatchform';
 
 const statusStyle = (status: string): string => {
@@ -39,7 +39,7 @@ export const PatchformApplyPage = () => {
 
   const onStart = () => {
     if (!procedureId) return;
-    navigate(`/patchform/apply/${procedureId}/wizard`);
+    navigate(`/patchform/apply/${procedureId}/wizard?from=my`);
   };
 
   return (
@@ -50,8 +50,7 @@ export const PatchformApplyPage = () => {
           items={[
             { label: 'ホーム', to: '/' },
             { label: 'AIアプリ', to: '/apps' },
-            { label: PATCHFORM_LABEL, to: '/patchform' },
-            { label: 'マイ手続き', to: '/patchform/my' },
+            { label: DOCMAKER_LABEL, to: '/docmaker' },
             { label: procedure?.name || '庁内申請' },
           ]}
         />
@@ -142,7 +141,7 @@ export const PatchformApplyPage = () => {
         ) : null}
 
         <p className='text-std-16N-170'>
-          <Link to='/patchform/my' className='text-blue-900 underline-offset-2 hover:underline'>
+          <Link to='/docmaker' className='text-blue-900 underline-offset-2 hover:underline'>
             マイ手続きへ
           </Link>
         </p>

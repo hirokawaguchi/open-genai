@@ -450,6 +450,32 @@ PATCHFORM_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# マイ手続き（docmaker）。UI は専用ページ /docmaker。patchform-app を共有するため、
+# 同じ /health で出し分ける（フォームと同時に表示/非表示になる）。
+DOCMAKER_SEED: dict[str, Any] = {
+    "exAppId": "docmaker",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "マイ手続き",
+    "endpoint": (
+        PATCHFORM_APP_URL
+        if PATCHFORM_APP_URL.endswith("/invoke")
+        else PATCHFORM_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "自分の手続き（案件）を一覧で管理します。公開中の手続きを選んで始め、案内に答えると提出書類一覧ができ、記入や添付を少しずつ進められます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「マイ手続き」から新しい手続きを始めます。\n"
+        "- 始めると案内（ナビ）に答えるだけで提出書類一覧ができ、記入・添付を進められます。\n"
+        "- 案件ごとに状態・担当・期限を管理できます。\n"
+        "- 有効化: `docker compose --profile patchform up -d` または `COMPOSE_PROFILES=patchform`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -525,6 +551,7 @@ EXAPP_SEEDS = [
     CHOSEI_SEED,
     DOCCHECK_SEED,
     PATCHFORM_SEED,
+    DOCMAKER_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。

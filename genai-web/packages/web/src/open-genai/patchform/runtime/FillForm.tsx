@@ -10,7 +10,7 @@ import { GENDERS, PREFECTURES, yuuchoToBranch } from './japan';
 import { choiceOptions } from './choiceOptions';
 import { suggestFor, type ImiSource, type SuggestOption } from './imiSuggest';
 import { seedPrepare } from './prepareSeed';
-import { COMPOSITE_NORMALIZE, normalizeInput, type NormalizeKind } from './normalizeInput';
+import { normalizeInput, type NormalizeKind } from './normalizeInput';
 import { nextFilledPage, splitPages } from './pages';
 import { isVisible, missingRequired } from './visibility';
 

@@ -149,7 +149,7 @@ export const PatchformDetailPage = () => {
         );
         return;
       }
-      navigate(fromMy ? '/patchform/my' : '/patchform/inbox');
+      navigate(fromMy ? '/docmaker' : '/patchform/inbox');
     }
   };
 

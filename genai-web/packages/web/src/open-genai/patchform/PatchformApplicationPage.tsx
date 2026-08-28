@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { DOCMAKER_LABEL } from '../docmaker/labels';
 import { PATCHFORM_LABEL } from './labels';
 import { PatchformProcedureCoach } from './PatchformProcedureCoach';
 import { answerRows } from './runtime/formatAnswer';
@@ -164,8 +165,7 @@ export const PatchformApplicationPage = () => {
               ? [
                   { label: 'ホーム', to: '/' },
                   { label: 'AIアプリ', to: '/apps' },
-                  { label: PATCHFORM_LABEL, to: '/patchform' },
-                  { label: 'マイ手続き', to: '/patchform/my' },
+                  { label: DOCMAKER_LABEL, to: '/docmaker' },
                   {
                     label:
                       application?.title || application?.procedure_name || '手続き',

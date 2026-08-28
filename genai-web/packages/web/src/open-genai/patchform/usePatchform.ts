@@ -868,23 +868,6 @@ export const usePatchformInbox = (procedureId?: string) => {
   };
 };
 
-export const usePatchformApplications = (procedureId: string | undefined) => {
-  const key = procedureId
-    ? `patchform/procedures/${encodeURIComponent(procedureId)}/applications`
-    : null;
-  const { data, error, isLoading, mutate } = useSWR<{ applications: Application[] }>(
-    key,
-    teamApiFetcher,
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  );
-  return {
-    applications: data?.applications ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, '申請一覧の取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
 export const usePatchformApplication = (applicationId: string | undefined) => {
   const key = applicationId ? `patchform/applications/${encodeURIComponent(applicationId)}` : null;
   const { data, error, isLoading, mutate } = useSWR<Application>(key, teamApiFetcher, {
