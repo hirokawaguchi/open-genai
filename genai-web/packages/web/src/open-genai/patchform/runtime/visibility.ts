@@ -22,7 +22,7 @@ export const isVisible = (c: FormComponent, values: Record<string, unknown>): bo
   return rules.every((rule) => ruleMatches(values[rule.field], rule));
 };
 
-export const isAnswerEmpty = (type: string, value: unknown): boolean => {
+export const isAnswerEmpty = (_type: string, value: unknown): boolean => {
   if (value == null || value === '') return true;
   if (Array.isArray(value)) return value.length === 0;
   if (typeof value === 'object') {

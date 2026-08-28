@@ -5,14 +5,13 @@ import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { PATCHFORM_LABEL } from './labels';
-import { PatchformSubnav } from './PatchformSubnav';
-import type { MyApplication } from './types';
+import type { MyApplication } from '../patchform/types';
 import {
   usePatchformMyApplications,
   usePatchformProcedures,
   usePatchformProjectActions,
-} from './usePatchform';
+} from '../patchform/usePatchform';
+import { DOCMAKER_LABEL } from './labels';
 
 const statusStyle = (status: string): string => {
   switch (status) {
@@ -46,12 +45,12 @@ const deadlineTone = (deadline: string): string => {
 };
 
 /**
- * マイ手続き（庁内・自分が所有するプロジェクトの一覧）。
- * docmaker.net の「案件（プロジェクト）一覧（Index）」に相当。
- * エクスプローラー風の一覧（表形式）で、担当・期限・次回更新日を管理できる。
+ * docmaker（マイ手続き）：庁内・自分が所有するプロジェクトの一覧。
+ * 「フォーム」アプリ（作成・公開・受付）とは別アプリとして分離している。
+ * 表形式のエクスプローラー風一覧で、担当・期限・次回更新日を管理できる。
  * 「始める」を押すと作成ウィザードが起動し、案内に答えると提出書類一覧が育つ。
  */
-export const PatchformMyPage = () => {
+export const DocmakerPage = () => {
   const navigate = useNavigate();
   const { applications, isLoading, loadError, mutate } = usePatchformMyApplications();
   const { procedures } = usePatchformProcedures();
@@ -84,7 +83,7 @@ export const PatchformMyPage = () => {
   const onStart = () => {
     if (!pick) return;
     setError(null);
-    navigate(`/patchform/apply/${pick}/wizard`);
+    navigate(`/patchform/apply/${pick}/wizard?from=my`);
   };
 
   const onSetStatus = async (id: string, status: string) => {
@@ -135,22 +134,20 @@ export const PatchformMyPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`マイ手続き | ${PATCHFORM_LABEL}`} />
+      <PageTitle title={DOCMAKER_LABEL} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <div className='flex flex-col gap-4'>
           <BreadcrumbsNav
             items={[
               { label: 'ホーム', to: '/' },
               { label: 'AIアプリ', to: '/apps' },
-              { label: PATCHFORM_LABEL, to: '/patchform' },
-              { label: 'マイ手続き' },
+              { label: DOCMAKER_LABEL },
             ]}
           />
           <h1 className='flex items-center gap-2 text-std-20B-160 lg:text-std-24B-150'>
             <PiFoldersBold className='size-6' />
             マイ手続き
           </h1>
-          <PatchformSubnav current='my' />
           <p className='text-std-16N-170 text-solid-gray-700'>
             自分の手続き（案件）を一覧で管理します。手続きを選んで始めると、案内に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。
           </p>
@@ -173,11 +170,11 @@ export const PatchformMyPage = () => {
             </p>
           ) : (
             <div className='flex flex-wrap items-center gap-2'>
-              <label className='text-std-16N-170 text-solid-gray-700' htmlFor='pf-my-pick'>
+              <label className='text-std-16N-170 text-solid-gray-700' htmlFor='dm-pick'>
                 手続きを選ぶ
               </label>
               <select
-                id='pf-my-pick'
+                id='dm-pick'
                 className='rounded-4 border border-solid-gray-420 px-2 py-1.5 text-std-16N-170'
                 value={pick}
                 onChange={(e) => setPick(e.target.value)}

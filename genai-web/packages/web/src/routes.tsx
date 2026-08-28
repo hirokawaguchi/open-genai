@@ -29,12 +29,12 @@ import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
+import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
 import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
 import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
 import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
-import { PatchformMyPage } from '@/open-genai/patchform/PatchformMyPage';
 import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
 import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProcedureEditPage';
 import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
@@ -96,9 +96,13 @@ export const createRoutes = (): RouteObject[] => {
     // 書類領域分割チェックは専用ページへ（Compose profiles: ["doccheck"]）。
     { path: 'doccheck', element: <DoccheckPage /> },
     { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },
+    // マイ手続き（docmaker）は独立アプリの専用ページへ（patchform-app を共有）。
+    { path: 'docmaker', element: <DocmakerPage /> },
+    { path: 'apps/:teamId/docmaker', element: <Navigate to='/docmaker' replace /> },
+    // 旧 URL 互換：フォーム配下の「マイ手続き」は docmaker へ寄せる。
+    { path: 'patchform/my', element: <Navigate to='/docmaker' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。
     { path: 'patchform', element: <PatchformPage /> },
-    { path: 'patchform/my', element: <PatchformMyPage /> },
     { path: 'patchform/inbox', element: <PatchformInboxPage /> },
     { path: 'patchform/inbox/:procedureId', element: <PatchformInboxPage /> },
     { path: 'patchform/procedures', element: <PatchformProceduresPage /> },

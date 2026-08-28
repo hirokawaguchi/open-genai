@@ -55,7 +55,7 @@ export const PatchformProcedureCoach = ({
     <Disclosure
       className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'
       aria-labelledby='pf-proc-coach-title'
-      defaultOpen={defaultOpen}
+      open={defaultOpen}
     >
       <DisclosureSummary>
         <span className='flex flex-col gap-0.5 text-left'>

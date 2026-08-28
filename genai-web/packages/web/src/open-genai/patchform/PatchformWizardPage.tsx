@@ -10,7 +10,7 @@ import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { PATCHFORM_LABEL } from './labels';
+import { DOCMAKER_LABEL } from '../docmaker/labels';
 import { FillForm } from './runtime/FillForm';
 import { missingRequired } from './runtime/visibility';
 import type { FormComponent, FormDefinition, ProcedureResolvePreview, SlotKind } from './types';
@@ -156,7 +156,7 @@ export const PatchformWizardPage = () => {
 
   const cancelTo = editAppId
     ? `/patchform/applications/${editAppId}?from=my`
-    : '/patchform/my';
+    : '/docmaker';
 
   const onConfirm = async () => {
     if (!procedureId) return;
@@ -207,14 +207,13 @@ export const PatchformWizardPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`${procedure?.name || '手続き'}を始める | ${PATCHFORM_LABEL}`} />
+      <PageTitle title={`${procedure?.name || '手続き'}を始める | ${DOCMAKER_LABEL}`} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <BreadcrumbsNav
           items={[
             { label: 'ホーム', to: '/' },
             { label: 'AIアプリ', to: '/apps' },
-            { label: PATCHFORM_LABEL, to: '/patchform' },
-            { label: 'マイ手続き', to: '/patchform/my' },
+            { label: DOCMAKER_LABEL, to: '/docmaker' },
             ...(editAppId
               ? [
                   {
@@ -459,7 +458,7 @@ export const PatchformWizardPage = () => {
         ) : null}
 
         <p className='text-std-16N-170'>
-          <Link to='/patchform/my' className='text-blue-900 underline-offset-2 hover:underline'>
+          <Link to='/docmaker' className='text-blue-900 underline-offset-2 hover:underline'>
             マイ手続きへ
           </Link>
         </p>
