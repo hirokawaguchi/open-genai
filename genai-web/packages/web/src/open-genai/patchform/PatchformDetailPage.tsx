@@ -21,6 +21,7 @@ import {
   uploadPatchformFile,
   usePatchformActions,
   usePatchformApplication,
+  usePatchformApplicationImiSources,
   usePatchformDetail,
 } from './usePatchform';
 import { sourcesFromApplication } from './runtime/imiSuggest';
@@ -47,8 +48,13 @@ export const PatchformDetailPage = () => {
   const [searchParams] = useSearchParams();
   const applicationToken = searchParams.get('app') || '';
   const applicationItemId = searchParams.get('item') || '';
+  const fromMy = searchParams.get('from') === 'my';
   const { form, isLoading, loadError, mutate } = usePatchformDetail(formId);
   const { application } = usePatchformApplication(applicationToken || undefined);
+  // 本人の他プロジェクトの記入済み様式から横断候補を取り込む（庁内のみ）。
+  const { sources: crossSources } = usePatchformApplicationImiSources(
+    fromMy ? application?.id : undefined,
+  );
   const {
     setStatus,
     remove,
@@ -138,10 +144,12 @@ export const PatchformDetailPage = () => {
       setDraftNote(null);
       await mutate();
       if (ok.application) {
-        navigate(`/patchform/applications/${ok.application.id}`);
+        navigate(
+          `/patchform/applications/${ok.application.id}${fromMy ? '?from=my' : ''}`,
+        );
         return;
       }
-      navigate('/patchform/inbox');
+      navigate(fromMy ? '/patchform/my' : '/patchform/inbox');
     }
   };
 
@@ -335,7 +343,10 @@ export const PatchformDetailPage = () => {
                   onPostalLookup={lookupPatchformPostal}
                   onCorporateLookup={lookupPatchformCorporate}
                   onWizardChange={(info) => setWizardLast(info.isLast)}
-                  imiSources={sourcesFromApplication(application, form.id)}
+                  imiSources={[
+                    ...sourcesFromApplication(application, form.id),
+                    ...crossSources,
+                  ]}
                   prepareItems={application?.notice?.prepare || []}
                 />
                 {error && (

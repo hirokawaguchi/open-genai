@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -193,10 +194,69 @@ def init_db() -> None:
             """
         )
         _ensure_columns(db)
+        _migrate_applications_optional_submission(db)
         file_moves = _migrate_legacy_receptions(db)
+        _migrate_slot_templates_to_forms(db)
         db.commit()
     for old_id, new_id in file_moves:
         files.rename_form_dir(old_id, new_id)
+
+
+def _migrate_applications_optional_submission(db: sqlite3.Connection) -> None:
+    """マイ手続き（project-first）のため、案内提出前の空プロジェクトを許す。
+
+    元の applications は guide_submission_id が NOT NULL かつ submissions への
+    FK を持つため、案内回答前の束を作れない。当該 FK のみ外し、guide_submission_id
+    を nullable にしたテーブルへ再構築する（procedure/guide の FK は維持）。冪等。
+    """
+    fks = db.execute("PRAGMA foreign_key_list(applications)").fetchall()
+    if not any(fk["from"] == "guide_submission_id" for fk in fks):
+        return  # 既に移行済み
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute(
+        """
+        CREATE TABLE applications_new (
+          id TEXT PRIMARY KEY,
+          token TEXT NOT NULL UNIQUE,
+          procedure_id TEXT NOT NULL,
+          guide_form_id TEXT NOT NULL,
+          guide_submission_id TEXT,
+          form_ids_json TEXT NOT NULL,
+          notice_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          items_json TEXT NOT NULL DEFAULT '[]',
+          owner_kind TEXT NOT NULL DEFAULT '',
+          owner_key TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '',
+          status_override TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL DEFAULT '',
+          assignee TEXT NOT NULL DEFAULT '',
+          deadline TEXT NOT NULL DEFAULT '',
+          next_action_date TEXT NOT NULL DEFAULT '',
+          FOREIGN KEY (procedure_id) REFERENCES procedures(id),
+          FOREIGN KEY (guide_form_id) REFERENCES forms(id)
+        )
+        """
+    )
+    db.execute(
+        "INSERT INTO applications_new (id, token, procedure_id, guide_form_id, "
+        "guide_submission_id, form_ids_json, notice_json, created_at, items_json, "
+        "owner_kind, owner_key, title, status_override, updated_at, "
+        "assignee, deadline, next_action_date) "
+        "SELECT id, token, procedure_id, guide_form_id, guide_submission_id, "
+        "form_ids_json, notice_json, created_at, items_json, owner_kind, owner_key, "
+        "title, status_override, updated_at, assignee, deadline, next_action_date "
+        "FROM applications"
+    )
+    db.execute("DROP TABLE applications")
+    db.execute("ALTER TABLE applications_new RENAME TO applications")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_applications_proc ON applications(procedure_id)"
+    )
+    db.execute("PRAGMA foreign_keys = ON")
 
 
 def _ensure_columns(db: sqlite3.Connection) -> None:
@@ -215,6 +275,16 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("submissions", "application_item_id", "TEXT"),
         ("procedures", "notify_emails_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("applications", "items_json", "TEXT NOT NULL DEFAULT '[]'"),
+        # マイ手続き: 所有者・タイトル・状態の手動上書き・更新時刻
+        ("applications", "owner_kind", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "owner_key", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "title", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "status_override", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "updated_at", "TEXT NOT NULL DEFAULT ''"),
+        # docmaker Index 相当: 担当者・期限・次回更新日
+        ("applications", "assignee", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "deadline", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "next_action_date", "TEXT NOT NULL DEFAULT ''"),
     )
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -323,6 +393,51 @@ def _replace_form_id_json(raw: str | None, old_id: str, new_id: str) -> str:
         return raw or "[]"
     changed = [new_id if item == old_id else item for item in items]
     return json.dumps(changed, ensure_ascii=False)
+
+
+def _migrate_slot_templates_to_forms(db: sqlite3.Connection) -> None:
+    """旧・手続きスロット別ひな型（template:yoshiki:{fid}）を様式フォーム自身へ移す。
+
+    ひな型は「その様式の1つ」に集約する方が自然なので、フォームの定義IDの
+    バケットへ移設し component_id を template:self に付け替える。冪等。
+    """
+    try:
+        rows = db.execute(
+            "SELECT id, form_id, component_id FROM uploaded_files "
+            "WHERE component_id LIKE 'template:yoshiki:%'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    prefix = "template:yoshiki:"
+    for r in rows:
+        fid = str(r["component_id"])[len(prefix):]
+        target = _form_row(db, fid)
+        if not target:
+            continue
+        def_id = _definition_id(target)
+        exists = db.execute(
+            "SELECT 1 FROM uploaded_files WHERE form_id = ? AND component_id = ?",
+            (def_id, FORM_TEMPLATE_COMP),
+        ).fetchone()
+        if exists:
+            continue
+        src_bucket = str(r["form_id"])
+        if src_bucket == def_id:
+            db.execute(
+                "UPDATE uploaded_files SET component_id = ? WHERE id = ?",
+                (FORM_TEMPLATE_COMP, r["id"]),
+            )
+            continue
+        try:
+            blob = files.stored_path(src_bucket, r["id"]).read_bytes()
+        except (ValueError, OSError):
+            continue
+        files.write_blob(def_id, r["id"], blob)
+        db.execute(
+            "UPDATE uploaded_files SET form_id = ?, component_id = ? WHERE id = ?",
+            (def_id, FORM_TEMPLATE_COMP, r["id"]),
+        )
+        files.remove_blob(src_bucket, r["id"])
 
 
 def _migrate_legacy_receptions(db: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -678,6 +793,8 @@ def get_form(
         if not row:
             return None
         out = _row_to_form(row)
+        # 様式フォーム自身に登録されたひな型（作成画面で登録/差し替え）。
+        out["template"] = _form_template_meta(db, row["id"])
         out["submission_count"] = db.execute(
             "SELECT COUNT(*) AS n FROM submissions WHERE form_id = ? AND is_draft = 0 "
             "AND (withdrawn_at IS NULL OR withdrawn_at = '')",
@@ -763,6 +880,16 @@ def get_form(
         return out
 
 
+def _apply_default_imi(definition: dict[str, Any]) -> dict[str, Any]:
+    """型から一意に決まる語彙（IMI）を空欄だけ補完する。手動保存/公開でも適用する。"""
+    comps = definition.get("components")
+    if not isinstance(comps, list):
+        return definition
+    out = dict(definition)
+    out["components"] = [spec.fill_default_imi(c) for c in comps]
+    return out
+
+
 def create_form(
     *,
     title: str,
@@ -791,6 +918,7 @@ def create_form(
     normalized, err = spec.validate_definition(base, visibility=visibility)
     if err or normalized is None:
         return None, err
+    normalized = _apply_default_imi(normalized)
     tag_list, tag_err = normalize_tags(tags)
     if tag_err or tag_list is None:
         return None, tag_err
@@ -879,6 +1007,7 @@ def update_form(
         normalized, err = spec.validate_definition(next_def, visibility=new_vis)
         if err or normalized is None:
             return None, err
+        normalized = _apply_default_imi(normalized)
         pin_hash = row["pin_hash"]
         if pin is not None:
             if pin == "":
@@ -1137,6 +1266,125 @@ def set_tags(
     return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
 
 
+def list_all_tags(
+    *, actor_user_id: str, actor_groups: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """編集権限のある様式フォームに付いているタグを、使用件数付きで集計する。
+
+    ゴミ箱（archived）のフォームも数えるため、未使用に見えるタグの掃除にも使える。
+    受付窓口（reception）は様式ペア側で数えるので二重計上しない。
+    """
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT * FROM forms").fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            if _is_reception(row):
+                continue
+            if not _can_edit(row, actor_user_id, actor_groups):
+                continue
+            for t in _row_tags(row):
+                counts[t] = counts.get(t, 0) + 1
+        return [{"tag": t, "count": counts[t]} for t in sorted(counts)]
+
+
+def _apply_tag_change(
+    db: sqlite3.Connection,
+    def_row: sqlite3.Row,
+    transform: Callable[[list[str]], list[str]],
+) -> bool:
+    """様式フォーム本体とその受付窓口ペアのタグを、transform で一括更新する。"""
+    ids = [def_row["id"]]
+    for r in db.execute(
+        "SELECT id FROM forms WHERE source_form_id = ?", (def_row["id"],)
+    ).fetchall():
+        ids.append(r["id"])
+    changed = False
+    for fid in ids:
+        r = db.execute("SELECT tags FROM forms WHERE id = ?", (fid,)).fetchone()
+        if not r:
+            continue
+        cur = _row_tags(r)
+        nxt = transform(cur)
+        if nxt != cur:
+            db.execute(
+                "UPDATE forms SET tags = ?, updated_at = ? WHERE id = ?",
+                (_tags_json(nxt), _now_iso(), fid),
+            )
+            changed = True
+    return changed
+
+
+def rename_tag(
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    old: str,
+    new: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """タグを、編集権限のある全フォームでまとめて改名する。"""
+    old_tag = (old or "").strip()
+    if not old_tag:
+        return None, "元のタグを指定してください"
+    norm, err = normalize_tags([new])
+    if err or not norm:
+        return None, err or "新しいタグ名が不正です"
+    new_tag = norm[0]
+
+    def transform(tags: list[str]) -> list[str]:
+        if old_tag not in tags:
+            return tags
+        out: list[str] = []
+        for t in tags:
+            repl = new_tag if t == old_tag else t
+            if repl not in out:
+                out.append(repl)
+        return out
+
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT * FROM forms").fetchall()
+        n = 0
+        for row in rows:
+            if _is_reception(row) or not _can_edit(row, actor_user_id, actor_groups):
+                continue
+            if old_tag not in _row_tags(row):
+                continue
+            if _apply_tag_change(db, row, transform):
+                n += 1
+        db.commit()
+        return {"changed": n}, None
+
+
+def delete_tag(
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    tag: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """タグを、編集権限のある全フォームからまとめて外す。"""
+    target = (tag or "").strip()
+    if not target:
+        return None, "タグを指定してください"
+
+    def transform(tags: list[str]) -> list[str]:
+        return [t for t in tags if t != target]
+
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT * FROM forms").fetchall()
+        n = 0
+        for row in rows:
+            if _is_reception(row) or not _can_edit(row, actor_user_id, actor_groups):
+                continue
+            if target not in _row_tags(row):
+                continue
+            if _apply_tag_change(db, row, transform):
+                n += 1
+        db.commit()
+        return {"changed": n}, None
+
+
 def set_status(
     form_id: str,
     *,
@@ -1214,18 +1462,26 @@ def delete_form(
             return "フォームが見つかりません"
         if not _can_delete(row, actor_user_id, actor_groups):
             return "このフォームを削除する権限がありません"
+        removed_dirs: list[str] = []
         if not _is_reception(row):
-            child = db.execute(
-                "SELECT id FROM forms WHERE source_form_id = ? LIMIT 1", (form_id,)
-            ).fetchone()
-            if child:
-                return "受付の窓口があるため削除できません。先に窓口を終了して削除してください。"
-        used_name = _procedure_using_form(db, form_id)
-        if used_name:
-            return used_name
+            children = db.execute(
+                "SELECT id, status FROM forms WHERE source_form_id = ?", (form_id,)
+            ).fetchall()
+            active = [c for c in children if c["status"] == "published"]
+            if active:
+                return "受付中の窓口があるため削除できません。先に窓口を終了してから削除してください。"
+            used_name = _procedure_using_form(db, form_id)
+            if used_name:
+                return used_name
+            # 終了済みの窓口（reception）は本体と一緒に完全削除する。
+            for c in children:
+                db.execute("DELETE FROM forms WHERE id = ?", (c["id"],))
+                removed_dirs.append(c["id"])
         db.execute("DELETE FROM forms WHERE id = ?", (form_id,))
+        removed_dirs.append(form_id)
         db.commit()
-    files.remove_form_dir(form_id)
+    for d in removed_dirs:
+        files.remove_form_dir(d)
     return None
 
 
@@ -1637,7 +1893,14 @@ def submit_answers(
         opened = None
         notify_proc = None
         if not is_draft:
-            opened = _open_application_from_guide(db, row["id"], sid, cleaned)
+            if linked_app_id:
+                opened = _populate_project_from_guide(
+                    db, linked_app_id, row["id"], sid, cleaned
+                )
+            if opened is None:
+                opened = _open_application_from_guide(
+                    db, row["id"], sid, cleaned, submitter_user_id=submitter_user_id
+                )
             if opened:
                 notify_proc = db.execute(
                     "SELECT name, notify_emails_json FROM procedures WHERE id = ?",
@@ -2822,9 +3085,8 @@ def _items_from_form_ids(db: sqlite3.Connection, row: sqlite3.Row) -> list[dict[
     return items
 
 
-def _item_status(db: sqlite3.Connection, application_id: str, item: dict[str, Any]) -> str:
-    if item.get("fulfillment") == "file" and item.get("file_id"):
-        return "submitted"
+def _item_form_status(db: sqlite3.Connection, application_id: str, item: dict[str, Any]) -> str:
+    """様式（form_id）側の記入状況だけを見た状態。ファイル添付は考慮しない。"""
     form_id = item.get("form_id") or ""
     if not form_id:
         return "none"
@@ -2845,37 +3107,123 @@ def _item_status(db: sqlite3.Connection, application_id: str, item: dict[str, An
     return _form_progress(db, application_id, form_id)
 
 
-_TEMPLATE_PREFIX = "template:"
+def _item_status(db: sqlite3.Connection, application_id: str, item: dict[str, Any]) -> str:
+    """採用ソース（fulfillment）を踏まえた枠の状態。
+
+    記入と添付は併存でき、どちらを申請データとして採用するかは fulfillment で決める。
+    - "file": 添付ファイルを採用（記入があっても添付優先）
+    - "form": オンライン記入を採用（添付があっても記入優先）
+    - "": 未指定。添付があれば添付、無ければ記入を見る（従来動作）
+    """
+    fulfillment = item.get("fulfillment") or ""
+    file_attached = bool(item.get("file_id"))
+    if fulfillment == "file":
+        return "submitted" if file_attached else "none"
+    if fulfillment == "form":
+        return _item_form_status(db, application_id, item)
+    if file_attached:
+        return "submitted"
+    return _item_form_status(db, application_id, item)
 
 
-def _procedure_templates(
-    db: sqlite3.Connection, guide_form_id: str
-) -> dict[str, dict[str, Any]]:
-    """枠ごとの様式ひな型を案内フォームのバケットから引く。{slot_id: メタ}。"""
-    if not guide_form_id:
-        return {}
-    rows = db.execute(
-        "SELECT id, component_id, filename, mime, size FROM uploaded_files "
-        "WHERE form_id = ? AND component_id LIKE 'template:%'",
-        (guide_form_id,),
-    ).fetchall()
-    out: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        slot_id = str(r["component_id"])[len(_TEMPLATE_PREFIX) :]
-        out[slot_id] = {
-            "file_id": r["id"],
-            "filename": r["filename"],
-            "mime": r["mime"] or "",
-            "size": int(r["size"] or 0),
-        }
-    return out
+# フォーム自身のひな型（枠あたり1つ）。様式の定義ID（def_id）のバケットに置く。
+FORM_TEMPLATE_COMP = "template:self"
+# 追加の添付に備えて常設する「その他」枠の固定スロットID。
+OTHER_ATTACH_SLOT = "attach:__other__"
+
+
+def _form_template_meta(
+    db: sqlite3.Connection, form_id: str
+) -> dict[str, Any] | None:
+    """様式フォームに登録されたひな型を1件返す。受付版IDでも定義IDでも解決する。"""
+    if not form_id:
+        return None
+    def_id = _as_definition_id(db, form_id) or form_id
+    r = db.execute(
+        "SELECT id, filename, mime, size FROM uploaded_files "
+        "WHERE form_id = ? AND component_id = ? ORDER BY created_at DESC",
+        (def_id, FORM_TEMPLATE_COMP),
+    ).fetchone()
+    if not r:
+        return None
+    return {
+        "file_id": r["id"],
+        "filename": r["filename"],
+        "mime": r["mime"] or "",
+        "size": int(r["size"] or 0),
+    }
+
+
+def _form_has_fillable_fields(db: sqlite3.Connection, form_id: str) -> bool:
+    """様式に『ファイル添付以外』の入力部品があるかを返す。
+
+    アシストが自動生成した様式は file 部品だけのプレースホルダで、オンライン記入
+    しても実質は添付と同じになる。実入力欄が無い様式は「オンライン記入」を出さず、
+    添付のみに寄せることで、記入と添付の併用が意味を持つようにする。
+    """
+    if not form_id:
+        return False
+    form = _form_row(db, form_id)
+    if not form:
+        return False
+    for comp in _definition(form).get("components") or []:
+        if not isinstance(comp, dict):
+            continue
+        ctype = comp.get("type") or ""
+        if ctype in spec.DISPLAY_TYPES or ctype == "file":
+            continue
+        return True
+    return False
+
+
+# マイ手続きの自動ステータス（本人が手動で上書きも可能）
+APP_STATUS_TODO = "未着手"
+APP_STATUS_WORKING = "作業中"
+APP_STATUS_SUBMITTED = "提出済"
+APP_STATUS_AUTO = (APP_STATUS_TODO, APP_STATUS_WORKING, APP_STATUS_SUBMITTED)
+# 手動上書きで許可する状態（自動値＋終端の状態）
+APP_STATUS_OVERRIDE_ALLOWED = APP_STATUS_AUTO + ("取下げ", "完了")
+
+
+def _auto_status(items: list[dict[str, Any]]) -> str:
+    """枠の充足状況から状態を導出する。
+
+    - 案内(data)が未提出: 未着手
+    - 案内は済だが書類が残る: 作業中
+    - 書類がすべて提出済（または書類が無い）: 提出済
+    """
+    data_items = [it for it in items if it.get("kind") == "data"]
+    nav_done = any(it.get("status") == "submitted" for it in data_items)
+    if not nav_done:
+        return APP_STATUS_TODO
+    # 任意枠（常設の「その他」など）は完了判定の妨げにしない。
+    docs = [
+        it
+        for it in items
+        if it.get("kind") != "data" and it.get("required") != "optional"
+    ]
+    if not docs or all(it.get("status") == "submitted" for it in docs):
+        return APP_STATUS_SUBMITTED
+    return APP_STATUS_WORKING
+
+
+def _status_block(items: list[dict[str, Any]], override: str) -> dict[str, str]:
+    auto = _auto_status(items)
+    ov = override if override in APP_STATUS_OVERRIDE_ALLOWED else ""
+    return {"auto": auto, "override": ov, "effective": ov or auto}
+
+
+def _touch_application(db: sqlite3.Connection, application_id: str) -> None:
+    db.execute(
+        "UPDATE applications SET updated_at = ? WHERE id = ?",
+        (_now_iso(), application_id),
+    )
 
 
 def _item_payload(
     db: sqlite3.Connection,
     app_row: sqlite3.Row,
     item: dict[str, Any],
-    templates: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": item.get("id"),
@@ -2893,9 +3241,13 @@ def _item_payload(
         "guest_token": None,
         "public_url": None,
         "visibility": None,
-        "can_fill_online": bool(item.get("form_id")),
-        "template": (templates or {}).get(item.get("slot_id") or ""),
+        "can_fill_online": _form_has_fillable_fields(db, item.get("form_id") or ""),
+        # ひな型は様式フォーム自身に登録されたものを使う。
+        "template": _form_template_meta(db, item.get("form_id") or ""),
         "status": "none",
+        # 記入と添付の併存判定用（採用ソースの切り替えUIに使う）
+        "form_submitted": False,
+        "file_attached": bool(item.get("file_id")),
     }
     form_id = item.get("form_id") or ""
     if form_id:
@@ -2905,8 +3257,11 @@ def _item_payload(
             out["guest_token"] = form["guest_token"]
             out["public_url"] = public_url_for(form["guest_token"])
             out["visibility"] = form["visibility"]
+    out["form_submitted"] = _item_form_status(db, app_row["id"], item) == "submitted"
     out["status"] = _item_status(db, app_row["id"], item)
-    if form_id and out["status"] == "submitted" and item.get("fulfillment") != "file":
+    # 添付を採用中でも、記入済みなら記入内容は「保管」として引ける（採用切替のため）。
+    show_form_answers = item.get("fulfillment") != "file" and out["form_submitted"]
+    if form_id and show_form_answers:
         sub = db.execute(
             "SELECT s.answers_json, s.receipt_code, s.submitter_name, s.created_at, "
             "v.definition_json FROM submissions s "
@@ -3008,9 +3363,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
     raw_items = _application_items(row)
     if not raw_items:
         raw_items = _items_from_form_ids(db, row)
-    template_bucket = proc["guide_form_id"] if proc else row["guide_form_id"]
-    templates = _procedure_templates(db, template_bucket)
-    items = [_item_payload(db, row, item, templates) for item in raw_items]
+    items = [_item_payload(db, row, item) for item in raw_items]
     stamps = [str(row["created_at"] or "")]
     for form in forms:
         submitted = form.get("submitted_at")
@@ -3020,12 +3373,29 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         submitted = item.get("submitted_at")
         if submitted:
             stamps.append(str(submitted))
+    keys = row.keys()
+    stored_updated = str(row["updated_at"]) if "updated_at" in keys and row["updated_at"] else ""
+    if stored_updated:
+        stamps.append(stored_updated)
+    override = str(row["status_override"]) if "status_override" in keys and row["status_override"] else ""
+    title = str(row["title"]) if "title" in keys and row["title"] else ""
+
+    def _meta(name: str) -> str:
+        return str(row[name]) if name in keys and row[name] else ""
+
     return {
         "id": row["id"],
         "token": row["token"],
         "procedure_id": row["procedure_id"],
         "procedure_name": proc["name"] if proc else "",
         "procedure_description": proc["description"] if proc else None,
+        "title": title or (proc["name"] if proc else ""),
+        "assignee": _meta("assignee"),
+        "deadline": _meta("deadline"),
+        "next_action_date": _meta("next_action_date"),
+        "owner_kind": str(row["owner_kind"]) if "owner_kind" in keys and row["owner_kind"] else "",
+        "owner_key": str(row["owner_key"]) if "owner_key" in keys and row["owner_key"] else "",
+        "status": _status_block(items, override),
         "guide_form_id": row["guide_form_id"],
         "guide_submission_id": row["guide_submission_id"],
         "form_ids": form_ids,
@@ -3099,6 +3469,8 @@ def _open_application_from_guide(
     form_id: str,
     submission_id: str,
     answers: dict[str, Any],
+    *,
+    submitter_user_id: str | None = None,
 ) -> dict[str, Any] | None:
     submitted = _form_row(db, form_id)
     if not submitted or submitted["status"] != "published":
@@ -3174,10 +3546,15 @@ def _open_application_from_guide(
                 added_by="system",
             )
         )
+    # ログイン中の庁内ユーザーが案内に回答したら、その人を所有者にする
+    # （＝マイ手続きに載る）。ゲスト回答は所有者なし（P2でクレーム取り込み）。
+    owner_kind = "internal" if submitter_user_id else ""
+    owner_key = submitter_user_id or ""
     db.execute(
         "INSERT INTO applications (id, token, procedure_id, guide_form_id, "
-        "guide_submission_id, form_ids_json, notice_json, items_json, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
+        "guide_submission_id, form_ids_json, notice_json, items_json, created_at, "
+        "owner_kind, owner_key, title, status_override, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             aid,
             token,
@@ -3188,6 +3565,11 @@ def _open_application_from_guide(
             json.dumps(notice, ensure_ascii=False),
             json.dumps(items, ensure_ascii=False),
             now,
+            owner_kind,
+            owner_key,
+            proc["name"],
+            "",
+            now,
         ),
     )
     db.execute(
@@ -3196,6 +3578,538 @@ def _open_application_from_guide(
     )
     row = db.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
     return _application_payload(db, row) if row else None
+
+
+def _resolve_bundle_items(
+    db: sqlite3.Connection,
+    proc: sqlite3.Row,
+    submitted: sqlite3.Row,
+    answers: dict[str, Any],
+) -> dict[str, Any] | None:
+    """案内フォームの回答から、束の枠（nav + 対応様式/添付）を組み立てる。"""
+    mapping, err = procedure.normalize_mapping(proc["mapping_json"])
+    if err:
+        return None
+    resolved = procedure.resolve_bundle(mapping, answers)
+    slots = procedure.resolve_slots(mapping, answers)
+    reception_ids: list[str] = [submitted["id"]]
+    for fid in resolved["form_ids"]:
+        rec = _published_reception_row(db, fid)
+        if rec and rec["id"] not in reception_ids:
+            reception_ids.append(rec["id"])
+    notice = {
+        "notes": resolved["notes"],
+        "prepare": resolved["prepare"],
+        "refs": resolved["refs"],
+    }
+    items: list[dict[str, Any]] = [
+        _new_item(
+            slot_id="",
+            title=submitted["title"],
+            kind="data",
+            required="required",
+            cardinality="one",
+            form_id=submitted["id"],
+            fulfillment="form",
+            added_by="system",
+        )
+    ]
+    seen_forms = {submitted["id"]}
+    for slot in slots["slots"]:
+        if slot["kind"] == "attach":
+            items.append(
+                _new_item(
+                    slot_id=slot["slot_id"],
+                    title=slot["title"],
+                    kind="attach",
+                    required=slot["required"],
+                    cardinality=slot["cardinality"],
+                    form_id="",
+                    added_by="system",
+                )
+            )
+            continue
+        rec = _published_reception_row(db, slot["form_id"])
+        if not rec or rec["id"] in seen_forms:
+            continue
+        seen_forms.add(rec["id"])
+        items.append(
+            _new_item(
+                slot_id=slot["slot_id"],
+                title=rec["title"],
+                kind="yoshiki",
+                required=slot["required"],
+                cardinality=slot["cardinality"],
+                form_id=rec["id"],
+                added_by="system",
+            )
+        )
+    # 追加の添付に備えて、常設の「その他」枠を必ず1つ用意する。
+    items.append(
+        _new_item(
+            slot_id=OTHER_ATTACH_SLOT,
+            title="その他（追加の添付）",
+            kind="attach",
+            required="optional",
+            cardinality="many",
+            form_id="",
+            added_by="system",
+        )
+    )
+    return {"reception_ids": reception_ids, "notice": notice, "items": items}
+
+
+def _merge_items(
+    existing: list[dict[str, Any]], new_system: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """再解決した枠を、既存の作業（充足済み・手動追加）を残しつつ統合する。"""
+    new_nav = new_system[0]
+    new_others = new_system[1:]
+    new_slots = {n.get("slot_id") for n in new_others}
+    existing_nav = next((it for it in existing if it.get("kind") == "data"), None)
+    result: list[dict[str, Any]] = [existing_nav or new_nav]
+    handled: set[Any] = set()
+    for it in existing:
+        if it.get("kind") == "data" or it.get("added_by") != "system":
+            continue
+        slot = it.get("slot_id")
+        if slot in new_slots:
+            result.append(it)  # 同じ枠は既存（充足・複製）を維持
+            handled.add(slot)
+        elif it.get("fulfillment") == "file" and it.get("file_id"):
+            result.append(it)  # 対象外になっても済みの添付は残す
+    for ni in new_others:
+        if ni.get("slot_id") not in handled:
+            result.append(ni)
+    for it in existing:
+        if it.get("kind") != "data" and it.get("added_by") != "system":
+            result.append(it)  # 申請者が手動で足した枠
+    return result
+
+
+def _populate_project_from_guide(
+    db: sqlite3.Connection,
+    application_id: str,
+    form_id: str,
+    submission_id: str,
+    answers: dict[str, Any],
+) -> dict[str, Any] | None:
+    """既存プロジェクトの案内回答で、書類リストを（再）生成する。"""
+    app_row = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    if not app_row:
+        return None
+    proc = db.execute(
+        "SELECT * FROM procedures WHERE id = ?", (app_row["procedure_id"],)
+    ).fetchone()
+    if not proc:
+        return None
+    submitted = _form_row(db, form_id)
+    if not submitted:
+        return None
+    submitted_def = _definition_id(submitted)
+    guide_def = _as_definition_id(db, proc["guide_form_id"]) or proc["guide_form_id"]
+    if not (
+        proc["guide_form_id"] in (form_id, submitted_def) or guide_def == submitted_def
+    ):
+        return None  # 送信フォームがこの手続きの案内でなければ何もしない
+    resolved = _resolve_bundle_items(db, proc, submitted, answers)
+    if resolved is None:
+        return None
+    existing = _application_items(app_row)
+    merged = _merge_items(existing, resolved["items"])
+    nav = merged[0]
+    nav["form_id"] = submitted["id"]
+    nav["fulfillment"] = "form"
+    form_ids = list(resolved["reception_ids"])
+    for it in merged:
+        fid = it.get("form_id")
+        if fid and fid not in form_ids:
+            form_ids.append(fid)
+    db.execute(
+        "UPDATE applications SET guide_submission_id = ?, guide_form_id = ?, "
+        "form_ids_json = ?, notice_json = ?, items_json = ?, updated_at = ? WHERE id = ?",
+        (
+            submission_id,
+            submitted["id"],
+            json.dumps(form_ids, ensure_ascii=False),
+            json.dumps(resolved["notice"], ensure_ascii=False),
+            json.dumps(merged, ensure_ascii=False),
+            _now_iso(),
+            application_id,
+        ),
+    )
+    db.execute(
+        "UPDATE submissions SET application_id = ?, application_item_id = ? WHERE id = ?",
+        (application_id, nav["id"], submission_id),
+    )
+    row = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    return _application_payload(db, row) if row else None
+
+
+def create_project(
+    *,
+    procedure_id: str,
+    owner_kind: str,
+    owner_key: str,
+    title: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """空のプロジェクト（申請束）を先に作る。以後、案内回答で中身が埋まる。"""
+    if owner_kind not in ("internal", "external") or not owner_key:
+        return None, "所有者が不正です"
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        if proc["status"] != "published":
+            return None, "公開中の手続きではありません"
+        guide_rec = _published_reception_row(db, proc["guide_form_id"])
+        if not guide_rec:
+            return None, "案内フォームが公開されていません"
+        now = _now_iso()
+        aid = str(uuid.uuid4())
+        token = secrets.token_urlsafe(10)
+        nav = _new_item(
+            slot_id="",
+            title=guide_rec["title"],
+            kind="data",
+            required="required",
+            cardinality="one",
+            form_id=guide_rec["id"],
+            fulfillment="",
+            added_by="system",
+        )
+        notice = {"notes": [], "prepare": [], "refs": []}
+        db.execute(
+            "INSERT INTO applications (id, token, procedure_id, guide_form_id, "
+            "guide_submission_id, form_ids_json, notice_json, items_json, created_at, "
+            "owner_kind, owner_key, title, status_override, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                aid,
+                token,
+                proc["id"],
+                guide_rec["id"],
+                None,
+                json.dumps([guide_rec["id"]], ensure_ascii=False),
+                json.dumps(notice, ensure_ascii=False),
+                json.dumps([nav], ensure_ascii=False),
+                now,
+                owner_kind,
+                owner_key,
+                (title or proc["name"]).strip() or proc["name"],
+                "",
+                now,
+            ),
+        )
+        row = db.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
+        db.commit()
+        return (_application_payload(db, row) if row else None), None
+
+
+def resolve_procedure_preview(
+    *, procedure_id: str, answers: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """案内回答から必要書類/案内文を DB 書き込みなしで算出する（ウィザードのプレビュー用）。"""
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        guide = _form_row(db, proc["guide_form_id"])
+        if not guide:
+            return None, "案内フォームが見つかりません"
+        resolved = _resolve_bundle_items(db, proc, guide, answers or {})
+        if resolved is None:
+            return None, "案内の解決に失敗しました"
+        items: list[dict[str, Any]] = []
+        for it in resolved["items"]:
+            if it.get("kind") == "data":
+                continue  # 案内（ナビ）本体はプレビューに出さない
+            items.append(
+                {
+                    "slot_id": it.get("slot_id") or "",
+                    "title": it.get("title") or "",
+                    "kind": it.get("kind") or "yoshiki",
+                    "required": it.get("required") or "recommended",
+                    "cardinality": it.get("cardinality") or "one",
+                    "has_template": bool(_form_template_meta(db, it.get("form_id") or "")),
+                    "can_fill_online": _form_has_fillable_fields(
+                        db, it.get("form_id") or ""
+                    ),
+                }
+            )
+        return {
+            "notice": resolved["notice"],
+            "items": items,
+            "count": len(items),
+        }, None
+
+
+def _application_summary(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    payload = _application_payload(db, row)
+    items = payload["items"]
+    doc_items = [it for it in items if it.get("kind") != "data"]
+    done = len([it for it in doc_items if it.get("status") == "submitted"])
+    return {
+        "id": payload["id"],
+        "token": payload["token"],
+        "title": payload["title"],
+        "procedure_id": payload["procedure_id"],
+        "procedure_name": payload["procedure_name"],
+        "status": payload["status"],
+        "assignee": payload["assignee"],
+        "deadline": payload["deadline"],
+        "next_action_date": payload["next_action_date"],
+        "created_at": payload["created_at"],
+        "updated_at": payload["updated_at"],
+        "done": done,
+        "total": len(doc_items),
+        "public_url": payload["public_url"],
+    }
+
+
+def list_my_applications(
+    *, owner_kind: str, owner_key: str
+) -> list[dict[str, Any]]:
+    """本人が所有するプロジェクト一覧（マイ手続き）。"""
+    if not owner_kind or not owner_key:
+        return []
+    db = connect()
+    with _lock:
+        rows = db.execute(
+            "SELECT * FROM applications WHERE owner_kind = ? AND owner_key = ? "
+            "ORDER BY updated_at DESC, created_at DESC",
+            (owner_kind, owner_key),
+        ).fetchall()
+        return [_application_summary(db, row) for row in rows]
+
+
+def application_imi_sources(
+    *, application_id: str, owner_kind: str, owner_key: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """本人が所有する他の申請から、記入済みの様式（定義＋回答）を IMI 候補源として集める。
+
+    同一オーナーの別プロジェクトに入力済みの氏名・住所などを、記入時の候補に使う。
+    """
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if not row:
+            return None, "申請が見つかりません"
+        if not _owns_application(row, owner_kind, owner_key):
+            return None, "この手続きを操作する権限がありません"
+        rows = db.execute(
+            "SELECT * FROM applications WHERE owner_kind = ? AND owner_key = ? "
+            "ORDER BY updated_at DESC, created_at DESC",
+            (owner_kind, owner_key),
+        ).fetchall()
+        sources: list[dict[str, Any]] = []
+        for r in rows:
+            if r["id"] == application_id:
+                continue
+            payload = _application_payload(db, r)
+            base_title = payload.get("title") or payload.get("procedure_name") or ""
+            for coll in (payload.get("forms") or [], payload.get("items") or []):
+                for f in coll:
+                    if f.get("status") != "submitted":
+                        continue
+                    definition = f.get("definition") or {}
+                    answers = f.get("answers")
+                    comps = definition.get("components") if isinstance(definition, dict) else None
+                    if not comps or not isinstance(answers, dict):
+                        continue
+                    label = f.get("title") or ""
+                    title = f"{base_title} / {label}".strip(" /") if base_title else label
+                    sources.append(
+                        {"title": title, "components": comps, "answers": answers}
+                    )
+        return {"sources": sources}, None
+
+
+def _owns_application(row: sqlite3.Row, owner_kind: str, owner_key: str) -> bool:
+    keys = row.keys()
+    if "owner_kind" not in keys:
+        return False
+    return str(row["owner_kind"]) == owner_kind and str(row["owner_key"]) == owner_key
+
+
+def set_application_status(
+    *, application_id: str, owner_kind: str, owner_key: str, status: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if not row:
+            return None, "申請が見つかりません"
+        if not _owns_application(row, owner_kind, owner_key):
+            return None, "この手続きを操作する権限がありません"
+        ov = (status or "").strip()
+        if ov and ov not in APP_STATUS_OVERRIDE_ALLOWED:
+            return None, "不正な状態です"
+        db.execute(
+            "UPDATE applications SET status_override = ?, updated_at = ? WHERE id = ?",
+            (ov, _now_iso(), application_id),
+        )
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        db.commit()
+        return _application_payload(db, row), None
+
+
+def _normalize_date(value: str) -> str | None:
+    """空文字は許可（クリア）。YYYY-MM-DD のみ受け付け、不正は None を返す。"""
+    v = (value or "").strip()
+    if not v:
+        return ""
+    try:
+        datetime.strptime(v, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return v
+
+
+def update_application_meta(
+    *,
+    application_id: str,
+    owner_kind: str,
+    owner_key: str,
+    title: str | None = None,
+    assignee: str | None = None,
+    deadline: str | None = None,
+    next_action_date: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """マイ手続きの案件メタ（名称・担当者・期限・次回更新日）を更新する。
+
+    None のフィールドは変更しない。日付は空文字でクリア可。
+    """
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if not row:
+            return None, "申請が見つかりません"
+        if not _owns_application(row, owner_kind, owner_key):
+            return None, "この手続きを操作する権限がありません"
+        sets: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            t = title.strip()
+            if not t:
+                return None, "名称を入力してください"
+            sets.append("title = ?")
+            params.append(t)
+        if assignee is not None:
+            sets.append("assignee = ?")
+            params.append(assignee.strip())
+        if deadline is not None:
+            d = _normalize_date(deadline)
+            if d is None:
+                return None, "期限は YYYY-MM-DD で入力してください"
+            sets.append("deadline = ?")
+            params.append(d)
+        if next_action_date is not None:
+            d = _normalize_date(next_action_date)
+            if d is None:
+                return None, "次回更新日は YYYY-MM-DD で入力してください"
+            sets.append("next_action_date = ?")
+            params.append(d)
+        if not sets:
+            return _application_payload(db, row), None
+        sets.append("updated_at = ?")
+        params.append(_now_iso())
+        params.append(application_id)
+        db.execute(
+            f"UPDATE applications SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        db.commit()
+        return _application_payload(db, row), None
+
+
+def delete_application(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> str | None:
+    """申請束（プロジェクト）を、ひも付く提出・添付ごと削除する。
+
+    権限は「所有者本人」「システム管理者」「その手続きの編集者」のいずれか。
+    """
+    db = connect()
+    with _lock:
+        row = _app_row(db, application_id, token)
+        if not row:
+            return "申請が見つかりません"
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+        ).fetchone()
+        allowed = (
+            _owns_application(row, "internal", actor_user_id)
+            or _is_admin(actor_groups)
+            or (proc is not None and _can_edit_procedure(proc, actor_user_id, actor_groups))
+        )
+        if not allowed:
+            return "この申請を削除する権限がありません"
+        app_id = row["id"]
+        # アイテムに添付されたファイル（bucket/file_id）を掃除
+        try:
+            items = json.loads(row["items_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            items = []
+        for it in items if isinstance(items, list) else []:
+            fid = it.get("file_id")
+            if not fid:
+                continue
+            bucket = it.get("file_bucket") or row["guide_form_id"]
+            files.remove_blob(bucket, fid)
+            db.execute("DELETE FROM uploaded_files WHERE id = ?", (fid,))
+        # この申請にひも付く提出と、その添付ファイル
+        subs = db.execute(
+            "SELECT id FROM submissions WHERE application_id = ?", (app_id,)
+        ).fetchall()
+        for s in subs:
+            for uf in db.execute(
+                "SELECT id, form_id FROM uploaded_files WHERE submission_id = ?",
+                (s["id"],),
+            ).fetchall():
+                files.remove_blob(uf["form_id"], uf["id"])
+                db.execute("DELETE FROM uploaded_files WHERE id = ?", (uf["id"],))
+            db.execute("DELETE FROM audit_events WHERE submission_id = ?", (s["id"],))
+        db.execute("DELETE FROM submissions WHERE application_id = ?", (app_id,))
+        db.execute("DELETE FROM applications WHERE id = ?", (app_id,))
+        db.commit()
+        return None
+
+
+def rename_application(
+    *, application_id: str, owner_kind: str, owner_key: str, title: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    return update_application_meta(
+        application_id=application_id,
+        owner_kind=owner_kind,
+        owner_key=owner_key,
+        title=title,
+    )
 
 
 def list_inbox(
@@ -3367,7 +4281,6 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
         mapping, err = procedure.normalize_mapping(proc["mapping_json"])
         if err:
             return None, err
-        templates = _procedure_templates(db, proc["guide_form_id"])
         slots: list[dict[str, Any]] = []
         seen: set[str] = set()
         for rule in mapping.get("rules") or []:
@@ -3385,7 +4298,7 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
                         "title": rec["title"],
                         "kind": "yoshiki",
                         "form_id": rec["id"],
-                        "template": templates.get(key),
+                        "template": _form_template_meta(db, rec["id"]),
                     }
                 )
             for item in rule.get("prepare") or []:
@@ -3402,57 +4315,49 @@ def procedure_catalog(procedure_id: str) -> tuple[dict[str, Any] | None, str | N
                         "title": text,
                         "kind": "attach",
                         "form_id": None,
-                        "template": templates.get(key),
+                        "template": None,
                     }
                 )
         return {"procedure_id": procedure_id, "slots": slots}, None
 
 
-def add_procedure_template(
+def set_form_template(
     *,
-    procedure_id: str,
-    slot_id: str,
+    form_id: str,
     filename: str,
     data: str,
     actor_user_id: str,
     actor_groups: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """枠（slot_id）に様式ひな型を登録する。同じ枠の既存ひな型は差し替える。"""
-    slot = (slot_id or "").strip()
-    if not slot:
-        return None, "枠が指定されていません"
+    """様式フォーム自身にひな型を登録する（フォームあたり1つ、既存は差し替え）。"""
     db = connect()
     with _lock:
-        proc = db.execute(
-            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
-        ).fetchone()
-        if not proc:
-            return None, "手続きが見つかりません"
-        if not _can_edit_procedure(proc, actor_user_id, actor_groups):
-            return None, "この手続きを変更する権限がありません"
+        row = _form_row(db, form_id)
+        if not row:
+            return None, "フォームが見つかりません"
+        if not _can_edit(row, actor_user_id, actor_groups):
+            return None, "このフォームを編集する権限がありません"
+        def_id = _definition_id(row)
         name = files.safe_filename(filename)
         try:
             blob, mime = files.decode_upload(data, filename=name, kind="file")
         except ValueError as e:
             return None, str(e)
-        guide_id = proc["guide_form_id"]
-        comp = _TEMPLATE_PREFIX + slot
         for old in db.execute(
             "SELECT id FROM uploaded_files WHERE form_id = ? AND component_id = ?",
-            (guide_id, comp),
+            (def_id, FORM_TEMPLATE_COMP),
         ).fetchall():
-            files.remove_blob(guide_id, old["id"])
+            files.remove_blob(def_id, old["id"])
             db.execute("DELETE FROM uploaded_files WHERE id = ?", (old["id"],))
         file_id = str(uuid.uuid4())
-        files.write_blob(guide_id, file_id, blob)
+        files.write_blob(def_id, file_id, blob)
         db.execute(
             "INSERT INTO uploaded_files (id, form_id, submission_id, component_id, "
             "filename, mime, size, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (file_id, guide_id, None, comp, name, mime, len(blob), _now_iso()),
+            (file_id, def_id, None, FORM_TEMPLATE_COMP, name, mime, len(blob), _now_iso()),
         )
         db.commit()
         return {
-            "slot_id": slot,
             "file_id": file_id,
             "filename": name,
             "mime": mime,
@@ -3460,64 +4365,43 @@ def add_procedure_template(
         }, None
 
 
-def list_procedure_templates(
-    procedure_id: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    db = connect()
-    with _lock:
-        proc = db.execute(
-            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
-        ).fetchone()
-        if not proc:
-            return None, "手続きが見つかりません"
-        return {
-            "procedure_id": procedure_id,
-            "templates": _procedure_templates(db, proc["guide_form_id"]),
-        }, None
-
-
-def delete_procedure_template(
+def delete_form_template(
     *,
-    procedure_id: str,
-    file_id: str,
+    form_id: str,
     actor_user_id: str,
     actor_groups: list[str] | None = None,
 ) -> str | None:
     db = connect()
     with _lock:
-        proc = db.execute(
-            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
-        ).fetchone()
-        if not proc:
-            return "手続きが見つかりません"
-        if not _can_edit_procedure(proc, actor_user_id, actor_groups):
-            return "この手続きを変更する権限がありません"
-        guide_id = proc["guide_form_id"]
-        row = db.execute(
-            "SELECT id FROM uploaded_files WHERE id = ? AND form_id = ? "
-            "AND component_id LIKE 'template:%'",
-            (file_id, guide_id),
-        ).fetchone()
+        row = _form_row(db, form_id)
         if not row:
-            return "ひな型が見つかりません"
-        files.remove_blob(guide_id, file_id)
-        db.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
+            return "フォームが見つかりません"
+        if not _can_edit(row, actor_user_id, actor_groups):
+            return "このフォームを編集する権限がありません"
+        def_id = _definition_id(row)
+        removed = False
+        for old in db.execute(
+            "SELECT id FROM uploaded_files WHERE form_id = ? AND component_id = ?",
+            (def_id, FORM_TEMPLATE_COMP),
+        ).fetchall():
+            files.remove_blob(def_id, old["id"])
+            db.execute("DELETE FROM uploaded_files WHERE id = ?", (old["id"],))
+            removed = True
         db.commit()
-        return None
+        return None if removed else "ひな型が登録されていません"
 
 
-def _template_file_at(
-    db: sqlite3.Connection, guide_form_id: str, file_id: str
+def _form_template_file_at(
+    db: sqlite3.Connection, def_id: str, file_id: str
 ) -> tuple[dict[str, Any] | None, str | None]:
     row = db.execute(
-        "SELECT * FROM uploaded_files WHERE id = ? AND form_id = ? "
-        "AND component_id LIKE 'template:%'",
-        (file_id, guide_form_id),
+        "SELECT * FROM uploaded_files WHERE id = ? AND form_id = ? AND component_id = ?",
+        (file_id, def_id, FORM_TEMPLATE_COMP),
     ).fetchone()
     if not row:
         return None, "ひな型が見つかりません"
     try:
-        path = files.stored_path(guide_form_id, file_id)
+        path = files.stored_path(def_id, file_id)
     except ValueError:
         return None, "ひな型が見つかりません"
     if not path.is_file():
@@ -3530,32 +4414,42 @@ def _template_file_at(
     }, None
 
 
-def get_procedure_template_file(
-    procedure_id: str, file_id: str
+def get_form_template_file(
+    form_id: str, file_id: str
 ) -> tuple[dict[str, Any] | None, str | None]:
     db = connect()
     with _lock:
-        proc = db.execute(
-            "SELECT guide_form_id FROM procedures WHERE id = ?", (procedure_id,)
-        ).fetchone()
-        if not proc:
-            return None, "手続きが見つかりません"
-        return _template_file_at(db, proc["guide_form_id"], file_id)
+        row = _form_row(db, form_id)
+        if not row:
+            return None, "フォームが見つかりません"
+        return _form_template_file_at(db, _definition_id(row), file_id)
 
 
-def get_application_template_file(
-    token: str, file_id: str
+def get_item_template_file(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    """申請束のアイテムに紐づく様式ひな型を返す。"""
     db = connect()
     with _lock:
-        app = db.execute(
-            "SELECT p.guide_form_id AS guide_form_id FROM applications a "
-            "JOIN procedures p ON p.id = a.procedure_id WHERE a.token = ?",
-            (token,),
-        ).fetchone()
+        app = _app_row(db, application_id, token)
         if not app:
             return None, "申請が見つかりません"
-        return _template_file_at(db, app["guide_form_id"], file_id)
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        item = next((it for it in items if it.get("id") == item_id), None)
+        if not item:
+            return None, "アイテムが見つかりません"
+        form_id = item.get("form_id") or ""
+        meta = _form_template_meta(db, form_id)
+        if not meta:
+            return None, "ひな型が見つかりません"
+        return _form_template_file_at(
+            db, _as_definition_id(db, form_id) or form_id, meta["file_id"]
+        )
 
 
 def add_application_item(
@@ -3623,8 +4517,8 @@ def add_application_item(
             )
         items.append(new_item)
         db.execute(
-            "UPDATE applications SET items_json = ? WHERE id = ?",
-            (json.dumps(items, ensure_ascii=False), app["id"]),
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
         db.commit()
         row = _app_row(db, app["id"], None)
@@ -3680,8 +4574,8 @@ def fulfill_item_with_file(
         target["file_name"] = saved["filename"]
         target["file_bucket"] = bucket
         db.execute(
-            "UPDATE applications SET items_json = ? WHERE id = ?",
-            (json.dumps(items, ensure_ascii=False), app["id"]),
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
         db.commit()
         row = _app_row(db, app["id"], None)
@@ -3711,8 +4605,81 @@ def clear_item_fulfillment(
         target["file_name"] = ""
         target.pop("file_bucket", None)
         db.execute(
-            "UPDATE applications SET items_json = ? WHERE id = ?",
-            (json.dumps(items, ensure_ascii=False), app["id"]),
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
+        )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
+def set_item_source(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
+    source: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """記入と添付が併存する枠で、どちらを申請データとして採用するかを決める。"""
+    if source not in ("form", "file"):
+        return None, "採用ソースは form か file を指定してください"
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        target = next((it for it in items if it.get("id") == item_id), None)
+        if not target:
+            return None, "アイテムが見つかりません"
+        if source == "file" and not target.get("file_id"):
+            return None, "添付ファイルがありません"
+        if source == "form" and not target.get("form_id"):
+            return None, "この枠にはオンライン記入がありません"
+        target["fulfillment"] = source
+        db.execute(
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
+        )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
+def reorder_application_items(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    order: list[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """提出書類一覧の並び順を、申請者が指定した順に並べ替える。
+
+    order に無いアイテムは末尾へ元の順序で残す（欠落による消失を防ぐ）。
+    """
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        by_id = {str(it.get("id")): it for it in items}
+        seen: set[str] = set()
+        ordered: list[dict[str, Any]] = []
+        for iid in order:
+            it = by_id.get(str(iid))
+            if it is not None and str(iid) not in seen:
+                ordered.append(it)
+                seen.add(str(iid))
+        for it in items:
+            if str(it.get("id")) not in seen:
+                ordered.append(it)
+        db.execute(
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(ordered, ensure_ascii=False), _now_iso(), app["id"]),
         )
         db.commit()
         row = _app_row(db, app["id"], None)

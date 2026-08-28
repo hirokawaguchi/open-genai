@@ -7,7 +7,11 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { PATCHFORM_LABEL } from './labels';
 import { PatchformSubnav } from './PatchformSubnav';
 import type { InboxProcedure } from './types';
-import { downloadProcedureExport, usePatchformInbox } from './usePatchform';
+import {
+  downloadProcedureExport,
+  usePatchformInbox,
+  usePatchformProjectActions,
+} from './usePatchform';
 
 const statusLabel = (status: string) => (status === 'published' ? '公開中' : '受付終了');
 
@@ -25,10 +29,23 @@ export const PatchformInboxPage = () => {
   const { procedureId: pathId } = useParams();
   const [params] = useSearchParams();
   const procedureId = pathId || params.get('procedure') || undefined;
-  const { items, procedures, inbox, isLoading, loadError } = usePatchformInbox(procedureId);
+  const { items, procedures, inbox, isLoading, loadError, mutate } =
+    usePatchformInbox(procedureId);
   const selected = procedures.find((p) => p.id === procedureId);
   const [exporting, setExporting] = useState<'csv' | 'jsonl' | 'aligned' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const { remove, busy: deleting, error: deleteError } = usePatchformProjectActions();
+
+  const onDelete = async (id: string, label: string) => {
+    if (
+      !window.confirm(
+        `申請「案内番号 ${label}」を完全に削除します。提出済みの回答や添付も消え、元に戻せません。よろしいですか？`,
+      )
+    )
+      return;
+    const ok = await remove(id);
+    if (ok) await mutate();
+  };
 
   const download = async (format: 'csv' | 'jsonl' | 'aligned') => {
     if (!selected) return;
@@ -125,23 +142,42 @@ export const PatchformInboxPage = () => {
             {inbox && (
               <p className='text-dns-14N-130 text-solid-gray-600'>{inbox.bundle_count} 件</p>
             )}
+            {deleteError && (
+              <p className='text-error-1' role='alert'>
+                {deleteError}
+              </p>
+            )}
             {items.length === 0 ? (
               <p className='text-solid-gray-600'>まだ届いた申請はありません。</p>
             ) : (
               <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
                 {items.map((item) => (
-                  <li key={`${item.kind}-${item.id}`} className='py-3'>
-                    <Link
-                      to={`/patchform/applications/${item.id}`}
-                      className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
+                  <li
+                    key={`${item.kind}-${item.id}`}
+                    className='flex flex-wrap items-start justify-between gap-2 py-3'
+                  >
+                    <div className='min-w-0'>
+                      <Link
+                        to={`/patchform/applications/${item.id}`}
+                        className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
+                      >
+                        案内番号 {item.label}
+                      </Link>
+                      <p className='text-dns-14N-130 text-solid-gray-600'>
+                        {item.total != null ? `${item.submitted}/${item.total} 提出` : ''}
+                        {' / '}
+                        {new Date(item.created_at).toLocaleString('ja-JP')}
+                      </p>
+                    </div>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      aria-disabled={deleting}
+                      onClick={() => void onDelete(item.id, item.label)}
                     >
-                      案内番号 {item.label}
-                    </Link>
-                    <p className='text-dns-14N-130 text-solid-gray-600'>
-                      {item.total != null ? `${item.submitted}/${item.total} 提出` : ''}
-                      {' / '}
-                      {new Date(item.created_at).toLocaleString('ja-JP')}
-                    </p>
+                      削除
+                    </Button>
                   </li>
                 ))}
               </ul>

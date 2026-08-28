@@ -34,9 +34,11 @@ import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
 import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
 import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
+import { PatchformMyPage } from '@/open-genai/patchform/PatchformMyPage';
 import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
 import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProcedureEditPage';
 import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
+import { PatchformWizardPage } from '@/open-genai/patchform/PatchformWizardPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -96,11 +98,13 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。
     { path: 'patchform', element: <PatchformPage /> },
+    { path: 'patchform/my', element: <PatchformMyPage /> },
     { path: 'patchform/inbox', element: <PatchformInboxPage /> },
     { path: 'patchform/inbox/:procedureId', element: <PatchformInboxPage /> },
     { path: 'patchform/procedures', element: <PatchformProceduresPage /> },
     { path: 'patchform/procedures/:procedureId', element: <PatchformProcedureEditPage /> },
     { path: 'patchform/apply/:procedureId', element: <PatchformApplyPage /> },
+    { path: 'patchform/apply/:procedureId/wizard', element: <PatchformWizardPage /> },
     { path: 'patchform/applications/:applicationId', element: <PatchformApplicationPage /> },
     { path: 'patchform/:formId', element: <PatchformDetailPage /> },
     { path: 'patchform/:formId/edit', element: <PatchformEditPage /> },

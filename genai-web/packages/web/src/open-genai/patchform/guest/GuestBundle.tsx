@@ -214,7 +214,7 @@ export const GuestBundle = () => {
         </section>
       )}
       <section className='mt-6'>
-        <h2 className='text-std-16B-150'>提出物</h2>
+        <h2 className='text-std-16B-150'>提出書類一覧</h2>
         {bundle.items.length === 0 ? (
           <p className='mt-2 text-solid-gray-700'>この回答では推奨する枠がありません。下から足せます。</p>
         ) : (
@@ -251,7 +251,7 @@ export const GuestBundle = () => {
                   {f.template ? (
                     <p className='mt-1'>
                       <a
-                        href={`/public/api/applications/${encodeURIComponent(bundle.token)}/templates/${encodeURIComponent(f.template.file_id)}`}
+                        href={`/public/api/applications/${encodeURIComponent(bundle.token)}/items/${encodeURIComponent(f.id)}/template`}
                         className='text-blue-900 underline-offset-2 hover:underline'
                       >
                         様式ひな型をダウンロード（{f.template.filename}）

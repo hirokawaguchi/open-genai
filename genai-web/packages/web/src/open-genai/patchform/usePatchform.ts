@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import useSWR from 'swr';
 import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
+import type { ImiSource } from './runtime/imiSuggest';
 import { lookupPostalDirect } from './runtime/postalLookup';
 import type {
   AssistGenerateResult,
@@ -16,9 +17,11 @@ import type {
   FormVisibility,
   IdentityMode,
   Application,
+  MyApplication,
   Inbox,
   Procedure,
   ProcedureCatalog,
+  ProcedureResolvePreview,
   ProcedureShare,
   SlotTemplate,
   Submission,
@@ -75,6 +78,62 @@ export const usePatchformList = () => {
     loadError: error ? errorMessage(error, 'フォーム一覧の取得に失敗しました。') : null,
     mutate,
   };
+};
+
+export type TagUsage = { tag: string; count: number };
+
+/** 編集権限のある様式に付いたタグ（使用件数付き・ゴミ箱分も含む）。 */
+export const usePatchformTags = () => {
+  const { data, error, isLoading, mutate } = useSWR<{ tags: TagUsage[] }>(
+    'patchform/tags',
+    teamApiFetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  return {
+    tags: data?.tags ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, 'タグの取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+/** タグの改名・削除（編集権限のある全フォームに一括反映）。 */
+export const usePatchformTagActions = () => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const rename = useCallback(async (from: string, to: string): Promise<number | null> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await teamApi.post<{ changed: number }>('patchform/tags/rename', {
+        from,
+        to,
+      });
+      return res.data?.changed ?? 0;
+    } catch (e) {
+      setError(errorMessage(e, 'タグの改名に失敗しました。'));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const remove = useCallback(async (tag: string): Promise<number | null> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await teamApi.post<{ changed: number }>('patchform/tags/delete', { tag });
+      return res.data?.changed ?? 0;
+    } catch (e) {
+      setError(errorMessage(e, 'タグの削除に失敗しました。'));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return { rename, remove, busy, error, setError };
 };
 
 export const usePatchformDetail = (formId: string | undefined) => {
@@ -442,15 +501,70 @@ export const downloadProcedureExport = async (
   saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
 };
 
-/** 職員が手続きの様式ひな型をダウンロードする（庁内用）。 */
-export const downloadProcedureTemplate = async (
-  procedureId: string,
+/** 申請束のアイテムに紐づく様式ひな型をDLする。 */
+export const downloadItemTemplate = async (
+  applicationId: string,
+  itemId: string,
+  fallbackName?: string,
+): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/template`,
+  );
+  saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'template');
+};
+
+/** 作成画面で様式フォーム自身のひな型をDLする。 */
+export const downloadFormTemplate = async (
+  formId: string,
   file: SlotTemplate,
 ): Promise<void> => {
   const { blob, disposition } = await teamApi.getBlob(
-    `patchform/procedures/${encodeURIComponent(procedureId)}/templates/${encodeURIComponent(file.file_id)}/download`,
+    `patchform/forms/${encodeURIComponent(formId)}/templates/${encodeURIComponent(file.file_id)}/download`,
   );
   saveBlob(blob, parseFilename(disposition) ?? file.filename);
+};
+
+/** 様式フォーム自身のひな型を登録・差し替え・削除する（作成者/編集者）。 */
+export const usePatchformFormTemplate = () => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const setTemplate = useCallback(
+    async (formId: string, file: File): Promise<SlotTemplate | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const data = await fileToDataUrl(file);
+        const res = await teamApi.post<SlotTemplate>(
+          `patchform/forms/${encodeURIComponent(formId)}/template`,
+          { filename: file.name, data },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'ひな型の登録に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const removeTemplate = useCallback(async (formId: string): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await teamApi.delete(`patchform/forms/${encodeURIComponent(formId)}/template`);
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, 'ひな型の削除に失敗しました。'));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return { setTemplate, removeTemplate, busy, error };
 };
 
 export const downloadApplicationExport = async (
@@ -785,6 +899,147 @@ export const usePatchformApplication = (applicationId: string | undefined) => {
   };
 };
 
+/** マイ手続き一覧（庁内: 自分が所有するプロジェクト）。 */
+export const usePatchformMyApplications = () => {
+  const { data, error, isLoading, mutate } = useSWR<{ applications: MyApplication[] }>(
+    'patchform/applications/mine',
+    teamApiFetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  return {
+    applications: data?.applications ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, 'マイ手続きの取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+/** 記入時の横断 IMI 候補源（本人の他プロジェクトの記入済み様式）。 */
+export const usePatchformApplicationImiSources = (applicationId: string | undefined) => {
+  const key = applicationId
+    ? `patchform/applications/${encodeURIComponent(applicationId)}/imi-sources`
+    : null;
+  const { data } = useSWR<{ sources: ImiSource[] }>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return { sources: data?.sources ?? [] };
+};
+
+/** プロジェクト（申請束）の作成・状態変更・改名。 */
+export const usePatchformProjectActions = () => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = useCallback(
+    async (procedureId: string, title?: string): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Application>('patchform/applications', {
+          procedure_id: procedureId,
+          ...(title ? { title } : {}),
+        });
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの作成に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const setStatus = useCallback(
+    async (applicationId: string, status: string): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/status`,
+          { status },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '状態の変更に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const updateMeta = useCallback(
+    async (
+      applicationId: string,
+      patch: {
+        title?: string;
+        assignee?: string;
+        deadline?: string;
+        next_action_date?: string;
+      },
+    ): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.patch<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}`,
+          patch,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '案件の更新に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const rename = useCallback(
+    (applicationId: string, title: string): Promise<Application | null> =>
+      updateMeta(applicationId, { title }),
+    [updateMeta],
+  );
+
+  const remove = useCallback(async (applicationId: string): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await teamApi.delete(
+        `patchform/applications/${encodeURIComponent(applicationId)}`,
+      );
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, '申請の削除に失敗しました。'));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return { create, setStatus, rename, updateMeta, remove, busy, error, setError };
+};
+
+/** 作成ウィザード用: 案内回答から必要書類を dry-run で解決してプレビューする。 */
+export const resolveProcedurePreview = async (
+  procedureId: string,
+  answers: Record<string, unknown>,
+): Promise<ProcedureResolvePreview | null> => {
+  try {
+    const res = await teamApi.post<ProcedureResolvePreview>(
+      `patchform/procedures/${encodeURIComponent(procedureId)}/resolve`,
+      { answers },
+    );
+    return res.data ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const usePatchformProcedureCatalog = (procedureId: string | undefined) => {
   const key = procedureId
     ? `patchform/procedures/${encodeURIComponent(procedureId)}/catalog`
@@ -874,75 +1129,51 @@ export const usePatchformApplicationItems = () => {
     [],
   );
 
-  return { addItem, fulfillWithFile, clearFile, busy, error, setError };
-};
-
-/** 手続き編集で枠ごとの様式ひな型を登録・削除する（職員のみ）。 */
-export const usePatchformProcedureTemplates = (procedureId: string | undefined) => {
-  const key = procedureId
-    ? `patchform/procedures/${encodeURIComponent(procedureId)}/templates`
-    : null;
-  const { data, isLoading, mutate } = useSWR<{
-    procedure_id: string;
-    templates: Record<string, SlotTemplate>;
-  }>(key, teamApiFetcher, { revalidateOnFocus: false, shouldRetryOnError: false });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const upload = useCallback(
-    async (slotId: string, file: File): Promise<boolean> => {
-      if (!procedureId) return false;
+  const setSource = useCallback(
+    async (
+      applicationId: string,
+      itemId: string,
+      source: 'form' | 'file',
+    ): Promise<Application | null> => {
       setBusy(true);
       setError(null);
       try {
-        const data = await fileToDataUrl(file);
-        await teamApi.post(
-          `patchform/procedures/${encodeURIComponent(procedureId)}/templates`,
-          { slot_id: slotId, filename: file.name, data },
+        const res = await teamApi.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/source`,
+          { source },
         );
-        await mutate();
-        return true;
+        return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, 'ひな型の登録に失敗しました。'));
-        return false;
+        setError(errorMessage(e, '採用する申請データの切り替えに失敗しました。'));
+        return null;
       } finally {
         setBusy(false);
       }
     },
-    [procedureId, mutate],
+    [],
   );
 
-  const remove = useCallback(
-    async (fileId: string): Promise<boolean> => {
-      if (!procedureId) return false;
+  const reorder = useCallback(
+    async (applicationId: string, order: string[]): Promise<Application | null> => {
       setBusy(true);
       setError(null);
       try {
-        await teamApi.delete(
-          `patchform/procedures/${encodeURIComponent(procedureId)}/templates/${encodeURIComponent(fileId)}`,
+        const res = await teamApi.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items/order`,
+          { order },
         );
-        await mutate();
-        return true;
+        return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, 'ひな型の削除に失敗しました。'));
-        return false;
+        setError(errorMessage(e, '並び順の変更に失敗しました。'));
+        return null;
       } finally {
         setBusy(false);
       }
     },
-    [procedureId, mutate],
+    [],
   );
 
-  return {
-    templates: data?.templates ?? {},
-    isLoading,
-    upload,
-    remove,
-    busy,
-    error,
-    setError,
-    mutate,
-  };
+  return { addItem, fulfillWithFile, clearFile, setSource, reorder, busy, error, setError };
 };
 
 export const usePatchformProcedureActions = () => {

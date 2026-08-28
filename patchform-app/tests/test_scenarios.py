@@ -537,10 +537,513 @@ def test_scenario_workbench_bundle_grows() -> None:
         _teardown(path, mail_dir)
 
 
+def test_scenario_mypage_project_first() -> None:
+    """マイ手続き: 空プロジェクトを先に作り、案内回答で書類が埋まり、状態が育つ。"""
+    import base64
+
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "許可申請の案内",
+            [
+                {"id": "name", "type": "text", "label": "氏名", "required": True},
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "申請の種類",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                },
+            ],
+        )
+        # file 部品だけのプレースホルダ様式（添付専用）
+        yoshiki = _create_form(
+            client, "様式第3号", [{"id": "a", "type": "file", "label": "様式ファイル"}]
+        )
+        proc = _publish(
+            client,
+            "建設業許可の手続き",
+            guide["id"],
+            mapping={
+                "rules": [
+                    {
+                        "component_id": "kind",
+                        "option": "新規",
+                        "form_ids": [yoshiki["id"]],
+                        "prepare": ["住民票の写し"],
+                    }
+                ]
+            },
+        )
+        guide_rec = _reception(client, guide["id"])
+        yoshiki_rec = _reception(client, yoshiki["id"])
+
+        # 1) 空プロジェクト作成（未着手）
+        res = client.post(
+            "/applications", headers=_staff(), json={"procedure_id": proc["id"]}
+        )
+        assert res.status_code == 201, res.text
+        proj = res.json()
+        token = proj["token"]
+        assert proj["title"] == "建設業許可の手続き"
+        assert proj["status"]["effective"] == "未着手"
+        assert [i["kind"] for i in proj["items"]] == ["data"]
+        nav_id = proj["items"][0]["id"]
+
+        # 2) マイ手続き一覧に出る（本人のみ）
+        res = client.get("/applications/mine", headers=_staff())
+        assert res.status_code == 200, res.text
+        assert len(res.json()["applications"]) == 1
+        assert client.get("/applications/mine", headers=_staff("other")).json()[
+            "applications"
+        ] == []
+
+        # 3) 案内回答で書類が生成（作業中）
+        res = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"name": "田中一郎", "kind": "新規"},
+                "application_token": token,
+                "application_item_id": nav_id,
+            },
+        )
+        assert res.status_code == 201, res.text
+        after = res.json()["application"]
+        assert after["status"]["effective"] == "作業中"
+        assert "様式第3号" in [i["title"] for i in after["items"]]
+        assert after["notice"]["prepare"] == ["住民票の写し"]
+
+        # 4) 書類をすべて満たすと提出済
+        yitem = next(i for i in after["items"] if i.get("form_id") == yoshiki_rec["id"])
+        attach = next(i for i in after["items"] if i["kind"] == "attach")
+        blob = base64.b64encode(b"pdf").decode()
+        for it in (yitem, attach):
+            res = client.post(
+                f"/applications/{proj['id']}/items/{it['id']}/file",
+                headers=_staff(),
+                json={"filename": "f.pdf", "data": blob},
+            )
+            assert res.status_code == 200, res.text
+        assert res.json()["status"]["effective"] == "提出済"
+
+        # 5) 手動上書き（取下げ）と改名
+        res = client.post(
+            f"/applications/{proj['id']}/status",
+            headers=_staff(),
+            json={"status": "取下げ"},
+        )
+        assert res.status_code == 200, res.text
+        st = res.json()["status"]
+        assert st["auto"] == "提出済" and st["effective"] == "取下げ"
+        res = client.patch(
+            f"/applications/{proj['id']}",
+            headers=_staff(),
+            json={"title": "田中建設 新規許可"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["title"] == "田中建設 新規許可"
+    finally:
+        _teardown(path, mail_dir)
+
+
+def test_scenario_guide_submission_registers_owner() -> None:
+    """一本化: 庁内ユーザーが案内に回答した束は、その人のマイ手続きに載る。"""
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "案内",
+            [
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "種類",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                }
+            ],
+        )
+        proc = _publish(client, "許可の手続き", guide["id"], mapping={"rules": []})
+        guide_rec = _reception(client, guide["id"])
+
+        # プロジェクトを先に作らず、案内へ直接回答（庁内=owner付き）
+        res = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_staff(),
+            json={"answers": {"kind": "新規"}},
+        )
+        assert res.status_code == 201, res.text
+        app = res.json()["application"]
+        assert app["owner_kind"] == "internal"
+        assert app["status"]["effective"] in ("作業中", "提出済")
+
+        # マイ手続きに出る（本人のみ）
+        mine = client.get("/applications/mine", headers=_staff()).json()["applications"]
+        assert any(a["id"] == app["id"] for a in mine)
+        assert client.get("/applications/mine", headers=_staff("other")).json()[
+            "applications"
+        ] == []
+        _ = proc
+    finally:
+        _teardown(path, mail_dir)
+
+
+def test_scenario_wizard_resolve_meta_and_imi() -> None:
+    """作成ウィザード: dry-run 解決・案件メタ更新・本人横断 IMI 候補。"""
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "案内",
+            [
+                {"id": "name", "type": "text", "label": "氏名", "required": True, "imi_type": "ic:氏名"},
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "種類",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                },
+            ],
+        )
+        yoshiki = _create_form(
+            client,
+            "様式第4号",
+            [{"id": "cnt", "type": "text", "label": "使用人数", "required": True}],
+        )
+        proc = _publish(
+            client,
+            "建設業許可の手続き",
+            guide["id"],
+            mapping={
+                "rules": [
+                    {"component_id": "kind", "option": "新規", "form_ids": [yoshiki["id"]]}
+                ]
+            },
+        )
+        guide_rec = _reception(client, guide["id"])
+        _reception(client, yoshiki["id"])
+
+        # 1) dry-run 解決: 新規なら様式第4号が必要書類に出る（DB書き込みなし）
+        res = client.post(
+            f"/procedures/{proc['id']}/resolve",
+            headers=_staff(),
+            json={"answers": {"name": "田中一郎", "kind": "新規"}},
+        )
+        assert res.status_code == 200, res.text
+        preview = res.json()
+        titles = [i["title"] for i in preview["items"]]
+        assert "様式第4号" in titles
+        y = next(i for i in preview["items"] if i["title"] == "様式第4号")
+        assert y["kind"] == "yoshiki" and y["can_fill_online"] is True
+        # 解決はプレビューのみ（マイ手続きは増えない）
+        assert client.get("/applications/mine", headers=_staff()).json()["applications"] == []
+
+        # 2) プロジェクトA 作成 + 案内回答（名前を記録）
+        proj_a = client.post(
+            "/applications", headers=_staff(), json={"procedure_id": proc["id"]}
+        ).json()
+        nav_a = proj_a["items"][0]["id"]
+        res = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"name": "田中一郎", "kind": "新規"},
+                "application_token": proj_a["token"],
+                "application_item_id": nav_a,
+            },
+        )
+        assert res.status_code == 201, res.text
+
+        # 3) 案件メタ（担当・期限・次回更新日）を更新
+        res = client.patch(
+            f"/applications/{proj_a['id']}",
+            headers=_staff(),
+            json={"assignee": "窓口A", "deadline": "2026-09-30", "next_action_date": "2026-09-01"},
+        )
+        assert res.status_code == 200, res.text
+        meta = res.json()
+        assert meta["assignee"] == "窓口A"
+        assert meta["deadline"] == "2026-09-30"
+        assert meta["next_action_date"] == "2026-09-01"
+        mine = client.get("/applications/mine", headers=_staff()).json()["applications"]
+        row = next(a for a in mine if a["id"] == proj_a["id"])
+        assert row["assignee"] == "窓口A" and row["deadline"] == "2026-09-30"
+
+        # 不正な日付は 400
+        assert (
+            client.patch(
+                f"/applications/{proj_a['id']}",
+                headers=_staff(),
+                json={"deadline": "2026/09/30"},
+            ).status_code
+            == 400
+        )
+
+        # 4) プロジェクトB から本人横断 IMI 候補（A の氏名が候補源に載る）
+        proj_b = client.post(
+            "/applications", headers=_staff(), json={"procedure_id": proc["id"]}
+        ).json()
+        res = client.get(
+            f"/applications/{proj_b['id']}/imi-sources", headers=_staff()
+        )
+        assert res.status_code == 200, res.text
+        sources = res.json()["sources"]
+        names = [
+            src["answers"].get("name")
+            for src in sources
+            if isinstance(src.get("answers"), dict)
+        ]
+        assert "田中一郎" in names
+        # 他人からは A の候補は見えない
+        assert (
+            client.get(
+                f"/applications/{proj_b['id']}/imi-sources", headers=_staff("other")
+            ).status_code
+            == 403
+        )
+    finally:
+        _teardown(path, mail_dir)
+
+
+def test_scenario_item_source_and_reorder() -> None:
+    """記入と添付は併存でき、採用ソースを切り替えられる。並び替えも保存される。"""
+    import base64
+
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "案内",
+            [
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "種類",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                }
+            ],
+        )
+        # 実入力欄を持つ様式（オンライン記入できる）
+        yoshiki = _create_form(
+            client,
+            "様式第3号 工事施工金額",
+            [{"id": "amount", "type": "text", "label": "金額", "required": True}],
+        )
+        proc = _publish(
+            client,
+            "許可の手続き",
+            guide["id"],
+            mapping={
+                "rules": [
+                    {
+                        "component_id": "kind",
+                        "option": "新規",
+                        "form_ids": [yoshiki["id"]],
+                        "prepare": ["住民票の写し"],
+                    }
+                ]
+            },
+        )
+        guide_rec = _reception(client, guide["id"])
+        yoshiki_rec = _reception(client, yoshiki["id"])
+
+        proj = client.post(
+            "/applications", headers=_staff(), json={"procedure_id": proc["id"]}
+        ).json()
+        nav_id = proj["items"][0]["id"]
+        after = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"kind": "新規"},
+                "application_token": proj["token"],
+                "application_item_id": nav_id,
+            },
+        ).json()["application"]
+        yitem = next(i for i in after["items"] if i.get("form_id") == yoshiki_rec["id"])
+        attach = next(i for i in after["items"] if i["kind"] == "attach")
+        assert yitem["can_fill_online"] is True
+
+        # 1) オンライン記入で満たす
+        client.post(
+            f"/forms/{yoshiki_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"amount": "1000"},
+                "application_token": proj["token"],
+                "application_item_id": yitem["id"],
+            },
+        )
+        state = client.get(f"/applications/{proj['id']}", headers=_staff()).json()
+        y = next(i for i in state["items"] if i["id"] == yitem["id"])
+        assert y["form_submitted"] is True
+        assert y["status"] == "submitted"
+
+        # 2) 同じ枠にファイルも添付（併存）→ 既定は添付を採用
+        blob = base64.b64encode(b"pdf").decode()
+        client.post(
+            f"/applications/{proj['id']}/items/{yitem['id']}/file",
+            headers=_staff(),
+            json={"filename": "y.pdf", "data": blob},
+        )
+        state = client.get(f"/applications/{proj['id']}", headers=_staff()).json()
+        y = next(i for i in state["items"] if i["id"] == yitem["id"])
+        assert y["form_submitted"] is True and y["file_attached"] is True
+        assert y["fulfillment"] == "file"
+
+        # 3) 採用ソースを記入へ切り替え（添付は残る）
+        res = client.post(
+            f"/applications/{proj['id']}/items/{yitem['id']}/source",
+            headers=_staff(),
+            json={"source": "form"},
+        )
+        assert res.status_code == 200, res.text
+        y = next(i for i in res.json()["items"] if i["id"] == yitem["id"])
+        assert y["fulfillment"] == "form" and y["file_attached"] is True
+        assert y["status"] == "submitted"
+
+        # 4) 並び替え（添付を先頭へ）
+        order = [attach["id"], yitem["id"]]
+        res = client.post(
+            f"/applications/{proj['id']}/items/order",
+            headers=_staff(),
+            json={"order": order},
+        )
+        assert res.status_code == 200, res.text
+        docs = [i["id"] for i in res.json()["items"] if i["kind"] != "data"]
+        # 指定した並びが先頭に反映される（常設「その他」枠などは末尾に残る）
+        assert docs[: len(order)] == order
+    finally:
+        _teardown(path, mail_dir)
+
+
+def test_scenario_form_level_template_and_standing_other() -> None:
+    """ひな型は様式フォーム自身に登録。手続き公開では選ぶだけ。常設『その他』枠も付く。"""
+    import base64
+
+    client, path, mail_dir = _setup()
+    try:
+        guide = _create_form(
+            client,
+            "案内",
+            [
+                {
+                    "id": "kind",
+                    "type": "radio",
+                    "label": "種類",
+                    "required": True,
+                    "properties": {"options": ["新規", "更新"]},
+                }
+            ],
+        )
+        # 記入様式（実入力欄あり）と、添付専用フォーム（ファイルのみ）
+        yoshiki = _create_form(
+            client,
+            "様式第3号 工事施工金額",
+            [{"id": "amount", "type": "text", "label": "金額", "required": True}],
+        )
+        juminhyo = _create_form(
+            client, "住民票の写し", [{"id": "f", "type": "file", "label": "ファイル"}]
+        )
+
+        # 役割の自己記述: 記入様式=yoshiki / ファイルのみ=attachment
+        y_detail = client.get(f"/forms/{yoshiki['id']}", headers=_staff()).json()
+        j_detail = client.get(f"/forms/{juminhyo['id']}", headers=_staff()).json()
+        assert y_detail["definition"]["metadata"]["doc_role"] == "yoshiki"
+        assert j_detail["definition"]["metadata"]["doc_role"] == "attachment"
+
+        # フォーム作成時にひな型を登録
+        blob = base64.b64encode(b"template-doc").decode()
+        res = client.post(
+            f"/forms/{yoshiki['id']}/template",
+            headers=_staff(),
+            json={"filename": "yoshiki3.docx", "data": blob},
+        )
+        assert res.status_code == 201, res.text
+
+        proc = _publish(
+            client,
+            "許可の手続き",
+            guide["id"],
+            mapping={
+                "rules": [
+                    {
+                        "component_id": "kind",
+                        "option": "新規",
+                        "form_ids": [yoshiki["id"], juminhyo["id"]],
+                    }
+                ]
+            },
+        )
+        guide_rec = _reception(client, guide["id"])
+        yoshiki_rec = _reception(client, yoshiki["id"])
+        _reception(client, juminhyo["id"])
+
+        proj = client.post(
+            "/applications", headers=_staff(), json={"procedure_id": proc["id"]}
+        ).json()
+        nav_id = proj["items"][0]["id"]
+        after = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"kind": "新規"},
+                "application_token": proj["token"],
+                "application_item_id": nav_id,
+            },
+        ).json()["application"]
+
+        yitem = next(i for i in after["items"] if i.get("form_id") == yoshiki_rec["id"])
+        # ひな型は様式フォーム由来で引ける
+        assert yitem["template"] and yitem["template"]["filename"] == "yoshiki3.docx"
+        assert yitem["can_fill_online"] is True
+        # 常設の「その他」枠が必ず付く
+        assert any(i["slot_id"] == "attach:__other__" for i in after["items"])
+
+        # アイテム単位のひな型DLが出所を問わず通る
+        res = client.get(
+            f"/applications/{proj['id']}/items/{yitem['id']}/template", headers=_staff()
+        )
+        assert res.status_code == 200, res.text
+        assert res.content == b"template-doc"
+
+        # 必須の書類を満たせば、任意の「その他」枠が空でも提出済になる
+        juminhyo_item = next(
+            i for i in after["items"] if i.get("form_id") and i.get("form_id") != yoshiki_rec["id"] and i["kind"] == "yoshiki"
+        )
+        fblob = base64.b64encode(b"pdf").decode()
+        client.post(
+            f"/forms/{yoshiki_rec['id']}/submissions",
+            headers=_staff(),
+            json={
+                "answers": {"amount": "1"},
+                "application_token": proj["token"],
+                "application_item_id": yitem["id"],
+            },
+        )
+        res = client.post(
+            f"/applications/{proj['id']}/items/{juminhyo_item['id']}/file",
+            headers=_staff(),
+            json={"filename": "j.pdf", "data": fblob},
+        )
+        assert res.json()["status"]["effective"] == "提出済", res.text
+    finally:
+        _teardown(path, mail_dir)
+
+
 if __name__ == "__main__":
     test_scenario_single_form_inquiry_and_staff_mail_dump()
     test_scenario_option_value_opens_bundle_and_imi_carries()
     test_scenario_service_reads_only_the_diff()
     test_scenario_wrong_option_does_not_add_forms()
     test_scenario_workbench_bundle_grows()
+    test_scenario_mypage_project_first()
+    test_scenario_wizard_resolve_meta_and_imi()
+    test_scenario_guide_submission_registers_owner()
+    test_scenario_item_source_and_reorder()
+    test_scenario_form_level_template_and_standing_other()
     print("ok")
