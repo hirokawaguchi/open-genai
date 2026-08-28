@@ -89,15 +89,6 @@ export type FormDetail = FormSummary & {
   template?: SlotTemplate | null;
 };
 
-export type AuditEvent = {
-  id: string;
-  form_id: string;
-  submission_id?: string | null;
-  actor_user_id: string;
-  action: string;
-  created_at: string;
-};
-
 export type FormConfig = {
   public_endpoint?: string;
   retention_days?: number;

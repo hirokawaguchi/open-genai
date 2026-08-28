@@ -9,7 +9,6 @@ import type {
   AssistProcedureApply,
   AssistProcedurePreview,
   AssistProcedureResult,
-  AuditEvent,
   FormConfig,
   FormDefinition,
   FormDetail,
@@ -146,21 +145,6 @@ export const usePatchformDetail = (formId: string | undefined) => {
     form: data ?? null,
     isLoading,
     loadError: error ? errorMessage(error, 'フォームの取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
-export const usePatchformSubmissions = (formId: string | undefined) => {
-  const key = formId ? `patchform/forms/${encodeURIComponent(formId)}/submissions` : null;
-  const { data, error, isLoading, mutate } = useSWR<{ submissions: Submission[] }>(
-    key,
-    teamApiFetcher,
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  );
-  return {
-    submissions: data?.submissions ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, '回答一覧の取得に失敗しました。') : null,
     mutate,
   };
 };
@@ -440,20 +424,6 @@ export const usePatchformActions = () => {
   };
 };
 
-export const usePatchformAudit = (formId: string | undefined) => {
-  const key = formId ? `patchform/forms/${encodeURIComponent(formId)}/audit` : null;
-  const { data, error, isLoading, mutate } = useSWR<{ events: AuditEvent[] }>(key, teamApiFetcher, {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
-  });
-  return {
-    events: data?.events ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, '監査ログの取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
 const parseFilename = (disposition: string | null): string | null => {
   if (!disposition) return null;
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -475,18 +445,6 @@ const saveBlob = (blob: Blob, filename: string) => {
   a.download = filename;
   a.click();
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-};
-
-export const downloadPatchformCsv = async (
-  formId: string,
-  format: 'csv' | 'jsonl' = 'csv',
-  reveal = false,
-): Promise<void> => {
-  const { blob, disposition } = await teamApi.getBlob(
-    `patchform/forms/${encodeURIComponent(formId)}/export`,
-    { params: { format, ...(reveal ? { reveal: '1' } : {}) } },
-  );
-  saveBlob(blob, parseFilename(disposition) ?? `patchform_${formId}.${format}`);
 };
 
 export const downloadProcedureExport = async (
@@ -732,23 +690,6 @@ export const uploadPatchformFile = async (
   return res.data;
 };
 
-export const downloadPatchformFile = async (
-  formId: string,
-  fileId: string,
-  filename?: string,
-): Promise<void> => {
-  const { blob, disposition } = await teamApi.getBlob(
-    `patchform/forms/${encodeURIComponent(formId)}/files/${encodeURIComponent(fileId)}`,
-  );
-  const name = parseFilename(disposition) ?? filename ?? fileId;
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-};
-
 export const downloadProcedureLinkFile = (
   name: string,
   urls: { internal?: string | null; external?: string | null },
@@ -800,27 +741,6 @@ export const usePatchformProcedureShare = (procedureId: string | undefined, enab
     isLoading,
     loadError: error ? errorMessage(error, '申請用リンクの取得に失敗しました。') : null,
   };
-};
-
-export const downloadPatchformCarrier = async (
-  formId: string,
-  format: 'txt' | 'html' = 'txt',
-): Promise<void> => {
-  const res = await teamApi.get<{ filename: string; content: string }>(
-    `patchform/forms/${encodeURIComponent(formId)}/carrier`,
-    { params: { format } },
-  );
-  const data = res.data;
-  if (!data) return;
-  const blob = new Blob([data.content], {
-    type: format === 'html' ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8',
-  });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = data.filename;
-  a.click();
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 };
 
 export const usePatchformProcedures = () => {

@@ -1505,75 +1505,6 @@ async def withdraw_submission(
     return JSONResponse(content=result)
 
 
-@app.get("/forms/{form_id}/audit")
-def list_audit(
-    form_id: str,
-    x_api_key: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
-    x_user_groups: str | None = Header(default=None),
-    x_scope: str | None = Header(default=None),
-    x_user_ts: str | None = Header(default=None),
-    x_user_sig: str | None = Header(default=None),
-    x_user_tags: str | None = Header(default=None),
-) -> JSONResponse:
-    err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
-    )
-    if err:
-        return err
-    items, msg = store.list_audit(
-        form_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
-    )
-    if msg or items is None:
-        code = 404 if "見つかりません" in msg else 403
-        return JSONResponse(status_code=code, content={"error": msg})
-    return JSONResponse(content={"events": items})
-
-
-@app.get("/forms/{form_id}/export")
-def export_answers(
-    form_id: str,
-    format: str = "csv",
-    reveal: bool = False,
-    x_api_key: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
-    x_user_groups: str | None = Header(default=None),
-    x_scope: str | None = Header(default=None),
-    x_user_ts: str | None = Header(default=None),
-    x_user_sig: str | None = Header(default=None),
-    x_user_tags: str | None = Header(default=None),
-) -> Response:
-    err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
-    )
-    if err:
-        return err
-    fmt = (format or "csv").lower()
-    groups = _groups(x_user_groups)
-    if fmt == "jsonl":
-        body, msg = store.export_jsonl(
-            form_id, actor_user_id=uid, actor_groups=groups, reveal=reveal
-        )
-        media = "application/x-ndjson; charset=utf-8"
-        filename = f"patchform_{form_id}.jsonl"
-        encoded = (body or "").encode("utf-8")
-    else:
-        body, msg = store.export_csv(
-            form_id, actor_user_id=uid, actor_groups=groups, reveal=reveal
-        )
-        media = "text/csv; charset=utf-8"
-        filename = f"patchform_{form_id}.csv"
-        encoded = (body or "").encode("utf-8-sig")
-    if msg or body is None:
-        code = 404 if "見つかりません" in msg else 403
-        return JSONResponse(status_code=code, content={"error": msg})
-    return Response(
-        content=encoded,
-        media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
 def _upload_from_body(
     body: dict[str, Any],
     *,
@@ -1655,54 +1586,6 @@ def download_internal(
         meta["path"],
         media_type=meta["mime"],
         headers={"Content-Disposition": files.content_disposition(meta["filename"])},
-    )
-
-
-@app.get("/forms/{form_id}/carrier")
-def form_carrier(
-    form_id: str,
-    format: str = "txt",
-    x_api_key: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
-    x_user_groups: str | None = Header(default=None),
-    x_scope: str | None = Header(default=None),
-    x_user_ts: str | None = Header(default=None),
-    x_user_sig: str | None = Header(default=None),
-    x_user_tags: str | None = Header(default=None),
-) -> JSONResponse:
-    err, uid = _verify_internal(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
-    )
-    if err:
-        return err
-    detail = store.get_form(form_id)
-    if not detail:
-        return JSONResponse(status_code=404, content={"error": "フォームが見つかりません"})
-    if detail["creator_user_id"] != uid:
-        return JSONResponse(status_code=403, content={"error": "このフォームを閲覧する権限がありません"})
-    url = detail["public_url"]
-    title = detail["title"]
-    fmt = (format or "txt").lower()
-    if fmt == "html":
-        body = (
-            "<!DOCTYPE html><html lang='ja'><head><meta charset='utf-8'>"
-            f"<title>{title} - フォームリンク</title></head><body>"
-            f"<h1>{title}</h1><p>外部から回答するURL:</p>"
-            f"<p><a href='{url}'>{url}</a></p>"
-            "<p>LGWAN 端末から開けない場合は、このファイルを持ち出して"
-            "インターネット接続端末で開いてください。</p></body></html>"
-        )
-        filename = f"{title}_patchform_link.html"
-    else:
-        body = (
-            f"フォーム: {title}\n\n"
-            f"外部から回答するURL:\n{url}\n\n"
-            "LGWAN 端末から開けない場合は、このファイルを持ち出して"
-            "インターネット接続端末で開いてください。\n"
-        )
-        filename = f"{title}_patchform_link.txt"
-    return JSONResponse(
-        content={"filename": filename, "content": body, "public_url": url, "format": fmt}
     )
 
 
