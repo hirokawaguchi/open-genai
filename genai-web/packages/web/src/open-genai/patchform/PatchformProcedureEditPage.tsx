@@ -71,7 +71,8 @@ export const PatchformProcedureEditPage = () => {
   const { procedure, isLoading, loadError, mutate } = usePatchformProcedure(procedureId);
   const { forms } = usePatchformList();
   const { config } = usePatchformConfig();
-  const { save, setStatus, remove, submitting, error, setError } = usePatchformProcedureActions();
+  const { save, setStatus, setProcedureVisibility, remove, submitting, error, setError } =
+    usePatchformProcedureActions();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [guideFormId, setGuideFormId] = useState('');
@@ -461,6 +462,30 @@ export const PatchformProcedureEditPage = () => {
                     : config?.mail?.dump
                       ? ' いまはメールサーバの代わりに、サーバ上のテキストに書き出します。'
                       : ' いまはメールサーバ未設定のため、宛先を書いても送られません。'}
+                </p>
+              </div>
+              <div>
+                <Label htmlFor='pf-pe-vis' size='sm'>
+                  公開範囲
+                </Label>
+                <select
+                  id='pf-pe-vis'
+                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                  value={procedure.visibility === 'both' ? 'both' : 'internal'}
+                  disabled={!procedure.can_edit}
+                  onChange={async (e) => {
+                    const next = await setProcedureVisibility(
+                      procedure.id,
+                      e.target.value === 'both' ? 'both' : 'internal',
+                    );
+                    if (next) await mutate();
+                  }}
+                >
+                  <option value='internal'>庁内のみ</option>
+                  <option value='both'>庁内と外部</option>
+                </select>
+                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                  庁内/庁外の公開はこの手続きで決めます。「庁内と外部」にすると、案内と申請用紙すべてが外部からも記入できます。マイナンバーなど庁内専用の部品を含む場合は庁外公開できません。
                 </p>
               </div>
               <div>

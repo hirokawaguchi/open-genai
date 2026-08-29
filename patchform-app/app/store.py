@@ -469,6 +469,8 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("submissions", "application_id", "TEXT"),
         ("submissions", "application_item_id", "TEXT"),
         ("procedures", "notify_emails_json", "TEXT NOT NULL DEFAULT '[]'"),
+        # 庁内/庁外の公開範囲は手続き単位で決める（internal / both）。
+        ("procedures", "visibility", "TEXT NOT NULL DEFAULT 'internal'"),
         ("applications", "items_json", "TEXT NOT NULL DEFAULT '[]'"),
         # マイ手続き: 所有者・タイトル・状態の手動上書き・更新時刻
         ("applications", "owner_kind", "TEXT NOT NULL DEFAULT ''"),
@@ -488,11 +490,33 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         # 庁外由来は庁内で直接ストリームせず SeaweedFS 再ホスト経由で受け渡す。
         ("uploaded_files", "origin", "TEXT NOT NULL DEFAULT 'internal'"),
     )
+    added: set[tuple[str, str]] = set()
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if name not in cols:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            added.add((table, name))
     db.execute("CREATE INDEX IF NOT EXISTS idx_forms_source ON forms(source_form_id)")
+    if ("procedures", "visibility") in added:
+        _backfill_procedure_visibility(db)
+
+
+def _backfill_procedure_visibility(db: sqlite3.Connection) -> None:
+    """既存手続きの公開範囲を、案内フォームの現行 visibility から一度だけ引き継ぐ。"""
+    for r in db.execute("SELECT id, guide_form_id FROM procedures").fetchall():
+        gid = r["guide_form_id"]
+        rec = db.execute(
+            "SELECT visibility FROM forms WHERE source_form_id = ? AND status = 'published' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (gid,),
+        ).fetchone()
+        if not rec:
+            rec = db.execute("SELECT visibility FROM forms WHERE id = ?", (gid,)).fetchone()
+        vis = (rec["visibility"] if rec else "internal") or "internal"
+        db.execute(
+            "UPDATE procedures SET visibility = ? WHERE id = ?",
+            ("internal" if vis == "internal" else "both", r["id"]),
+        )
 
 
 def _source_form_id(row: sqlite3.Row) -> str | None:
@@ -2560,7 +2584,9 @@ def _row_to_procedure(
         if opening
         else (public_url_for(guide["guest_token"]) if guide else None),
         "guide_reception_id": opening["id"] if opening else None,
-        "guide_visibility": (opening or guide)["visibility"] if (opening or guide) else None,
+        # 公開範囲は手続き単位。guide_visibility は後方互換のためのミラー。
+        "visibility": _proc_visibility(row),
+        "guide_visibility": _proc_visibility(row),
         "mapping": mapping,
         "status": row["status"],
         "creator_user_id": row["creator_user_id"],
@@ -2640,7 +2666,7 @@ def procedure_share(
     if proc["status"] != "published" or not proc.get("guide_reception_id"):
         return None, "この手続きは受付していません"
     internal_url = f"{base}/patchform/apply/{proc['id']}"
-    vis = proc.get("guide_visibility")
+    vis = proc.get("visibility") or proc.get("guide_visibility")
     external_url = proc.get("guide_public_url") if vis in ("both", "public") else None
     return {
         "id": proc["id"],
@@ -2649,27 +2675,27 @@ def procedure_share(
         "external_url": external_url,
         "internal_qr_svg": _qr_svg(internal_url),
         "external_qr_svg": _qr_svg(external_url) if external_url else None,
-        # 庁外URLが出ない原因（案内フォームの公開範囲）を画面で説明・修正できるよう返す。
+        # 庁外URLが出ない原因（手続きの公開範囲）を画面で説明・修正できるよう返す。
         "guide_form_id": proc.get("guide_form_id"),
+        "visibility": vis,
         "guide_visibility": vis,
     }, None
 
 
-def set_guide_visibility(
+def set_procedure_visibility(
     procedure_id: str,
     *,
     actor_user_id: str,
     actor_groups: list[str] | None = None,
     visibility: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """手続きの案内（ナビゲーション）フォームの公開範囲を変更する（庁外公開のON/OFF）。
+    """手続きの公開範囲（庁内のみ / 庁内と外部）を変更する。
 
-    公開範囲は部品ではなくメタ情報のため、フォームが「作成完了」(locked)でも変更できる。
-    定義自体は変えない。公開中の受付(reception)側にも追随させ、既存の共有URL・QRに
-    即時反映する。
+    公開範囲は手続き単位で決める。公開中は案内＋全様式の定義・受付にも即時反映し、
+    既存の共有URL・QRへ反映する。庁外(both)にする場合、機微部品(mynumber等)を含む
+    様式があれば拒否する。
     """
-    if visibility not in spec.VISIBILITIES:
-        return None, "公開範囲が不正です"
+    proc_vis = _norm_proc_visibility(visibility)
     db = connect()
     with _lock:
         proc = db.execute(
@@ -2677,27 +2703,16 @@ def set_guide_visibility(
         ).fetchone()
         if not proc:
             return None, "手続きが見つかりません"
-        guide = _form_row(db, proc["guide_form_id"])
-        if not guide:
-            return None, "案内フォームが見つかりません"
-        def_id = _definition_id(guide)
-        source = _form_row(db, def_id) or guide
-        if not _can_edit(source, actor_user_id, actor_groups):
-            return None, "この案内フォームを編集する権限がありません"
-        # 庁外公開の妥当性: 定義が新しい公開範囲の制約に適合するか確認する。
-        _, err = spec.validate_definition(_definition(source), visibility=visibility)
+        if not _can_edit_procedure(proc, actor_user_id, actor_groups):
+            return None, "この手続きを変更する権限がありません"
+        err = _apply_procedure_visibility(
+            db, proc, proc_vis, propagate=(proc["status"] == "published")
+        )
         if err:
             return None, err
-        now = _now_iso()
         db.execute(
-            "UPDATE forms SET visibility = ?, updated_at = ? WHERE id = ?",
-            (visibility, now, source["id"]),
-        )
-        # 公開中の受付(reception)にも反映（既存の共有URLへ即時反映するため）。
-        db.execute(
-            "UPDATE forms SET visibility = ?, updated_at = ? "
-            "WHERE source_form_id = ? AND status = 'published'",
-            (visibility, now, source["id"]),
+            "UPDATE procedures SET visibility = ?, updated_at = ? WHERE id = ?",
+            (proc_vis, _now_iso(), procedure_id),
         )
         db.commit()
         row = db.execute(
@@ -2723,7 +2738,7 @@ def _catalog_form(db: sqlite3.Connection, form_id: str) -> dict[str, Any] | None
         "title": row["title"],
         "status": shown["status"],
     }
-    if shown["status"] == "published" and shown["visibility"] in ("both", "external"):
+    if shown["status"] == "published" and shown["visibility"] in ("both", "public"):
         out["public_url"] = public_url_for(shown["guest_token"])
     return out
 
@@ -2765,7 +2780,7 @@ def _inspect_published(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
             "status": shown["status"],
             "choice_fields": fields,
         }
-        if shown["status"] == "published" and shown["visibility"] in ("both", "external"):
+        if shown["status"] == "published" and shown["visibility"] in ("both", "public"):
             guide_out["public_url"] = public_url_for(shown["guest_token"])
     return {
         "id": row["id"],
@@ -2887,6 +2902,63 @@ def _validate_mapping_forms(
     return None
 
 
+def _norm_proc_visibility(value: Any) -> str:
+    """手続きの公開範囲を internal / both に正規化する（外部のみ=public は both 扱い）。"""
+    v = str(value or "internal").strip()
+    return "internal" if v == "internal" else "both"
+
+
+def _proc_visibility(row: sqlite3.Row) -> str:
+    if "visibility" in row.keys():
+        return (row["visibility"] or "internal")
+    return "internal"
+
+
+def _procedure_definition_ids(db: sqlite3.Connection, proc_row: sqlite3.Row) -> list[str]:
+    """案内＋mapping内の全様式の『定義ID』を重複なしで返す。"""
+    mapping, _merr = procedure.normalize_mapping(proc_row["mapping_json"])
+    ids = [_as_definition_id(db, proc_row["guide_form_id"]) or proc_row["guide_form_id"]]
+    for rule in mapping.get("rules") or []:
+        for fid in rule.get("form_ids") or []:
+            ids.append(_as_definition_id(db, fid) or fid)
+    return list(dict.fromkeys(ids))
+
+
+def _apply_procedure_visibility(
+    db: sqlite3.Connection,
+    proc_row: sqlite3.Row,
+    visibility: str,
+    *,
+    propagate: bool,
+) -> str | None:
+    """手続きの公開範囲を検証し、propagate 時は案内＋全様式の定義・受付へ反映する。
+
+    庁外(both)にする場合、機微部品(mynumber等)を含む定義があれば拒否する。
+    エラー文字列を返す。問題なければ None。
+    """
+    def_ids = _procedure_definition_ids(db, proc_row)
+    for did in def_ids:
+        drow = _form_row(db, did)
+        if not drow:
+            continue
+        _, err = spec.validate_definition(_definition(drow), visibility=visibility)
+        if err:
+            return err
+    if propagate:
+        now = _now_iso()
+        for did in def_ids:
+            db.execute(
+                "UPDATE forms SET visibility = ?, updated_at = ? WHERE id = ?",
+                (visibility, now, did),
+            )
+            db.execute(
+                "UPDATE forms SET visibility = ?, updated_at = ? "
+                "WHERE source_form_id = ? AND status IN ('published', 'closed')",
+                (visibility, now, did),
+            )
+    return None
+
+
 def create_procedure(
     *,
     name: str,
@@ -2894,6 +2966,7 @@ def create_procedure(
     guide_form_id: str,
     mapping: Any = None,
     notify_emails: Any = None,
+    visibility: str = "internal",
     creator_user_id: str,
     creator_name: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -2919,8 +2992,9 @@ def create_procedure(
         pid = str(uuid.uuid4())
         db.execute(
             "INSERT INTO procedures (id, name, description, guide_form_id, mapping_json, "
-            "notify_emails_json, status, creator_user_id, creator_name, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "notify_emails_json, status, visibility, creator_user_id, creator_name, "
+            "created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 pid,
                 title,
@@ -2929,6 +3003,7 @@ def create_procedure(
                 json.dumps(mapping_norm, ensure_ascii=False),
                 json.dumps(emails or [], ensure_ascii=False),
                 "draft",
+                _norm_proc_visibility(visibility),
                 creator_user_id,
                 creator_name,
                 now,
@@ -3056,6 +3131,7 @@ def create_procedure_from_draft(
             description=desc or None,
             guide_form_id=guide_id,
             mapping={"rules": rules},
+            visibility=visibility,
             creator_user_id=creator_user_id,
             creator_name=creator_name,
         )
@@ -3180,6 +3256,12 @@ def set_procedure_status(
                 other_def = _as_definition_id(db, other["guide_form_id"]) or other["guide_form_id"]
                 if other_def == guide_def:
                     return None, "この案内フォームは、すでに別の公開中手続きで使われています"
+            # 公開範囲は手続きが決める。案内＋全様式の定義・受付へ一括反映する。
+            vis_err = _apply_procedure_visibility(
+                db, row, _proc_visibility(row), propagate=True
+            )
+            if vis_err:
+                return None, vis_err
         db.execute(
             "UPDATE procedures SET status = ?, updated_at = ? WHERE id = ?",
             (status, _now_iso(), procedure_id),

@@ -24,6 +24,7 @@ import type {
   ProcedureCatalog,
   ProcedureResolvePreview,
   ProcedureShare,
+  ProcedureVisibility,
   SlotTemplate,
   Submission,
   UploadedFile,
@@ -1364,20 +1365,23 @@ export const usePatchformProcedureActions = () => {
     [],
   );
 
-  // 案内フォームの公開範囲を変更する（庁外公開のON/OFF）。公開範囲はメタ情報のため
-  // 「作成完了」でも変更でき、公開中の受付にも即時反映される。
-  const setGuideVisibility = useCallback(
-    async (procedureId: string, visibility: FormVisibility): Promise<Procedure | null> => {
+  // 手続きの公開範囲を変更する（庁内のみ / 庁内と外部）。公開中は案内＋全様式の
+  // 受付にも即時反映され、既存の共有URL・QRへ反映される。
+  const setProcedureVisibility = useCallback(
+    async (
+      procedureId: string,
+      visibility: ProcedureVisibility,
+    ): Promise<Procedure | null> => {
       setSubmitting(true);
       setError(null);
       try {
         const res = await teamApi.post<Procedure>(
-          `patchform/procedures/${encodeURIComponent(procedureId)}/guide-visibility`,
+          `patchform/procedures/${encodeURIComponent(procedureId)}/visibility`,
           { visibility },
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '案内フォームの公開範囲を変更できませんでした。'));
+        setError(errorMessage(e, '公開範囲を変更できませんでした。'));
         return null;
       } finally {
         setSubmitting(false);
@@ -1391,7 +1395,7 @@ export const usePatchformProcedureActions = () => {
     save,
     setStatus,
     setStatusMany,
-    setGuideVisibility,
+    setProcedureVisibility,
     remove,
     removeMany,
     submitting,

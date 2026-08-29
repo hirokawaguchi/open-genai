@@ -495,6 +495,7 @@ async def create_procedure(
         guide_form_id=(body.get("guide_form_id") or ""),
         mapping=body.get("mapping"),
         notify_emails=body.get("notify_emails"),
+        visibility=(body.get("visibility") or "internal"),
         creator_user_id=uid,
         creator_name=(body.get("creator_name") or None),
     )
@@ -629,8 +630,8 @@ async def set_procedure_status(
     return JSONResponse(content=detail)
 
 
-@app.post("/procedures/{procedure_id}/guide-visibility")
-async def set_guide_visibility(
+@app.post("/procedures/{procedure_id}/visibility")
+async def set_procedure_visibility(
     procedure_id: str,
     request: Request,
     x_api_key: str | None = Header(default=None),
@@ -647,7 +648,7 @@ async def set_guide_visibility(
     if err:
         return err
     body = await request.json()
-    detail, msg = store.set_guide_visibility(
+    detail, msg = store.set_procedure_visibility(
         procedure_id,
         actor_user_id=uid,
         actor_groups=_groups(x_user_groups),
