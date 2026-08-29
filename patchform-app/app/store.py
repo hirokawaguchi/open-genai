@@ -1272,6 +1272,14 @@ def update_form(
                 form_id,
             ),
         )
+        # 公開範囲を変えたら、公開中の受付(reception)にも反映する。受付側の visibility が
+        # 古いままだと手続きの庁外URL/QRに反映されないため（案内フォーム編集での庁外公開）。
+        if new_vis != row["visibility"] and not _is_reception(row):
+            db.execute(
+                "UPDATE forms SET visibility = ?, updated_at = ? "
+                "WHERE source_form_id = ? AND status = 'published'",
+                (new_vis, _now_iso(), form_id),
+            )
         db.commit()
     return get_form(form_id, actor_user_id=actor_user_id, actor_groups=actor_groups), None
 
