@@ -187,10 +187,22 @@ def init_db() -> None:
               FOREIGN KEY (guide_form_id) REFERENCES forms(id),
               FOREIGN KEY (guide_submission_id) REFERENCES submissions(id)
             );
+            CREATE TABLE IF NOT EXISTS application_events (
+              id TEXT PRIMARY KEY,
+              application_id TEXT NOT NULL,
+              actor_role TEXT NOT NULL,
+              actor_user_id TEXT NOT NULL DEFAULT '',
+              action TEXT NOT NULL,
+              target TEXT NOT NULL DEFAULT '',
+              detail TEXT NOT NULL DEFAULT '',
+              changes TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_procedures_guide ON procedures(guide_form_id);
             CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
             CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token);
             CREATE INDEX IF NOT EXISTS idx_applications_proc ON applications(procedure_id);
+            CREATE INDEX IF NOT EXISTS idx_app_events_app ON application_events(application_id);
             """
         )
         _ensure_columns(db)
@@ -285,6 +297,10 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "assignee", "TEXT NOT NULL DEFAULT ''"),
         ("applications", "deadline", "TEXT NOT NULL DEFAULT ''"),
         ("applications", "next_action_date", "TEXT NOT NULL DEFAULT ''"),
+        # 申請（提出）した時点。これ以降の変更だけを履歴に残す。
+        ("applications", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
+        # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
+        ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
     )
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -1787,6 +1803,12 @@ def submit_answers(
                 definition = json.loads(ver["definition_json"])
         if definition is None:
             definition = _definition(row)
+        # 申請束（作業台）の中のフォームは、共有・双方向で内容を直せるよう、
+        # フォーム設定の allow_multiple に関わらず再記入（修正）を許可する。
+        in_bundle = bool(
+            (application_token or "").strip() or (application_item_id or "").strip()
+        )
+        allow_multi = bool(_flag(row, "allow_multiple")) or in_bundle
         existing = _find_draft(
             db, row["id"], submitter_user_id=submitter_user_id, resume_token=resume_token
         )
@@ -1795,7 +1817,7 @@ def submit_answers(
         if existing and not existing["is_draft"]:
             if is_draft:
                 return None, "この控えはすでに提出済みです"
-            if not _flag(row, "allow_multiple"):
+            if not allow_multi:
                 return None, "このフォームにはすでに回答しています"
             existing = None
         if (
@@ -1819,7 +1841,7 @@ def submit_answers(
         )
         if ident_err:
             return None, ident_err
-        if not is_draft and not _flag(row, "allow_multiple"):
+        if not is_draft and not allow_multi:
             keys = _lookup_ids(row["id"], submitter_user_id)
             if stored_id and stored_id not in keys:
                 keys.append(stored_id)
@@ -1833,6 +1855,7 @@ def submit_answers(
                 ).fetchone()
                 if prior and (not existing or prior["id"] != existing["id"]):
                     return None, "このフォームにはすでに回答しています"
+        new_plain = dict(cleaned)
         cleaned = crypto.protect_answers(definition, cleaned)
         now = _now_iso()
         linked_app_id, link_err = _resolve_application_id(
@@ -1843,6 +1866,51 @@ def submit_answers(
         linked_item_id = _resolve_application_item_id(
             db, linked_app_id, row["id"], application_item_id
         )
+        app_for_link = None
+        prev_answers: dict[str, Any] = {}
+        if linked_app_id:
+            app_for_link = db.execute(
+                "SELECT * FROM applications WHERE id = ?", (linked_app_id,)
+            ).fetchone()
+            is_guide = (
+                app_for_link is not None
+                and str(app_for_link["guide_form_id"]) == row["id"]
+            )
+            # 条件（案内）の変更は申請者本人（束の所有者）だけが行える。
+            if (
+                is_guide
+                and app_for_link is not None
+                and str(app_for_link["owner_kind"]) == "internal"
+                and app_for_link["owner_key"]
+                and (
+                    not submitter_user_id
+                    or submitter_user_id != str(app_for_link["owner_key"])
+                )
+            ):
+                return None, "条件を変更する権限がありません"
+            # 差分算出のため、上書き前の直近の提出内容を控える。
+            if not is_draft:
+                prev_row = None
+                if linked_item_id:
+                    prev_row = db.execute(
+                        "SELECT answers_json FROM submissions WHERE application_id = ? "
+                        "AND application_item_id = ? AND is_draft = 0 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (linked_app_id, linked_item_id),
+                    ).fetchone()
+                if prev_row is None:
+                    prev_row = db.execute(
+                        "SELECT answers_json FROM submissions WHERE application_id = ? "
+                        "AND form_id = ? AND is_draft = 0 ORDER BY created_at DESC LIMIT 1",
+                        (linked_app_id, row["id"]),
+                    ).fetchone()
+                if prev_row is not None:
+                    try:
+                        parsed_prev = json.loads(prev_row["answers_json"])
+                        if isinstance(parsed_prev, dict):
+                            prev_answers = parsed_prev
+                    except (TypeError, json.JSONDecodeError):
+                        prev_answers = {}
         if existing:
             sid = existing["id"]
             receipt = existing["receipt_code"]
@@ -1906,6 +1974,20 @@ def submit_answers(
                     "SELECT name, notify_emails_json FROM procedures WHERE id = ?",
                     (opened.get("procedure_id"),),
                 ).fetchone()
+            if linked_app_id and app_for_link is not None and _app_is_submitted(
+                app_for_link
+            ):
+                is_guide = str(app_for_link["guide_form_id"]) == row["id"]
+                diffs = _answers_diff(definition, prev_answers, new_plain)
+                _log_app_event(
+                    db,
+                    linked_app_id,
+                    actor_role=_actor_role(app_for_link, submitter_user_id),
+                    actor_user_id=submitter_user_id or "",
+                    action="条件を変更" if is_guide else "記入を修正",
+                    target="" if is_guide else str(row["title"] or ""),
+                    changes=diffs,
+                )
         db.commit()
     if opened:
         try:
@@ -2226,6 +2308,20 @@ def _guide_definition(db: sqlite3.Connection, guide_form_id: str) -> dict[str, A
         return published
     row = db.execute("SELECT * FROM forms WHERE id = ?", (guide_form_id,)).fetchone()
     return _definition(row) if row else None
+
+
+def _is_single_form_app(db: sqlite3.Connection, app: sqlite3.Row) -> bool:
+    """選択肢(ラジオ/プルダウン等)を持たない『申請用紙1枚』の手続きか。
+
+    案内(nav)としての分岐が無い手続きでは、案内フォーム＝申請用紙本体になる。
+    """
+    proc = db.execute(
+        "SELECT * FROM procedures WHERE id = ?", (app["procedure_id"],)
+    ).fetchone()
+    if not proc:
+        return False
+    guide_def = _guide_definition(db, proc["guide_form_id"])
+    return not procedure.choice_fields(guide_def)
 
 
 def _row_to_procedure(
@@ -3037,10 +3133,12 @@ def _form_has_fillable_fields(db: sqlite3.Connection, form_id: str) -> bool:
 # マイ手続きの自動ステータス（本人が手動で上書きも可能）
 APP_STATUS_TODO = "未着手"
 APP_STATUS_WORKING = "作業中"
+APP_STATUS_READY = "準備完了"
 APP_STATUS_SUBMITTED = "提出済"
-APP_STATUS_AUTO = (APP_STATUS_TODO, APP_STATUS_WORKING, APP_STATUS_SUBMITTED)
-# 手動上書きで許可する状態（自動値＋終端の状態）
-APP_STATUS_OVERRIDE_ALLOWED = APP_STATUS_AUTO + ("取下げ", "完了")
+# 自動導出する状態。提出済は「提出する」操作でのみ付く（自動では付けない）。
+APP_STATUS_AUTO = (APP_STATUS_TODO, APP_STATUS_WORKING, APP_STATUS_READY)
+# 手動上書きで許可する状態（自動値＋提出/終端の状態）
+APP_STATUS_OVERRIDE_ALLOWED = APP_STATUS_AUTO + (APP_STATUS_SUBMITTED, "取下げ", "完了")
 
 
 def _auto_status(items: list[dict[str, Any]]) -> str:
@@ -3048,7 +3146,10 @@ def _auto_status(items: list[dict[str, Any]]) -> str:
 
     - 案内(data)が未提出: 未着手
     - 案内は済だが書類が残る: 作業中
-    - 書類がすべて提出済（または書類が無い）: 提出済
+    - 書類がすべて揃った（または書類が無い）: 準備完了
+
+    「提出済」は自動では付けない。実際に提出したかは本人にしか分からないため、
+    明示的な「提出する」操作（status_override）でのみ付く。
     """
     data_items = [it for it in items if it.get("kind") == "data"]
     nav_done = any(it.get("status") == "submitted" for it in data_items)
@@ -3061,7 +3162,7 @@ def _auto_status(items: list[dict[str, Any]]) -> str:
         if it.get("kind") != "data" and it.get("required") != "optional"
     ]
     if not docs or all(it.get("status") == "submitted" for it in docs):
-        return APP_STATUS_SUBMITTED
+        return APP_STATUS_READY
     return APP_STATUS_WORKING
 
 
@@ -3263,6 +3364,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "public_url": public_application_url_for(row["token"]),
         "created_at": row["created_at"],
         "updated_at": max(stamps),
+        "events": list_application_events(db, row["id"]),
     }
 
 
@@ -3506,7 +3608,7 @@ def _resolve_bundle_items(
     items.append(
         _new_item(
             slot_id=OTHER_ATTACH_SLOT,
-            title="その他（追加の添付）",
+            title="その他（別途ファイルを添付する場合にお使いください）",
             kind="attach",
             required="optional",
             cardinality="many",
@@ -3802,6 +3904,129 @@ def _owns_application(row: sqlite3.Row, owner_kind: str, owner_key: str) -> bool
     return str(row["owner_kind"]) == owner_kind and str(row["owner_key"]) == owner_key
 
 
+def _actor_role(app: sqlite3.Row, actor_user_id: str | None) -> str:
+    """変更履歴に残す実行者の役割を判定する。
+
+    申請者本人（束の所有者、または公開トークン経由）は「申請者」、それ以外の
+    庁内ユーザーは受領側の「受付」として扱う。
+    """
+    if actor_user_id and _owns_application(app, "internal", actor_user_id):
+        return "申請者"
+    if actor_user_id:
+        return "受付"
+    return "申請者"
+
+
+def _app_is_submitted(app: sqlite3.Row) -> bool:
+    """申請者が「提出」した後かどうか。提出前は履歴を残さず自由に修正できる。"""
+    keys = app.keys()
+    return "submitted_at" in keys and bool(app["submitted_at"])
+
+
+def _diff_cell(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, list):
+        return "；".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _answers_diff(
+    definition: dict[str, Any],
+    old_answers: dict[str, Any],
+    new_answers: dict[str, Any],
+) -> list[dict[str, str]]:
+    """記入内容の変更前→後を、フィールドごとに算出する（機微な値はマスク）。"""
+    old_disp = crypto.reveal_answers(definition, old_answers or {}, mask=True)
+    new_disp = crypto.reveal_answers(definition, new_answers or {}, mask=True)
+    skip = {"display", "heading", "note", "divider", "page_break", "section"}
+    diffs: list[dict[str, str]] = []
+    for comp in definition.get("components") or []:
+        if comp.get("type") in skip:
+            continue
+        cid = comp.get("id")
+        if not cid:
+            continue
+        before = _diff_cell(old_disp.get(cid))
+        after = _diff_cell(new_disp.get(cid))
+        if before != after:
+            diffs.append(
+                {
+                    "label": str(comp.get("label") or cid),
+                    "before": before,
+                    "after": after,
+                }
+            )
+    return diffs
+
+
+def _log_app_event(
+    db: sqlite3.Connection,
+    application_id: str,
+    *,
+    actor_role: str,
+    actor_user_id: str = "",
+    action: str,
+    target: str = "",
+    detail: str = "",
+    changes: list[dict[str, str]] | None = None,
+) -> None:
+    """申請束の追加・削除・修正を変更履歴として記録する。"""
+    db.execute(
+        "INSERT INTO application_events (id, application_id, actor_role, "
+        "actor_user_id, action, target, detail, changes, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            str(uuid.uuid4()),
+            application_id,
+            actor_role,
+            actor_user_id or "",
+            action,
+            target or "",
+            detail or "",
+            json.dumps(changes, ensure_ascii=False) if changes else "",
+            _now_iso(),
+        ),
+    )
+
+
+def list_application_events(
+    db: sqlite3.Connection, application_id: str, limit: int = 200
+) -> list[dict[str, Any]]:
+    """新しい順に変更履歴を返す。"""
+    keys = {r[1] for r in db.execute("PRAGMA table_info(application_events)").fetchall()}
+    has_changes = "changes" in keys
+    cols = "actor_role, actor_user_id, action, target, detail, created_at" + (
+        ", changes" if has_changes else ""
+    )
+    rows = db.execute(
+        f"SELECT {cols} FROM application_events WHERE application_id = ? "
+        "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (application_id, limit),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        changes_raw = r["changes"] if has_changes else ""
+        try:
+            changes = json.loads(changes_raw) if changes_raw else []
+        except (TypeError, json.JSONDecodeError):
+            changes = []
+        out.append(
+            {
+                "actor_role": r["actor_role"],
+                "actor_user_id": r["actor_user_id"],
+                "action": r["action"],
+                "target": r["target"],
+                "detail": r["detail"],
+                "changes": changes,
+                "created_at": r["created_at"],
+            }
+        )
+    return out
+
+
 def set_application_status(
     *, application_id: str, owner_kind: str, owner_key: str, status: str
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -3817,10 +4042,37 @@ def set_application_status(
         ov = (status or "").strip()
         if ov and ov not in APP_STATUS_OVERRIDE_ALLOWED:
             return None, "不正な状態です"
-        db.execute(
-            "UPDATE applications SET status_override = ?, updated_at = ? WHERE id = ?",
-            (ov, _now_iso(), application_id),
-        )
+        now = _now_iso()
+        was_submitted = _app_is_submitted(row)
+        # 「提出」した瞬間から履歴の記録を始める。提出前は自由に修正でき記録しない。
+        newly_submitted = ov == APP_STATUS_SUBMITTED and not was_submitted
+        if newly_submitted:
+            db.execute(
+                "UPDATE applications SET status_override = ?, submitted_at = ?, "
+                "updated_at = ? WHERE id = ?",
+                (ov, now, now, application_id),
+            )
+            _log_app_event(
+                db,
+                application_id,
+                actor_role=_actor_role(row, owner_key),
+                actor_user_id=owner_key,
+                action="提出",
+            )
+        else:
+            db.execute(
+                "UPDATE applications SET status_override = ?, updated_at = ? WHERE id = ?",
+                (ov, now, application_id),
+            )
+            if was_submitted:
+                _log_app_event(
+                    db,
+                    application_id,
+                    actor_role=_actor_role(row, owner_key),
+                    actor_user_id=owner_key,
+                    action="状態を変更",
+                    detail=ov or "自動",
+                )
         row = db.execute(
             "SELECT * FROM applications WHERE id = ?", (application_id,)
         ).fetchone()
@@ -4310,6 +4562,48 @@ def get_item_template_file(
         )
 
 
+def get_item_file(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """申請束のアイテムに添付された、申請者アップロードのファイルを返す。"""
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        item = next((it for it in items if it.get("id") == item_id), None)
+        if not item:
+            return None, "アイテムが見つかりません"
+        file_id = item.get("file_id") or ""
+        if not file_id:
+            return None, "添付ファイルがありません"
+        bucket = item.get("file_bucket") or app["guide_form_id"]
+        row = db.execute(
+            "SELECT * FROM uploaded_files WHERE id = ? AND form_id = ?",
+            (file_id, bucket),
+        ).fetchone()
+        if not row:
+            return None, "添付ファイルが見つかりません"
+        try:
+            path = files.stored_path(bucket, file_id)
+        except ValueError:
+            return None, "添付ファイルが見つかりません"
+        if not path.is_file():
+            return None, "添付ファイルが見つかりません"
+        return {
+            "filename": row["filename"],
+            "mime": row["mime"] or "application/octet-stream",
+            "path": str(path),
+            "size": row["size"],
+        }, None
+
+
 def add_application_item(
     *,
     application_id: str | None = None,
@@ -4320,6 +4614,7 @@ def add_application_item(
     title: str | None = None,
     kind: str | None = None,
     added_by: str = "guest",
+    actor_user_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """申請束に枠アイテムを1件足す（複製・カタログ追加・任意の添付）。"""
     db = connect()
@@ -4331,22 +4626,47 @@ def add_application_item(
         if not items:
             items = _items_from_form_ids(db, app)
         new_item: dict[str, Any] | None = None
+        insert_at: int | None = None
+        action_label = "枠を追加"
+        if duplicate_of:
+            action_label = "枠を複製"
+        elif form_id:
+            action_label = "様式を追加"
+        else:
+            action_label = "添付枠を追加"
         if duplicate_of:
             src = next((it for it in items if it.get("id") == duplicate_of), None)
             if not src:
                 return None, "複製元のアイテムが見つかりません"
-            copies = [it for it in items if it.get("slot_id") and it.get("slot_id") == src.get("slot_id")]
+            # 案内(data)＝単一フォームの申請用紙も複製できる。複製は通常の様式(yoshiki)
+            # として扱い、案内の再解決で消えないようにする（案内本体は1つのまま）。
+            if src.get("kind") == "data":
+                dup_slot = f"yoshiki:{src.get('form_id') or src.get('id')}"
+                dup_kind = "yoshiki"
+                copies = [it for it in items if it.get("slot_id") == dup_slot]
+                copy_index = len(copies) + 1
+            else:
+                dup_slot = src.get("slot_id") or ""
+                dup_kind = src.get("kind") or "yoshiki"
+                copies = [
+                    it
+                    for it in items
+                    if it.get("slot_id") and it.get("slot_id") == dup_slot
+                ]
+                copy_index = len(copies)
             new_item = _new_item(
-                slot_id=src.get("slot_id") or "",
+                slot_id=dup_slot,
                 title=src.get("title") or "",
-                kind=src.get("kind") or "yoshiki",
+                kind=dup_kind,
                 required="optional",
                 cardinality="many",
                 form_id=src.get("form_id") or "",
                 template_file_id=src.get("template_file_id") or "",
-                copy_index=len(copies),
+                copy_index=copy_index,
                 added_by=added_by,
             )
+            # 複製は末尾ではなく、複製元の行の直下に置く。
+            insert_at = items.index(src) + 1
         elif form_id:
             rec = _published_reception_row(db, form_id) or _form_row(db, form_id)
             if not rec:
@@ -4373,11 +4693,77 @@ def add_application_item(
                 form_id="",
                 added_by=added_by,
             )
-        items.append(new_item)
+        if insert_at is not None:
+            items.insert(insert_at, new_item)
+        else:
+            items.append(new_item)
         db.execute(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
+        if _app_is_submitted(app):
+            _log_app_event(
+                db,
+                app["id"],
+                actor_role=_actor_role(app, actor_user_id),
+                actor_user_id=actor_user_id or "",
+                action=action_label,
+                target=str(new_item.get("title") or "") if new_item else "",
+            )
+        db.commit()
+        row = _app_row(db, app["id"], None)
+        return _application_payload(db, row) if row else None, None
+
+
+def delete_application_item(
+    *,
+    application_id: str | None = None,
+    token: str | None = None,
+    item_id: str,
+    actor_user_id: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """申請束から、あとから足した枠（複製・手動追加）を1件外す。
+
+    案内（nav）や、案内の解決で置かれた必須の枠は消せない。複製（copy_index>0）と
+    ユーザーが足した枠（added_by が system 以外）だけを削除できる。
+    """
+    db = connect()
+    with _lock:
+        app = _app_row(db, application_id, token)
+        if not app:
+            return None, "申請が見つかりません"
+        items = _application_items(app)
+        if not items:
+            items = _items_from_form_ids(db, app)
+        target = next((it for it in items if it.get("id") == item_id), None)
+        if not target:
+            return None, "アイテムが見つかりません"
+        if target.get("kind") == "data":
+            return None, "案内は削除できません"
+        removable = bool(target.get("copy_index")) or (
+            target.get("added_by") not in (None, "", "system")
+        )
+        if not removable:
+            return None, "この枠は削除できません"
+        fid = target.get("file_id")
+        if fid:
+            bucket = target.get("file_bucket") or app["guide_form_id"]
+            files.remove_blob(bucket, fid)
+            db.execute("DELETE FROM uploaded_files WHERE id = ?", (fid,))
+        items = [it for it in items if it.get("id") != item_id]
+        db.execute(
+            "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
+        )
+        if _app_is_submitted(app):
+            _log_app_event(
+                db,
+                app["id"],
+                actor_role=_actor_role(app, actor_user_id),
+                actor_user_id=actor_user_id or "",
+                action="枠を削除",
+                target=str(target.get("title") or ""),
+            )
         db.commit()
         row = _app_row(db, app["id"], None)
         return _application_payload(db, row) if row else None, None
@@ -4408,6 +4794,7 @@ def fulfill_item_with_file(
     item_id: str,
     filename: str,
     data: str,
+    actor_user_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """様式・添付の枠を、記入済みファイルの添付で満たす。"""
     db = connect()
@@ -4421,7 +4808,9 @@ def fulfill_item_with_file(
         target = next((it for it in items if it.get("id") == item_id), None)
         if not target:
             return None, "アイテムが見つかりません"
-        if target.get("kind") == "data":
+        if target.get("kind") == "data" and not _is_single_form_app(db, app):
+            # 選択肢のある案内(nav)は記入専用。単一フォーム手続きは申請用紙本体
+            # なので、記入済みファイルの添付も許可する。
             return None, "この枠はオンライン記入のみです"
         bucket = target.get("form_id") or app["guide_form_id"]
         saved, err = _store_item_file(db, bucket, filename, data)
@@ -4435,6 +4824,16 @@ def fulfill_item_with_file(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
+        if _app_is_submitted(app):
+            _log_app_event(
+                db,
+                app["id"],
+                actor_role=_actor_role(app, actor_user_id),
+                actor_user_id=actor_user_id or "",
+                action="ファイルを添付",
+                target=str(target.get("title") or ""),
+                detail=str(saved.get("filename") or ""),
+            )
         db.commit()
         row = _app_row(db, app["id"], None)
         return _application_payload(db, row) if row else None, None
@@ -4445,6 +4844,7 @@ def clear_item_fulfillment(
     application_id: str | None = None,
     token: str | None = None,
     item_id: str,
+    actor_user_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """ファイル添付を外して、未充足（またはオンライン記入）に戻す。"""
     db = connect()
@@ -4458,6 +4858,7 @@ def clear_item_fulfillment(
         target = next((it for it in items if it.get("id") == item_id), None)
         if not target:
             return None, "アイテムが見つかりません"
+        prev_file = str(target.get("file_name") or "")
         target["fulfillment"] = ""
         target["file_id"] = ""
         target["file_name"] = ""
@@ -4466,6 +4867,16 @@ def clear_item_fulfillment(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
+        if _app_is_submitted(app):
+            _log_app_event(
+                db,
+                app["id"],
+                actor_role=_actor_role(app, actor_user_id),
+                actor_user_id=actor_user_id or "",
+                action="添付を取り消し",
+                target=str(target.get("title") or ""),
+                detail=prev_file,
+            )
         db.commit()
         row = _app_row(db, app["id"], None)
         return _application_payload(db, row) if row else None, None
@@ -4477,6 +4888,7 @@ def set_item_source(
     token: str | None = None,
     item_id: str,
     source: str,
+    actor_user_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """記入と添付が併存する枠で、どちらを申請データとして採用するかを決める。"""
     if source not in ("form", "file"):
@@ -4501,6 +4913,16 @@ def set_item_source(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),
         )
+        if _app_is_submitted(app):
+            _log_app_event(
+                db,
+                app["id"],
+                actor_role=_actor_role(app, actor_user_id),
+                actor_user_id=actor_user_id or "",
+                action="採用ソースを変更",
+                target=str(target.get("title") or ""),
+                detail="オンライン記入" if source == "form" else "添付ファイル",
+            )
         db.commit()
         row = _app_row(db, app["id"], None)
         return _application_payload(db, row) if row else None, None
@@ -4511,6 +4933,7 @@ def reorder_application_items(
     application_id: str | None = None,
     token: str | None = None,
     order: list[str],
+    actor_user_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """提出書類一覧の並び順を、申請者が指定した順に並べ替える。
 
@@ -4539,6 +4962,7 @@ def reorder_application_items(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(ordered, ensure_ascii=False), _now_iso(), app["id"]),
         )
+        # 並び替え（順番変更）は申請内容の変更に当たらないため履歴には残さない。
         db.commit()
         row = _app_row(db, app["id"], None)
         return _application_payload(db, row) if row else None, None

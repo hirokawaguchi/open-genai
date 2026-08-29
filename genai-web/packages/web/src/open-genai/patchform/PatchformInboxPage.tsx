@@ -6,7 +6,6 @@ import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PATCHFORM_LABEL } from './labels';
 import { PatchformSubnav } from './PatchformSubnav';
-import type { InboxProcedure } from './types';
 import {
   downloadProcedureExport,
   usePatchformInbox,
@@ -14,16 +13,6 @@ import {
 } from './usePatchform';
 
 const statusLabel = (status: string) => (status === 'published' ? '公開中' : '受付終了');
-
-const ProcedureActions = ({ procedure }: { procedure: InboxProcedure }) => (
-  <div className='mt-3 flex flex-wrap gap-2'>
-    <Link to={`/patchform/procedures/${procedure.id}`} className='inline-flex'>
-      <Button type='button' variant='outline' size='sm'>
-        詳細
-      </Button>
-    </Link>
-  </div>
-);
 
 export const PatchformInboxPage = () => {
   const { procedureId: pathId } = useParams();
@@ -99,7 +88,6 @@ export const PatchformInboxPage = () => {
               {selected.guide_title ? ` / ${selected.guide_title}` : ''}
               {` / 申請 ${selected.bundle_count} 件`}
             </p>
-            <ProcedureActions procedure={selected} />
             <div className='flex flex-wrap gap-2'>
               <Button
                 type='button'
@@ -212,7 +200,6 @@ export const PatchformInboxPage = () => {
                       {' / '}
                       {new Date(item.updated_at).toLocaleString('ja-JP')}
                     </p>
-                    <ProcedureActions procedure={item} />
                   </li>
                 ))}
               </ul>

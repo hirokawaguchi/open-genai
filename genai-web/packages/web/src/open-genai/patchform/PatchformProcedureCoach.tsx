@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { PiBookOpenBold } from 'react-icons/pi';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
@@ -41,11 +42,13 @@ const StepAction = ({ action }: { action: CoachAction }) => {
 export const PatchformProcedureCoach = ({
   title,
   lead,
+  note,
   steps,
   defaultOpen = false,
 }: {
   title: string;
   lead?: string;
+  note?: ReactNode;
   steps: CoachStep[];
   defaultOpen?: boolean;
 }) => {
@@ -69,6 +72,9 @@ export const PatchformProcedureCoach = ({
         </span>
       </DisclosureSummary>
       {lead ? <p className='mt-3 text-std-16N-170 text-solid-gray-700'>{lead}</p> : null}
+      {note ? (
+        <div className='mt-3 rounded-8 border border-solid-gray-300 bg-white px-4 py-3'>{note}</div>
+      ) : null}
       <ol className='mt-3 flex flex-col gap-3'>
         {steps.map((step, index) => {
           const current = next?.id === step.id;

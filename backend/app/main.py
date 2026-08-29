@@ -4391,6 +4391,17 @@ async def patchform_download_item_template(
     )
 
 
+@app.get("/patchform/applications/{application_id}/items/{item_id}/file")
+async def patchform_download_item_file(
+    application_id: str, item_id: str, request: Request
+) -> Response:
+    return await _patchform_binary_get(
+        f"/applications/{application_id}/items/{item_id}/file",
+        request,
+        f"patchform_{item_id}",
+    )
+
+
 @app.post("/patchform/applications/{application_id}/items")
 async def patchform_add_application_item(
     application_id: str, request: Request
@@ -4434,6 +4445,20 @@ async def patchform_clear_application_item(
     return await _proxy_patchform(
         "DELETE",
         _patchform_app_url(f"/applications/{application_id}/items/{item_id}/file"),
+        headers,
+    )
+
+
+@app.delete("/patchform/applications/{application_id}/items/{item_id}")
+async def patchform_delete_application_item(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "DELETE",
+        _patchform_app_url(f"/applications/{application_id}/items/{item_id}"),
         headers,
     )
 

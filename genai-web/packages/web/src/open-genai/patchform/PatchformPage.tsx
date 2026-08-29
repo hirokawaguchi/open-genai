@@ -31,6 +31,8 @@ export const PatchformPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fromGuideLink = searchParams.get('intent') === 'guide';
+  const kind: 'application' | 'navigation' =
+    searchParams.get('kind') === 'navigation' || fromGuideLink ? 'navigation' : 'application';
   const pane = searchParams.get('tab') === 'new' || fromGuideLink ? 'new' : 'list';
   const { config, isLoading: configLoading, unavailable } = usePatchformConfig();
   const { forms, isLoading, loadError, mutate } = usePatchformList();
@@ -57,10 +59,7 @@ export const PatchformPage = () => {
     error: assistError,
     setError: setAssistError,
   } = usePatchformAssist();
-  const [formKind, setFormKind] = useState<'application' | 'navigation'>(
-    fromGuideLink ? 'navigation' : 'application',
-  );
-  const asGuide = formKind === 'navigation';
+  const asGuide = kind === 'navigation';
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [aiText, setAiText] = useState('');
@@ -73,9 +72,17 @@ export const PatchformPage = () => {
   const [bulkAction, setBulkAction] = useState('');
   const [tagTargets, setTagTargets] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState('');
-  const knownTags = [...new Set(forms.flatMap((f) => f.tags || []))].sort();
-  const activeCount = forms.filter((f) => f.status !== 'archived').length;
-  const trashCount = forms.filter((f) => f.status === 'archived').length;
+  const isNavForm = (f: { tags?: string[] | null }) => (f.tags || []).includes(NAVIGATION_TAG);
+  const appForms = forms.filter((f) => !isNavForm(f));
+  const navForms = forms.filter((f) => isNavForm(f));
+  const kindForms = kind === 'navigation' ? navForms : appForms;
+  const appActiveCount = appForms.filter((f) => f.status !== 'archived').length;
+  const navActiveCount = navForms.filter((f) => f.status !== 'archived').length;
+  const knownTags = [...new Set(kindForms.flatMap((f) => f.tags || []))]
+    .filter((t) => t !== NAVIGATION_TAG)
+    .sort();
+  const activeCount = kindForms.filter((f) => f.status !== 'archived').length;
+  const trashCount = kindForms.filter((f) => f.status === 'archived').length;
   const trashView = statusFilter === 'trash';
 
   const refreshAfterTagChange = async () => {
@@ -109,6 +116,7 @@ export const PatchformPage = () => {
   };
 
   const visibleForms = forms.filter((f) => {
+    if ((kind === 'navigation') !== isNavForm(f)) return false;
     if (trashView) return f.status === 'archived';
     if (f.status === 'archived') return false;
     if (statusFilter) {
@@ -260,13 +268,13 @@ export const PatchformPage = () => {
     setSelected(new Set());
   };
 
-  const chooseKind = (kind: 'application' | 'navigation') => {
-    setFormKind(kind);
+  useEffect(() => {
+    // タブ（種別）に合わせてナビゲーションタグの有無を揃える
     setTags((prev) => {
       const without = prev.filter((t) => t !== NAVIGATION_TAG);
       return kind === 'navigation' ? [NAVIGATION_TAG, ...without] : without;
     });
-  };
+  }, [kind]);
 
   useEffect(() => {
     if (pane !== 'new') return;
@@ -307,7 +315,7 @@ export const PatchformPage = () => {
           <h1 className='text-std-20B-160 lg:text-std-24B-150'>{PATCHFORM_LABEL}</h1>
           <PatchformSubnav current='forms' />
           <p className='text-std-16N-170 text-solid-gray-700'>
-            フォームを作成することができます。「一覧」で作成したフォームを見ることができます。「作成」で申請フォームやナビゲーションフォームの作成ができます。
+            申請フォームとナビゲーションフォームは、それぞれの「一覧」で確認し、「作成」タブから作れます。
           </p>
           <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
             <DisclosureSummary>
@@ -317,7 +325,7 @@ export const PatchformPage = () => {
               </span>
             </DisclosureSummary>
             <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-              <p>・タイトルを付けて作成し、編集画面で部品を並べます。1枚だけの手続きではタグは不要です。答えで用紙を足すナビゲーションフォームには、ラジオやプルダウンを入れ、「ナビゲーション」タグを付けてください。</p>
+              <p>・「申請フォーム」は記入してもらう1枚の用紙です。「ナビゲーションフォーム」は申請者の状況を聞いて必要な用紙を出し分ける入口で、それぞれ専用タブから作成・一覧できます。ナビゲーションフォームにはラジオやプルダウンを入れてください（作成時に「ナビゲーション」タグが自動で付きます）。</p>
               <p>・受付は「手続き」を公開すると始まります。届いた件は「申請受付」にあります。</p>
               <p>・外部 URL は「手続きを公開」にあります。LGWAN から届かない場合は、そこのリンクファイルを持ち出して別端末で開いてください。</p>
               <p>
@@ -353,13 +361,30 @@ export const PatchformPage = () => {
           <>
             <PatchformPaneTabs
               label='フォームの作成と一覧'
-              current={pane}
+              current={`${kind === 'navigation' ? 'nav' : 'app'}-${pane}`}
               tabs={[
-                { id: 'list', label: `一覧（${activeCount}）`, to: '/patchform', icon: PiListBold },
                 {
-                  id: 'new',
-                  label: '作成',
-                  to: fromGuideLink ? '/patchform?tab=new&intent=guide' : '/patchform?tab=new',
+                  id: 'app-list',
+                  label: `申請フォーム一覧（${appActiveCount}）`,
+                  to: '/patchform',
+                  icon: PiListBold,
+                },
+                {
+                  id: 'app-new',
+                  label: '申請フォーム作成',
+                  to: '/patchform?tab=new',
+                  icon: PiNotePencilBold,
+                },
+                {
+                  id: 'nav-list',
+                  label: `ナビゲーションフォーム一覧（${navActiveCount}）`,
+                  to: '/patchform?kind=navigation',
+                  icon: PiListBold,
+                },
+                {
+                  id: 'nav-new',
+                  label: 'ナビゲーションフォーム作成',
+                  to: '/patchform?kind=navigation&tab=new',
                   icon: PiNotePencilBold,
                 },
               ]}
@@ -368,44 +393,14 @@ export const PatchformPage = () => {
             <section id='pf-new-form' className='flex flex-col gap-4'>
               <h2 className='flex items-center gap-2 text-std-18B-160'>
                 <PiNotePencilBold className='size-5' />
-                新しいフォーム
+                {asGuide ? '新しいナビゲーションフォーム' : '新しい申請フォーム'}
               </h2>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                {asGuide
+                  ? '申請者の状況を聞き、必要な申請フォームの組み合わせを決めます。ラジオやプルダウンを入れてください。作成すると「ナビゲーション」タグが自動で付きます。'
+                  : '1枚の申請やお問い合わせなど、記入してもらう用紙です。'}
+              </p>
               <form onSubmit={onSubmit} className='flex flex-col gap-4'>
-                <fieldset>
-                  <legend className='text-std-16B-150'>種類</legend>
-                  <div className='mt-2 flex flex-col gap-2'>
-                    <label className='flex items-start gap-2 text-std-16N-170'>
-                      <input
-                        type='radio'
-                        name='pf-form-kind'
-                        className='mt-1'
-                        checked={!asGuide}
-                        onChange={() => chooseKind('application')}
-                      />
-                      <span>
-                        申請フォームを作る
-                        <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
-                          1枚の申請やお問い合わせなど、記入してもらう用紙です。
-                        </span>
-                      </span>
-                    </label>
-                    <label className='flex items-start gap-2 text-std-16N-170'>
-                      <input
-                        type='radio'
-                        name='pf-form-kind'
-                        className='mt-1'
-                        checked={asGuide}
-                        onChange={() => chooseKind('navigation')}
-                      />
-                      <span>
-                        ナビゲーションフォームを作る
-                        <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
-                          申請者の状況を聞き、必要な申請フォームの組み合わせを決めます。ラジオやプルダウンを入れてください。
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                </fieldset>
                 <div>
                   <Label htmlFor='pf-title' size='sm'>
                     タイトル
@@ -518,10 +513,15 @@ export const PatchformPage = () => {
             ) : (
             <section className='flex flex-col gap-3'>
               <div className='flex flex-wrap items-center justify-between gap-2'>
-                <h2 className='text-std-18B-160'>フォーム一覧</h2>
-                <Link to='/patchform?tab=new' className='inline-flex'>
+                <h2 className='text-std-18B-160'>
+                  {asGuide ? 'ナビゲーションフォーム一覧' : '申請フォーム一覧'}
+                </h2>
+                <Link
+                  to={asGuide ? '/patchform?kind=navigation&tab=new' : '/patchform?tab=new'}
+                  className='inline-flex'
+                >
                   <Button type='button' variant='solid-fill' size='sm'>
-                    新しいフォームを作る
+                    {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
                   </Button>
                 </Link>
               </div>
@@ -648,21 +648,13 @@ export const PatchformPage = () => {
                 </p>
               ) : visibleForms.length === 0 ? (
                 <p className='text-solid-gray-600'>
-                  {trashView ? (
-                    'ゴミ箱は空です。'
-                  ) : forms.length === 0 ? (
-                    <>
-                      まだフォームがありません。
-                      <Link
-                        to='/patchform?tab=new'
-                        className='ml-1 text-blue-900 underline-offset-2 hover:underline'
-                      >
-                        作成タブから作る
-                      </Link>
-                    </>
-                  ) : (
-                    'この条件のフォームはありません。'
-                  )}
+                  {trashView
+                    ? 'ゴミ箱は空です。'
+                    : kindForms.length === 0
+                      ? asGuide
+                        ? 'まだナビゲーションフォームがありません。'
+                        : 'まだ申請フォームがありません。'
+                      : 'この条件のフォームはありません。'}
                 </p>
               ) : (
                 <>

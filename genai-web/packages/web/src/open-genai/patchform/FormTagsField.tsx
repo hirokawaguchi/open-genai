@@ -14,8 +14,11 @@ const MAX_LEN = 30;
 
 export const FormTagsField = ({ id, value, onChange, suggestions = [], disabled }: Props) => {
   const [draft, setDraft] = useState('');
-  const extras = [NAVIGATION_TAG, ...suggestions].filter(
-    (tag, index, all) => !value.includes(tag) && all.indexOf(tag) === index,
+  const isNavigation = value.includes(NAVIGATION_TAG);
+  // ナビゲーション種別は作成タブで決まるため、通常のタグ候補には出さない
+  const extras = suggestions.filter(
+    (tag, index, all) =>
+      tag !== NAVIGATION_TAG && !value.includes(tag) && all.indexOf(tag) === index,
   );
 
   const add = (raw: string) => {
@@ -41,7 +44,10 @@ export const FormTagsField = ({ id, value, onChange, suggestions = [], disabled 
         タグ
       </Label>
       <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-        フォームを管理しやすいようにタグを付けることができます。「{NAVIGATION_TAG}」タグはナビゲーションフォームです。一連の手続きで複数の様式を作成する場合は、同じタグでグルーピングしておくと良いでしょう。
+        フォームを管理しやすいようにタグを付けることができます。一連の手続きで複数の様式を作成する場合は、同じタグでグルーピングしておくと良いでしょう。
+        {isNavigation
+          ? `なお「${NAVIGATION_TAG}」タグが付いたフォームはナビゲーションフォームとして扱われます。`
+          : ''}
       </p>
       {value.length > 0 ? (
         <ul className='mt-2 flex flex-wrap gap-2'>

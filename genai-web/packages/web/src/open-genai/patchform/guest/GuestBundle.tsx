@@ -18,6 +18,7 @@ type BundleItem = {
   fulfillment: '' | 'form' | 'file';
   file_name?: string | null;
   copy_index: number;
+  added_by?: string;
   public_url?: string | null;
   visibility?: string | null;
   can_fill_online: boolean;
@@ -40,6 +41,9 @@ type CatalogSlot = {
   kind: string;
   form_id?: string | null;
 };
+
+const OTHER_ATTACH_SLOT = 'attach:__other__';
+const OTHER_ATTACH_LABEL = 'その他（別途ファイルを添付する場合にお使いください）';
 
 const statusLabel: Record<string, string> = {
   none: '未充足',
@@ -133,6 +137,15 @@ export const GuestBundle = () => {
       body: JSON.stringify({ duplicate_of: item.id }),
     });
 
+  const onRemove = (item: BundleItem) => {
+    const label = item.slot_id === OTHER_ATTACH_SLOT ? OTHER_ATTACH_LABEL : item.title;
+    if (!window.confirm(`「${label}」の枠を削除します。よろしいですか？`)) return;
+    void call(
+      `/public/api/applications/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`,
+      { method: 'DELETE' },
+    );
+  };
+
   const onAddCatalog = () => {
     if (!catalogPick) return;
     void call(`/public/api/applications/${encodeURIComponent(token)}/items`, {
@@ -222,6 +235,10 @@ export const GuestBundle = () => {
             {bundle.items.map((f) => {
               const guestOk = f.visibility !== 'internal' && f.public_url;
               const filled = f.fulfillment === 'file';
+              const displayTitle = f.slot_id === OTHER_ATTACH_SLOT ? OTHER_ATTACH_LABEL : f.title;
+              const removable =
+                f.kind !== 'data' &&
+                (f.copy_index > 0 || (!!f.added_by && f.added_by !== 'system'));
               return (
                 <li key={f.id} className='py-3'>
                   <div className='flex flex-wrap items-baseline gap-2'>
@@ -230,12 +247,12 @@ export const GuestBundle = () => {
                         href={withApp(f.public_url || '', bundle.token, f.id)}
                         className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
                       >
-                        {f.title}
+                        {displayTitle}
                         {f.copy_index ? `（${f.copy_index + 1}件目）` : ''}
                       </a>
                     ) : (
                       <span className='text-std-16B-150'>
-                        {f.title}
+                        {displayTitle}
                         {f.copy_index ? `（${f.copy_index + 1}件目）` : ''}
                       </span>
                     )}
@@ -245,9 +262,18 @@ export const GuestBundle = () => {
                   </div>
                   <p className='text-solid-gray-700'>
                     {statusLabel[f.status] || f.status}
-                    {filled && f.file_name ? ` / 添付: ${f.file_name}` : ''}
                     {!guestOk && f.can_fill_online ? ' / 庁内のみ' : ''}
                   </p>
+                  {filled && f.file_name ? (
+                    <p className='mt-1'>
+                      <a
+                        href={`/public/api/applications/${encodeURIComponent(bundle.token)}/items/${encodeURIComponent(f.id)}/file`}
+                        className='text-blue-900 underline-offset-2 hover:underline'
+                      >
+                        添付ファイルをダウンロード（{f.file_name}）
+                      </a>
+                    </p>
+                  ) : null}
                   {f.template ? (
                     <p className='mt-1'>
                       <a
@@ -297,6 +323,16 @@ export const GuestBundle = () => {
                       >
                         同じ枠をもう1件
                       </button>
+                      {removable && (
+                        <button
+                          type='button'
+                          className='rounded border border-solid-gray-400 px-3 py-1 text-dns-14N-130 text-error-1'
+                          disabled={busy}
+                          onClick={() => onRemove(f)}
+                        >
+                          削除
+                        </button>
+                      )}
                     </div>
                   )}
                 </li>
