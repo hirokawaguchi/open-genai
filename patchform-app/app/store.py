@@ -6016,3 +6016,50 @@ def import_procedure(
         creator_name=creator_name,
     )
     return proc, perr
+
+
+def _copy_title(name: str) -> str:
+    base = (name or "").strip() or "無題"
+    return f"{base} のコピー"
+
+
+def duplicate_form(
+    form_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    creator_name: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """フォームを独立したコピーとして複製する（ひな型も含む）。"""
+    bundle, err = export_form(
+        form_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    )
+    if err or not bundle:
+        return None, err or "複製元のフォームが見つかりません"
+    pform = bundle.get("form")
+    if isinstance(pform, dict):
+        pform["title"] = _copy_title(str(pform.get("title") or ""))
+    return import_form(
+        bundle, creator_user_id=actor_user_id, creator_name=creator_name
+    )
+
+
+def duplicate_procedure(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    creator_name: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """手続きを独立したコピーとして複製する（構成フォームも複製する）。"""
+    bundle, err = export_procedure_bundle(
+        procedure_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    )
+    if err or not bundle:
+        return None, err or "複製元の手続きが見つかりません"
+    pproc = bundle.get("procedure")
+    if isinstance(pproc, dict):
+        pproc["name"] = _copy_title(str(pproc.get("name") or ""))
+    return import_procedure(
+        bundle, creator_user_id=actor_user_id, creator_name=creator_name
+    )

@@ -52,6 +52,7 @@ export const PatchformPage = () => {
     applyTagsMany,
     removeMany,
     importForm,
+    duplicate: duplicateForm,
     submitting,
     error,
     setError,
@@ -59,6 +60,7 @@ export const PatchformPage = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const {
     generate,
     busy: assistBusy,
@@ -296,6 +298,20 @@ export const PatchformPage = () => {
       setImportMsg('書き出しに失敗しました。');
     } finally {
       setExportingId(null);
+    }
+  };
+
+  const onDuplicateForm = async (id: string) => {
+    setImportMsg(null);
+    setDuplicatingId(id);
+    try {
+      const created = await duplicateForm(id);
+      if (created) {
+        await mutate();
+        setImportMsg(`「${created.title}」を複製しました（未公開）。`);
+      }
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -934,14 +950,24 @@ export const PatchformPage = () => {
                           </p>
                         </div>
                         {f.can_edit ? (
-                          <button
-                            type='button'
-                            className='mt-0.5 flex-none rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
-                            aria-disabled={exportingId === f.id}
-                            onClick={() => void onExportForm(f.id)}
-                          >
-                            {exportingId === f.id ? '書き出し中...' : '書き出し'}
-                          </button>
+                          <div className='mt-0.5 flex flex-none gap-2'>
+                            <button
+                              type='button'
+                              className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                              aria-disabled={duplicatingId === f.id}
+                              onClick={() => void onDuplicateForm(f.id)}
+                            >
+                              {duplicatingId === f.id ? '複製中...' : '複製'}
+                            </button>
+                            <button
+                              type='button'
+                              className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                              aria-disabled={exportingId === f.id}
+                              onClick={() => void onExportForm(f.id)}
+                            >
+                              {exportingId === f.id ? '書き出し中...' : '書き出し'}
+                            </button>
+                          </div>
                         ) : null}
                       </li>
                     ))}

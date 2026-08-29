@@ -1086,6 +1086,60 @@ async def import_procedure_portable(
     return JSONResponse(status_code=201, content=detail)
 
 
+@app.post("/forms/{form_id}/duplicate")
+async def duplicate_form_endpoint(
+    form_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    detail, msg = store.duplicate_form(
+        form_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg or "複製に失敗しました"})
+    print(f"[patchform] form duplicated id={detail['id']} from={form_id} by={uid}")
+    return JSONResponse(status_code=201, content=detail)
+
+
+@app.post("/procedures/{procedure_id}/duplicate")
+async def duplicate_procedure_endpoint(
+    procedure_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    detail, msg = store.duplicate_procedure(
+        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg or "複製に失敗しました"})
+    print(
+        f"[patchform] procedure duplicated id={detail['id']} from={procedure_id} by={uid}"
+    )
+    return JSONResponse(status_code=201, content=detail)
+
+
 @app.get("/procedures/{procedure_id}/export")
 def export_procedure_applications(
     procedure_id: str,

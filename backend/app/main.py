@@ -4719,6 +4719,32 @@ async def patchform_import_procedure(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/patchform/forms/{form_id}/duplicate")
+async def patchform_duplicate_form(form_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/forms/{form_id}/duplicate"), headers, {}, timeout=60
+    )
+
+
+@app.post("/patchform/procedures/{procedure_id}/duplicate")
+async def patchform_duplicate_procedure(
+    procedure_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/procedures/{procedure_id}/duplicate"),
+        headers,
+        {},
+        timeout=60,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 利用者一括管理 専用ページ(/admin/users) 用プロキシ（管理者限定）
 #

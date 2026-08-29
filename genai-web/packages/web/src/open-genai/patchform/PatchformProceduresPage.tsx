@@ -43,6 +43,7 @@ export const PatchformProceduresPage = () => {
     setStatusMany,
     removeMany,
     importProcedure,
+    duplicate: duplicateProcedure,
     submitting,
     error,
     setError,
@@ -50,6 +51,7 @@ export const PatchformProceduresPage = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const {
     previewProcedure,
     applyProcedureDraft,
@@ -228,6 +230,20 @@ export const PatchformProceduresPage = () => {
       setImportMsg('書き出しに失敗しました。');
     } finally {
       setExportingId(null);
+    }
+  };
+
+  const onDuplicateProcedure = async (id: string) => {
+    setImportMsg(null);
+    setDuplicatingId(id);
+    try {
+      const created = await duplicateProcedure(id);
+      if (created) {
+        await Promise.all([mutate(), mutateForms()]);
+        setImportMsg(`「${created.name}」を複製しました（未公開）。`);
+      }
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -727,14 +743,24 @@ export const PatchformProceduresPage = () => {
                       )}
                     </div>
                     {p.can_edit ? (
-                      <button
-                        type='button'
-                        className='mt-0.5 flex-none rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
-                        aria-disabled={exportingId === p.id}
-                        onClick={() => void onExportProcedure(p.id)}
-                      >
-                        {exportingId === p.id ? '書き出し中...' : '書き出し'}
-                      </button>
+                      <div className='mt-0.5 flex flex-none gap-2'>
+                        <button
+                          type='button'
+                          className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                          aria-disabled={duplicatingId === p.id}
+                          onClick={() => void onDuplicateProcedure(p.id)}
+                        >
+                          {duplicatingId === p.id ? '複製中...' : '複製'}
+                        </button>
+                        <button
+                          type='button'
+                          className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                          aria-disabled={exportingId === p.id}
+                          onClick={() => void onExportProcedure(p.id)}
+                        >
+                          {exportingId === p.id ? '書き出し中...' : '書き出し'}
+                        </button>
+                      </div>
                     ) : null}
                   </li>
                 ))}

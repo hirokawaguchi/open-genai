@@ -461,6 +461,25 @@ export const usePatchformActions = () => {
     [api],
   );
 
+  const duplicate = useCallback(
+    async (formId: string): Promise<FormDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await api.post<FormDetail>(
+          `patchform/forms/${encodeURIComponent(formId)}/duplicate`,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'フォームの複製に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [api],
+  );
+
   return {
     create,
     update,
@@ -474,6 +493,7 @@ export const usePatchformActions = () => {
     setWithdrawn,
     revealSubmission,
     importForm,
+    duplicate,
     submitting,
     error,
     setError,
@@ -1457,6 +1477,26 @@ export const usePatchformProcedureActions = () => {
     [],
   );
 
+  // 手続きを複製する（構成フォームも独立したコピーとして作られる）。
+  const duplicate = useCallback(
+    async (procedureId: string): Promise<Procedure | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Procedure>(
+          `patchform/procedures/${encodeURIComponent(procedureId)}/duplicate`,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの複製に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   return {
     create,
     save,
@@ -1466,6 +1506,7 @@ export const usePatchformProcedureActions = () => {
     remove,
     removeMany,
     importProcedure,
+    duplicate,
     submitting,
     error,
     setError,
