@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import {
   downloadProcedureLinkFile,
   downloadProcedureQr,
+  usePatchformProcedureActions,
   usePatchformProcedureShare,
 } from './usePatchform';
 
@@ -73,7 +75,21 @@ export const ProcedureSharePanel = ({
   name: string;
 }) => {
   const [open, setOpen] = useState(false);
-  const { share, isLoading, loadError } = usePatchformProcedureShare(procedureId, open);
+  const { share, isLoading, loadError, mutate } = usePatchformProcedureShare(procedureId, open);
+  const { setGuideVisibility, submitting } = usePatchformProcedureActions();
+  const [fixError, setFixError] = useState<string | null>(null);
+
+  // 庁外URLは案内（ナビゲーション）フォームの公開範囲が「庁内と外部」「外部のみ」の
+  // ときだけ作られる。庁内のみだと庁外導線が出ないので、その場で公開範囲を広げられる。
+  const onOpenExternal = async () => {
+    setFixError(null);
+    const updated = await setGuideVisibility(procedureId, 'both');
+    if (updated) {
+      await mutate();
+    } else {
+      setFixError('案内フォームの公開範囲を変更できませんでした。時間をおいて再度お試しください。');
+    }
+  };
 
   return (
     <Disclosure
@@ -108,9 +124,37 @@ export const ProcedureSharePanel = ({
                 filename={`${name}_庁外QR.svg`}
               />
             ) : (
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                この手続きは庁内のみです。庁外向けのURLとQRはありません。
-              </p>
+              <div className='flex flex-col gap-2 rounded-8 border border-amber-600 bg-amber-50 px-3 py-3'>
+                <p className='text-std-16B-150 text-amber-900'>
+                  庁外向けのURL・QRがありません
+                </p>
+                <p className='text-dns-14N-130 text-solid-gray-800'>
+                  入口となる<strong>案内（ナビゲーション）フォームの公開範囲が「庁内のみ」</strong>のため、庁外には公開できません。庁外にも公開するには、案内フォームの公開範囲を「庁内と外部」に変更してください。
+                </p>
+                {fixError && (
+                  <p className='text-error-1' role='alert'>
+                    {fixError}
+                  </p>
+                )}
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='sm'
+                    aria-disabled={submitting}
+                    onClick={() => void onOpenExternal()}
+                  >
+                    {submitting ? '変更中...' : '庁外にも公開する'}
+                  </Button>
+                  {share.guide_form_id && (
+                    <Link to={`/patchform/${share.guide_form_id}/edit`} className='inline-flex'>
+                      <Button type='button' variant='outline' size='sm'>
+                        案内フォームを編集
+                      </Button>
+                    </Link>
+                  )}
+                </div>
+              </div>
             )}
             <div>
               <Button

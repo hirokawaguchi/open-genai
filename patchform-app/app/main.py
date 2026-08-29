@@ -629,6 +629,36 @@ async def set_procedure_status(
     return JSONResponse(content=detail)
 
 
+@app.post("/procedures/{procedure_id}/guide-visibility")
+async def set_guide_visibility(
+    procedure_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    detail, msg = store.set_guide_visibility(
+        procedure_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        visibility=(body.get("visibility") or ""),
+    )
+    if msg or detail is None:
+        code = 404 if "見つかりません" in (msg or "") else 403 if "権限" in (msg or "") else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
 @app.delete("/procedures/{procedure_id}")
 def delete_procedure(
     procedure_id: str,

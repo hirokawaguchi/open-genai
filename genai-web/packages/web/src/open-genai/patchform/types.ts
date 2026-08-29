@@ -408,6 +408,9 @@ export type ProcedureShare = {
   external_url?: string | null;
   internal_qr_svg: string;
   external_qr_svg?: string | null;
+  // 庁外URLが無い原因の説明・修正用（案内フォームの公開範囲）。
+  guide_form_id?: string | null;
+  guide_visibility?: FormVisibility | null;
 };
 
 export type Inbox = {
