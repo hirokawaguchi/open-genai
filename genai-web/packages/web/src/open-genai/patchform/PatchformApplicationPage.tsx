@@ -16,7 +16,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PatchformApiScope, createGuestFormApi, usePatchformApi } from './PatchformApiContext';
 import { PatchformFillModal } from './PatchformFillModal';
-import { readSession } from './guest/guestSession';
+import { clearSession, readSession } from './guest/guestSession';
 import { PATCHFORM_LABEL } from './labels';
 import { usePatchformRoutes } from './routes';
 import { answerRows } from './runtime/formatAnswer';
@@ -207,16 +207,21 @@ export const PatchformApplicationPage = () => {
   const [claimError, setClaimError] = useState<string | null>(null);
   // 匿名束を「マイ手続き」へ引き取る。未ログインならログインへ誘導し、戻り先 token を
   // 保持して GuestVerify 側で自動 claim させる。ログイン済みならその場で claim する。
+  // ログイン画面へ誘導する。戻り先 token を保持して GuestVerify 側で自動 claim させる。
+  const goLoginForClaim = (token: string) => {
+    try {
+      sessionStorage.setItem('pf_pending_claim', token);
+    } catch {
+      // sessionStorage 不可でも致命ではない（ログイン後に再度ボタンを押せばよい）。
+    }
+    navigate('/public/mine');
+  };
+
   const onClaim = async () => {
     const token = application?.token || applicationId || '';
     if (!token) return;
     if (!readSession()) {
-      try {
-        sessionStorage.setItem('pf_pending_claim', token);
-      } catch {
-        // sessionStorage 不可でも致命ではない（ログイン後に再度ボタンを押せばよい）。
-      }
-      navigate('/public/mine');
+      goLoginForClaim(token);
       return;
     }
     setClaimBusy(true);
@@ -230,7 +235,15 @@ export const PatchformApplicationPage = () => {
         navigate(`/public/mine/${encodeURIComponent(id)}?from=my`);
       }
     } catch (e) {
-      setClaimError(e instanceof Error ? e.message : '引き取りに失敗しました');
+      const msg = e instanceof Error ? e.message : '引き取りに失敗しました';
+      // セッション失効（例: サーバ再起動で署名鍵が変わった）なら、古いセッションを
+      // 破棄してログインへ。email だけ残って操作が失敗し続ける状態を防ぐ。
+      if (/セッション|認証|失効|期限/.test(msg)) {
+        clearSession();
+        goLoginForClaim(token);
+        return;
+      }
+      setClaimError(msg);
     } finally {
       setClaimBusy(false);
     }
