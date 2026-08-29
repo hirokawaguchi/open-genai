@@ -22,7 +22,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -4391,14 +4391,96 @@ async def patchform_download_item_template(
     )
 
 
+def _filename_from_disposition(disposition: str | None, fallback: str) -> str:
+    if not disposition:
+        return fallback
+    m = re.search(r"filename\*=UTF-8''([^;]+)", disposition, re.IGNORECASE)
+    if m:
+        try:
+            return unquote(m.group(1)) or fallback
+        except Exception:  # noqa: BLE001
+            return m.group(1) or fallback
+    m = re.search(r'filename="?([^";]+)"?', disposition, re.IGNORECASE)
+    if m:
+        return m.group(1) or fallback
+    return fallback
+
+
 @app.get("/patchform/applications/{application_id}/items/{item_id}/file")
 async def patchform_download_item_file(
     application_id: str, item_id: str, request: Request
 ) -> Response:
-    return await _patchform_binary_get(
-        f"/applications/{application_id}/items/{item_id}/file",
-        request,
-        f"patchform_{item_id}",
+    """申請束アイテムの添付ダウンロード。
+
+    庁外(external)由来の添付は庁内でローカル実体を直接ストリームせず、
+    SeaweedFS へ再ホストして署名付き URL（LGWAN では carrier）で受け渡す。
+    庁内由来・ストレージ未設定時は従来どおりバイナリをストリームする。
+    """
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    path = f"/applications/{application_id}/items/{item_id}/file"
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(_patchform_app_url(path), headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"フォームサービスに接続できませんでした: {e}", "enabled": False},
+        )
+    ctype = res.headers.get("content-type", "")
+    if res.status_code != 200 or (ctype and ctype.startswith("application/json")):
+        try:
+            payload = res.json()
+        except ValueError:
+            payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+        return JSONResponse(status_code=res.status_code, content=payload)
+
+    disposition = res.headers.get("content-disposition")
+    fallback_name = f"patchform_{item_id}"
+    filename = _filename_from_disposition(disposition, fallback_name)
+    origin = (res.headers.get("x-patchform-origin") or "internal").strip().lower()
+
+    # 庁内由来 or ストレージ未設定 → 従来どおりストリーム
+    if origin != "external" or not objstore.is_configured():
+        return Response(
+            content=res.content,
+            media_type=ctype or "application/octet-stream",
+            headers={
+                "Content-Disposition": disposition
+                or f'attachment; filename="{fallback_name}"'
+            },
+        )
+
+    # 庁外由来 → SeaweedFS へ再ホストして署名付き URL / carrier で返す
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims) or PATCHFORM_SERVICE_USER
+    presigned, object_key = objstore.put_and_presign(
+        res.content,
+        filename=filename,
+        content_type=ctype or "application/octet-stream",
+        user_id=user_id,
+    )
+    if not object_key:
+        # 再ホストに失敗した場合はストリームにフォールバック
+        return Response(
+            content=res.content,
+            media_type=ctype or "application/octet-stream",
+            headers={
+                "Content-Disposition": disposition
+                or f'attachment; filename="{fallback_name}"'
+            },
+        )
+    carrier = ARTIFACT_DELIVERY_MODE == "carrier"
+    return JSONResponse(
+        content={
+            "rehosted": True,
+            "display_name": filename,
+            "mime_type": ctype or "application/octet-stream",
+            "file_url": "" if carrier else (presigned or ""),
+            "object_key": object_key,
+            "delivery": "carrier" if carrier else "open",
+        }
     )
 
 

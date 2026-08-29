@@ -132,6 +132,41 @@ GET    /public/api/applications/{token}/templates/{file_id}      # 申請者ダ�
 
 公開済みの手続きは読み取り専用 MCP（`procedure-mcp`）でも配れます。ツールは `list_procedures` / `inspect_procedure` / `resolve_bundle` です。下書き・提出本文・申請束トークンは出しません。詳細は [procedure-mcp.md](procedure-mcp.md)。デジタル庁の行政手続等調査 MCP とは別物です。
 
+## 庁外「マイ手続き」（外部ログイン）
+
+庁外の申請者も、メールでログインして自分の手続き（申請束）の一覧・新規作成・提出ができます。庁内 Keycloak には依存しません。公開面（`/public/*`）だけで完結します。
+
+- ログイン: `/public/mine`（未ログインならメール入力画面）→ メールのリンク（`/public/auth/verify?token=...`）を開くと外部セッションが確立します。列挙防止のため、送信要求はメールの有無に関わらず同じ応答を返します。
+- 一覧: `/public/mine` に、自分が所有する申請束（`owner_kind=external`・`owner_key=正規化メール`）が並びます。
+- 新規作成: `/public/new` で公開中の手続きを選ぶと空のプロジェクトができ、作業台の先頭「記入必須」枠（案内フォーム）に答えると必要書類が確定します（プロジェクト先行方式）。
+- 作業台: `/public/p/{token}?from=my` で、記入・添付・枠の追加/複製、提出/取下げを行います。条件（案内）の変更は本人だけ、受付（庁内）はできません。
+
+セッションは HMAC 署名の Bearer トークン（既定 TTL 30日、`PATCHFORM_EXT_SESSION_TTL_DAYS`）。マジックトークンは単回・短命（既定 15分、`PATCHFORM_MAGIC_TTL_MIN`）。署名鍵は `PATCHFORM_EXT_SECRET`（本番は必ず固定。未設定時はサービスキー流用、それも無ければ再起動でセッション失効）。dev で SMTP 未設定のときはリンクを標準出力にログし、`PATCHFORM_MAIL_DUMP_DIR` にも文面を書き出します。
+
+```
+POST /public/api/auth/request         # {email} → マジックリンク送信（常に成功応答）
+POST /public/api/auth/verify          # {token} → {token(Bearer), email, expires_at}
+GET  /public/api/auth/session         # 本人確認（Bearer）
+POST /public/api/auth/logout          # セッション失効
+GET  /public/api/applications/mine    # 自分の申請束一覧（Bearer）
+POST /public/api/applications         # {procedure_id} 新規プロジェクト（Bearer）
+POST /public/api/applications/{id}/status  # 提出/取下げ等（Bearer・所有者チェック）
+PATCH /public/api/applications/{id}   # タイトル等の更新（Bearer・所有者チェック）
+GET  /public/api/procedures           # 公開手続き一覧（Bearer）
+POST /public/api/procedures/{id}/resolve   # 必要書類の dry-run（Bearer）
+```
+
+既存のトークン URL（`/public/f/...` 単体フォーム、`/public/p/{token}` 束）は温存します。トークンのみで開いた束（owner 空）はログインしても一覧には出ません（新規はログイン後に作成した束が対象）。庁内先行で作った `owner_kind=internal` の束は庁外一覧には出ません（別人格）。
+
+## 安全なファイル受け渡し（庁外→庁内）
+
+庁外の申請者がアップロードした添付は、庁内でローカル実体を直接ストリームしません。AI アプリ成果物と同じ経路で、backend がサーバ間で実体を取得し SeaweedFS へ再ホストして、署名付き URL（開発）/ carrier リンクファイル（LGWAN）で庁内へ渡します。
+
+- 由来の記録: `uploaded_files.origin`（`internal` / `external`）。公開（ゲスト/外部）アップロードは `external`。
+- 庁内 DL: `GET /patchform/applications/{id}/items/{item_id}/file` は、`external` 由来かつ SeaweedFS 設定時に JSON（`{rehosted, file_url|object_key, mime_type, delivery}`）を返します。`internal` 由来やストレージ未設定時は従来どおりバイナリをストリームします。
+- carrier: `ARTIFACT_DELIVERY_MODE=carrier` のとき `file_url` を空にして `object_key` を返し、庁内フロントは `/exapps/artifact-carrier` でリンクファイルを取得します（`ExAppArtifactDownloads` と同じ作法）。
+- 再ホストは backend に集約し、`patchform-app` は無改造。庁内由来の添付は従来どおりです。
+
 ## 庁内バッチ（サービス認証）
 
 `PATCHFORM_SERVICE_KEY` を backend と `patchform-app` の両方に同じ値で書いたときだけ、職員ログインなしで読み取れます。書き込み・ゲスト公開面では使えません。
@@ -188,5 +223,9 @@ OpenAI 互換 API（既定は Ollama）でフォーム定義の作成・修正�
 | `PATCHFORM_STAFF_BASE_URL` | 通知メール内の申請受付 URL のホスト | `http://localhost` |
 | `PATCHFORM_SERVICE_KEY` | 庁内バッチの読み取り鍵。未設定なら使えない | |
 | `PATCHFORM_MAIL_DUMP_DIR` | 職員通知の文面を書き出すディレクトリ。SMTP が無くても確認できる。開発は `/data/mail` | `/data/mail` |
+| `PATCHFORM_EXT_SECRET` | 庁外セッションの署名鍵（HMAC）。本番は固定必須。未設定はサービスキー流用→無ければ再起動で失効 | |
+| `PATCHFORM_MAGIC_TTL_MIN` | マジックリンクの有効分数（単回・短命） | `15` |
+| `PATCHFORM_EXT_SESSION_TTL_DAYS` | 庁外セッションの有効日数 | `30` |
+| `ARTIFACT_DELIVERY_MODE` | 添付/成果物の配信（`open`=署名付きURL / `carrier`=リンクファイル）。backend 側 | `open` |
 | `PROCEDURE_MCP_PORT` | 手続き MCP のホストポート | `8013` |
 | `PROCEDURE_MCP_BIND` | 手続き MCP のバインド（既定は loopback） | `127.0.0.1` |

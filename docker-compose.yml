@@ -492,6 +492,11 @@ services:
       - PATCHFORM_STAFF_BASE_URL=${PATCHFORM_STAFF_BASE_URL:-${PUBLIC_URL:-http://localhost}}
       - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
       - PATCHFORM_MAIL_DUMP_DIR=${PATCHFORM_MAIL_DUMP_DIR:-/data/mail}
+      # 庁外マイ手続き（外部セッション）。本番は EXT_SECRET を必ず固定値で設定する。
+      # 未設定時はサービスキーを流用し、それも無ければ再起動でセッション失効。
+      - PATCHFORM_EXT_SECRET=${PATCHFORM_EXT_SECRET:-}
+      - PATCHFORM_MAGIC_TTL_MIN=${PATCHFORM_MAGIC_TTL_MIN:-15}
+      - PATCHFORM_EXT_SESSION_TTL_DAYS=${PATCHFORM_EXT_SESSION_TTL_DAYS:-30}
     volumes:
       - patchform_app_data:/data
     ports:

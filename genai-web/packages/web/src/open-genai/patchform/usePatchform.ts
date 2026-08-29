@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import useSWR from 'swr';
 import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
+import { download } from '@/utils/createDownloadLink';
 import type { ImiSource } from './runtime/imiSuggest';
 import { lookupPostalDirect } from './runtime/postalLookup';
 import type {
@@ -471,7 +472,21 @@ export const downloadItemTemplate = async (
   saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'template');
 };
 
-/** 申請束のアイテムに添付された、申請者アップロードのファイルをDLする。 */
+/** 成果物DLリンクを記載した「リンクファイル」(carrier)を取得して保存する（LGWAN想定）。 */
+export const downloadArtifactCarrier = async (objectKey: string): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob('/exapps/artifact-carrier', {
+    params: { objectKey },
+  });
+  const filename =
+    parseFilename(disposition) ?? `${objectKey.split('/').pop() ?? 'download'}_link.txt`;
+  saveBlob(blob, filename);
+};
+
+/** 申請束のアイテムに添付された、申請者アップロードのファイルをDLする。
+ *
+ * 庁外由来の添付は backend が SeaweedFS へ再ホストし、署名付きURL（carrierモードでは
+ * リンクファイル）を JSON で返す。庁内由来はバイナリをそのままストリームする。
+ */
 export const downloadItemFile = async (
   applicationId: string,
   itemId: string,
@@ -480,6 +495,32 @@ export const downloadItemFile = async (
   const { blob, disposition } = await teamApi.getBlob(
     `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
   );
+  if (blob.type.includes('application/json')) {
+    let info: {
+      rehosted?: boolean;
+      delivery?: string;
+      file_url?: string;
+      object_key?: string;
+      display_name?: string;
+      error?: string;
+    } = {};
+    try {
+      info = JSON.parse(await blob.text());
+    } catch {
+      info = {};
+    }
+    if (info.rehosted) {
+      if (info.delivery === 'carrier' && info.object_key) {
+        await downloadArtifactCarrier(info.object_key);
+        return;
+      }
+      if (info.file_url) {
+        download(info.file_url, info.display_name ?? fallbackName ?? 'attachment');
+        return;
+      }
+    }
+    throw new Error(info.error ?? 'ダウンロードに失敗しました');
+  }
   saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'attachment');
 };
 

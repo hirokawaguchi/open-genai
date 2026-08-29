@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
+import { PatchformApiProvider } from '../PatchformApiContext';
 import { FillForm } from '../runtime/FillForm';
 import { answerRows } from '../runtime/formatAnswer';
 import { sourcesFromApplication } from '../runtime/imiSuggest';
@@ -8,6 +9,9 @@ import { lookupPostalDirect } from '../runtime/postalLookup';
 import { missingRequired } from '../runtime/visibility';
 import type { Application, FormDefinition, UploadedFile } from '../types';
 import { GuestBundle } from './GuestBundle';
+import { GuestMine } from './GuestMine';
+import { GuestVerify } from './GuestVerify';
+import { GuestWizard } from './GuestWizard';
 
 type PublicForm = {
   title?: string;
@@ -64,12 +68,32 @@ const api = async <T,>(path: string, opts?: RequestInit): Promise<T> => {
   return data;
 };
 
-export const GuestApp = () => {
-  if (location.pathname.includes('/public/p/')) {
+const GuestRoutes = () => {
+  const path = location.pathname;
+  if (path.includes('/public/auth/verify')) {
+    return <GuestVerify />;
+  }
+  if (path.includes('/public/new')) {
+    return <GuestWizard />;
+  }
+  if (path.includes('/public/mine')) {
+    return <GuestMine />;
+  }
+  if (path.includes('/public/p/')) {
     return <GuestBundle />;
   }
-  return <GuestForm />;
+  if (path.includes('/public/f/')) {
+    return <GuestForm />;
+  }
+  // ルート（/public/ 直下）はマイ手続き（未ログインならログイン画面）。
+  return <GuestMine />;
 };
+
+export const GuestApp = () => (
+  <PatchformApiProvider mode='guest'>
+    <GuestRoutes />
+  </PatchformApiProvider>
+);
 
 const GuestForm = () => {
   const token = tokenFromPath();
