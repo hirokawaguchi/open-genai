@@ -158,7 +158,6 @@ const GuestForm = () => {
   const [draftNote, setDraftNote] = useState<string | null>(null);
   const [resumeToken, setResumeToken] = useState('');
   const [withdrawCode, setWithdrawCode] = useState('');
-  const [openedApp, setOpenedApp] = useState<Application | null>(null);
   const [bundle, setBundle] = useState<Application | null>(null);
 
   const onWithdraw = async (code: string) => {
@@ -344,7 +343,6 @@ const GuestForm = () => {
       );
       writeGuestState(token, { receipt: result.receipt_code || '', submitted: true, resume: '' });
       setReceipt(result.receipt_code || '');
-      setOpenedApp(result.application || null);
       setPhase('done');
     } catch (e) {
       setError(e instanceof Error ? e.message : '送信に失敗しました');
@@ -557,16 +555,7 @@ const GuestForm = () => {
             控え番号: <strong>{receipt}</strong>
           </p>
           <p className='mt-2'>この番号を控えてください。</p>
-          {openedApp?.public_url ? (
-            <p className='mt-4'>
-              <a
-                href={openedApp.public_url}
-                className='text-blue-900 underline-offset-2 hover:underline'
-              >
-                この申請の一覧へ
-              </a>
-            </p>
-          ) : applicationToken ? (
+          {applicationToken ? (
             <p className='mt-4'>
               <a
                 href={`/public/p/${encodeURIComponent(applicationToken)}`}
