@@ -20,6 +20,7 @@ import type {
   Application,
   MyApplication,
   Inbox,
+  PatchformExportBundle,
   Procedure,
   ProcedureCatalog,
   ProcedureResolvePreview,
@@ -443,6 +444,23 @@ export const usePatchformActions = () => {
     }
   }, []);
 
+  const importForm = useCallback(
+    async (bundle: PatchformExportBundle): Promise<FormDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await api.post<FormDetail>('patchform/forms/import', { bundle });
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'フォームの取り込みに失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [api],
+  );
+
   return {
     create,
     update,
@@ -455,6 +473,7 @@ export const usePatchformActions = () => {
     loadDraft,
     setWithdrawn,
     revealSubmission,
+    importForm,
     submitting,
     error,
     setError,
@@ -494,6 +513,37 @@ export const downloadProcedureExport = async (
   );
   const ext = format === 'jsonl' ? 'jsonl' : 'csv';
   saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
+};
+
+/** フォームの定義とひな型を可搬なJSONとして書き出す（庁内）。 */
+export const downloadFormPortable = async (formId: string): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/forms/${encodeURIComponent(formId)}/portable`,
+  );
+  saveBlob(blob, parseFilename(disposition) ?? `form_${formId}.json`);
+};
+
+/** 手続き（案内＋全構成様式を同梱）を可搬なJSONとして書き出す（庁内）。 */
+export const downloadProcedurePortable = async (procedureId: string): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/procedures/${encodeURIComponent(procedureId)}/portable`,
+  );
+  saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}.json`);
+};
+
+/** アップロードされたJSONファイルを読み、書き出しバンドルとしてパースする。 */
+export const readExportBundleFile = async (file: File): Promise<PatchformExportBundle> => {
+  const text = await file.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('JSONファイルとして読み取れませんでした。');
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('取り込みデータが不正です。');
+  }
+  return parsed as PatchformExportBundle;
 };
 
 /** 申請束のアイテムに紐づく様式ひな型をDLする（庁内=teamApi / 庁外=公開API）。 */
@@ -1390,6 +1440,23 @@ export const usePatchformProcedureActions = () => {
     [],
   );
 
+  const importProcedure = useCallback(
+    async (bundle: PatchformExportBundle): Promise<Procedure | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Procedure>('patchform/procedures/import', { bundle });
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '手続きの取り込みに失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   return {
     create,
     save,
@@ -1398,6 +1465,7 @@ export const usePatchformProcedureActions = () => {
     setProcedureVisibility,
     remove,
     removeMany,
+    importProcedure,
     submitting,
     error,
     setError,

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { PiListBold, PiNotePencilBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
@@ -14,7 +14,9 @@ import { PatchformSubnav } from './PatchformSubnav';
 import { ProcedureReceptionActions } from './ProcedureReceptionActions';
 import { omitsNavigation } from './types';
 import {
+  downloadProcedurePortable,
   extractPatchformFile,
+  readExportBundleFile,
   usePatchformAssist,
   usePatchformConfig,
   usePatchformList,
@@ -35,8 +37,19 @@ export const PatchformProceduresPage = () => {
   const { config } = usePatchformConfig();
   const { forms, mutate: mutateForms } = usePatchformList();
   const { procedures, isLoading, loadError, mutate } = usePatchformProcedures();
-  const { create, setStatus, setStatusMany, removeMany, submitting, error, setError } =
-    usePatchformProcedureActions();
+  const {
+    create,
+    setStatus,
+    setStatusMany,
+    removeMany,
+    importProcedure,
+    submitting,
+    error,
+    setError,
+  } = usePatchformProcedureActions();
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const {
     previewProcedure,
     applyProcedureDraft,
@@ -203,6 +216,39 @@ export const PatchformProceduresPage = () => {
       setAssistError('ファイルの読み取りに失敗しました。txt / md / pdf / docx / xlsx を選んでください。');
     } finally {
       setReadingFile(false);
+    }
+  };
+
+  const onExportProcedure = async (id: string) => {
+    setImportMsg(null);
+    setExportingId(id);
+    try {
+      await downloadProcedurePortable(id);
+    } catch {
+      setImportMsg('書き出しに失敗しました。');
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportMsg(null);
+    try {
+      const bundle = await readExportBundleFile(file);
+      if (bundle.kind !== 'procedure') {
+        setImportMsg('これはフォームの書き出しファイルです。フォーム一覧の「読み込み」からお試しください。');
+        return;
+      }
+      const created = await importProcedure(bundle);
+      if (created) {
+        await Promise.all([mutate(), mutateForms()]);
+        setImportMsg(`「${created.name}」を下書きとして取り込みました（構成フォームも作成しました）。`);
+      }
+    } catch (err) {
+      setImportMsg(err instanceof Error ? err.message : '取り込みに失敗しました。');
     }
   };
 
@@ -465,12 +511,35 @@ export const PatchformProceduresPage = () => {
         <section className='flex flex-col gap-3'>
           <div className='flex flex-wrap items-center justify-between gap-2'>
             <h2 className='text-std-18B-160'>手続き一覧</h2>
-            <Link to='/patchform/procedures?tab=new' className='inline-flex'>
-              <Button type='button' variant='solid-fill' size='sm'>
-                新しい手続きを作る
+            <div className='flex flex-wrap items-center gap-2'>
+              <input
+                ref={importInputRef}
+                type='file'
+                accept='application/json,.json'
+                className='hidden'
+                onChange={onImportFile}
+              />
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                aria-disabled={submitting}
+                onClick={() => importInputRef.current?.click()}
+              >
+                読み込み
               </Button>
-            </Link>
+              <Link to='/patchform/procedures?tab=new' className='inline-flex'>
+                <Button type='button' variant='solid-fill' size='sm'>
+                  新しい手続きを作る
+                </Button>
+              </Link>
+            </div>
           </div>
+          {importMsg ? (
+            <p className='text-dns-14N-130 text-solid-gray-700' role='status'>
+              {importMsg}
+            </p>
+          ) : null}
           <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='表示の切り替え'>
             <button
               type='button'
@@ -657,6 +726,16 @@ export const PatchformProceduresPage = () => {
                         </div>
                       )}
                     </div>
+                    {p.can_edit ? (
+                      <button
+                        type='button'
+                        className='mt-0.5 flex-none rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                        aria-disabled={exportingId === p.id}
+                        onClick={() => void onExportProcedure(p.id)}
+                      >
+                        {exportingId === p.id ? '書き出し中...' : '書き出し'}
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </ul>
