@@ -17,7 +17,6 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { DOCMAKER_LABEL } from '../docmaker/labels';
 import { PatchformFillModal } from './PatchformFillModal';
 import { PATCHFORM_LABEL } from './labels';
-import { PatchformProcedureCoach } from './PatchformProcedureCoach';
 import { answerRows } from './runtime/formatAnswer';
 import { omitsNavigation } from './types';
 import type { ApplicationItem } from './types';
@@ -280,7 +279,7 @@ export const PatchformApplicationPage = () => {
                 )}
               </div>
               <p className='text-std-16N-170 text-solid-gray-700'>
-                案内番号: {application.token}。このセットで始めてください。足りなければ足せます。
+                案内番号: {application.token}
               </p>
               {application.procedure_description && (
                 <p className='text-std-16N-170 text-solid-gray-700'>
@@ -732,47 +731,6 @@ export const PatchformApplicationPage = () => {
               )}
             </section>
 
-            {!singleForm && (
-              <Disclosure className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-3'>
-                <DisclosureSummary>
-                  <span className='text-std-16B-150'>操作方法（クリックで開く）</span>
-                </DisclosureSummary>
-                <div className='mt-3 flex flex-col gap-5'>
-                  <PatchformProcedureCoach
-                    title='この申請でやること'
-                    lead='様式はオンライン記入でも、記入済みファイルの添付でも構いません。足りなければ枠を足せます。'
-                    steps={[
-                      {
-                        id: 'open',
-                        label: '未充足の枠を満たす',
-                        done: items.length === 0 || items.every((f) => f.status === 'submitted'),
-                        hint: '一覧のカードから記入・添付できます。',
-                        action: (() => {
-                          const next = items.find(
-                            (f) =>
-                              f.can_fill_online &&
-                              f.fulfillment !== 'file' &&
-                              (f.status === 'none' || f.status === 'draft'),
-                          );
-                          return next
-                            ? {
-                                label: `「${next.title}」を記入する`,
-                                to: `/patchform/${next.form_id}?app=${encodeURIComponent(application.token)}&item=${encodeURIComponent(next.id)}${fromMy ? '&from=my' : ''}`,
-                              }
-                            : undefined;
-                        })(),
-                      },
-                      {
-                        id: 'done',
-                        label: '必要な枠を満たし終える',
-                        done: items.length > 0 && items.every((f) => f.status === 'submitted'),
-                        hint: `${items.filter((f) => f.status === 'submitted').length} / ${items.length} 充足`,
-                      },
-                    ]}
-                  />
-                </div>
-              </Disclosure>
-            )}
             <div className='flex flex-col gap-3'>
                 <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 bg-white p-4'>
                   <h3 className='text-std-16B-150'>関連するフォームを足す</h3>
