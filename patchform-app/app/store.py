@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -65,6 +67,169 @@ def verify_pin(pin: str, hashed: str | None) -> bool:
         return bcrypt.checkpw(pin.encode("utf-8"), hashed.encode("ascii"))
     except (ValueError, TypeError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# 庁外（外部ユーザー）向け軽量認証: メール＋マジックリンク → HMAC 署名セッション
+# ---------------------------------------------------------------------------
+# セッション署名の秘密鍵。未設定時はサービスキーを流用し、それも無ければ
+# 起動ごとにランダム（＝再起動でセッション失効）。本番は必ず固定値を設定する。
+EXT_SECRET = (
+    os.environ.get("PATCHFORM_EXT_SECRET")
+    or os.environ.get("PATCHFORM_SERVICE_KEY")
+    or secrets.token_hex(32)
+)
+MAGIC_TTL_MIN = int(os.environ.get("PATCHFORM_MAGIC_TTL_MIN", "15"))
+EXT_SESSION_TTL_DAYS = int(os.environ.get("PATCHFORM_EXT_SESSION_TTL_DAYS", "30"))
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_email(email: str | None) -> str:
+    return (email or "").strip().lower()
+
+
+def is_valid_email(email: str) -> bool:
+    return bool(_EMAIL_RE.match(email or ""))
+
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def create_magic_token(email: str) -> tuple[str, str]:
+    """マジックリンク用の単回・短命トークンを発行し、(平文トークン, 失効ISO) を返す。"""
+    token_plain = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    exp = now + timedelta(minutes=MAGIC_TTL_MIN)
+    db = connect()
+    with _lock:
+        db.execute(
+            "INSERT INTO magic_tokens (id, token_hash, email, created_at, expires_at, "
+            "consumed_at) VALUES (?,?,?,?,?,NULL)",
+            (
+                str(uuid.uuid4()),
+                _sha256_hex(token_plain),
+                normalize_email(email),
+                now.isoformat(),
+                exp.isoformat(),
+            ),
+        )
+        db.commit()
+    return token_plain, exp.isoformat()
+
+
+def _sign_session(sid: str, exp_ts: int) -> str:
+    msg = f"{sid}.{exp_ts}"
+    sig = hmac.new(EXT_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{msg}.{sig}"
+
+
+def issue_external_session(email: str) -> tuple[str, str]:
+    """外部セッションを作成し、(Bearer トークン, 失効ISO) を返す。"""
+    sid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    exp = now + timedelta(days=EXT_SESSION_TTL_DAYS)
+    exp_ts = int(exp.timestamp())
+    db = connect()
+    with _lock:
+        db.execute(
+            "INSERT INTO external_sessions (id, email, created_at, expires_at, revoked_at) "
+            "VALUES (?,?,?,?,NULL)",
+            (sid, normalize_email(email), now.isoformat(), exp.isoformat()),
+        )
+        db.commit()
+    return _sign_session(sid, exp_ts), exp.isoformat()
+
+
+def consume_magic_token(token_plain: str) -> tuple[str | None, str | None]:
+    """マジックトークンを検証・消費し、(正規化メール, エラー) を返す。"""
+    if not token_plain:
+        return None, "トークンがありません"
+    token_hash = _sha256_hex(token_plain)
+    now = datetime.now(timezone.utc)
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM magic_tokens WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
+        if not row:
+            return None, "リンクが無効です"
+        if row["consumed_at"]:
+            return None, "このリンクは使用済みです"
+        exp = _parse_iso(row["expires_at"])
+        if exp and now > exp:
+            return None, "リンクの有効期限が切れています"
+        db.execute(
+            "UPDATE magic_tokens SET consumed_at = ? WHERE id = ?",
+            (_now_iso(), row["id"]),
+        )
+        db.commit()
+        return normalize_email(row["email"]), None
+
+
+def verify_external_session(bearer: str | None) -> tuple[str | None, str | None]:
+    """Bearer トークンを検証し、(正規化メール, エラー) を返す。"""
+    if not bearer:
+        return None, "認証が必要です"
+    token = bearer.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None, "セッションが不正です"
+    sid, exp_ts_s, sig = parts
+    try:
+        exp_ts = int(exp_ts_s)
+    except ValueError:
+        return None, "セッションが不正です"
+    expected = hmac.new(
+        EXT_SECRET.encode("utf-8"), f"{sid}.{exp_ts_s}".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return None, "セッションが不正です"
+    if int(datetime.now(timezone.utc).timestamp()) > exp_ts:
+        return None, "セッションの有効期限が切れています"
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM external_sessions WHERE id = ?", (sid,)
+        ).fetchone()
+    if not row or row["revoked_at"]:
+        return None, "セッションが失効しています"
+    exp = _parse_iso(row["expires_at"])
+    if exp and datetime.now(timezone.utc) > exp:
+        return None, "セッションの有効期限が切れています"
+    return normalize_email(row["email"]), None
+
+
+def revoke_external_session(bearer: str | None) -> None:
+    if not bearer:
+        return
+    token = bearer.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    parts = token.split(".")
+    if len(parts) != 3:
+        return
+    sid = parts[0]
+    db = connect()
+    with _lock:
+        db.execute(
+            "UPDATE external_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+            (_now_iso(), sid),
+        )
+        db.commit()
+
+
+def cleanup_expired_auth() -> None:
+    """期限切れマジックトークン/セッションの掃除（任意呼び出し）。"""
+    now = _now_iso()
+    db = connect()
+    with _lock:
+        db.execute("DELETE FROM magic_tokens WHERE expires_at < ?", (now,))
+        db.execute("DELETE FROM external_sessions WHERE expires_at < ?", (now,))
+        db.commit()
 
 
 def reset_connection() -> None:
@@ -198,11 +363,29 @@ def init_db() -> None:
               changes TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS magic_tokens (
+              id TEXT PRIMARY KEY,
+              token_hash TEXT NOT NULL UNIQUE,
+              email TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              consumed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS external_sessions (
+              id TEXT PRIMARY KEY,
+              email TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              revoked_at TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_procedures_guide ON procedures(guide_form_id);
             CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
             CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token);
             CREATE INDEX IF NOT EXISTS idx_applications_proc ON applications(procedure_id);
+            CREATE INDEX IF NOT EXISTS idx_applications_owner ON applications(owner_kind, owner_key);
             CREATE INDEX IF NOT EXISTS idx_app_events_app ON application_events(application_id);
+            CREATE INDEX IF NOT EXISTS idx_magic_email ON magic_tokens(email);
+            CREATE INDEX IF NOT EXISTS idx_extsess_email ON external_sessions(email);
             """
         )
         _ensure_columns(db)
@@ -301,6 +484,9 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
         # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
         ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
+        # 添付ファイルの由来（internal=庁内 / external=庁外アップロード）。
+        # 庁外由来は庁内で直接ストリームせず SeaweedFS 再ホスト経由で受け渡す。
+        ("uploaded_files", "origin", "TEXT NOT NULL DEFAULT 'internal'"),
     )
     for table, name, decl in wanted:
         cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -1877,17 +2063,18 @@ def submit_answers(
                 and str(app_for_link["guide_form_id"]) == row["id"]
             )
             # 条件（案内）の変更は申請者本人（束の所有者）だけが行える。
-            if (
-                is_guide
-                and app_for_link is not None
-                and str(app_for_link["owner_kind"]) == "internal"
-                and app_for_link["owner_key"]
-                and (
-                    not submitter_user_id
-                    or submitter_user_id != str(app_for_link["owner_key"])
-                )
-            ):
-                return None, "条件を変更する権限がありません"
+            if is_guide and app_for_link is not None:
+                owner_kind = str(app_for_link["owner_kind"] or "")
+                owner_key = str(app_for_link["owner_key"] or "")
+                if owner_kind == "internal" and owner_key:
+                    # 庁内所有: 本人（submitter_user_id 一致）以外は不可。
+                    if not submitter_user_id or submitter_user_id != owner_key:
+                        return None, "条件を変更する権限がありません"
+                elif owner_kind == "external":
+                    # 庁外所有: 本人（トークン経由＝submitter_user_id なし）のみ可。
+                    # 庁内ユーザー（受付）による条件変更は不可。
+                    if submitter_user_id:
+                        return None, "条件を変更する権限がありません"
             # 差分算出のため、上書き前の直近の提出内容を控える。
             if not is_draft:
                 prev_row = None
@@ -3179,6 +3366,26 @@ def _touch_application(db: sqlite3.Connection, application_id: str) -> None:
     )
 
 
+def _item_file_external(db: sqlite3.Connection, item: dict[str, Any]) -> bool:
+    """アイテムの添付ファイルが庁外（external）由来かどうか。"""
+    file_id = item.get("file_id") or ""
+    if not file_id:
+        return False
+    origin = item.get("file_origin")
+    if origin:
+        return origin == "external"
+    try:
+        row = db.execute(
+            "SELECT origin FROM uploaded_files WHERE id = ?", (file_id,)
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    if not row:
+        return False
+    keys = row.keys()
+    return "origin" in keys and row["origin"] == "external"
+
+
 def _item_payload(
     db: sqlite3.Connection,
     app_row: sqlite3.Row,
@@ -3207,6 +3414,8 @@ def _item_payload(
         # 記入と添付の併存判定用（採用ソースの切り替えUIに使う）
         "form_submitted": False,
         "file_attached": bool(item.get("file_id")),
+        # 添付が庁外由来か（庁内DL時に SeaweedFS 再ホスト経由へ回すための印）
+        "file_external": _item_file_external(db, item),
     }
     form_id = item.get("form_id") or ""
     if form_id:
@@ -3910,7 +4119,10 @@ def _actor_role(app: sqlite3.Row, actor_user_id: str | None) -> str:
     申請者本人（束の所有者、または公開トークン経由）は「申請者」、それ以外の
     庁内ユーザーは受領側の「受付」として扱う。
     """
-    if actor_user_id and _owns_application(app, "internal", actor_user_id):
+    if actor_user_id and (
+        _owns_application(app, "internal", actor_user_id)
+        or _owns_application(app, "external", actor_user_id)
+    ):
         return "申請者"
     if actor_user_id:
         return "受付"
@@ -4596,11 +4808,16 @@ def get_item_file(
             return None, "添付ファイルが見つかりません"
         if not path.is_file():
             return None, "添付ファイルが見つかりません"
+        row_keys = row.keys()
+        origin = row["origin"] if "origin" in row_keys else None
+        if not origin:
+            origin = str(item.get("file_origin") or "internal")
         return {
             "filename": row["filename"],
             "mime": row["mime"] or "application/octet-stream",
             "path": str(path),
             "size": row["size"],
+            "origin": "external" if origin == "external" else "internal",
         }, None
 
 
@@ -4770,7 +4987,11 @@ def delete_application_item(
 
 
 def _store_item_file(
-    db: sqlite3.Connection, bucket_form_id: str, filename: str, data: str
+    db: sqlite3.Connection,
+    bucket_form_id: str,
+    filename: str,
+    data: str,
+    origin: str = "internal",
 ) -> tuple[dict[str, Any] | None, str | None]:
     name = files.safe_filename(filename)
     try:
@@ -4781,8 +5002,18 @@ def _store_item_file(
     files.write_blob(bucket_form_id, file_id, blob)
     db.execute(
         "INSERT INTO uploaded_files (id, form_id, submission_id, component_id, "
-        "filename, mime, size, created_at) VALUES (?,?,?,?,?,?,?,?)",
-        (file_id, bucket_form_id, None, None, name, mime, len(blob), _now_iso()),
+        "filename, mime, size, created_at, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            file_id,
+            bucket_form_id,
+            None,
+            None,
+            name,
+            mime,
+            len(blob),
+            _now_iso(),
+            "external" if origin == "external" else "internal",
+        ),
     )
     return {"file_id": file_id, "filename": name, "mime": mime, "size": len(blob)}, None
 
@@ -4795,6 +5026,7 @@ def fulfill_item_with_file(
     filename: str,
     data: str,
     actor_user_id: str | None = None,
+    origin: str = "internal",
 ) -> tuple[dict[str, Any] | None, str | None]:
     """様式・添付の枠を、記入済みファイルの添付で満たす。"""
     db = connect()
@@ -4813,13 +5045,14 @@ def fulfill_item_with_file(
             # なので、記入済みファイルの添付も許可する。
             return None, "この枠はオンライン記入のみです"
         bucket = target.get("form_id") or app["guide_form_id"]
-        saved, err = _store_item_file(db, bucket, filename, data)
+        saved, err = _store_item_file(db, bucket, filename, data, origin=origin)
         if err or saved is None:
             return None, err
         target["fulfillment"] = "file"
         target["file_id"] = saved["file_id"]
         target["file_name"] = saved["filename"]
         target["file_bucket"] = bucket
+        target["file_origin"] = "external" if origin == "external" else "internal"
         db.execute(
             "UPDATE applications SET items_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(items, ensure_ascii=False), _now_iso(), app["id"]),

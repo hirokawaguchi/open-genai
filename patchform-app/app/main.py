@@ -1449,7 +1449,11 @@ def download_item_file_internal(
     return FileResponse(
         meta["path"],
         media_type=meta["mime"],
-        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+        headers={
+            "Content-Disposition": files.content_disposition(meta["filename"]),
+            # 庁内プロキシ(backend)が庁外由来かを判定し、SeaweedFS 再ホスト経由へ回すための印。
+            "X-Patchform-Origin": str(meta.get("origin") or "internal"),
+        },
     )
 
 
@@ -1966,6 +1970,175 @@ async def catalog_resolve_bundle(
 # ---------------------------------------------------------------------------
 # 公開面（ゲスト）。公開プロキシはここだけ upstream すること。
 # ---------------------------------------------------------------------------
+
+
+def _verify_external(request: Request) -> tuple[str | None, JSONResponse | None]:
+    """Authorization: Bearer の外部セッションを検証し、(正規化メール, エラー応答) を返す。"""
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    email, err = store.verify_external_session(auth)
+    if err or not email:
+        return None, JSONResponse(status_code=401, content={"error": err or "認証が必要です"})
+    return email, None
+
+
+@app.post("/public/api/auth/request")
+async def public_auth_request(request: Request) -> JSONResponse:
+    """メール宛にマジックリンクを送る。メール列挙防止のため常に成功扱いで返す。"""
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"auth-req:{ip}", limit=8, window=60.0):
+        return JSONResponse(status_code=429, content={"error": "回数制限に達しました。少し待ってからお試しください。"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    email = store.normalize_email(str(body.get("email") or ""))
+    ok = {"ok": True, "message": "ログイン用のリンクをメールで送信しました。"}
+    if not store.is_valid_email(email):
+        # 形式不正でも列挙を避けるため同じ応答（ただし送信はしない）
+        return JSONResponse(content=ok)
+    token, _exp = store.create_magic_token(email)
+    notify.send_magic_link(email=email, token=token)
+    return JSONResponse(content=ok)
+
+
+@app.post("/public/api/auth/verify")
+async def public_auth_verify(request: Request) -> JSONResponse:
+    """マジックトークンを検証し、外部セッション（Bearer）を発行する。"""
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"auth-vf:{ip}", limit=20, window=60.0):
+        return JSONResponse(status_code=429, content={"error": "回数制限に達しました。"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    token = str(body.get("token") or "")
+    email, msg = store.consume_magic_token(token)
+    if msg or not email:
+        return JSONResponse(status_code=400, content={"error": msg or "リンクが無効です"})
+    bearer, exp = store.issue_external_session(email)
+    return JSONResponse(content={"token": bearer, "email": email, "expires_at": exp})
+
+
+@app.get("/public/api/auth/session")
+def public_auth_session(request: Request) -> JSONResponse:
+    """現在の外部セッションの本人情報を返す（未認証は 401）。"""
+    email, err = _verify_external(request)
+    if err:
+        return err
+    return JSONResponse(content={"email": email})
+
+
+@app.post("/public/api/auth/logout")
+def public_auth_logout(request: Request) -> JSONResponse:
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    store.revoke_external_session(auth)
+    return JSONResponse(content={"ok": True})
+
+
+# --- 庁外マイ手続き（外部セッション必須） ---------------------------------
+
+
+@app.get("/public/api/applications/mine")
+def public_list_my_applications(request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    items = store.list_my_applications(owner_kind="external", owner_key=email)
+    return JSONResponse(content={"applications": items})
+
+
+@app.post("/public/api/applications")
+async def public_create_project(request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.create_project(
+        procedure_id=str(body.get("procedure_id") or ""),
+        owner_kind="external",
+        owner_key=email,
+        title=(body.get("title") or None),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/public/api/applications/{application_id}/status")
+async def public_set_application_status(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.set_application_status(
+        application_id=application_id,
+        owner_kind="external",
+        owner_key=email,
+        status=str(body.get("status") or ""),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.patch("/public/api/applications/{application_id}")
+async def public_update_application_meta(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    kwargs: dict[str, str] = {}
+    for key in ("title", "assignee", "deadline", "next_action_date"):
+        if key in body:
+            kwargs[key] = str(body.get(key) or "")
+    result, msg = store.update_application_meta(
+        application_id=application_id,
+        owner_kind="external",
+        owner_key=email,
+        **kwargs,
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.get("/public/api/procedures")
+def public_list_procedures(request: Request, q: str = "") -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    items = store.list_published_procedures(query=q or None)
+    return JSONResponse(content={"procedures": items})
+
+
+@app.post("/public/api/procedures/{procedure_id}/resolve")
+async def public_resolve_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    answers = body.get("answers")
+    result, msg = store.resolve_procedure_preview(
+        procedure_id=procedure_id,
+        answers=answers if isinstance(answers, dict) else {},
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
 @app.get("/public/api/forms/{guest_token}")
 def public_get_form(guest_token: str, pin: str | None = None) -> JSONResponse:
     detail, msg = store.public_form(guest_token, pin=pin)
@@ -2148,6 +2321,7 @@ async def public_fulfill_item(token: str, item_id: str, request: Request) -> JSO
         item_id=item_id,
         filename=str(body.get("filename") or "file"),
         data=str(body.get("data") or ""),
+        origin="external",
     )
     if msg or result is None:
         return _item_error(msg)
@@ -2225,23 +2399,35 @@ def public_download_item_file(token: str, item_id: str) -> Response:
     )
 
 
-@app.get("/public/f/{guest_token}", response_model=None)
-@app.get("/public/p/{token}", response_model=None)
-def public_form_page(guest_token: str = "", token: str = "") -> FileResponse | HTMLResponse:
+def _public_shell() -> FileResponse | HTMLResponse:
+    """庁外 SPA のシェル HTML（#root + guest.js）を返す。"""
     path = PUBLIC_DIR / "form.html"
     if path.is_file():
         return FileResponse(path, media_type="text/html; charset=utf-8")
     return HTMLResponse("<p>ゲスト UI が未配置です</p>", status_code=500)
 
 
-@app.get("/public/", response_class=HTMLResponse)
-@app.get("/public", response_class=HTMLResponse)
-def public_index() -> HTMLResponse:
-    return HTMLResponse(
-        "<!DOCTYPE html><html lang='ja'><head><meta charset='utf-8'>"
-        "<title>フォーム</title></head><body>"
-        "<p>フォームの共有リンクからアクセスしてください。</p></body></html>"
-    )
+# 単体フォーム／束の共有リンク（トークン URL）は温存する。
+@app.get("/public/f/{guest_token}", response_model=None)
+@app.get("/public/p/{token}", response_model=None)
+def public_form_page(guest_token: str = "", token: str = "") -> FileResponse | HTMLResponse:
+    return _public_shell()
+
+
+# 庁外マイ手続きのルーティング SPA。すべて同じシェルを返し、guest.js が
+# location.pathname を見て画面を出し分ける（ログイン/一覧/新規/検証）。
+@app.get("/public/mine", response_model=None)
+@app.get("/public/mine/{rest:path}", response_model=None)
+@app.get("/public/new", response_model=None)
+@app.get("/public/auth/verify", response_model=None)
+def public_spa_page(rest: str = "") -> FileResponse | HTMLResponse:
+    return _public_shell()
+
+
+@app.get("/public/", response_model=None)
+@app.get("/public", response_model=None)
+def public_index() -> FileResponse | HTMLResponse:
+    return _public_shell()
 
 
 if PUBLIC_DIR.is_dir():

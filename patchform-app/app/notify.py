@@ -95,6 +95,66 @@ def application_url(application_id: str) -> str:
     return f"{base}/patchform/applications/{application_id}"
 
 
+def public_base_url() -> str:
+    """庁外（公開）SPA の到達先ベースURL。"""
+    return (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
+
+
+def magic_link_url(token: str) -> str:
+    from urllib.parse import quote
+
+    base = public_base_url()
+    path = f"/public/auth/verify?token={quote(token)}"
+    return f"{base}{path}" if base else path
+
+
+def build_magic_link_message(*, email: str, token: str) -> EmailMessage:
+    link = magic_link_url(token)
+    lines = [
+        "マイ手続きにログインするためのリンクです。",
+        "",
+        "下のリンクを開くとログインが完了します（有効期限あり・1回のみ有効）。",
+        "",
+        link,
+        "",
+        "このメールに心当たりがない場合は破棄してください。",
+    ]
+    msg = EmailMessage()
+    msg["Subject"] = "【マイ手続き】ログイン用リンク"
+    msg["From"] = smtp_from() or "patchform@localhost"
+    msg["To"] = email
+    msg.set_content("\n".join(lines))
+    return msg
+
+
+def send_magic_link(*, email: str, token: str) -> dict[str, Any]:
+    """マジックリンクを送信（SMTP）またはダンプ（dev）する。"""
+    dest = (email or "").strip()
+    if not dest:
+        return {"sent": False, "reason": "no_recipient"}
+    if not mail_configured():
+        # メール未設定でも dev では動作確認できるよう、リンクをログ出力する。
+        print(f"[patchform] magic link for {dest}: {magic_link_url(token)}")
+        return {"sent": False, "reason": "smtp_unconfigured"}
+    message = build_magic_link_message(email=dest, token=token)
+    dumped: str | None = None
+    if dump_dir() is not None:
+        try:
+            dumped = str(dump_email(message, token=dest))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[patchform] magic link dump failed: {exc}")
+            if not smtp_configured():
+                return {"sent": False, "reason": "dump_failed"}
+    if smtp_configured():
+        try:
+            send_email(message)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[patchform] magic link send failed: {exc}")
+            return {"sent": False, "reason": "send_failed", "dumped": dumped}
+        return {"sent": True, "dumped": dumped}
+    return {"sent": False, "reason": "dumped", "dumped": dumped}
+
+
 def build_staff_message(
     *,
     procedure_name: str,

@@ -260,6 +260,8 @@ export type ApplicationItem = {
   // 記入と添付が併存しているかどうか（採用ソース切替UIの表示判定）
   form_submitted?: boolean;
   file_attached?: boolean;
+  // 添付が庁外由来か（庁内DLは SeaweedFS 再ホスト経由になる）
+  file_external?: boolean;
   answers?: Record<string, unknown>;
   definition?: FormDefinition;
   receipt_code?: string | null;

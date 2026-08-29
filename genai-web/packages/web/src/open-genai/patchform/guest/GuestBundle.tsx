@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/dads/Button';
+import { usePatchformApi } from '../PatchformApiContext';
+import { readSession } from './guestSession';
 
 type SlotTemplate = {
   file_id: string;
   filename: string;
   mime?: string;
   size?: number;
+};
+
+type ApplicationStatusBlock = {
+  auto: string;
+  override: string;
+  effective: string;
 };
 
 type BundleItem = {
@@ -27,12 +36,15 @@ type BundleItem = {
 };
 
 type Bundle = {
+  id: string;
   token: string;
   procedure_id: string;
   procedure_name: string;
   procedure_description?: string | null;
   notice?: { notes?: string[]; prepare?: string[]; refs?: string[] };
   items: BundleItem[];
+  status?: ApplicationStatusBlock;
+  public_url?: string | null;
 };
 
 type CatalogSlot = {
@@ -77,7 +89,10 @@ const fileToDataUrl = (file: File) =>
   });
 
 export const GuestBundle = () => {
+  const api = usePatchformApi();
   const token = tokenFromPath();
+  const fromMy = new URLSearchParams(location.search).get('from') === 'my';
+  const authed = Boolean(readSession());
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [catalog, setCatalog] = useState<CatalogSlot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -87,13 +102,11 @@ export const GuestBundle = () => {
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = async () => {
-    const res = await fetch(`/public/api/applications/${encodeURIComponent(token)}`);
-    const data = (await res.json().catch(() => ({}))) as Bundle & { error?: string };
-    if (!res.ok) {
-      throw new Error(data.error || '申請を開けませんでした');
-    }
-    setBundle(data);
-    document.title = data.procedure_name || '手続き';
+    const res = await api.get<Bundle>(
+      `/public/api/applications/${encodeURIComponent(token)}`,
+    );
+    setBundle(res.data);
+    document.title = res.data.procedure_name || '手続き';
   };
 
   useEffect(() => {
@@ -104,26 +117,30 @@ export const GuestBundle = () => {
     void (async () => {
       try {
         await load();
-        const res = await fetch(`/public/api/applications/${encodeURIComponent(token)}/catalog`);
-        const data = (await res.json().catch(() => ({}))) as { slots?: CatalogSlot[] };
-        setCatalog(data.slots || []);
+        const res = await api.get<{ slots?: CatalogSlot[] }>(
+          `/public/api/applications/${encodeURIComponent(token)}/catalog`,
+        );
+        setCatalog(res.data.slots || []);
       } catch (e) {
         setError(e instanceof Error ? e.message : '申請を開けませんでした');
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const call = async (path: string, opts: RequestInit) => {
+  const call = async (
+    path: string,
+    method: 'POST' | 'DELETE',
+    body?: unknown,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts,
-      });
-      const data = (await res.json().catch(() => ({}))) as Bundle & { error?: string };
-      if (!res.ok) throw new Error(data.error || '操作に失敗しました');
-      setBundle(data);
+      const res =
+        method === 'DELETE'
+          ? await api.delete<Bundle>(path, body)
+          : await api.post<Bundle>(path, body);
+      setBundle(res.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : '操作に失敗しました');
     } finally {
@@ -131,10 +148,28 @@ export const GuestBundle = () => {
     }
   };
 
+  const onSetStatus = async (status: string) => {
+    if (!bundle) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post<Bundle>(
+        `/public/api/applications/${encodeURIComponent(bundle.id)}/status`,
+        { status },
+      );
+      setBundle(res.data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '状態の更新に失敗しました');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onDuplicate = (item: BundleItem) =>
-    call(`/public/api/applications/${encodeURIComponent(token)}/items`, {
-      method: 'POST',
-      body: JSON.stringify({ duplicate_of: item.id }),
+    call(`/public/api/applications/${encodeURIComponent(token)}/items`, 'POST', {
+      duplicate_of: item.id,
     });
 
   const onRemove = (item: BundleItem) => {
@@ -142,24 +177,22 @@ export const GuestBundle = () => {
     if (!window.confirm(`「${label}」の枠を削除します。よろしいですか？`)) return;
     void call(
       `/public/api/applications/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}`,
-      { method: 'DELETE' },
+      'DELETE',
     );
   };
 
   const onAddCatalog = () => {
     if (!catalogPick) return;
-    void call(`/public/api/applications/${encodeURIComponent(token)}/items`, {
-      method: 'POST',
-      body: JSON.stringify({ form_id: catalogPick }),
+    void call(`/public/api/applications/${encodeURIComponent(token)}/items`, 'POST', {
+      form_id: catalogPick,
     });
     setCatalogPick('');
   };
 
   const onAddAttach = () => {
     if (!attachTitle.trim()) return;
-    void call(`/public/api/applications/${encodeURIComponent(token)}/items`, {
-      method: 'POST',
-      body: JSON.stringify({ title: attachTitle.trim() }),
+    void call(`/public/api/applications/${encodeURIComponent(token)}/items`, 'POST', {
+      title: attachTitle.trim(),
     });
     setAttachTitle('');
   };
@@ -169,14 +202,15 @@ export const GuestBundle = () => {
     const data = await fileToDataUrl(file);
     await call(
       `/public/api/applications/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}/file`,
-      { method: 'POST', body: JSON.stringify({ filename: file.name, data }) },
+      'POST',
+      { filename: file.name, data },
     );
   };
 
   const onClearFile = (item: BundleItem) =>
     call(
       `/public/api/applications/${encodeURIComponent(token)}/items/${encodeURIComponent(item.id)}/file`,
-      { method: 'DELETE' },
+      'DELETE',
     );
 
   if (error && !bundle) {
@@ -191,8 +225,18 @@ export const GuestBundle = () => {
   }
 
   const notice = bundle.notice;
+  const effective = bundle.status?.effective || '';
+  const submitted = effective === '提出済';
+  const withdrawn = effective === '取下げ';
   return (
     <>
+      {fromMy && authed ? (
+        <p className='mb-2'>
+          <a href='/public/mine' className='text-blue-900 underline-offset-2 hover:underline'>
+            ← マイ手続きに戻る
+          </a>
+        </p>
+      ) : null}
       <h1 className='text-std-20B-160'>{bundle.procedure_name}</h1>
       {bundle.procedure_description ? (
         <p className='mt-2 text-solid-gray-700'>{bundle.procedure_description}</p>
@@ -200,7 +244,50 @@ export const GuestBundle = () => {
       <p className='mt-2 text-solid-gray-700'>
         案内番号: <strong>{bundle.token}</strong>
       </p>
-      <p className='mt-1 text-solid-gray-700'>このセットで始めてください。足りなければ足せます。</p>
+      {authed && bundle.status ? (
+        <div className='mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-solid-gray-300 p-3'>
+          <span className='text-dns-14N-130 text-solid-gray-700'>
+            状態: <strong>{effective || '未着手'}</strong>
+          </span>
+          {!submitted && !withdrawn ? (
+            <Button
+              type='button'
+              variant='solid-fill'
+              size='sm'
+              aria-disabled={busy}
+              onClick={() => {
+                if (window.confirm('この内容で提出します。よろしいですか？')) {
+                  void onSetStatus('提出済');
+                }
+              }}
+            >
+              提出する
+            </Button>
+          ) : null}
+          {submitted ? (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              aria-disabled={busy}
+              onClick={() => void onSetStatus('取下げ')}
+            >
+              提出を取下げ
+            </Button>
+          ) : null}
+          {withdrawn ? (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              aria-disabled={busy}
+              onClick={() => void onSetStatus('')}
+            >
+              取下げを解除
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {error ? (
         <p className='mt-2 text-error-1' role='alert'>
           {error}
