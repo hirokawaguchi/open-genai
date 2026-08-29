@@ -1734,6 +1734,7 @@ def save_upload(
     kind: str = "file",
     pin: str | None = None,
     actor_user_id: str | None = None,
+    origin: str = "internal",
 ) -> tuple[dict[str, Any] | None, str | None]:
     if kind not in ("file", "signature"):
         return None, "添付の種類が不正です"
@@ -1762,8 +1763,18 @@ def save_upload(
         now = _now_iso()
         db.execute(
             "INSERT INTO uploaded_files (id, form_id, submission_id, component_id, "
-            "filename, mime, size, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (file_id, row["id"], None, None, name, mime, len(blob), now),
+            "filename, mime, size, created_at, origin) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                file_id,
+                row["id"],
+                None,
+                None,
+                name,
+                mime,
+                len(blob),
+                now,
+                "external" if origin == "external" else "internal",
+            ),
         )
         db.commit()
         return {
@@ -1800,11 +1811,14 @@ def get_stored_file(
             return None, "添付ファイルが見つかりません"
         if not path.is_file():
             return None, "添付ファイルが見つかりません"
+        row_keys = row.keys()
+        origin = row["origin"] if "origin" in row_keys else None
         return {
             "filename": row["filename"],
             "mime": row["mime"] or "application/octet-stream",
             "path": str(path),
             "size": row["size"],
+            "origin": "external" if origin == "external" else "internal",
         }, None
 
 
@@ -4113,6 +4127,135 @@ def _owns_application(row: sqlite3.Row, owner_kind: str, owner_key: str) -> bool
     return str(row["owner_kind"]) == owner_kind and str(row["owner_key"]) == owner_key
 
 
+def application_owned(
+    application_id: str, *, owner_kind: str, owner_key: str
+) -> tuple[bool, str | None]:
+    """application_id が指定オーナーの所有物か確認する（庁外マイ手続きの所有者チェック）。"""
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if not row:
+            return False, "申請が見つかりません"
+        if not _owns_application(row, owner_kind, owner_key):
+            return False, "この手続きを操作する権限がありません"
+        return True, None
+
+
+def application_owned_by_token(
+    token: str, *, owner_kind: str, owner_key: str
+) -> tuple[bool, str | None]:
+    """公開トークンが指定オーナーの所有する申請束のものか確認する。"""
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE token = ?", (token,)
+        ).fetchone()
+        if not row:
+            return False, "申請が見つかりません"
+        if not _owns_application(row, owner_kind, owner_key):
+            return False, "この手続きを操作する権限がありません"
+        return True, None
+
+
+def claim_application(token: str, *, owner_key: str) -> tuple[str | None, str | None]:
+    """未所有の申請束を庁外ユーザー(external+email)の所有に付け替える（引き取り）。
+
+    - 未所有(owner_kind=='')のみ付替。
+    - 既に同一 external+owner_key なら冪等成功（既存 id を返す）。
+    - 他所有者なら「別の利用者が管理中です」を返す（呼び出し側で 409）。
+    戻り値: (application_id, error)。
+    """
+    key = normalize_email(owner_key)
+    if not key:
+        return None, "所有者が不正です"
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE token = ?", (token,)
+        ).fetchone()
+        if not row:
+            return None, "申請が見つかりません"
+        cur_kind = str(row["owner_kind"] or "")
+        cur_key = str(row["owner_key"] or "")
+        if cur_kind == "external" and cur_key == key:
+            return str(row["id"]), None
+        if cur_kind:
+            return None, "別の利用者が管理中です"
+        db.execute(
+            "UPDATE applications SET owner_kind = 'external', owner_key = ?, "
+            "updated_at = ? WHERE token = ?",
+            (key, _now_iso(), token),
+        )
+        db.commit()
+        return str(row["id"]), None
+
+
+def _guest_token_for_form(db: sqlite3.Connection, form_id: str) -> str | None:
+    row = db.execute("SELECT guest_token FROM forms WHERE id = ?", (form_id,)).fetchone()
+    return row["guest_token"] if row and row["guest_token"] else None
+
+
+def mine_form_detail(form_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """庁外マイ手続きの記入モーダル用。公開/受付フォームの記入定義を form_id で返す。"""
+    db = connect()
+    with _lock:
+        gt = _guest_token_for_form(db, form_id)
+    if not gt:
+        return None, "フォームが見つかりません"
+    detail, msg = public_form(gt)
+    if msg or detail is None:
+        return None, msg
+    detail["id"] = form_id
+    detail["fill_definition"] = detail.get("definition")
+    return detail, None
+
+
+def mine_submit_answers(
+    *,
+    form_id: str,
+    answers: dict[str, Any],
+    submitter_name: str | None,
+    is_draft: bool,
+    application_token: str | None,
+    application_item_id: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """庁外マイ手続きの記入送信。form_id → guest_token に解決して公開経路で保存する。
+
+    申請束の所有権チェックは呼び出し側（application_token）で済ませている前提。
+    submitter_user_id は None（＝本人＝申請者）として扱う。
+    """
+    db = connect()
+    with _lock:
+        gt = _guest_token_for_form(db, form_id)
+    if not gt:
+        return None, "フォームが見つかりません"
+    return submit_answers(
+        guest_token=gt,
+        answers=answers,
+        submitter_user_id=None,
+        submitter_name=submitter_name,
+        is_draft=is_draft,
+        application_token=application_token,
+        application_item_id=application_item_id,
+    )
+
+
+def mine_upload_file(
+    *, form_id: str, filename: str, data: str, kind: str = "file"
+) -> tuple[dict[str, Any] | None, str | None]:
+    """庁外マイ手続きの記入中ファイル添付。origin=external で保存する。"""
+    db = connect()
+    with _lock:
+        gt = _guest_token_for_form(db, form_id)
+    if not gt:
+        return None, "フォームが見つかりません"
+    return save_upload(
+        guest_token=gt, filename=filename, data=data, kind=kind, origin="external"
+    )
+
+
 def _actor_role(app: sqlite3.Row, actor_user_id: str | None) -> str:
     """変更履歴に残す実行者の役割を判定する。
 
@@ -4370,12 +4513,15 @@ def delete_application(
     *,
     application_id: str | None = None,
     token: str | None = None,
-    actor_user_id: str,
+    actor_user_id: str | None = None,
     actor_groups: list[str] | None = None,
+    owner_kind: str | None = None,
+    owner_key: str | None = None,
 ) -> str | None:
     """申請束（プロジェクト）を、ひも付く提出・添付ごと削除する。
 
-    権限は「所有者本人」「システム管理者」「その手続きの編集者」のいずれか。
+    権限は「所有者本人（庁内/庁外）」「システム管理者」「その手続きの編集者」のいずれか。
+    庁外マイ手続きは owner_kind="external"/owner_key=email で本人確認する。
     """
     db = connect()
     with _lock:
@@ -4386,7 +4532,12 @@ def delete_application(
             "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
         ).fetchone()
         allowed = (
-            _owns_application(row, "internal", actor_user_id)
+            (actor_user_id is not None and _owns_application(row, "internal", actor_user_id))
+            or (
+                owner_kind is not None
+                and owner_key is not None
+                and _owns_application(row, owner_kind, owner_key)
+            )
             or _is_admin(actor_groups)
             or (proc is not None and _can_edit_procedure(proc, actor_user_id, actor_groups))
         )

@@ -11,21 +11,18 @@ import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { DOCMAKER_LABEL } from '../docmaker/labels';
+import { usePatchformRoutes } from './routes';
 import { FillForm } from './runtime/FillForm';
 import { missingRequired } from './runtime/visibility';
 import { omitsNavigation } from './types';
 import type { FormComponent, FormDefinition, ProcedureResolvePreview, SlotKind } from './types';
 import {
-  extractPatchformFile,
-  lookupPatchformCorporate,
-  lookupPatchformPostal,
-  resolveProcedurePreview,
-  uploadPatchformFile,
   usePatchformActions,
   usePatchformApplication,
   usePatchformDetail,
   usePatchformProcedure,
   usePatchformProjectActions,
+  usePatchformRuntime,
 } from './usePatchform';
 
 type Step = 'intro' | 'conditions' | 'preview';
@@ -95,6 +92,7 @@ export const PatchformWizardPage = () => {
   const { procedureId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const routes = usePatchformRoutes();
   // ?app=<applicationId> があれば「既存プロジェクトの条件を変更」モード。
   const editAppId = searchParams.get('app') || '';
   const { procedure, isLoading: procLoading, loadError: procError } =
@@ -104,6 +102,7 @@ export const PatchformWizardPage = () => {
   const { application: editApp } = usePatchformApplication(editAppId || undefined);
   const { create } = usePatchformProjectActions();
   const { submitAnswers } = usePatchformActions();
+  const { extract, upload, postalLookup, corporateLookup, resolvePreview } = usePatchformRuntime();
 
   const [step, setStep] = useState<Step>('intro');
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -157,7 +156,7 @@ export const PatchformWizardPage = () => {
     }
     setError(null);
     setBusy(true);
-    const res = await resolveProcedurePreview(procedureId, answers);
+    const res = await resolvePreview(procedureId, answers);
     setBusy(false);
     // 解決 API が未反映でもウィザードは止めない（作成後に案内から書類が並ぶ）。
     setPreview(res);
@@ -165,9 +164,7 @@ export const PatchformWizardPage = () => {
     setStep('preview');
   };
 
-  const cancelTo = editAppId
-    ? `/patchform/applications/${editAppId}?from=my`
-    : '/docmaker';
+  const cancelTo = editAppId ? routes.application(editAppId) : routes.myList;
 
   // 単一フォーム: 必須チェックのうえ、そのまま案件を作成して申請フォームを保存する。
   const onSubmitSingle = async () => {
@@ -200,7 +197,7 @@ export const PatchformWizardPage = () => {
         }
       }
       setBusy(false);
-      navigate(`/patchform/applications/${editApp.id}?from=my`);
+      navigate(routes.application(editApp.id));
       return;
     }
     const created = await create(procedureId);
@@ -219,12 +216,12 @@ export const PatchformWizardPage = () => {
       if (!ok) {
         // プロジェクトは作成済み。案内の反映だけ失敗しても作業台へ進める。
         setBusy(false);
-        navigate(`/patchform/applications/${created.id}?from=my`);
+        navigate(routes.application(created.id));
         return;
       }
     }
     setBusy(false);
-    navigate(`/patchform/applications/${created.id}?from=my`);
+    navigate(routes.application(created.id));
   };
 
   return (
@@ -233,14 +230,13 @@ export const PatchformWizardPage = () => {
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <BreadcrumbsNav
           items={[
-            { label: 'ホーム', to: '/' },
-            { label: 'AIアプリ', to: '/apps' },
-            { label: DOCMAKER_LABEL, to: '/docmaker' },
+            ...routes.homeCrumbs,
+            { label: routes.myListLabel, to: routes.myList },
             ...(editAppId
               ? [
                   {
                     label: editApp?.title || procedure?.name || '手続き',
-                    to: `/patchform/applications/${editAppId}?from=my`,
+                    to: routes.application(editAppId),
                   },
                   { label: '条件を変更' },
                 ]
@@ -366,14 +362,14 @@ export const PatchformWizardPage = () => {
                     definition={fillDef}
                     values={answers}
                     onChange={(id, v) => setAnswers((p) => ({ ...p, [id]: v }))}
-                    onExtract={extractPatchformFile}
+                    onExtract={extract}
                     onUpload={(file, kind) =>
                       guideFormId
-                        ? uploadPatchformFile(guideFormId, file, kind)
+                        ? upload(guideFormId, file, kind)
                         : Promise.reject(new Error('準備中です'))
                     }
-                    onPostalLookup={lookupPatchformPostal}
-                    onCorporateLookup={lookupPatchformCorporate}
+                    onPostalLookup={postalLookup}
+                    onCorporateLookup={corporateLookup}
                   />
                 ) : null}
                 <div className='flex flex-wrap gap-2'>
@@ -409,14 +405,14 @@ export const PatchformWizardPage = () => {
                     definition={wizardDef}
                     values={answers}
                     onChange={(id, v) => setAnswers((p) => ({ ...p, [id]: v }))}
-                    onExtract={extractPatchformFile}
+                    onExtract={extract}
                     onUpload={(file, kind) =>
                       guideFormId
-                        ? uploadPatchformFile(guideFormId, file, kind)
+                        ? upload(guideFormId, file, kind)
                         : Promise.reject(new Error('準備中です'))
                     }
-                    onPostalLookup={lookupPatchformPostal}
-                    onCorporateLookup={lookupPatchformCorporate}
+                    onPostalLookup={postalLookup}
+                    onCorporateLookup={corporateLookup}
                     onWizardChange={(info) => setWizardLast(info.isLast)}
                   />
                 ) : null}
@@ -528,7 +524,7 @@ export const PatchformWizardPage = () => {
         ) : null}
 
         <p className='text-std-16N-170'>
-          <Link to='/docmaker' className='text-blue-900 underline-offset-2 hover:underline'>
+          <Link to={routes.myList} className='text-blue-900 underline-offset-2 hover:underline'>
             マイ手続きへ
           </Link>
         </p>

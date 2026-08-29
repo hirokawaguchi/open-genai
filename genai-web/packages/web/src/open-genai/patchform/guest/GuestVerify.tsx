@@ -24,6 +24,28 @@ export const GuestVerify = () => {
           token,
         });
         writeSession({ token: res.data.token, email: res.data.email });
+        // 共有リンクからの引き取り待ち（claim）があれば、ログイン直後に実行して
+        // その申請束のマイ手続き詳細へ遷移する。
+        let pending = '';
+        try {
+          pending = sessionStorage.getItem('pf_pending_claim') || '';
+          sessionStorage.removeItem('pf_pending_claim');
+        } catch {
+          pending = '';
+        }
+        if (pending) {
+          try {
+            const claimed = await api.post<{ id: string }>(
+              `/public/api/applications/${encodeURIComponent(pending)}/claim`,
+            );
+            if (claimed.data?.id) {
+              location.replace(`/public/mine/${encodeURIComponent(claimed.data.id)}?from=my`);
+              return;
+            }
+          } catch {
+            // 引き取りに失敗しても一覧までは進める（そこで再操作できる）。
+          }
+        }
         location.replace('/public/mine');
       } catch (e) {
         setError(
