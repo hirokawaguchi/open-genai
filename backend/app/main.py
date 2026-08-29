@@ -4174,6 +4174,22 @@ async def patchform_set_procedure_status(
     )
 
 
+@app.post("/patchform/procedures/{procedure_id}/visibility")
+async def patchform_set_procedure_visibility(
+    procedure_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/procedures/{procedure_id}/visibility"),
+        headers,
+        body,
+    )
+
+
 @app.delete("/patchform/procedures/{procedure_id}")
 async def patchform_delete_procedure(procedure_id: str, request: Request) -> JSONResponse:
     err, headers = _patchform_headers(request)
