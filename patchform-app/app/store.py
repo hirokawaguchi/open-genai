@@ -2641,7 +2641,64 @@ def procedure_share(
         "external_url": external_url,
         "internal_qr_svg": _qr_svg(internal_url),
         "external_qr_svg": _qr_svg(external_url) if external_url else None,
+        # 庁外URLが出ない原因（案内フォームの公開範囲）を画面で説明・修正できるよう返す。
+        "guide_form_id": proc.get("guide_form_id"),
+        "guide_visibility": vis,
     }, None
+
+
+def set_guide_visibility(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    visibility: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """手続きの案内（ナビゲーション）フォームの公開範囲を変更する（庁外公開のON/OFF）。
+
+    公開範囲は部品ではなくメタ情報のため、フォームが「作成完了」(locked)でも変更できる。
+    定義自体は変えない。公開中の受付(reception)側にも追随させ、既存の共有URL・QRに
+    即時反映する。
+    """
+    if visibility not in spec.VISIBILITIES:
+        return None, "公開範囲が不正です"
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        guide = _form_row(db, proc["guide_form_id"])
+        if not guide:
+            return None, "案内フォームが見つかりません"
+        def_id = _definition_id(guide)
+        source = _form_row(db, def_id) or guide
+        if not _can_edit(source, actor_user_id, actor_groups):
+            return None, "この案内フォームを編集する権限がありません"
+        # 庁外公開の妥当性: 定義が新しい公開範囲の制約に適合するか確認する。
+        _, err = spec.validate_definition(_definition(source), visibility=visibility)
+        if err:
+            return None, err
+        now = _now_iso()
+        db.execute(
+            "UPDATE forms SET visibility = ?, updated_at = ? WHERE id = ?",
+            (visibility, now, source["id"]),
+        )
+        # 公開中の受付(reception)にも反映（既存の共有URLへ即時反映するため）。
+        db.execute(
+            "UPDATE forms SET visibility = ?, updated_at = ? "
+            "WHERE source_form_id = ? AND status = 'published'",
+            (visibility, now, source["id"]),
+        )
+        db.commit()
+        row = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        detail = _row_to_procedure(
+            db, row, actor_user_id=actor_user_id, actor_groups=actor_groups
+        )
+        return detail, None
 
 
 def _catalog_form(db: sqlite3.Connection, form_id: str) -> dict[str, Any] | None:

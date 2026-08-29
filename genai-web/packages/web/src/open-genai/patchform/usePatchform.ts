@@ -844,7 +844,7 @@ export const usePatchformProcedureShare = (procedureId: string | undefined, enab
     procedureId && enabled && origin
       ? `patchform/procedures/${encodeURIComponent(procedureId)}/share?origin=${encodeURIComponent(origin)}`
       : null;
-  const { data, error, isLoading } = useSWR<ProcedureShare>(key, fetcher, {
+  const { data, error, isLoading, mutate } = useSWR<ProcedureShare>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -852,6 +852,7 @@ export const usePatchformProcedureShare = (procedureId: string | undefined, enab
     share: data,
     isLoading,
     loadError: error ? errorMessage(error, '申請用リンクの取得に失敗しました。') : null,
+    mutate,
   };
 };
 
@@ -1363,7 +1364,40 @@ export const usePatchformProcedureActions = () => {
     [],
   );
 
-  return { create, save, setStatus, setStatusMany, remove, removeMany, submitting, error, setError };
+  // 案内フォームの公開範囲を変更する（庁外公開のON/OFF）。公開範囲はメタ情報のため
+  // 「作成完了」でも変更でき、公開中の受付にも即時反映される。
+  const setGuideVisibility = useCallback(
+    async (procedureId: string, visibility: FormVisibility): Promise<Procedure | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<Procedure>(
+          `patchform/procedures/${encodeURIComponent(procedureId)}/guide-visibility`,
+          { visibility },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '案内フォームの公開範囲を変更できませんでした。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  return {
+    create,
+    save,
+    setStatus,
+    setStatusMany,
+    setGuideVisibility,
+    remove,
+    removeMany,
+    submitting,
+    error,
+    setError,
+  };
 };
 
 /**
