@@ -36,6 +36,8 @@ export const PatchformApplyPage = () => {
   const { applications, isLoading: mineLoading } = usePatchformMyApplications();
 
   const published = procedure?.status === 'published';
+  // 選択肢（案内フォームの分岐）が無い＝申請用紙1枚の手続き。案内ウィザードの説明は出さない。
+  const singleForm = !(procedure?.choice_fields && procedure.choice_fields.length > 0);
   const mine = applications.filter((a) => a.procedure_id === procedureId);
   const active = mine.filter((a) => a.status.effective !== '取下げ');
 
@@ -64,7 +66,9 @@ export const PatchformApplyPage = () => {
             <p className='text-std-16N-170 text-solid-gray-700'>{procedure.description}</p>
           ) : null}
           <p className='text-std-16N-170 text-solid-gray-700'>
-            この手続きは「マイ手続き」の案件として進めます。始めると案内（ナビ）に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。
+            {singleForm
+              ? 'この手続きは「マイ手続き」の案件として進めます。始めると、申請用紙の記入や書類の添付を少しずつ進められます。'
+              : 'この手続きは「マイ手続き」の案件として進めます。始めると案内（ナビ）に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。'}
           </p>
         </div>
 
@@ -126,7 +130,9 @@ export const PatchformApplyPage = () => {
                 {active.length > 0 ? 'もう1件、新しく始める' : 'この手続きを始める'}
               </h2>
               <p className='text-std-16N-170 text-solid-gray-700'>
-                案内ウィザードに沿って条件を選ぶと、必要書類を揃えた案件を作成します。
+                {singleForm
+                  ? '始めると、この手続きの案件を作成します。申請用紙の記入と、必要な書類の添付を進められます。'
+                  : '案内ウィザードに沿って条件を選ぶと、必要書類を揃えた案件を作成します。'}
               </p>
               <div>
                 <Button
