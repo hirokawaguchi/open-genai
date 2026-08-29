@@ -289,7 +289,6 @@ export const DocmakerPage = () => {
                             className={`inline-block whitespace-nowrap rounded-4 border px-2 py-0.5 text-dns-14N-130 ${statusStyle(status)}`}
                           >
                             {status}
-                            {overridden ? '（手動）' : ''}
                           </span>
                         </td>
                         <td className='px-3 py-2'>
@@ -385,7 +384,13 @@ export const DocmakerPage = () => {
                                   aria-disabled={busy}
                                   onClick={() => void onSetStatus(a.id, '')}
                                 >
-                                  自動に戻す
+                                  {status === '提出済'
+                                    ? '提出を取下げ'
+                                    : status === '取下げ'
+                                      ? '取下げを解除'
+                                      : status === '完了'
+                                        ? '完了を取消'
+                                        : '状態を戻す'}
                                 </button>
                               ) : (
                                 <button
