@@ -12,13 +12,10 @@ import { sourcesFromApplication } from './runtime/imiSuggest';
 import { missingRequired } from './runtime/visibility';
 import type { Application } from './types';
 import {
-  extractPatchformFile,
-  lookupPatchformCorporate,
-  lookupPatchformPostal,
-  uploadPatchformFile,
   usePatchformActions,
   usePatchformApplicationImiSources,
   usePatchformDetail,
+  usePatchformRuntime,
 } from './usePatchform';
 
 type Props = {
@@ -57,6 +54,7 @@ export const PatchformFillModal = (props: Props) => {
     open ? applicationId : undefined,
   );
   const { submitAnswers, loadDraft, submitting, error, setError } = usePatchformActions();
+  const { extract, upload, postalLookup, corporateLookup } = usePatchformRuntime();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [submitterName, setSubmitterName] = useState('');
   const [wizardLast, setWizardLast] = useState(true);
@@ -156,10 +154,10 @@ export const PatchformFillModal = (props: Props) => {
                 definition={fillDef}
                 values={answers}
                 onChange={(id, v) => setAnswers((p) => ({ ...p, [id]: v }))}
-                onExtract={extractPatchformFile}
-                onUpload={(file, kind) => uploadPatchformFile(form.id, file, kind)}
-                onPostalLookup={lookupPatchformPostal}
-                onCorporateLookup={lookupPatchformCorporate}
+                onExtract={extract}
+                onUpload={(file, kind) => upload(form.id, file, kind)}
+                onPostalLookup={postalLookup}
+                onCorporateLookup={corporateLookup}
                 onWizardChange={(info) => setWizardLast(info.isLast)}
                 imiSources={[
                   ...sourcesFromApplication(application ?? null, form.id),

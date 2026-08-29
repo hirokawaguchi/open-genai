@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import type { MyApplication } from '../patchform/types';
+import { usePatchformRoutes } from '../patchform/routes';
 import {
   usePatchformMyApplications,
   usePatchformProcedures,
@@ -54,6 +55,7 @@ const deadlineTone = (deadline: string): string => {
  */
 export const DocmakerPage = () => {
   const navigate = useNavigate();
+  const routes = usePatchformRoutes();
   const { applications, isLoading, loadError, mutate } = usePatchformMyApplications();
   const { procedures } = usePatchformProcedures();
   const { setStatus, updateMeta, remove, busy, error, setError } =
@@ -85,7 +87,7 @@ export const DocmakerPage = () => {
   const onStart = () => {
     if (!pick) return;
     setError(null);
-    navigate(`/patchform/apply/${pick}/wizard?from=my`);
+    navigate(routes.wizard(pick));
   };
 
   const onSetStatus = async (id: string, status: string) => {
@@ -139,13 +141,7 @@ export const DocmakerPage = () => {
       <PageTitle title={DOCMAKER_LABEL} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: DOCMAKER_LABEL },
-            ]}
-          />
+          <BreadcrumbsNav items={[...routes.homeCrumbs, { label: routes.myListLabel }]} />
           <h1 className='flex items-center gap-2 text-std-20B-160 lg:text-std-24B-150'>
             <PiFoldersBold className='size-6' />
             マイ手続き
@@ -163,12 +159,14 @@ export const DocmakerPage = () => {
           {published.length === 0 ? (
             <p className='text-std-16N-170 text-solid-gray-700'>
               公開中の手続きがありません。
-              <Link
-                to='/patchform/procedures'
-                className='ml-1 text-blue-900 underline-offset-2 hover:underline'
-              >
-                手続きを公開する
-              </Link>
+              {routes.procedures && (
+                <Link
+                  to={routes.procedures}
+                  className='ml-1 text-blue-900 underline-offset-2 hover:underline'
+                >
+                  手続きを公開する
+                </Link>
+              )}
             </p>
           ) : (
             <div className='flex flex-wrap items-center gap-2'>
@@ -277,7 +275,7 @@ export const DocmakerPage = () => {
                       >
                         <td className='px-3 py-2'>
                           <Link
-                            to={`/patchform/applications/${a.id}?from=my`}
+                            to={routes.application(a.id)}
                             className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
                           >
                             {a.title}

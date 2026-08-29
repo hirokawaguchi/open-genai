@@ -10,6 +10,7 @@ export const GuestLogin = () => {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [devLink, setDevLink] = useState<string | null>(null);
 
   const onSubmit = async () => {
     const value = email.trim();
@@ -20,7 +21,10 @@ export const GuestLogin = () => {
     setBusy(true);
     setError(null);
     try {
-      await api.post('/public/api/auth/request', { email: value });
+      const res = await api.post<{ dev_link?: string }>('/public/api/auth/request', {
+        email: value,
+      });
+      setDevLink(res.data?.dev_link ?? null);
       setSent(true);
     } catch {
       // 列挙防止のためサーバは常に成功を返す。ネットワーク障害時のみここに来る。
@@ -38,6 +42,19 @@ export const GuestLogin = () => {
           {email} 宛にログイン用のリンクを送信しました。メール内のリンクを開くとログインが完了します。
         </p>
         <p className='mt-2 text-solid-gray-700'>リンクの有効期限は短めです。届かない場合は迷惑メールもご確認ください。</p>
+        {devLink && (
+          <div className='mt-4 rounded-8 border border-dashed border-amber-700 bg-amber-50 p-3'>
+            <p className='text-dns-14N-130 text-solid-gray-700'>
+              開発モード: メール未連携のため、下のリンクからログインできます。
+            </p>
+            <a
+              href={devLink}
+              className='mt-1 inline-block break-all text-blue-900 underline underline-offset-2'
+            >
+              このリンクでログイン
+            </a>
+          </div>
+        )}
         <div className='mt-6'>
           <Button type='button' variant='outline' size='md' onClick={() => setSent(false)}>
             別のメールアドレスで送り直す

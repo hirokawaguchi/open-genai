@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
 import useSWR from 'swr';
-import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
+import { ApiError, teamApi } from '@/lib/fetcher';
 import { download } from '@/utils/createDownloadLink';
+import { GuestApiError, usePatchformApi } from './PatchformApiContext';
 import type { ImiSource } from './runtime/imiSuggest';
 import { lookupPostalDirect } from './runtime/postalLookup';
 import type {
@@ -29,7 +30,7 @@ import type {
 } from './types';
 
 const errorMessage = (e: unknown, fallback: string): string => {
-  if (e instanceof ApiError) {
+  if (e instanceof ApiError || e instanceof GuestApiError) {
     const data = e.data as { error?: string } | undefined;
     if (data?.error) {
       return data.error;
@@ -38,15 +39,44 @@ const errorMessage = (e: unknown, fallback: string): string => {
   return fallback;
 };
 
+const statusOf = (e: unknown): number | null =>
+  e instanceof ApiError || e instanceof GuestApiError ? e.status : null;
+
+// データ取得を現在のモード（庁内=teamApi / 庁外=公開API Bearer）に束ねる薄い型。
+// teamApi と PatchformApi はいずれもこの形を満たす。
+type RuntimeApi = {
+  get: <T>(
+    path: string,
+    options?: { params?: Record<string, string | number | boolean | undefined> },
+  ) => Promise<{ data: T; status: number }>;
+  post: <T>(
+    path: string,
+    body?: unknown,
+    options?: { params?: Record<string, string | number | boolean | undefined> },
+  ) => Promise<{ data: T; status: number }>;
+  getBlob: (
+    path: string,
+    options?: { params?: Record<string, string | number | boolean | undefined> },
+  ) => Promise<{ blob: Blob; disposition: string | null }>;
+};
+
+// SWR フェッチャを現在のモードに束ねる。既定は庁内（teamApi）。
+const useApiFetcher = () => {
+  const api = usePatchformApi();
+  return useCallback(<T,>(path: string): Promise<T> => api.get<T>(path).then((r) => r.data), [api]);
+};
+
 export const usePatchformConfig = () => {
+  const api = usePatchformApi();
   const { data, error, isLoading } = useSWR<FormConfig>(
     'patchform/config',
     async () => {
       try {
-        return await teamApiFetcher<FormConfig>('patchform/config');
+        return (await api.get<FormConfig>('patchform/config')).data;
       } catch (e) {
-        if (e instanceof ApiError && (e.status === 503 || e.status === 502)) {
-          const data = e.data as FormConfig | undefined;
+        const status = statusOf(e);
+        if (status === 503 || status === 502) {
+          const data = (e as { data?: FormConfig }).data;
           return {
             enabled: false,
             error: data?.error || errorMessage(e, 'フォームサービスに接続できません'),
@@ -67,9 +97,10 @@ export const usePatchformConfig = () => {
 };
 
 export const usePatchformList = () => {
+  const fetcher = useApiFetcher();
   const { data, error, isLoading, mutate } = useSWR<{ forms: FormSummary[] }>(
     'patchform/forms',
-    teamApiFetcher,
+    fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false },
   );
   return {
@@ -84,9 +115,10 @@ export type TagUsage = { tag: string; count: number };
 
 /** 編集権限のある様式に付いたタグ（使用件数付き・ゴミ箱分も含む）。 */
 export const usePatchformTags = () => {
+  const fetcher = useApiFetcher();
   const { data, error, isLoading, mutate } = useSWR<{ tags: TagUsage[] }>(
     'patchform/tags',
-    teamApiFetcher,
+    fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false },
   );
   return {
@@ -99,6 +131,7 @@ export const usePatchformTags = () => {
 
 /** タグの改名・削除（編集権限のある全フォームに一括反映）。 */
 export const usePatchformTagActions = () => {
+  const api = usePatchformApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,7 +139,7 @@ export const usePatchformTagActions = () => {
     setBusy(true);
     setError(null);
     try {
-      const res = await teamApi.post<{ changed: number }>('patchform/tags/rename', {
+      const res = await api.post<{ changed: number }>('patchform/tags/rename', {
         from,
         to,
       });
@@ -117,13 +150,13 @@ export const usePatchformTagActions = () => {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [api]);
 
   const remove = useCallback(async (tag: string): Promise<number | null> => {
     setBusy(true);
     setError(null);
     try {
-      const res = await teamApi.post<{ changed: number }>('patchform/tags/delete', { tag });
+      const res = await api.post<{ changed: number }>('patchform/tags/delete', { tag });
       return res.data?.changed ?? 0;
     } catch (e) {
       setError(errorMessage(e, 'タグの削除に失敗しました。'));
@@ -131,14 +164,15 @@ export const usePatchformTagActions = () => {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [api]);
 
   return { rename, remove, busy, error, setError };
 };
 
 export const usePatchformDetail = (formId: string | undefined) => {
+  const fetcher = useApiFetcher();
   const key = formId ? `patchform/forms/${encodeURIComponent(formId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<FormDetail>(key, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<FormDetail>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -151,6 +185,7 @@ export const usePatchformDetail = (formId: string | undefined) => {
 };
 
 export const usePatchformActions = () => {
+  const api = usePatchformApi();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -166,7 +201,7 @@ export const usePatchformActions = () => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<FormDetail>('patchform/forms', input);
+        const res = await api.post<FormDetail>('patchform/forms', input);
         return res.data ?? null;
       } catch (e) {
         setError(errorMessage(e, 'フォームの作成に失敗しました。'));
@@ -199,7 +234,7 @@ export const usePatchformActions = () => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.put<FormDetail>(
+        const res = await api.put<FormDetail>(
           `patchform/forms/${encodeURIComponent(formId)}`,
           input,
         );
@@ -222,7 +257,7 @@ export const usePatchformActions = () => {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await teamApi.post<FormDetail>(
+      const res = await api.post<FormDetail>(
         `patchform/forms/${encodeURIComponent(formId)}/status`,
         { status, ...(extra?.locked === undefined ? {} : { locked: extra.locked }) },
       );
@@ -239,7 +274,7 @@ export const usePatchformActions = () => {
     setSubmitting(true);
     setError(null);
     try {
-      await teamApi.delete(`patchform/forms/${encodeURIComponent(formId)}`);
+      await api.delete(`patchform/forms/${encodeURIComponent(formId)}`);
       return true;
     } catch (e) {
       setError(errorMessage(e, 'フォームの削除に失敗しました。'));
@@ -259,7 +294,7 @@ export const usePatchformActions = () => {
       try {
         for (const id of formIds) {
           try {
-            await teamApi.delete(`patchform/forms/${encodeURIComponent(id)}`);
+            await api.delete(`patchform/forms/${encodeURIComponent(id)}`);
             results.push({ id, ok: true });
           } catch (e) {
             results.push({ id, ok: false, error: errorMessage(e, '削除できませんでした。') });
@@ -285,7 +320,7 @@ export const usePatchformActions = () => {
       try {
         for (const id of formIds) {
           try {
-            await teamApi.post(`patchform/forms/${encodeURIComponent(id)}/status`, {
+            await api.post(`patchform/forms/${encodeURIComponent(id)}/status`, {
               status,
               ...(extra?.locked === undefined ? {} : { locked: extra.locked }),
             });
@@ -312,7 +347,7 @@ export const usePatchformActions = () => {
       try {
         for (const entry of entries) {
           try {
-            await teamApi.post(`patchform/forms/${encodeURIComponent(entry.id)}/tags`, {
+            await api.post(`patchform/forms/${encodeURIComponent(entry.id)}/tags`, {
               tags: entry.tags,
             });
             results.push({ id: entry.id, ok: true });
@@ -343,7 +378,7 @@ export const usePatchformActions = () => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<{
+        const res = await api.post<{
           receipt_code?: string;
           is_draft?: boolean;
           application?: Application;
@@ -364,7 +399,7 @@ export const usePatchformActions = () => {
 
   const loadDraft = useCallback(async (formId: string) => {
     try {
-      const res = await teamApi.get<{
+      const res = await api.get<{
         answers?: Record<string, unknown>;
         receipt_code?: string | null;
         submitter_name?: string | null;
@@ -373,14 +408,14 @@ export const usePatchformActions = () => {
     } catch {
       return null;
     }
-  }, []);
+  }, [api]);
 
   const setWithdrawn = useCallback(
     async (formId: string, submissionId: string, withdrawn: boolean): Promise<boolean> => {
       setSubmitting(true);
       setError(null);
       try {
-        await teamApi.post(
+        await api.post(
           `patchform/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/withdraw`,
           { withdrawn },
         );
@@ -397,7 +432,7 @@ export const usePatchformActions = () => {
 
   const revealSubmission = useCallback(async (formId: string, submissionId: string) => {
     try {
-      const res = await teamApi.get<Submission>(
+      const res = await api.get<Submission>(
         `patchform/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}`,
       );
       return res.data ?? null;
@@ -460,13 +495,14 @@ export const downloadProcedureExport = async (
   saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
 };
 
-/** 申請束のアイテムに紐づく様式ひな型をDLする。 */
-export const downloadItemTemplate = async (
+/** 申請束のアイテムに紐づく様式ひな型をDLする（庁内=teamApi / 庁外=公開API）。 */
+const downloadItemTemplateWith = async (
+  api: RuntimeApi,
   applicationId: string,
   itemId: string,
   fallbackName?: string,
 ): Promise<void> => {
-  const { blob, disposition } = await teamApi.getBlob(
+  const { blob, disposition } = await api.getBlob(
     `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/template`,
   );
   saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'template');
@@ -484,15 +520,17 @@ export const downloadArtifactCarrier = async (objectKey: string): Promise<void> 
 
 /** 申請束のアイテムに添付された、申請者アップロードのファイルをDLする。
  *
- * 庁外由来の添付は backend が SeaweedFS へ再ホストし、署名付きURL（carrierモードでは
+ * 庁内: 庁外由来の添付は backend が SeaweedFS へ再ホストし、署名付きURL（carrierモードでは
  * リンクファイル）を JSON で返す。庁内由来はバイナリをそのままストリームする。
+ * 庁外: 本人のファイルなので越境せず、常にバイナリを直接返す。
  */
-export const downloadItemFile = async (
+const downloadItemFileWith = async (
+  api: RuntimeApi,
   applicationId: string,
   itemId: string,
   fallbackName?: string,
 ): Promise<void> => {
-  const { blob, disposition } = await teamApi.getBlob(
+  const { blob, disposition } = await api.getBlob(
     `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
   );
   if (blob.type.includes('application/json')) {
@@ -681,58 +719,72 @@ const fileToDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-export const lookupPatchformPostal = async (
+const lookupPostalWith = async (
+  api: RuntimeApi,
   zip: string,
 ): Promise<{ prefecture?: string; city?: string; street?: string } | null> => {
   try {
-    const res = await teamApi.get<{ prefecture?: string; city?: string; street?: string }>(
+    const res = await api.get<{ prefecture?: string; city?: string; street?: string }>(
       'patchform/lookup/postal',
       { params: { zip } },
     );
     return res.data ?? null;
   } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 502 || e.status === 503)) {
+    const s = statusOf(e);
+    if (s === 404 || s === 502 || s === 503) {
       return lookupPostalDirect(zip);
     }
     throw new Error(errorMessage(e, '住所の検索に失敗しました。'));
   }
 };
 
-export const lookupPatchformCorporate = async (
+export const lookupPatchformPostal = (zip: string) => lookupPostalWith(teamApi, zip);
+
+const lookupCorporateWith = async (
+  api: RuntimeApi,
   number: string,
 ): Promise<{ company_name?: string } | null> => {
   try {
-    const res = await teamApi.get<{ company_name?: string }>('patchform/lookup/corporate', {
+    const res = await api.get<{ company_name?: string }>('patchform/lookup/corporate', {
       params: { number },
     });
     return res.data ?? null;
   } catch (e) {
-    if (e instanceof ApiError && e.status >= 500) {
+    const s = statusOf(e);
+    if (s !== null && s >= 500) {
       return { company_name: '' };
     }
     throw new Error(errorMessage(e, '法人番号の検索に失敗しました。'));
   }
 };
 
-export const extractPatchformFile = async (
+export const lookupPatchformCorporate = (number: string) => lookupCorporateWith(teamApi, number);
+
+const extractPatchformFileWith = async (
+  api: RuntimeApi,
   kind: 'image' | 'document',
   file: File,
 ): Promise<{ extracted: string; notes?: string }> => {
   const data = await fileToDataUrl(file);
-  const res = await teamApi.post<{ extracted?: string; notes?: string }>(
-    'patchform/extract',
-    { kind, filename: file.name, data },
-  );
+  const res = await api.post<{ extracted?: string; notes?: string }>('patchform/extract', {
+    kind,
+    filename: file.name,
+    data,
+  });
   return { extracted: res.data?.extracted || '', notes: res.data?.notes };
 };
 
-export const uploadPatchformFile = async (
+export const extractPatchformFile = (kind: 'image' | 'document', file: File) =>
+  extractPatchformFileWith(teamApi, kind, file);
+
+const uploadPatchformFileWith = async (
+  api: RuntimeApi,
   formId: string,
   file: File,
   kind: 'file' | 'signature' = 'file',
 ): Promise<UploadedFile> => {
   const data = await fileToDataUrl(file);
-  const res = await teamApi.post<UploadedFile>(`patchform/forms/${encodeURIComponent(formId)}/files`, {
+  const res = await api.post<UploadedFile>(`patchform/forms/${encodeURIComponent(formId)}/files`, {
     filename: file.name,
     data,
     kind,
@@ -742,6 +794,12 @@ export const uploadPatchformFile = async (
   }
   return res.data;
 };
+
+export const uploadPatchformFile = (
+  formId: string,
+  file: File,
+  kind: 'file' | 'signature' = 'file',
+) => uploadPatchformFileWith(teamApi, formId, file, kind);
 
 export const downloadProcedureLinkFile = (
   name: string,
@@ -781,11 +839,12 @@ export const downloadProcedureQr = (filename: string, svg: string) => {
 
 export const usePatchformProcedureShare = (procedureId: string | undefined, enabled: boolean) => {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const fetcher = useApiFetcher();
   const key =
     procedureId && enabled && origin
       ? `patchform/procedures/${encodeURIComponent(procedureId)}/share?origin=${encodeURIComponent(origin)}`
       : null;
-  const { data, error, isLoading } = useSWR<ProcedureShare>(key, teamApiFetcher, {
+  const { data, error, isLoading } = useSWR<ProcedureShare>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -797,9 +856,10 @@ export const usePatchformProcedureShare = (procedureId: string | undefined, enab
 };
 
 export const usePatchformProcedures = () => {
+  const fetcher = useApiFetcher();
   const { data, error, isLoading, mutate } = useSWR<{ procedures: Procedure[] }>(
     'patchform/procedures',
-    teamApiFetcher,
+    fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false },
   );
   return {
@@ -811,8 +871,9 @@ export const usePatchformProcedures = () => {
 };
 
 export const usePatchformProcedure = (procedureId: string | undefined) => {
+  const fetcher = useApiFetcher();
   const key = procedureId ? `patchform/procedures/${encodeURIComponent(procedureId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<Procedure>(key, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<Procedure>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -825,8 +886,9 @@ export const usePatchformProcedure = (procedureId: string | undefined) => {
 };
 
 export const usePatchformInbox = (procedureId?: string) => {
+  const fetcher = useApiFetcher();
   const qs = procedureId ? `?procedure_id=${encodeURIComponent(procedureId)}` : '';
-  const { data, error, isLoading, mutate } = useSWR<Inbox>(`patchform/inbox${qs}`, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<Inbox>(`patchform/inbox${qs}`, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -842,8 +904,9 @@ export const usePatchformInbox = (procedureId?: string) => {
 };
 
 export const usePatchformApplication = (applicationId: string | undefined) => {
+  const fetcher = useApiFetcher();
   const key = applicationId ? `patchform/applications/${encodeURIComponent(applicationId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<Application>(key, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<Application>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -857,9 +920,10 @@ export const usePatchformApplication = (applicationId: string | undefined) => {
 
 /** マイ手続き一覧（庁内: 自分が所有するプロジェクト）。 */
 export const usePatchformMyApplications = () => {
+  const fetcher = useApiFetcher();
   const { data, error, isLoading, mutate } = useSWR<{ applications: MyApplication[] }>(
     'patchform/applications/mine',
-    teamApiFetcher,
+    fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false },
   );
   return {
@@ -872,10 +936,11 @@ export const usePatchformMyApplications = () => {
 
 /** 記入時の横断 IMI 候補源（本人の他プロジェクトの記入済み様式）。 */
 export const usePatchformApplicationImiSources = (applicationId: string | undefined) => {
+  const fetcher = useApiFetcher();
   const key = applicationId
     ? `patchform/applications/${encodeURIComponent(applicationId)}/imi-sources`
     : null;
-  const { data } = useSWR<{ sources: ImiSource[] }>(key, teamApiFetcher, {
+  const { data } = useSWR<{ sources: ImiSource[] }>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -884,6 +949,7 @@ export const usePatchformApplicationImiSources = (applicationId: string | undefi
 
 /** プロジェクト（申請束）の作成・状態変更・改名。 */
 export const usePatchformProjectActions = () => {
+  const api = usePatchformApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -892,7 +958,7 @@ export const usePatchformProjectActions = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<Application>('patchform/applications', {
+        const res = await api.post<Application>('patchform/applications', {
           procedure_id: procedureId,
           ...(title ? { title } : {}),
         });
@@ -904,7 +970,7 @@ export const usePatchformProjectActions = () => {
         setBusy(false);
       }
     },
-    [],
+    [api],
   );
 
   const setStatus = useCallback(
@@ -912,7 +978,7 @@ export const usePatchformProjectActions = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<Application>(
+        const res = await api.post<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/status`,
           { status },
         );
@@ -924,7 +990,7 @@ export const usePatchformProjectActions = () => {
         setBusy(false);
       }
     },
-    [],
+    [api],
   );
 
   const updateMeta = useCallback(
@@ -940,7 +1006,7 @@ export const usePatchformProjectActions = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.patch<Application>(
+        const res = await api.patch<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}`,
           patch,
         );
@@ -952,7 +1018,7 @@ export const usePatchformProjectActions = () => {
         setBusy(false);
       }
     },
-    [],
+    [api],
   );
 
   const rename = useCallback(
@@ -965,7 +1031,7 @@ export const usePatchformProjectActions = () => {
     setBusy(true);
     setError(null);
     try {
-      await teamApi.delete(
+      await api.delete(
         `patchform/applications/${encodeURIComponent(applicationId)}`,
       );
       return true;
@@ -975,18 +1041,19 @@ export const usePatchformProjectActions = () => {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [api]);
 
   return { create, setStatus, rename, updateMeta, remove, busy, error, setError };
 };
 
 /** 作成ウィザード用: 案内回答から必要書類を dry-run で解決してプレビューする。 */
-export const resolveProcedurePreview = async (
+const resolveProcedurePreviewWith = async (
+  api: RuntimeApi,
   procedureId: string,
   answers: Record<string, unknown>,
 ): Promise<ProcedureResolvePreview | null> => {
   try {
-    const res = await teamApi.post<ProcedureResolvePreview>(
+    const res = await api.post<ProcedureResolvePreview>(
       `patchform/procedures/${encodeURIComponent(procedureId)}/resolve`,
       { answers },
     );
@@ -996,11 +1063,18 @@ export const resolveProcedurePreview = async (
   }
 };
 
+export const resolveProcedurePreview = (
+  procedureId: string,
+  answers: Record<string, unknown>,
+): Promise<ProcedureResolvePreview | null> =>
+  resolveProcedurePreviewWith(teamApi, procedureId, answers);
+
 export const usePatchformProcedureCatalog = (procedureId: string | undefined) => {
+  const fetcher = useApiFetcher();
   const key = procedureId
     ? `patchform/procedures/${encodeURIComponent(procedureId)}/catalog`
     : null;
-  const { data, error, isLoading } = useSWR<ProcedureCatalog>(key, teamApiFetcher, {
+  const { data, error, isLoading } = useSWR<ProcedureCatalog>(key, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -1013,6 +1087,7 @@ export const usePatchformProcedureCatalog = (procedureId: string | undefined) =>
 };
 
 export const usePatchformApplicationItems = () => {
+  const api = usePatchformApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1030,7 +1105,7 @@ export const usePatchformApplicationItems = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<Application>(
+        const res = await api.post<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items`,
           input,
         );
@@ -1051,7 +1126,7 @@ export const usePatchformApplicationItems = () => {
       setError(null);
       try {
         const data = await fileToDataUrl(file);
-        const res = await teamApi.post<Application>(
+        const res = await api.post<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
           { filename: file.name, data },
         );
@@ -1071,7 +1146,7 @@ export const usePatchformApplicationItems = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.delete<Application>(
+        const res = await api.delete<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
         );
         return res.data ?? null;
@@ -1094,7 +1169,7 @@ export const usePatchformApplicationItems = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<Application>(
+        const res = await api.post<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/source`,
           { source },
         );
@@ -1114,7 +1189,7 @@ export const usePatchformApplicationItems = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<Application>(
+        const res = await api.post<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items/order`,
           { order },
         );
@@ -1134,7 +1209,7 @@ export const usePatchformApplicationItems = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.delete<Application>(
+        const res = await api.delete<Application>(
           `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}`,
         );
         return res.data ?? null;
@@ -1289,4 +1364,41 @@ export const usePatchformProcedureActions = () => {
   );
 
   return { create, save, setStatus, setStatusMany, remove, removeMany, submitting, error, setError };
+};
+
+/**
+ * FillForm / ワークベンチが使う「その場の入出力」関数群を、現在のモード
+ * （庁内=teamApi / 庁外=公開API Bearer）に束ねて返す。庁外ページ（DocmakerPage /
+ * PatchformApplicationPage / PatchformWizardPage / PatchformFillModal）はこれを使う。
+ */
+export const usePatchformRuntime = () => {
+  const api = usePatchformApi();
+  return {
+    extract: useCallback(
+      (kind: 'image' | 'document', file: File) => extractPatchformFileWith(api, kind, file),
+      [api],
+    ),
+    upload: useCallback(
+      (formId: string, file: File, kind: 'file' | 'signature' = 'file') =>
+        uploadPatchformFileWith(api, formId, file, kind),
+      [api],
+    ),
+    postalLookup: useCallback((zip: string) => lookupPostalWith(api, zip), [api]),
+    corporateLookup: useCallback((number: string) => lookupCorporateWith(api, number), [api]),
+    resolvePreview: useCallback(
+      (procedureId: string, answers: Record<string, unknown>) =>
+        resolveProcedurePreviewWith(api, procedureId, answers),
+      [api],
+    ),
+    downloadItemFile: useCallback(
+      (applicationId: string, itemId: string, fallbackName?: string) =>
+        downloadItemFileWith(api, applicationId, itemId, fallbackName),
+      [api],
+    ),
+    downloadItemTemplate: useCallback(
+      (applicationId: string, itemId: string, fallbackName?: string) =>
+        downloadItemTemplateWith(api, applicationId, itemId, fallbackName),
+      [api],
+    ),
+  };
 };

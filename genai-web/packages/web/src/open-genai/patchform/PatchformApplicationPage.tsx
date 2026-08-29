@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   PiArrowDownBold,
   PiArrowUpBold,
@@ -14,21 +14,22 @@ import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { DOCMAKER_LABEL } from '../docmaker/labels';
+import { PatchformApiScope, createGuestFormApi, usePatchformApi } from './PatchformApiContext';
 import { PatchformFillModal } from './PatchformFillModal';
+import { readSession } from './guest/guestSession';
 import { PATCHFORM_LABEL } from './labels';
+import { usePatchformRoutes } from './routes';
 import { answerRows } from './runtime/formatAnswer';
 import { omitsNavigation } from './types';
 import type { ApplicationItem } from './types';
 import {
-  downloadItemFile,
-  downloadItemTemplate,
   usePatchformApplication,
   usePatchformApplicationItems,
   usePatchformList,
   usePatchformProcedure,
   usePatchformProcedureCatalog,
   usePatchformProjectActions,
+  usePatchformRuntime,
 } from './usePatchform';
 
 const OTHER_ATTACH_SLOT = 'attach:__other__';
@@ -62,11 +63,18 @@ const statusTone: Record<string, string> = {
 export const PatchformApplicationPage = () => {
   const { applicationId } = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const api = usePatchformApi();
+  const routes = usePatchformRoutes();
+  // 共有リンク（匿名）束か。匿名では閲覧・記入・枠追加・DL まで可能とし、
+  // 提出・状態管理・履歴はログインで引き取り（claim）後にマイ手続きで行う。
+  const anon = routes.mode === 'anonymous';
   // マイ手続き（本人）経由か、申請受付（レビュー）経由かでパンくずを出し分ける。
   const fromMy = searchParams.get('from') === 'my';
   // 申請受付（受領側）から開いたときは、内容の閲覧とダウンロードだけに限定する。
   // 条件変更・記入・添付・提出などの編集操作は申請者本人（マイ手続き）だけが行える。
-  const readOnly = !fromMy;
+  // 匿名の共有リンク束は編集可（提出のみ claim 後）なので readOnly から除く。
+  const readOnly = !fromMy && !anon;
   const { application, isLoading, loadError, mutate } = usePatchformApplication(applicationId);
   const { procedure } = usePatchformProcedure(application?.procedure_id);
   const { slots: catalogSlots } = usePatchformProcedureCatalog(application?.procedure_id);
@@ -82,12 +90,18 @@ export const PatchformApplicationPage = () => {
     error: itemError,
   } = usePatchformApplicationItems();
   const { setStatus, busy: statusBusy } = usePatchformProjectActions();
+  const { downloadItemFile, downloadItemTemplate } = usePatchformRuntime();
   const notice = application?.notice;
   const [catalogPick, setCatalogPick] = useState('');
   const [attachTitle, setAttachTitle] = useState('');
   const [condOpen, setCondOpen] = useState(true);
   const [fillItem, setFillItem] = useState<ApplicationItem | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  // 匿名記入モーダルは item の guest_token に固定した公開フォームAPIで動かす。
+  const fillApi = useMemo(
+    () => (anon && fillItem ? createGuestFormApi(fillItem.guest_token ?? '') : null),
+    [anon, fillItem],
+  );
 
   const allItems = application?.items ?? [];
   // 選択肢のない「申請用紙1枚」の手続きは、案内(nav)ではなく通常の申請フォーム
@@ -105,8 +119,8 @@ export const PatchformApplicationPage = () => {
   // プロジェクト編集モード（?app=）で開く。回答は現在の内容が引き継がれる。
   const condWizardTo =
     application?.procedure_id && aid
-      ? `/patchform/apply/${application.procedure_id}/wizard?app=${encodeURIComponent(aid)}&from=my`
-      : navItem?.form_id
+      ? routes.wizard(application.procedure_id, { app: aid })
+      : routes.mode === 'internal' && navItem?.form_id
         ? `/patchform/${navItem.form_id}?app=${encodeURIComponent(application?.token ?? '')}&item=${encodeURIComponent(navItem.id)}${fromMy ? '&from=my' : ''}`
         : null;
 
@@ -189,6 +203,39 @@ export const PatchformApplicationPage = () => {
     if (updated) await mutate(updated, { revalidate: false });
   };
 
+  const [claimBusy, setClaimBusy] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  // 匿名束を「マイ手続き」へ引き取る。未ログインならログインへ誘導し、戻り先 token を
+  // 保持して GuestVerify 側で自動 claim させる。ログイン済みならその場で claim する。
+  const onClaim = async () => {
+    const token = application?.token || applicationId || '';
+    if (!token) return;
+    if (!readSession()) {
+      try {
+        sessionStorage.setItem('pf_pending_claim', token);
+      } catch {
+        // sessionStorage 不可でも致命ではない（ログイン後に再度ボタンを押せばよい）。
+      }
+      navigate('/public/mine');
+      return;
+    }
+    setClaimBusy(true);
+    setClaimError(null);
+    try {
+      const res = await api.post<{ id: string }>(
+        `/public/api/applications/${encodeURIComponent(token)}/claim`,
+      );
+      const id = res.data?.id;
+      if (id) {
+        navigate(`/public/mine/${encodeURIComponent(id)}?from=my`);
+      }
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : '引き取りに失敗しました');
+    } finally {
+      setClaimBusy(false);
+    }
+  };
+
   // 「枠を足す」の提案: いま束にあるフォームと同じタグを持つ、公開中の別フォーム。
   const inBundleFormIds = new Set(
     allItems.map((it) => it.form_id).filter((v): v is string => Boolean(v)),
@@ -219,11 +266,17 @@ export const PatchformApplicationPage = () => {
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <BreadcrumbsNav
           items={
-            fromMy
+            anon
               ? [
-                  { label: 'ホーム', to: '/' },
-                  { label: 'AIアプリ', to: '/apps' },
-                  { label: DOCMAKER_LABEL, to: '/docmaker' },
+                  {
+                    label:
+                      application?.title || application?.procedure_name || '申請',
+                  },
+                ]
+              : fromMy
+              ? [
+                  ...routes.homeCrumbs,
+                  { label: routes.myListLabel, to: routes.myList },
                   {
                     label:
                       application?.title || application?.procedure_name || '手続き',
@@ -288,7 +341,31 @@ export const PatchformApplicationPage = () => {
               )}
               <p className='text-dns-14N-130 text-solid-gray-600'>公開 URL: {application.public_url}</p>
             </div>
-            {readOnly ? (
+            {anon ? (
+              <section className='flex flex-wrap items-center justify-between gap-3 rounded-8 border border-blue-900/30 bg-blue-50/60 p-4'>
+                <div className='min-w-0'>
+                  <p className='text-std-16N-170 text-solid-gray-800'>
+                    この共有リンクでは、記入・書類の追加・ダウンロードができます。<strong>提出</strong>や進み具合の管理は、ログインして<strong>マイ手続き</strong>に引き取ってから行います。
+                  </p>
+                  {claimError && (
+                    <p className='mt-1 text-error-1' role='alert'>
+                      {claimError}
+                    </p>
+                  )}
+                </div>
+                <div className='flex shrink-0 flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    aria-disabled={claimBusy}
+                    onClick={() => void onClaim()}
+                  >
+                    {claimBusy ? '処理中...' : 'マイ手続きで管理する（ログイン）'}
+                  </Button>
+                </div>
+              </section>
+            ) : readOnly ? (
               <p className='rounded-8 border border-blue-900/30 bg-blue-50/60 p-3 text-std-16N-170 text-solid-gray-800'>
                 これは申請受付（受領側）の画面です。ファイルの追加・差し替えや内容の修正ができ、変更はすべて<strong>変更履歴</strong>に記録されます。ただし<strong>条件の変更</strong>と<strong>提出</strong>は申請者本人が行います。
               </p>
@@ -811,7 +888,7 @@ export const PatchformApplicationPage = () => {
                   </div>
                 </div>
             </div>
-            {application.events && application.events.length > 0 && (
+            {!anon && application.events && application.events.length > 0 && (
               <Disclosure className='rounded-8 border border-solid-gray-300 bg-white px-4 py-3'>
                 <DisclosureSummary>
                   <span className='text-std-16B-150'>
@@ -869,26 +946,35 @@ export const PatchformApplicationPage = () => {
             )}
           </>
         )}
-        {fillItem && application ? (
-          <PatchformFillModal
-            open={true}
-            formId={fillItem.form_id ?? ''}
-            itemTitle={fillItem.title}
-            applicationToken={application.token}
-            applicationItemId={fillItem.id}
-            applicationId={aid}
-            application={application}
-            initialAnswers={fillItem.answers}
-            onClose={() => setFillItem(null)}
-            onSubmitted={(updated) => {
-              if (updated) {
-                void mutate(updated, { revalidate: false });
-              } else {
-                void mutate();
-              }
-            }}
-          />
-        ) : null}
+        {fillItem && application
+          ? (() => {
+              const modal = (
+                <PatchformFillModal
+                  open={true}
+                  formId={fillItem.form_id ?? ''}
+                  itemTitle={fillItem.title}
+                  applicationToken={application.token}
+                  applicationItemId={fillItem.id}
+                  applicationId={aid}
+                  application={application}
+                  initialAnswers={fillItem.answers}
+                  onClose={() => setFillItem(null)}
+                  onSubmitted={(updated) => {
+                    if (updated) {
+                      void mutate(updated, { revalidate: false });
+                    } else {
+                      void mutate();
+                    }
+                  }}
+                />
+              );
+              return fillApi ? (
+                <PatchformApiScope api={fillApi}>{modal}</PatchformApiScope>
+              ) : (
+                modal
+              );
+            })()
+          : null}
       </div>
     </LayoutBody>
   );

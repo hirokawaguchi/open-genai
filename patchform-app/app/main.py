@@ -1647,7 +1647,13 @@ def download_internal(
     return FileResponse(
         meta["path"],
         media_type=meta["mime"],
-        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+        headers={
+            "Content-Disposition": files.content_disposition(meta["filename"]),
+            # 庁外由来のファイルは庁内で直接受け取らず再ホストさせる（バックエンドが判定）。
+            "X-Patchform-Origin": "external"
+            if meta.get("origin") == "external"
+            else "internal",
+        },
     )
 
 
@@ -1981,6 +1987,21 @@ def _verify_external(request: Request) -> tuple[str | None, JSONResponse | None]
     return email, None
 
 
+def _dev_login_enabled() -> bool:
+    """開発用ログイン（マジックリンクを応答に直接返す）が有効か。
+
+    メールサーバ未連携の開発環境で動作確認できるようにするための逃げ道。
+    本番では必ず無効（既定 0）。有効時はログインリンクが認証なしで露出するため、
+    メール到達不能な検証環境に限定すること。
+    """
+    return (os.environ.get("PATCHFORM_DEV_LOGIN") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 @app.post("/public/api/auth/request")
 async def public_auth_request(request: Request) -> JSONResponse:
     """メール宛にマジックリンクを送る。メール列挙防止のため常に成功扱いで返す。"""
@@ -1998,6 +2019,11 @@ async def public_auth_request(request: Request) -> JSONResponse:
         return JSONResponse(content=ok)
     token, _exp = store.create_magic_token(email)
     notify.send_magic_link(email=email, token=token)
+    if _dev_login_enabled():
+        # 開発用: メール到達不能でもログインできるよう、リンクを直接返す。
+        resp = dict(ok)
+        resp["dev_link"] = notify.magic_link_url(token)
+        return JSONResponse(content=resp)
     return JSONResponse(content=ok)
 
 
@@ -2118,6 +2144,18 @@ def public_list_procedures(request: Request, q: str = "") -> JSONResponse:
         return err
     items = store.list_published_procedures(query=q or None)
     return JSONResponse(content={"procedures": items})
+
+
+@app.get("/public/api/procedures/{procedure_id}")
+def public_get_procedure(procedure_id: str) -> JSONResponse:
+    """公開中の手続き詳細（choice_fields 等）。匿名の共有リンク束が単票判定に使う。
+
+    公開情報（QR で配布される受付情報）に限るため認証不要。非公開は 404。
+    """
+    detail = store.get_procedure(procedure_id)
+    if not detail or detail.get("status") != "published":
+        return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
+    return JSONResponse(content=detail)
 
 
 @app.post("/public/api/procedures/{procedure_id}/resolve")
@@ -2268,6 +2306,23 @@ async def public_submit(guest_token: str, request: Request) -> JSONResponse:
     return JSONResponse(status_code=201, content=result)
 
 
+def _public_write_guard(token: str) -> JSONResponse | None:
+    """共有リンク(token)経由の書込を未claim(所有者なし)束に限定する。
+
+    claim 済み（owner_kind が付いている）束は、所有者のマイ手続き(/mine, Bearer)
+    経由でのみ編集できるようにし、token を知る第三者による無認可編集を防ぐ。
+    """
+    data, msg = store.public_application(token)
+    if msg or data is None:
+        return JSONResponse(status_code=404, content={"error": msg or "申請が見つかりません"})
+    if str(data.get("owner_kind") or ""):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "この手続きは所有者のマイ手続きから操作してください"},
+        )
+    return None
+
+
 @app.get("/public/api/applications/{token}")
 def public_get_application(token: str) -> JSONResponse:
     data, msg = store.public_application(token)
@@ -2289,6 +2344,9 @@ def public_application_catalog(token: str) -> JSONResponse:
 
 @app.post("/public/api/applications/{token}/items")
 async def public_add_application_item(token: str, request: Request) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
@@ -2309,6 +2367,9 @@ async def public_add_application_item(token: str, request: Request) -> JSONRespo
 
 @app.post("/public/api/applications/{token}/items/{item_id}/file")
 async def public_fulfill_item(token: str, item_id: str, request: Request) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     ip = request.client.host if request.client else "unknown"
     if not _extract_rate_ok(f"item-pub:{ip}", limit=40):
         return JSONResponse(status_code=429, content={"error": "添付の回数制限に達しました"})
@@ -2330,6 +2391,9 @@ async def public_fulfill_item(token: str, item_id: str, request: Request) -> JSO
 
 @app.delete("/public/api/applications/{token}/items/{item_id}/file")
 def public_clear_item(token: str, item_id: str) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     result, msg = store.clear_item_fulfillment(token=token, item_id=item_id)
     if msg or result is None:
         return _item_error(msg)
@@ -2338,6 +2402,9 @@ def public_clear_item(token: str, item_id: str) -> JSONResponse:
 
 @app.delete("/public/api/applications/{token}/items/{item_id}")
 def public_delete_item(token: str, item_id: str) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     result, msg = store.delete_application_item(token=token, item_id=item_id)
     if msg or result is None:
         return _item_error(msg)
@@ -2346,6 +2413,9 @@ def public_delete_item(token: str, item_id: str) -> JSONResponse:
 
 @app.post("/public/api/applications/{token}/items/{item_id}/source")
 async def public_set_item_source(token: str, item_id: str, request: Request) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
@@ -2360,6 +2430,9 @@ async def public_set_item_source(token: str, item_id: str, request: Request) -> 
 
 @app.post("/public/api/applications/{token}/items/order")
 async def public_reorder_items(token: str, request: Request) -> JSONResponse:
+    guard = _public_write_guard(token)
+    if guard:
+        return guard
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
@@ -2399,6 +2472,505 @@ def public_download_item_file(token: str, item_id: str) -> Response:
     )
 
 
+@app.post("/public/api/applications/{token}/claim")
+def public_claim_application(token: str, request: Request) -> JSONResponse:
+    """共有リンク(token)の未所有束を、ログイン中の庁外ユーザーのマイ手続きへ引き取る。"""
+    email, err = _verify_external(request)
+    if err or not email:
+        return err or JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    aid, msg = store.claim_application(token, owner_key=email)
+    if msg or not aid:
+        code = 404
+        if "別の利用者" in (msg or ""):
+            code = 409
+        elif "所有者が不正" in (msg or ""):
+            code = 400
+        return JSONResponse(status_code=code, content={"error": msg or "引き取りに失敗しました"})
+    return JSONResponse(content={"id": aid})
+
+
+# --- 庁外「マイ手続き」フル導線（Bearer + 所有者チェック / id・form_id 指定） -------
+# 共有フック（usePatchform）は庁内パス `patchform/...` を叩き、庁外アダプタが
+# `/public/api/mine/...` に読み替える。庁内と同一の application_id/form_id/procedure_id
+# 体系で、所有者（external + email）チェックを通してから既存 store を呼ぶ薄いラッパ。
+
+
+def _verify_mine_app(
+    request: Request, application_id: str
+) -> tuple[str | None, JSONResponse | None]:
+    """外部セッションを検証し、application_id の所有者であることを確認する。"""
+    email, err = _verify_external(request)
+    if err or not email:
+        return None, err or JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    ok, msg = store.application_owned(
+        application_id, owner_kind="external", owner_key=email
+    )
+    if not ok:
+        code = 404 if "見つかりません" in (msg or "") else 403
+        return None, JSONResponse(status_code=code, content={"error": msg})
+    return email, None
+
+
+@app.get("/public/api/mine/applications/mine")
+def mine_list_applications(request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    items = store.list_my_applications(owner_kind="external", owner_key=email)
+    return JSONResponse(content={"applications": items})
+
+
+@app.post("/public/api/mine/applications")
+async def mine_create_application(request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.create_project(
+        procedure_id=str(body.get("procedure_id") or ""),
+        owner_kind="external",
+        owner_key=email,
+        title=(body.get("title") or None),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.get("/public/api/mine/applications/{application_id}")
+def mine_get_application(application_id: str, request: Request) -> JSONResponse:
+    _email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    data = store.get_application(application_id=application_id)
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "申請が見つかりません"})
+    return JSONResponse(content=data)
+
+
+@app.post("/public/api/mine/applications/{application_id}/status")
+async def mine_set_application_status(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.set_application_status(
+        application_id=application_id,
+        owner_kind="external",
+        owner_key=email,
+        status=str(body.get("status") or ""),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.patch("/public/api/mine/applications/{application_id}")
+async def mine_update_application_meta(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    kwargs: dict[str, str] = {}
+    for key in ("title", "assignee", "deadline", "next_action_date"):
+        if key in body:
+            kwargs[key] = str(body.get(key) or "")
+    result, msg = store.update_application_meta(
+        application_id=application_id,
+        owner_kind="external",
+        owner_key=email,
+        **kwargs,
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/public/api/mine/applications/{application_id}")
+def mine_delete_application(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    msg = store.delete_application(
+        application_id=application_id, owner_kind="external", owner_key=email
+    )
+    if msg:
+        return _application_error(msg)
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/public/api/mine/applications/{application_id}/imi-sources")
+def mine_application_imi_sources(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    result, msg = store.application_imi_sources(
+        application_id=application_id, owner_kind="external", owner_key=email
+    )
+    if msg or result is None:
+        return JSONResponse(content={"sources": []})
+    return JSONResponse(content=result)
+
+
+@app.post("/public/api/mine/applications/{application_id}/items")
+async def mine_add_application_item(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.add_application_item(
+        application_id=application_id,
+        duplicate_of=(body.get("duplicate_of") or None),
+        form_id=(body.get("form_id") or None),
+        slot_id=(body.get("slot_id") or None),
+        title=(body.get("title") or None),
+        kind=(body.get("kind") or None),
+        added_by="guest",
+        actor_user_id=email,
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/public/api/mine/applications/{application_id}/items/{item_id}/file")
+async def mine_fulfill_item(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"item-mine:{ip}", limit=40):
+        return JSONResponse(status_code=429, content={"error": "添付の回数制限に達しました"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.fulfill_item_with_file(
+        application_id=application_id,
+        item_id=item_id,
+        filename=str(body.get("filename") or "file"),
+        data=str(body.get("data") or ""),
+        origin="external",
+        actor_user_id=email,
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/public/api/mine/applications/{application_id}/items/{item_id}/file")
+def mine_clear_item(application_id: str, item_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    result, msg = store.clear_item_fulfillment(
+        application_id=application_id, item_id=item_id, actor_user_id=email
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/public/api/mine/applications/{application_id}/items/{item_id}")
+def mine_delete_item(application_id: str, item_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    result, msg = store.delete_application_item(
+        application_id=application_id, item_id=item_id, actor_user_id=email
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/public/api/mine/applications/{application_id}/items/{item_id}/source")
+async def mine_set_item_source(
+    application_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.set_item_source(
+        application_id=application_id,
+        item_id=item_id,
+        source=str(body.get("source") or ""),
+        actor_user_id=email,
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/public/api/mine/applications/{application_id}/items/order")
+async def mine_reorder_items(application_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    order = body.get("order")
+    if not isinstance(order, list):
+        return _item_error("order には並び順のIDリストが必要です")
+    result, msg = store.reorder_application_items(
+        application_id=application_id,
+        order=[str(x) for x in order],
+        actor_user_id=email,
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.get(
+    "/public/api/mine/applications/{application_id}/items/{item_id}/template",
+    response_model=None,
+)
+def mine_download_item_template(
+    application_id: str, item_id: str, request: Request
+) -> Response:
+    _email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    meta, msg = store.get_item_template_file(
+        application_id=application_id, item_id=item_id
+    )
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
+@app.get(
+    "/public/api/mine/applications/{application_id}/items/{item_id}/file",
+    response_model=None,
+)
+def mine_download_item_file(
+    application_id: str, item_id: str, request: Request
+) -> Response:
+    # 本人が自分の申請束の添付をダウンロードするだけなので越境しない（再ホスト不要）。
+    _email, err = _verify_mine_app(request, application_id)
+    if err:
+        return err
+    meta, msg = store.get_item_file(application_id=application_id, item_id=item_id)
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
+@app.get("/public/api/mine/procedures")
+def mine_list_procedures(request: Request, q: str = "") -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    items = store.list_published_procedures(query=q or None)
+    # 共通コンポーネント(DocmakerPage)は status==='published' で絞り込むため、
+    # 公開一覧にも status を補って庁内と同じ形にする。
+    for it in items:
+        it.setdefault("status", "published")
+    return JSONResponse(content={"procedures": items})
+
+
+@app.get("/public/api/mine/procedures/{procedure_id}")
+def mine_get_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    data = store.get_procedure(procedure_id)
+    if data is None or data.get("status") != "published":
+        return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
+    return JSONResponse(content=data)
+
+
+@app.get("/public/api/mine/procedures/{procedure_id}/catalog")
+def mine_procedure_catalog(procedure_id: str, request: Request) -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    proc = store.get_procedure(procedure_id)
+    if proc is None or proc.get("status") != "published":
+        return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
+    catalog, msg = store.procedure_catalog(procedure_id)
+    if msg or catalog is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return JSONResponse(content=catalog)
+
+
+@app.post("/public/api/mine/procedures/{procedure_id}/resolve")
+async def mine_resolve_procedure(procedure_id: str, request: Request) -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    answers = body.get("answers")
+    result, msg = store.resolve_procedure_preview(
+        procedure_id=procedure_id,
+        answers=answers if isinstance(answers, dict) else {},
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.get("/public/api/mine/forms")
+def mine_list_forms(request: Request) -> JSONResponse:
+    # 庁外には庁内フォームカタログを公開しない。関連フォーム提案は空でよい
+    # （手続きカタログからの追加は mine/procedures/{id}/catalog で行える）。
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    return JSONResponse(content={"forms": []})
+
+
+@app.get("/public/api/mine/forms/{form_id}")
+def mine_get_form(form_id: str, request: Request) -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    detail, msg = store.mine_form_detail(form_id)
+    if msg or detail is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return JSONResponse(content=detail)
+
+
+@app.get("/public/api/mine/forms/{form_id}/draft")
+def mine_get_draft(form_id: str, request: Request) -> JSONResponse:
+    # 庁外の記入モーダルは、既存回答を親から初期値として受け取るため下書き復元は不要。
+    # 404 を返さず空応答で穏当に扱う。
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    return JSONResponse(content={"answers": {}, "receipt_code": None})
+
+
+@app.post("/public/api/mine/forms/{form_id}/submissions")
+async def mine_submit(form_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    application_token = (body.get("application_token") or "").strip()
+    if not application_token:
+        return JSONResponse(status_code=400, content={"error": "申請束を特定できません"})
+    ok, msg = store.application_owned_by_token(
+        application_token, owner_kind="external", owner_key=email
+    )
+    if not ok:
+        code = 404 if "見つかりません" in (msg or "") else 403
+        return JSONResponse(status_code=code, content={"error": msg})
+    result, smsg = store.mine_submit_answers(
+        form_id=form_id,
+        answers=body.get("answers") or {},
+        submitter_name=(body.get("submitter_name") or None),
+        is_draft=bool(body.get("is_draft")),
+        application_token=application_token,
+        application_item_id=(body.get("application_item_id") or None),
+    )
+    if smsg or result is None:
+        code = (
+            404
+            if "見つかりません" in (smsg or "")
+            else 403
+            if "権限" in (smsg or "") or "公開" in (smsg or "")
+            else 400
+        )
+        return JSONResponse(status_code=code, content={"error": smsg})
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.post("/public/api/mine/forms/{form_id}/files")
+async def mine_upload(form_id: str, request: Request) -> JSONResponse:
+    email, err = _verify_external(request)
+    if err:
+        return err
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"up-mine:{ip}", limit=40):
+        return JSONResponse(status_code=429, content={"error": "添付の回数制限に達しました"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    result, msg = store.mine_upload_file(
+        form_id=form_id,
+        filename=str(body.get("filename") or "file"),
+        data=str(body.get("data") or ""),
+        kind=str(body.get("kind") or "file"),
+    )
+    if msg or result is None:
+        return JSONResponse(status_code=400, content={"error": msg})
+    return JSONResponse(content=result)
+
+
+@app.post("/public/api/mine/extract")
+async def mine_extract(request: Request) -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"ex-mine:{ip}"):
+        return JSONResponse(status_code=429, content={"error": "読取の回数制限に達しました"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _run_extract(body if isinstance(body, dict) else {})
+
+
+@app.get("/public/api/mine/lookup/postal")
+async def mine_lookup_postal(request: Request, zip: str = "") -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"lk-mine:{ip}", limit=40):
+        return JSONResponse(status_code=429, content={"error": "検索の回数制限に達しました"})
+    return await _run_lookup("postal", zip)
+
+
+@app.get("/public/api/mine/lookup/corporate")
+async def mine_lookup_corporate(request: Request, number: str = "") -> JSONResponse:
+    _email, err = _verify_external(request)
+    if err:
+        return err
+    ip = request.client.host if request.client else "unknown"
+    if not _extract_rate_ok(f"lk-mine:{ip}", limit=40):
+        return JSONResponse(status_code=429, content={"error": "検索の回数制限に達しました"})
+    return await _run_lookup("corporate", number)
+
+
 def _public_shell() -> FileResponse | HTMLResponse:
     """庁外 SPA のシェル HTML（#root + guest.js）を返す。"""
     path = PUBLIC_DIR / "form.html"
@@ -2419,6 +2991,7 @@ def public_form_page(guest_token: str = "", token: str = "") -> FileResponse | H
 @app.get("/public/mine", response_model=None)
 @app.get("/public/mine/{rest:path}", response_model=None)
 @app.get("/public/new", response_model=None)
+@app.get("/public/new/{rest:path}", response_model=None)
 @app.get("/public/auth/verify", response_model=None)
 def public_spa_page(rest: str = "") -> FileResponse | HTMLResponse:
     return _public_shell()

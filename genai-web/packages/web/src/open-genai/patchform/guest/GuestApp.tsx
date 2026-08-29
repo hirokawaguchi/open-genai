@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
+import { DocmakerPage } from '../../docmaker/DocmakerPage';
 import { PatchformApiProvider } from '../PatchformApiContext';
+import { PatchformApplicationPage } from '../PatchformApplicationPage';
+import { PatchformWizardPage } from '../PatchformWizardPage';
 import { FillForm } from '../runtime/FillForm';
 import { answerRows } from '../runtime/formatAnswer';
 import { sourcesFromApplication } from '../runtime/imiSuggest';
 import { lookupPostalDirect } from '../runtime/postalLookup';
 import { missingRequired } from '../runtime/visibility';
 import type { Application, FormDefinition, UploadedFile } from '../types';
-import { GuestBundle } from './GuestBundle';
-import { GuestMine } from './GuestMine';
+import { GuestAnonChrome } from './GuestAnonChrome';
+import { GuestChrome } from './GuestChrome';
+import { GuestNarrow } from './GuestNarrow';
 import { GuestVerify } from './GuestVerify';
-import { GuestWizard } from './GuestWizard';
 
 type PublicForm = {
   title?: string;
@@ -68,30 +72,71 @@ const api = async <T,>(path: string, opts?: RequestInit): Promise<T> => {
   return data;
 };
 
-const GuestRoutes = () => {
-  const path = location.pathname;
-  if (path.includes('/public/auth/verify')) {
-    return <GuestVerify />;
-  }
-  if (path.includes('/public/new')) {
-    return <GuestWizard />;
-  }
-  if (path.includes('/public/mine')) {
-    return <GuestMine />;
-  }
-  if (path.includes('/public/p/')) {
-    return <GuestBundle />;
-  }
-  if (path.includes('/public/f/')) {
-    return <GuestForm />;
-  }
-  // ルート（/public/ 直下）はマイ手続き（未ログインならログイン画面）。
-  return <GuestMine />;
+// 共有リンク束（/public/p/{token}）。庁内と同一の実ページ（PatchformApplicationPage）を
+// 匿名モードでマウントする。ルート param `applicationId` の値＝公開 token で、匿名
+// アダプタが token 系公開APIへ読み替える。ログインは強制しない（capability URL）。
+const AnonymousBundle = () => {
+  const { applicationId } = useParams();
+  return (
+    <PatchformApiProvider mode='anonymous' token={applicationId ?? ''}>
+      <GuestAnonChrome>
+        <PatchformApplicationPage />
+      </GuestAnonChrome>
+    </PatchformApiProvider>
+  );
 };
 
+// 庁外SPA。庁内と同一の実ページ（Docmaker / 申請ワークベンチ / 作成ウィザード）を
+// react-router でマウントする。公開フォーム(/public/f)は従来どおり、共有リンク
+// (/public/p)は匿名モードで実ページを描画する。
 export const GuestApp = () => (
   <PatchformApiProvider mode='guest'>
-    <GuestRoutes />
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path='/public/mine'
+          element={
+            <GuestChrome>
+              <DocmakerPage />
+            </GuestChrome>
+          }
+        />
+        <Route
+          path='/public/mine/:applicationId'
+          element={
+            <GuestChrome>
+              <PatchformApplicationPage />
+            </GuestChrome>
+          }
+        />
+        <Route
+          path='/public/new/:procedureId/wizard'
+          element={
+            <GuestChrome>
+              <PatchformWizardPage />
+            </GuestChrome>
+          }
+        />
+        <Route
+          path='/public/auth/verify'
+          element={
+            <GuestNarrow>
+              <GuestVerify />
+            </GuestNarrow>
+          }
+        />
+        <Route
+          path='/public/f/:token'
+          element={
+            <GuestNarrow>
+              <GuestForm />
+            </GuestNarrow>
+          }
+        />
+        <Route path='/public/p/:applicationId' element={<AnonymousBundle />} />
+        <Route path='*' element={<Navigate to='/public/mine' replace />} />
+      </Routes>
+    </BrowserRouter>
   </PatchformApiProvider>
 );
 

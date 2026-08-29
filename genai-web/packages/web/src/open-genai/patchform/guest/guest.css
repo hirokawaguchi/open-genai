@@ -9,6 +9,8 @@
   --breakpoint-2xl: 96em;
   --spacing-px: 0.0625rem;
   --radius-infinity: calc(infinity * 1px);
+  /* 庁内ページ（DocmakerPage 等）が使う最大幅トークン。庁内と同一の見た目にする。 */
+  --page-width: calc(1440 / 16 * 1rem);
 }
 
 @layer base {
