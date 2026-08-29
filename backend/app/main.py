@@ -4637,6 +4637,72 @@ async def patchform_export_application(application_id: str, request: Request) ->
     )
 
 
+async def _proxy_patchform_portable(path: str, request: Request, fallback_name: str) -> Response:
+    """可搬化JSON（書き出し）を添付ファイルとしてそのまま通す。"""
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(_patchform_app_url(path), headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"フォームサービスに接続できませんでした: {e}", "enabled": False},
+        )
+    if res.status_code == 200:
+        return Response(
+            content=res.content,
+            media_type=res.headers.get("content-type", "application/json; charset=utf-8"),
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition", f'attachment; filename="{fallback_name}.json"'
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "フォームサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/patchform/forms/{form_id}/portable")
+async def patchform_export_form_portable(form_id: str, request: Request) -> Response:
+    return await _proxy_patchform_portable(
+        f"/forms/{form_id}/portable", request, f"form_{form_id}"
+    )
+
+
+@app.post("/patchform/forms/import")
+async def patchform_import_form(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/forms/import"), headers, body, timeout=60
+    )
+
+
+@app.get("/patchform/procedures/{procedure_id}/portable")
+async def patchform_export_procedure_portable(procedure_id: str, request: Request) -> Response:
+    return await _proxy_patchform_portable(
+        f"/procedures/{procedure_id}/portable", request, f"procedure_{procedure_id}"
+    )
+
+
+@app.post("/patchform/procedures/import")
+async def patchform_import_procedure(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/procedures/import"), headers, body, timeout=60
+    )
+
+
 # ---------------------------------------------------------------------------
 # 利用者一括管理 専用ページ(/admin/users) 用プロキシ（管理者限定）
 #
