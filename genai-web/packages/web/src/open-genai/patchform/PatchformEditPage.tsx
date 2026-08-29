@@ -91,7 +91,6 @@ export const PatchformEditPage = () => {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [visibility, setVisibility] = useState<'internal' | 'public' | 'both'>('internal');
   const [pin, setPin] = useState('');
   const [retentionDays, setRetentionDays] = useState('');
   const [allowDraft, setAllowDraft] = useState(true);
@@ -111,7 +110,6 @@ export const PatchformEditPage = () => {
     if (!form) return;
     setTitle(form.title);
     setDescription(form.description || '');
-    setVisibility(form.visibility);
     setRetentionDays(String(form.retention_days ?? ''));
     setAllowDraft(form.allow_draft !== false);
     setAllowMultiple(form.allow_multiple !== false);
@@ -178,7 +176,6 @@ export const PatchformEditPage = () => {
     const detail = await update(formId, {
       title,
       description,
-      visibility,
       definition: definition(),
       pin: pin.trim() || undefined,
       retention_days: retentionDays.trim() ? Number(retentionDays) : undefined,
@@ -281,36 +278,22 @@ export const PatchformEditPage = () => {
               <div className='flex flex-col gap-6'>
                 <Disclosure className='rounded-8 border border-solid-gray-300 px-4 py-3'>
                   <DisclosureSummary>
-                    <span className='text-std-16B-150'>フォーム設定（タイトル・公開範囲）</span>
+                    <span className='text-std-16B-150'>フォーム設定（タイトル）</span>
                   </DisclosureSummary>
                   <div className='mt-3 flex flex-col gap-4'>
-                    <div className='grid gap-4 md:grid-cols-2'>
-                      <div>
-                        <Label htmlFor='pf-edit-title' size='sm'>
-                          タイトル
-                        </Label>
-                        <input
-                          id='pf-edit-title'
-                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                          value={title}
-                          onChange={(e) => setTitle(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor='pf-vis' size='sm'>
-                          公開範囲
-                        </Label>
-                        <select
-                          id='pf-vis'
-                          className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                          value={visibility}
-                          onChange={(e) => setVisibility(e.target.value as typeof visibility)}
-                        >
-                          <option value='internal'>庁内のみ</option>
-                          <option value='public'>外部のみ</option>
-                          <option value='both'>庁内と外部</option>
-                        </select>
-                      </div>
+                    <div>
+                      <Label htmlFor='pf-edit-title' size='sm'>
+                        タイトル
+                      </Label>
+                      <input
+                        id='pf-edit-title'
+                        className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                      />
+                      <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                        庁内/庁外の公開範囲は、このフォームを使う「手続き」で決めます。
+                      </p>
                     </div>
                     <div>
                       <Label htmlFor='pf-edit-desc' size='sm'>
@@ -582,7 +565,7 @@ export const PatchformEditPage = () => {
                           setAiNotes(null);
                           const res = await generate({
                             text: aiText.trim(),
-                            visibility,
+                            visibility: 'internal',
                             definition: definition(),
                           });
                           if (!res) return;

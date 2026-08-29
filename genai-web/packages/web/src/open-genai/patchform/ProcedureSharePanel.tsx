@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import {
@@ -76,18 +75,18 @@ export const ProcedureSharePanel = ({
 }) => {
   const [open, setOpen] = useState(false);
   const { share, isLoading, loadError, mutate } = usePatchformProcedureShare(procedureId, open);
-  const { setGuideVisibility, submitting } = usePatchformProcedureActions();
+  const { setProcedureVisibility, submitting } = usePatchformProcedureActions();
   const [fixError, setFixError] = useState<string | null>(null);
 
-  // 庁外URLは案内（ナビゲーション）フォームの公開範囲が「庁内と外部」「外部のみ」の
-  // ときだけ作られる。庁内のみだと庁外導線が出ないので、その場で公開範囲を広げられる。
+  // 庁外URLは手続きの公開範囲が「庁内と外部」のときだけ作られる。庁内のみだと庁外導線が
+  // 出ないので、その場で公開範囲を広げられる（案内＋全様式の受付へ一括反映される）。
   const onOpenExternal = async () => {
     setFixError(null);
-    const updated = await setGuideVisibility(procedureId, 'both');
+    const updated = await setProcedureVisibility(procedureId, 'both');
     if (updated) {
       await mutate();
     } else {
-      setFixError('案内フォームの公開範囲を変更できませんでした。時間をおいて再度お試しください。');
+      setFixError('公開範囲を変更できませんでした。時間をおいて再度お試しください。');
     }
   };
 
@@ -129,7 +128,7 @@ export const ProcedureSharePanel = ({
                   庁外向けのURL・QRがありません
                 </p>
                 <p className='text-dns-14N-130 text-solid-gray-800'>
-                  入口となる<strong>案内（ナビゲーション）フォームの公開範囲が「庁内のみ」</strong>のため、庁外には公開できません。庁外にも公開するには、案内フォームの公開範囲を「庁内と外部」に変更してください。
+                  この<strong>手続きの公開範囲が「庁内のみ」</strong>のため、庁外には公開できません。庁外にも公開するには、公開範囲を「庁内と外部」に変更してください（案内と申請用紙すべてに反映されます）。
                 </p>
                 {fixError && (
                   <p className='text-error-1' role='alert'>
@@ -146,13 +145,6 @@ export const ProcedureSharePanel = ({
                   >
                     {submitting ? '変更中...' : '庁外にも公開する'}
                   </Button>
-                  {share.guide_form_id && (
-                    <Link to={`/patchform/${share.guide_form_id}/edit`} className='inline-flex'>
-                      <Button type='button' variant='outline' size='sm'>
-                        案内フォームを編集
-                      </Button>
-                    </Link>
-                  )}
                 </div>
               </div>
             )}

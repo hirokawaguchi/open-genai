@@ -2,6 +2,9 @@ export type FormStatus = 'draft' | 'published' | 'closed' | 'archived';
 export type FormKind = 'definition' | 'reception';
 export type FormWorkStatus = 'editing' | 'ready';
 export type FormVisibility = 'internal' | 'public' | 'both';
+
+// 手続きの公開範囲。庁内のみ / 庁内と外部の2択。
+export type ProcedureVisibility = 'internal' | 'both';
 export type IdentityMode = 'required' | 'optional' | 'anonymous';
 
 export type CatalogItem = {
@@ -195,6 +198,8 @@ export type Procedure = {
   guide_guest_token?: string | null;
   guide_public_url?: string | null;
   guide_reception_id?: string | null;
+  // 公開範囲は手続き単位（庁内のみ / 庁内と外部）。guide_visibility は後方互換のミラー。
+  visibility?: ProcedureVisibility | null;
   guide_visibility?: FormVisibility | null;
   mapping: { rules: ProcedureRule[] };
   status: ProcedureStatus;
@@ -408,8 +413,9 @@ export type ProcedureShare = {
   external_url?: string | null;
   internal_qr_svg: string;
   external_qr_svg?: string | null;
-  // 庁外URLが無い原因の説明・修正用（案内フォームの公開範囲）。
+  // 庁外URLが無い原因の説明・修正用（手続きの公開範囲）。
   guide_form_id?: string | null;
+  visibility?: ProcedureVisibility | null;
   guide_visibility?: FormVisibility | null;
 };
 
