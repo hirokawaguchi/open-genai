@@ -1427,6 +1427,41 @@ def _closed_reception_row(db: sqlite3.Connection, form_id: str) -> sqlite3.Row |
     ).fetchone()
 
 
+def _reception_matches_source(reception: sqlite3.Row, source: sqlite3.Row) -> bool:
+    """閉じた受付が、現在の原本（定義・公開設定）と一致しているか。
+
+    一致するなら受付を再開して使い回してよい（在申請の互換を保つ）。原本を編集して
+    いれば不一致となり、呼び出し側は新しい受付（新バージョン）を作り直す。
+    """
+    src_def = _definition(source)
+    norm, err = spec.validate_definition(src_def, visibility=source["visibility"])
+    if err or norm is None:
+        # 検証できない原本は無用な作り直しを避け、再開を許す。
+        return True
+    try:
+        rec_def = json.loads(reception["definition_json"] or "{}")
+    except (TypeError, ValueError):
+        return False
+    if json.dumps(norm, ensure_ascii=False, sort_keys=True) != json.dumps(
+        rec_def, ensure_ascii=False, sort_keys=True
+    ):
+        return False
+    for key in ("title", "description", "visibility", "pin_hash", "retention_days"):
+        rec_val = reception[key] if key in reception.keys() else None
+        src_val = source[key] if key in source.keys() else None
+        if rec_val != src_val:
+            return False
+    if _flag(reception, "allow_draft") != _flag(source, "allow_draft"):
+        return False
+    if _flag(reception, "allow_multiple") != _flag(source, "allow_multiple"):
+        return False
+    if _identity_mode(reception) != _identity_mode(source):
+        return False
+    if _tags_json(_row_tags(reception)) != _tags_json(_row_tags(source)):
+        return False
+    return True
+
+
 def _ensure_reception(
     db: sqlite3.Connection,
     form_id: str,
@@ -1442,13 +1477,24 @@ def _ensure_reception(
     source = row if not _is_reception(row) else _form_row(db, _definition_id(row))
     if not source:
         return None, "フォームが見つかりません"
-    closed = _closed_reception_row(db, form_id)
-    if closed:
+    # 原本が編集されていなければ、内容が一致する閉じた受付をそのまま再開して使い回す
+    # （在申請は同じ受付IDを参照し続けるため壊れない）。原本を編集していれば一致する受付が
+    # 無いので新しい受付（新バージョン）を作る。新規申請だけが最新版になる。
+    # created_at は秒精度のため同秒のタイブレークとして rowid も併用する。
+    closed_rows = db.execute(
+        "SELECT * FROM forms WHERE source_form_id = ? AND status = 'closed' "
+        "ORDER BY created_at DESC, rowid DESC",
+        (_definition_id(source),),
+    ).fetchall()
+    match = next(
+        (r for r in closed_rows if _reception_matches_source(r, source)), None
+    )
+    if match is not None:
         db.execute(
             "UPDATE forms SET status = 'published', updated_at = ? WHERE id = ?",
-            (_now_iso(), closed["id"]),
+            (_now_iso(), match["id"]),
         )
-        return closed["id"], None
+        return match["id"], None
     return _insert_reception(db, source, actor_user_id=actor_user_id)
 
 
