@@ -496,8 +496,9 @@ services:
       # 直接返す（庁外マイ手続きの動作確認用）。本番は必ず 0。
       - PATCHFORM_DEV_LOGIN=${PATCHFORM_DEV_LOGIN:-1}
       # 庁外マイ手続き（外部セッション）。本番は EXT_SECRET を必ず固定値で設定する。
-      # 未設定時はサービスキーを流用し、それも無ければ再起動でセッション失効。
-      - PATCHFORM_EXT_SECRET=${PATCHFORM_EXT_SECRET:-}
+      # 開発では固定の既定値を入れ、コンテナ再起動でログインセッションが失効しないように
+      # する（未設定・空だと起動ごとにランダム鍵になり、再起動で「セッションが不正」になる）。
+      - PATCHFORM_EXT_SECRET=${PATCHFORM_EXT_SECRET:-dev-ext-secret-change-me}
       - PATCHFORM_MAGIC_TTL_MIN=${PATCHFORM_MAGIC_TTL_MIN:-15}
       - PATCHFORM_EXT_SESSION_TTL_DAYS=${PATCHFORM_EXT_SESSION_TTL_DAYS:-30}
     volumes:
