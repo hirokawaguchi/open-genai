@@ -10,6 +10,7 @@ Compose では profiles: ["patchform"] でオプション起動する。
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import threading
 import time
@@ -967,6 +968,122 @@ def _export_attachment(body: str | None, msg: str | None, *, filename: str, medi
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _bundle_attachment(
+    bundle: dict | None, msg: str | None, *, filename: str
+) -> Response:
+    if msg or bundle is None:
+        code = 404 if msg and "見つかりません" in msg else 403 if msg and "権限" in msg else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    encoded = json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        content=encoded,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/forms/{form_id}/portable")
+def export_form_portable(
+    form_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    bundle, msg = store.export_form(
+        form_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    return _bundle_attachment(bundle, msg, filename=f"form_{form_id}.json")
+
+
+@app.post("/forms/import")
+async def import_form_portable(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    bundle = body.get("bundle") if isinstance(body, dict) else None
+    detail, msg = store.import_form(
+        bundle,
+        creator_user_id=uid,
+        creator_name=(body.get("creator_name") if isinstance(body, dict) else None),
+    )
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg or "取り込みに失敗しました"})
+    print(f"[patchform] form imported id={detail['id']} by={uid}")
+    return JSONResponse(status_code=201, content=detail)
+
+
+@app.get("/procedures/{procedure_id}/portable")
+def export_procedure_portable(
+    procedure_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    bundle, msg = store.export_procedure_bundle(
+        procedure_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    return _bundle_attachment(bundle, msg, filename=f"procedure_{procedure_id}.json")
+
+
+@app.post("/procedures/import")
+async def import_procedure_portable(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    bundle = body.get("bundle") if isinstance(body, dict) else None
+    detail, msg = store.import_procedure(
+        bundle,
+        creator_user_id=uid,
+        creator_name=(body.get("creator_name") if isinstance(body, dict) else None),
+    )
+    if msg or detail is None:
+        return JSONResponse(status_code=400, content={"error": msg or "取り込みに失敗しました"})
+    print(f"[patchform] procedure imported id={detail['id']} by={uid}")
+    return JSONResponse(status_code=201, content=detail)
 
 
 @app.get("/procedures/{procedure_id}/export")

@@ -39,6 +39,17 @@ export type FormDefinition = {
   components: FormComponent[];
 };
 
+// 可搬化（書き出し/読み込み）のバンドル。フォーム単体か手続き（構成様式を同梱）。
+// 中身の細部は backend が検証するため、ここでは種別の識別に必要な最小限だけ型付けする。
+export type PatchformExportBundle = {
+  $export: string;
+  kind: 'form' | 'procedure';
+  exported_at?: string;
+  spec_version?: string;
+  form?: unknown;
+  procedure?: { name?: string; forms?: unknown[] } & Record<string, unknown>;
+};
+
 export type FormRole = 'admin' | 'owner' | 'editor' | 'viewer' | 'respondent';
 
 export type FormSummary = {

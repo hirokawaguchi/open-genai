@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { PiBookOpenBold, PiListBold, PiNotePencilBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
@@ -12,6 +12,8 @@ import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
 import { PatchformPaneTabs } from './PatchformPaneTabs';
 import { PatchformSubnav } from './PatchformSubnav';
 import {
+  downloadFormPortable,
+  readExportBundleFile,
   usePatchformActions,
   usePatchformAssist,
   usePatchformConfig,
@@ -49,10 +51,14 @@ export const PatchformPage = () => {
     setStatusMany,
     applyTagsMany,
     removeMany,
+    importForm,
     submitting,
     error,
     setError,
   } = usePatchformActions();
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const {
     generate,
     busy: assistBusy,
@@ -280,6 +286,39 @@ export const PatchformPage = () => {
     if (pane !== 'new') return;
     document.getElementById('pf-title')?.focus();
   }, [pane]);
+
+  const onExportForm = async (id: string) => {
+    setImportMsg(null);
+    setExportingId(id);
+    try {
+      await downloadFormPortable(id);
+    } catch {
+      setImportMsg('書き出しに失敗しました。');
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportMsg(null);
+    try {
+      const bundle = await readExportBundleFile(file);
+      if (bundle.kind !== 'form') {
+        setImportMsg('これは手続きの書き出しファイルです。手続き一覧の「読み込み」からお試しください。');
+        return;
+      }
+      const created = await importForm(bundle);
+      if (created) {
+        await mutate();
+        setImportMsg(`「${created.title}」を取り込みました（作成完了・未公開）。`);
+      }
+    } catch (err) {
+      setImportMsg(err instanceof Error ? err.message : '取り込みに失敗しました。');
+    }
+  };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -516,15 +555,38 @@ export const PatchformPage = () => {
                 <h2 className='text-std-18B-160'>
                   {asGuide ? 'ナビゲーションフォーム一覧' : '申請フォーム一覧'}
                 </h2>
-                <Link
-                  to={asGuide ? '/patchform?kind=navigation&tab=new' : '/patchform?tab=new'}
-                  className='inline-flex'
-                >
-                  <Button type='button' variant='solid-fill' size='sm'>
-                    {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
+                <div className='flex flex-wrap items-center gap-2'>
+                  <input
+                    ref={importInputRef}
+                    type='file'
+                    accept='application/json,.json'
+                    className='hidden'
+                    onChange={onImportFile}
+                  />
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-disabled={submitting}
+                    onClick={() => importInputRef.current?.click()}
+                  >
+                    読み込み
                   </Button>
-                </Link>
+                  <Link
+                    to={asGuide ? '/patchform?kind=navigation&tab=new' : '/patchform?tab=new'}
+                    className='inline-flex'
+                  >
+                    <Button type='button' variant='solid-fill' size='sm'>
+                      {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
+                    </Button>
+                  </Link>
+                </div>
               </div>
+              {importMsg ? (
+                <p className='text-dns-14N-130 text-solid-gray-700' role='status'>
+                  {importMsg}
+                </p>
+              ) : null}
               <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='状態で絞り込み'>
                 {(
                   [
@@ -871,6 +933,16 @@ export const PatchformPage = () => {
                             {new Date(f.updated_at).toLocaleString('ja-JP')}
                           </p>
                         </div>
+                        {f.can_edit ? (
+                          <button
+                            type='button'
+                            className='mt-0.5 flex-none rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700 hover:bg-solid-gray-50'
+                            aria-disabled={exportingId === f.id}
+                            onClick={() => void onExportForm(f.id)}
+                          >
+                            {exportingId === f.id ? '書き出し中...' : '書き出し'}
+                          </button>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

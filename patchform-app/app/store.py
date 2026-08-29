@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import hmac
@@ -5726,3 +5727,292 @@ def export_procedure_applications(
             ]
         )
     return buf.getvalue(), None
+
+
+# --- 可搬化: フォーム/手続きの書き出し・読み込み ----------------------------
+# 定義（部品・設定）とひな型ファイルを1つのJSONにまとめ、別環境・別作成者へ
+# 持ち運べるようにする。提出データ・受付・PIN・トークン・IDは含めない（非可搬・
+# 秘匿情報）。手続きは案内＋全構成様式を同梱する自己完結型で、読み込み時は全フォーム
+# を新規IDで作り直し、参照（案内・mapping）を張り替える。
+
+EXPORT_VERSION = "opengenai-patchform/export/1"
+
+
+def _portable_form(db: sqlite3.Connection, def_row: sqlite3.Row) -> dict[str, Any]:
+    """フォーム定義行を可搬なdictへ。ひな型はBase64で同梱する。"""
+    def_id = def_row["id"]
+    template: dict[str, Any] | None = None
+    trow = db.execute(
+        "SELECT id, filename, mime FROM uploaded_files "
+        "WHERE form_id = ? AND component_id = ?",
+        (def_id, FORM_TEMPLATE_COMP),
+    ).fetchone()
+    if trow:
+        try:
+            path = files.stored_path(def_id, trow["id"])
+            if path.is_file():
+                template = {
+                    "filename": trow["filename"],
+                    "mime": trow["mime"] or "application/octet-stream",
+                    "data_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+                }
+        except ValueError:
+            template = None
+    return {
+        "export_key": def_id,
+        "title": def_row["title"],
+        "description": def_row["description"],
+        "visibility": def_row["visibility"],
+        "definition": _definition(def_row),
+        "retention_days": def_row["retention_days"],
+        "allow_draft": bool(_flag(def_row, "allow_draft")),
+        "allow_multiple": bool(_flag(def_row, "allow_multiple")),
+        "identity_mode": _identity_mode(def_row),
+        "tags": _row_tags(def_row),
+        "template": template,
+    }
+
+
+def export_form(
+    form_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        row = _form_row(db, form_id)
+        if not row:
+            return None, "フォームが見つかりません"
+        def_row = row if not _is_reception(row) else _form_row(db, _definition_id(row))
+        if not def_row:
+            return None, "フォームが見つかりません"
+        if not (_is_admin(actor_groups) or _can_edit(def_row, actor_user_id, actor_groups)):
+            return None, "このフォームを書き出す権限がありません"
+        return {
+            "$export": EXPORT_VERSION,
+            "kind": "form",
+            "exported_at": _now_iso(),
+            "spec_version": spec.SPEC_VERSION,
+            "form": _portable_form(db, def_row),
+        }, None
+
+
+def export_procedure_bundle(
+    procedure_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+        ).fetchone()
+        if not proc:
+            return None, "手続きが見つかりません"
+        if not (
+            _is_admin(actor_groups)
+            or _can_edit_procedure(proc, actor_user_id, actor_groups)
+        ):
+            return None, "この手続きを書き出す権限がありません"
+        mapping, _merr = procedure.normalize_mapping(proc["mapping_json"])
+        ids = [proc["guide_form_id"]]
+        for rule in mapping.get("rules") or []:
+            ids.extend(rule.get("form_ids") or [])
+        keymap: dict[str, str] = {}
+        forms_out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for fid in ids:
+            if not fid:
+                continue
+            frow = _form_row(db, fid)
+            if not frow:
+                continue
+            def_row = frow if not _is_reception(frow) else _form_row(db, _definition_id(frow))
+            if not def_row:
+                continue
+            did = def_row["id"]
+            keymap[fid] = did
+            if did in seen:
+                continue
+            seen.add(did)
+            forms_out.append(_portable_form(db, def_row))
+        rules_out: list[dict[str, Any]] = []
+        for rule in mapping.get("rules") or []:
+            fkeys = [keymap[fid] for fid in (rule.get("form_ids") or []) if fid in keymap]
+            rules_out.append(
+                {
+                    "component_id": rule.get("component_id"),
+                    "option": rule.get("option"),
+                    "form_ids": fkeys,
+                    "notes": rule.get("notes") or "",
+                    "prepare": rule.get("prepare") or [],
+                    "refs": rule.get("refs") or [],
+                }
+            )
+        guide_key = keymap.get(proc["guide_form_id"])
+        if not guide_key:
+            guide_row = _form_row(db, proc["guide_form_id"])
+            guide_key = _definition_id(guide_row) if guide_row else None
+        if not guide_key:
+            return None, "案内フォームが見つかりません"
+        return {
+            "$export": EXPORT_VERSION,
+            "kind": "procedure",
+            "exported_at": _now_iso(),
+            "spec_version": spec.SPEC_VERSION,
+            "procedure": {
+                "name": proc["name"],
+                "description": proc["description"],
+                "visibility": _proc_visibility(proc),
+                "notify_emails": _emails_from_row(proc),
+                "guide_export_key": guide_key,
+                "mapping": {"rules": rules_out},
+                "forms": forms_out,
+            },
+        }, None
+
+
+def _validate_bundle(bundle: Any, kind: str) -> tuple[bool, str | None]:
+    if not isinstance(bundle, dict):
+        return False, "取り込みデータが不正です"
+    if bundle.get("$export") != EXPORT_VERSION:
+        return False, "対応していない書き出し形式です"
+    if bundle.get("kind") != kind:
+        label = "フォーム" if kind == "form" else "手続き"
+        return False, f"{label}の書き出しデータを選んでください"
+    return True, None
+
+
+def _import_one_form(
+    pform: dict[str, Any],
+    *,
+    creator_user_id: str,
+    creator_name: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    title = str(pform.get("title") or "").strip() or "無題フォーム"
+    vis = pform.get("visibility")
+    if vis not in spec.VISIBILITIES:
+        vis = "internal"
+    definition = pform.get("definition") if isinstance(pform.get("definition"), dict) else None
+    form, err = create_form(
+        title=title,
+        description=pform.get("description"),
+        creator_user_id=creator_user_id,
+        creator_name=creator_name,
+        visibility=vis,
+        definition=definition,
+        retention_days=pform.get("retention_days"),
+        tags=pform.get("tags"),
+    )
+    if err or not form:
+        return None, err or "フォームの取り込みに失敗しました"
+    fid = form["id"]
+    identity = pform.get("identity_mode")
+    if identity not in spec.IDENTITY_MODES:
+        identity = None
+    _detail, uerr = update_form(
+        fid,
+        actor_user_id=creator_user_id,
+        allow_draft=bool(pform.get("allow_draft", True)),
+        allow_multiple=bool(pform.get("allow_multiple", True)),
+        identity_mode=identity,
+    )
+    if uerr:
+        return None, uerr
+    tmpl = pform.get("template")
+    if isinstance(tmpl, dict) and tmpl.get("data_base64"):
+        mime = tmpl.get("mime") or "application/octet-stream"
+        data_url = f"data:{mime};base64,{tmpl['data_base64']}"
+        _res, terr = set_form_template(
+            form_id=fid,
+            filename=tmpl.get("filename") or "template",
+            data=data_url,
+            actor_user_id=creator_user_id,
+        )
+        if terr:
+            return None, terr
+    # 部品があれば作成完了(ロック)にして、そのまま手続きで使える状態にする。
+    if (definition or {}).get("components"):
+        _s, serr = set_status(
+            fid, actor_user_id=creator_user_id, status="draft", locked=True
+        )
+        if serr:
+            return None, serr
+    return get_form(fid, actor_user_id=creator_user_id), None
+
+
+def import_form(
+    bundle: Any,
+    *,
+    creator_user_id: str,
+    creator_name: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    ok, err = _validate_bundle(bundle, "form")
+    if not ok:
+        return None, err
+    pform = bundle.get("form")
+    if not isinstance(pform, dict):
+        return None, "フォームデータが不正です"
+    return _import_one_form(
+        pform, creator_user_id=creator_user_id, creator_name=creator_name
+    )
+
+
+def import_procedure(
+    bundle: Any,
+    *,
+    creator_user_id: str,
+    creator_name: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    ok, err = _validate_bundle(bundle, "procedure")
+    if not ok:
+        return None, err
+    pproc = bundle.get("procedure")
+    if not isinstance(pproc, dict):
+        return None, "手続きデータが不正です"
+    forms = pproc.get("forms") if isinstance(pproc.get("forms"), list) else []
+    keymap: dict[str, str] = {}
+    for pform in forms:
+        if not isinstance(pform, dict):
+            continue
+        key = pform.get("export_key")
+        created, ferr = _import_one_form(
+            pform, creator_user_id=creator_user_id, creator_name=creator_name
+        )
+        if ferr or not created:
+            return None, ferr or "様式の取り込みに失敗しました"
+        if key:
+            keymap[str(key)] = created["id"]
+    guide_key = pproc.get("guide_export_key")
+    guide_id = keymap.get(str(guide_key)) if guide_key is not None else None
+    if not guide_id:
+        return None, "案内フォームが見つかりません"
+    rules: list[dict[str, Any]] = []
+    for rule in (pproc.get("mapping") or {}).get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        fids = [keymap[str(k)] for k in (rule.get("form_ids") or []) if str(k) in keymap]
+        rules.append(
+            {
+                "component_id": rule.get("component_id"),
+                "option": rule.get("option"),
+                "form_ids": fids,
+                "notes": rule.get("notes") or "",
+                "prepare": rule.get("prepare") or [],
+                "refs": rule.get("refs") or [],
+            }
+        )
+    vis = pproc.get("visibility")
+    proc, perr = create_procedure(
+        name=str(pproc.get("name") or "取り込み手続き"),
+        description=pproc.get("description"),
+        guide_form_id=guide_id,
+        mapping={"rules": rules},
+        notify_emails=pproc.get("notify_emails"),
+        visibility=vis if vis in ("internal", "both") else "internal",
+        creator_user_id=creator_user_id,
+        creator_name=creator_name,
+    )
+    return proc, perr
