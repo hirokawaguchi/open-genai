@@ -18,6 +18,8 @@ const statusStyle = (status: string): string => {
     case '提出済':
     case '完了':
       return 'border-green-600 bg-green-50 text-green-800';
+    case '準備完了':
+      return 'border-amber-600 bg-amber-50 text-amber-800';
     case '作業中':
       return 'border-blue-900 bg-blue-50 text-blue-900';
     case '取下げ':
@@ -27,7 +29,7 @@ const statusStyle = (status: string): string => {
   }
 };
 
-const STATUS_FILTERS = ['すべて', '未着手', '作業中', '提出済', '完了', '取下げ'] as const;
+const STATUS_FILTERS = ['すべて', '未着手', '作業中', '準備完了', '提出済', '完了', '取下げ'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 const fmtDateTime = (v: string): string => (v ? new Date(v).toLocaleString('ja-JP') : '—');

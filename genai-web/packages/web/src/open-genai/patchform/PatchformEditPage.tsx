@@ -416,6 +416,11 @@ export const PatchformEditPage = () => {
                         />
                         同じ人の再提出を許可する
                       </label>
+                      <p className='pl-6 text-dns-14N-130 text-solid-gray-600'>
+                        この設定は、このフォームを<strong>単体</strong>で公開したときの挙動です。
+                        手続き（申請束）に組み込んだ場合は、提出後も申請者・受付が内容を直せるよう、
+                        この設定に関わらず<strong>手続き内では修正可</strong>として扱われます。
+                      </p>
                     </div>
                     {form.role === 'owner' || form.role === 'admin' ? (
                       <div className='grid gap-4 md:grid-cols-2'>
@@ -479,6 +484,7 @@ export const PatchformEditPage = () => {
                           type='button'
                           variant='outline'
                           size='sm'
+                          className='inline-flex shrink-0 items-center justify-center whitespace-nowrap'
                           onClick={() =>
                             formId ? void downloadFormTemplate(formId, template) : undefined
                           }
@@ -490,6 +496,7 @@ export const PatchformEditPage = () => {
                           type='button'
                           variant='outline'
                           size='sm'
+                          className='shrink-0 whitespace-nowrap'
                           aria-disabled={tplBusy || !form.can_edit}
                           onClick={() => templateInput.current?.click()}
                         >
@@ -499,6 +506,7 @@ export const PatchformEditPage = () => {
                           type='button'
                           variant='text'
                           size='sm'
+                          className='shrink-0 whitespace-nowrap'
                           aria-disabled={tplBusy || !form.can_edit}
                           onClick={() => void onRemoveTemplate()}
                         >

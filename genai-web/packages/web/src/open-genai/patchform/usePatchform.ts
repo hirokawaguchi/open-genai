@@ -471,6 +471,18 @@ export const downloadItemTemplate = async (
   saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'template');
 };
 
+/** 申請束のアイテムに添付された、申請者アップロードのファイルをDLする。 */
+export const downloadItemFile = async (
+  applicationId: string,
+  itemId: string,
+  fallbackName?: string,
+): Promise<void> => {
+  const { blob, disposition } = await teamApi.getBlob(
+    `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}/file`,
+  );
+  saveBlob(blob, parseFilename(disposition) ?? fallbackName ?? 'attachment');
+};
+
 /** 作成画面で様式フォーム自身のひな型をDLする。 */
 export const downloadFormTemplate = async (
   formId: string,
@@ -1076,7 +1088,36 @@ export const usePatchformApplicationItems = () => {
     [],
   );
 
-  return { addItem, fulfillWithFile, clearFile, setSource, reorder, busy, error, setError };
+  const removeItem = useCallback(
+    async (applicationId: string, itemId: string): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await teamApi.delete<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/items/${encodeURIComponent(itemId)}`,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '枠の削除に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  return {
+    addItem,
+    fulfillWithFile,
+    clearFile,
+    setSource,
+    reorder,
+    removeItem,
+    busy,
+    error,
+    setError,
+  };
 };
 
 export const usePatchformProcedureActions = () => {

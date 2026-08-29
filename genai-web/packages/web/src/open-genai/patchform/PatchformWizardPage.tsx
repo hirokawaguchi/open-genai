@@ -13,6 +13,7 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { DOCMAKER_LABEL } from '../docmaker/labels';
 import { FillForm } from './runtime/FillForm';
 import { missingRequired } from './runtime/visibility';
+import { omitsNavigation } from './types';
 import type { FormComponent, FormDefinition, ProcedureResolvePreview, SlotKind } from './types';
 import {
   extractPatchformFile,
@@ -134,6 +135,16 @@ export const PatchformWizardPage = () => {
   // 1問ずつのステップに変換した定義（ウィザード表示用）。
   const wizardDef = useMemo(() => (fillDef ? withStepBreaks(fillDef) : undefined), [fillDef]);
   const published = procedure?.status === 'published';
+  // 選択肢のない「申請用紙1枚」の手続きは、ウィザードにせず素の申請フォームとして
+  // 記入・送信させる（案内の分岐が無いため書類一覧の事前確認も不要）。
+  const singleForm = Boolean(procedure && omitsNavigation(procedure));
+  // 単一フォームでは「はじめに」を飛ばして記入から始める。
+  const jumpedSingle = useRef(false);
+  useEffect(() => {
+    if (jumpedSingle.current || !singleForm) return;
+    if (step === 'intro') setStep('conditions');
+    jumpedSingle.current = true;
+  }, [singleForm, step]);
 
   const stepIndex = useMemo(() => STEPS.findIndex((s) => s.id === step), [step]);
 
@@ -157,6 +168,17 @@ export const PatchformWizardPage = () => {
   const cancelTo = editAppId
     ? `/patchform/applications/${editAppId}?from=my`
     : '/docmaker';
+
+  // 単一フォーム: 必須チェックのうえ、そのまま案件を作成して申請フォームを保存する。
+  const onSubmitSingle = async () => {
+    if (!fillDef) return;
+    const missing = missingRequired(fillDef.components, answers);
+    if (missing) {
+      setError(`${missing.label}は必須です`);
+      return;
+    }
+    await onConfirm();
+  };
 
   const onConfirm = async () => {
     if (!procedureId) return;
@@ -228,17 +250,28 @@ export const PatchformWizardPage = () => {
 
         <div className='flex flex-col gap-2'>
           <h1 className='flex items-center gap-2 text-std-20B-160 lg:text-std-24B-150'>
-            <PiSignpostBold className='size-6 text-blue-900' />
-            {editAppId ? '申請条件を変更' : `${procedure?.name || '手続き'}を始める`}
+            {singleForm ? (
+              <PiFileTextBold className='size-6 text-blue-900' />
+            ) : (
+              <PiSignpostBold className='size-6 text-blue-900' />
+            )}
+            {singleForm
+              ? procedure?.name || '手続き'
+              : editAppId
+                ? '申請条件を変更'
+                : `${procedure?.name || '手続き'}を始める`}
           </h1>
           <p className='text-std-16N-170 text-solid-gray-700'>
-            {editAppId
-              ? '案内の回答を選び直すと、必要な書類の一覧が更新されます（追加済みの書類はそのまま残ります）。'
-              : '案内に沿って条件を選ぶと、この手続きに必要な書類の一覧（申請パック）を用意します。'}
+            {singleForm
+              ? '必要事項を記入して送信してください。'
+              : editAppId
+                ? '案内の回答を選び直すと、必要な書類の一覧が更新されます（追加済みの書類はそのまま残ります）。'
+                : '案内に沿って条件を選ぶと、この手続きに必要な書類の一覧（申請パック）を用意します。'}
           </p>
         </div>
 
-        {/* ステッパー */}
+        {/* ステッパー（単一フォームでは出さない） */}
+        {!singleForm ? (
         <ol className='flex flex-wrap items-center gap-2'>
           {STEPS.map((s, i) => {
             const state = i < stepIndex ? 'done' : i === stepIndex ? 'current' : 'todo';
@@ -269,6 +302,7 @@ export const PatchformWizardPage = () => {
             );
           })}
         </ol>
+        ) : null}
 
         {(procLoading || guideLoading) && <p className='text-solid-gray-600'>読み込み中...</p>}
         {procError && (
@@ -325,7 +359,43 @@ export const PatchformWizardPage = () => {
               </section>
             )}
 
-            {step === 'conditions' && (
+            {step === 'conditions' && singleForm && (
+              <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                {fillDef ? (
+                  <FillForm
+                    definition={fillDef}
+                    values={answers}
+                    onChange={(id, v) => setAnswers((p) => ({ ...p, [id]: v }))}
+                    onExtract={extractPatchformFile}
+                    onUpload={(file, kind) =>
+                      guideFormId
+                        ? uploadPatchformFile(guideFormId, file, kind)
+                        : Promise.reject(new Error('準備中です'))
+                    }
+                    onPostalLookup={lookupPatchformPostal}
+                    onCorporateLookup={lookupPatchformCorporate}
+                  />
+                ) : null}
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    aria-disabled={busy}
+                    onClick={() => void onSubmitSingle()}
+                  >
+                    {busy ? '送信中...' : '送信する'}
+                  </Button>
+                  <Link to={cancelTo} className='inline-flex'>
+                    <Button type='button' variant='outline' size='md'>
+                      やめる
+                    </Button>
+                  </Link>
+                </div>
+              </section>
+            )}
+
+            {step === 'conditions' && !singleForm && (
               <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
                 <h2 className='flex items-center gap-2 text-std-18B-160'>
                   <PiSignpostBold className='size-5 text-blue-900' />

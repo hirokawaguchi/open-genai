@@ -1129,6 +1129,7 @@ async def add_application_item_internal(
         title=(body.get("title") or None),
         kind=(body.get("kind") or None),
         added_by="staff",
+        actor_user_id=_uid,
     )
     if msg or result is None:
         return _item_error(msg)
@@ -1159,6 +1160,7 @@ async def fulfill_item_internal(
         item_id=item_id,
         filename=str(body.get("filename") or "file"),
         data=str(body.get("data") or ""),
+        actor_user_id=_uid,
     )
     if msg or result is None:
         return _item_error(msg)
@@ -1183,7 +1185,32 @@ def clear_item_internal(
     if err:
         return err
     result, msg = store.clear_item_fulfillment(
-        application_id=application_id, item_id=item_id
+        application_id=application_id, item_id=item_id, actor_user_id=_uid
+    )
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.delete("/applications/{application_id}/items/{item_id}")
+def delete_item_internal(
+    application_id: str,
+    item_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    result, msg = store.delete_application_item(
+        application_id=application_id, item_id=item_id, actor_user_id=_uid
     )
     if msg or result is None:
         return _item_error(msg)
@@ -1213,6 +1240,7 @@ async def set_item_source_internal(
         application_id=application_id,
         item_id=item_id,
         source=str(body.get("source") or ""),
+        actor_user_id=_uid,
     )
     if msg or result is None:
         return _item_error(msg)
@@ -1243,6 +1271,7 @@ async def reorder_items_internal(
     result, msg = store.reorder_application_items(
         application_id=application_id,
         order=[str(x) for x in order],
+        actor_user_id=_uid,
     )
     if msg or result is None:
         return _item_error(msg)
@@ -1386,6 +1415,35 @@ def download_item_template_internal(
     if err:
         return err
     meta, msg = store.get_item_template_file(application_id=application_id, item_id=item_id)
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
+@app.get("/applications/{application_id}/items/{item_id}/file")
+def download_item_file_internal(
+    application_id: str,
+    item_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> Response:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags,
+        x_service_key, allow_service=True,
+    )
+    if err:
+        return err
+    meta, msg = store.get_item_file(application_id=application_id, item_id=item_id)
     if msg or meta is None:
         return JSONResponse(status_code=404, content={"error": msg})
     return FileResponse(
@@ -2104,6 +2162,14 @@ def public_clear_item(token: str, item_id: str) -> JSONResponse:
     return JSONResponse(content=result)
 
 
+@app.delete("/public/api/applications/{token}/items/{item_id}")
+def public_delete_item(token: str, item_id: str) -> JSONResponse:
+    result, msg = store.delete_application_item(token=token, item_id=item_id)
+    if msg or result is None:
+        return _item_error(msg)
+    return JSONResponse(content=result)
+
+
 @app.post("/public/api/applications/{token}/items/{item_id}/source")
 async def public_set_item_source(token: str, item_id: str, request: Request) -> JSONResponse:
     try:
@@ -2138,6 +2204,18 @@ async def public_reorder_items(token: str, request: Request) -> JSONResponse:
 @app.get("/public/api/applications/{token}/items/{item_id}/template", response_model=None)
 def public_download_item_template(token: str, item_id: str) -> Response:
     meta, msg = store.get_item_template_file(token=token, item_id=item_id)
+    if msg or meta is None:
+        return JSONResponse(status_code=404, content={"error": msg})
+    return FileResponse(
+        meta["path"],
+        media_type=meta["mime"],
+        headers={"Content-Disposition": files.content_disposition(meta["filename"])},
+    )
+
+
+@app.get("/public/api/applications/{token}/items/{item_id}/file", response_model=None)
+def public_download_item_file(token: str, item_id: str) -> Response:
+    meta, msg = store.get_item_file(token=token, item_id=item_id)
     if msg or meta is None:
         return JSONResponse(status_code=404, content={"error": msg})
     return FileResponse(

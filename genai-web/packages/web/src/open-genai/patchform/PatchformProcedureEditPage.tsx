@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import {
+  PiEyeBold,
+  PiFileTextBold,
+  PiNotePencilBold,
+  PiPaperclipBold,
+  PiSignpostBold,
+} from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
@@ -8,18 +15,44 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
 import { PatchformProcedureCoach } from './PatchformProcedureCoach';
 import { PatchformSubnav } from './PatchformSubnav';
-import { omitsNavigation, type ProcedureRule } from './types';
-import { ProcedureSharePanel } from './ProcedureSharePanel';
+import { FillForm } from './runtime/FillForm';
 import {
+  type FormSummary,
+  omitsNavigation,
+  type ProcedureResolvePreview,
+  type ProcedureRule,
+  type SlotKind,
+  type SlotTemplate,
+} from './types';
+import {
+  downloadFormTemplate,
+  extractPatchformFile,
+  lookupPatchformCorporate,
+  lookupPatchformPostal,
+  resolveProcedurePreview,
   usePatchformConfig,
+  usePatchformDetail,
   usePatchformList,
   usePatchformProcedure,
   usePatchformProcedureActions,
+  usePatchformProcedureCatalog,
 } from './usePatchform';
 
 const statusLabel: Record<string, string> = {
   draft: '下書き',
   published: '公開中',
+};
+
+const requiredLabel: Record<string, string> = {
+  required: '必須',
+  recommended: '推奨',
+  optional: '任意',
+};
+
+const previewKindIcon = (kind: SlotKind) => {
+  if (kind === 'attach') return <PiPaperclipBold className='size-4 text-solid-gray-600' />;
+  if (kind === 'data') return <PiSignpostBold className='size-4 text-blue-900' />;
+  return <PiFileTextBold className='size-4 text-solid-gray-600' />;
 };
 
 const ruleKey = (componentId: string, option: string) => `${componentId}\t${option}`;
@@ -44,6 +77,35 @@ export const PatchformProcedureEditPage = () => {
   const [guideFormId, setGuideFormId] = useState('');
   const [notifyEmails, setNotifyEmails] = useState('');
   const [ruleMap, setRuleMap] = useState<Map<string, ProcedureRule>>(new Map());
+  const [pane, setPane] = useState<'edit' | 'preview'>('edit');
+  const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({});
+  const { form: guidePreviewForm, isLoading: guideLoading } = usePatchformDetail(
+    pane === 'preview' ? guideFormId || undefined : undefined,
+  );
+  const guideDefinition = guidePreviewForm?.fill_definition ?? guidePreviewForm?.definition;
+  const { slots: previewSlots } = usePatchformProcedureCatalog(
+    pane === 'preview' ? procedureId : undefined,
+  );
+  const [resolvePreview, setResolvePreview] = useState<ProcedureResolvePreview | null>(null);
+  const [resolveBusy, setResolveBusy] = useState(false);
+  const [resolveUnavailable, setResolveUnavailable] = useState(false);
+  const previewJson = JSON.stringify(previewValues);
+  useEffect(() => {
+    if (pane !== 'preview' || !procedureId || !guideDefinition) return;
+    let alive = true;
+    setResolveBusy(true);
+    const timer = setTimeout(async () => {
+      const res = await resolveProcedurePreview(procedureId, JSON.parse(previewJson));
+      if (!alive) return;
+      setResolvePreview(res);
+      setResolveUnavailable(res === null);
+      setResolveBusy(false);
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [pane, procedureId, guideDefinition, previewJson]);
 
   useEffect(() => {
     if (!procedure) return;
@@ -112,15 +174,54 @@ export const PatchformProcedureEditPage = () => {
 
   const fields = procedure?.choice_fields || [];
   const singleForm = Boolean(procedure && omitsNavigation(procedure));
+  const templateEntries: {
+    key: string;
+    title: string;
+    formId: string;
+    template: SlotTemplate;
+  }[] = [];
+  if (singleForm && guideFormId && guidePreviewForm?.template) {
+    templateEntries.push({
+      key: 'self',
+      title: guidePreviewForm.title || name,
+      formId: guideFormId,
+      template: guidePreviewForm.template,
+    });
+  }
+  for (const s of previewSlots) {
+    if (s.template && s.form_id) {
+      templateEntries.push({
+        key: s.slot_id,
+        title: s.title,
+        formId: s.form_id,
+        template: s.template,
+      });
+    }
+  }
+  const catalogSlotById = new Map(previewSlots.map((s) => [s.slot_id, s] as const));
+  const formById = new Map(forms.map((f) => [f.id, f] as const));
+  const answerValues = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.map((x) => String(x))
+      : v === null || v === undefined || v === ''
+        ? []
+        : [String(v)];
+  const matchedFormIds = new Set<string>();
+  for (const r of procedure?.mapping?.rules ?? []) {
+    if (answerValues(previewValues[r.component_id]).includes(r.option)) {
+      for (const fid of r.form_ids) matchedFormIds.add(fid);
+    }
+  }
+  const unpublishedMapped: FormSummary[] = [];
+  for (const id of matchedFormIds) {
+    const f = formById.get(id);
+    if (f && !f.has_opening) unpublishedMapped.push(f);
+  }
   const nameLooksDraft = /[#＃]|目次/.test(name);
   const needsCopyReview = description.includes('【確認】') || nameLooksDraft;
   const hasMappedForms = collectedRules().some((r) => r.form_ids.length > 0);
   const scrollTo = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  const guideForm = forms.find((f) => f.id === guideFormId);
-  const caseTags = (guideForm?.tags || []).filter((t) => t !== NAVIGATION_TAG);
-  const relatedStyles = styleForms.filter((f) => (f.tags || []).some((t) => caseTags.includes(t)));
-  const otherStyles = styleForms.filter((f) => !relatedStyles.some((r) => r.id === f.id));
   const knownKeys = new Set(
     fields.flatMap((f) => f.options.map((option) => ruleKey(f.id, option))),
   );
@@ -162,40 +263,41 @@ export const PatchformProcedureEditPage = () => {
               </p>
             </div>
 
-            {procedure.status === 'draft' ? (
-              <section className='rounded-8 border border-blue-900 bg-blue-50 px-4 py-4' aria-label='次にすること'>
-                <p className='text-std-16B-150'>いまここでやること</p>
-                <ol className='mt-3 flex list-decimal flex-col gap-2 pl-5 text-std-16N-170'>
-                  <li>
-                    <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-pe-name')}>
-                      名前を、庁内の一覧で使う短い手続き名に直す
-                    </button>
-                    {nameLooksDraft ? (
-                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-700'>
-                        いまは手引きの見出しが入っています。
-                      </span>
-                    ) : null}
-                  </li>
-                  <li>
-                    <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-pe-desc')}>
-                      説明の【確認】を読んで、残すか消すか決める
-                    </button>
-                  </li>
-                  {!singleForm ? (
-                    <li>
-                      <button type='button' className='text-left text-blue-900 underline-offset-2 hover:underline' onClick={() => scrollTo('pf-mapping')}>
-                        各答えのとき、申請者に出す用紙を確認する
-                      </button>
-                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-700'>
-                        「この手続きで作った用紙」にチェックします。サンプルは外して構いません。
-                      </span>
-                    </li>
-                  ) : null}
-                  <li>内容がよければ、この画面の下で保存し、公開する。</li>
-                </ol>
-              </section>
-            ) : null}
+            <div
+              className='flex flex-wrap gap-2 border-b border-solid-gray-300'
+              role='tablist'
+              aria-label='編集とプレビュー'
+            >
+              {(
+                [
+                  { id: 'edit', label: '編集', icon: PiNotePencilBold },
+                  { id: 'preview', label: 'プレビュー', icon: PiEyeBold },
+                ] as const
+              ).map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type='button'
+                    role='tab'
+                    aria-selected={pane === t.id}
+                    onClick={() => setPane(t.id)}
+                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-oln-16B-100 ${
+                      pane === t.id
+                        ? 'border-blue-900 text-blue-900'
+                        : 'border-transparent text-solid-gray-600 hover:text-solid-gray-900'
+                    }`}
+                  >
+                    <Icon aria-hidden={true} className='size-5' />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
 
+            {pane === 'edit' && (
+            <>
+            {!singleForm ? (
             <PatchformProcedureCoach
               title='操作の流れ'
               defaultOpen={needsCopyReview}
@@ -203,6 +305,17 @@ export const PatchformProcedureEditPage = () => {
                 singleForm
                   ? '申請用紙はこの1枚です。保存して公開すると受付が始まります。'
                   : 'チェックを付けた申請用紙だけが、申請者や回答者に出ます。'
+              }
+              note={
+                <div className='flex flex-col gap-1'>
+                  <p className='text-std-16B-150'>ナビゲーションフォームとは</p>
+                  <p className='text-dns-16N-130 text-solid-gray-700'>
+                    申請者・回答者が最初に答える「案内」の1枚です。ラジオボタンやプルダウンの答えに応じて、必要な申請用紙を出し分けます（出し分けは下の「答えと申請用紙の対応」で設定します）。
+                  </p>
+                  <p className='text-dns-16N-130 text-solid-gray-700'>
+                    答えによって必要書類が変わる手続きに向いています。選択肢が無く自由記入だけのときはナビゲーションにならず、その1枚だけを配る「単一フォーム」として公開されます。1枚で完結する手続きは単一フォームのままで構いません。
+                  </p>
+                </div>
               }
               steps={[
                 {
@@ -266,6 +379,7 @@ export const PatchformProcedureEditPage = () => {
                 },
               ]}
             />
+            ) : null}
 
             {(procedure.warnings || []).length > 0 && (
               <div className='rounded-8 border border-orange-400 bg-orange-50 px-4 py-3' role='status'>
@@ -387,47 +501,15 @@ export const PatchformProcedureEditPage = () => {
                 ) : null}
               </div>
             </div>
-            {procedure.status === 'published' ? (
-              <div className='flex flex-col gap-2'>
-                <div>
-                  <Link to={`/patchform/apply/${procedure.id}`} className='inline-flex'>
-                    <Button type='button' variant='solid-fill' size='sm'>
-                      庁内から申請する
-                    </Button>
-                  </Link>
-                </div>
-                <ProcedureSharePanel procedureId={procedure.id} name={procedure.name} />
-              </div>
-            ) : null}
-
+            {!singleForm ? (
             <section id='pf-mapping' className='flex flex-col gap-4'>
-              <h2 className='text-std-18B-160'>
-                {singleForm ? '申請用紙' : '答えと申請用紙の対応'}
-              </h2>
-              {singleForm ? (
-                <div className='rounded-8 border border-solid-gray-300 px-4 py-3'>
-                  <p className='text-solid-gray-700'>
-                    ナビゲーションフォームは使いません。申請者や回答者には、この1枚だけが出ます。
-                  </p>
-                  {procedure.guide_form_id ? (
-                    <p className='mt-2'>
-                      <Link
-                        to={`/patchform/${procedure.guide_form_id}/edit`}
-                        className='text-blue-900 underline-offset-2 hover:underline'
-                      >
-                        申請用紙を編集する
-                      </Link>
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
+              <h2 className='text-std-18B-160'>答えと申請用紙の対応</h2>
               <>
               <p className='text-std-16N-170 text-solid-gray-700'>
-                申請者がその答えを選んだとき、推奨する枠にチェックします。チェックしない用紙は、その答えでは置きません。
+                申請者がその答えを選んだとき、手続きへ追加するフォームにチェックします。
               </p>
               <p className='text-dns-14N-130 text-solid-gray-600'>
-                チェックした様式は「どちらでも可」の枠になり、申請者はオンライン記入でも、記入済みファイルの添付でも満たせます。
-                「準備するもの」は添付枠の種になり、申請者が提出書類一覧で足せます。束は閉じないので、申請者は複製や別枠の追加もできます。
+                「未公開」のフォームは、手続きを公開すると自動で受付が開き、申請者に出せるようになります。
               </p>
               {fields.length === 0 ? (
                 <div className='rounded-8 border border-solid-gray-300 px-4 py-3'>
@@ -456,11 +538,6 @@ export const PatchformProcedureEditPage = () => {
                       ).map((item) => {
                         const option = item.value;
                         const rule = ruleMap.get(ruleKey(field.id, option));
-                        const formGroups = [
-                          { heading: 'この手続きで作った用紙', items: relatedStyles },
-                          { heading: 'ほかのフォーム（サンプルなど）', items: otherStyles },
-                        ].filter((group) => group.items.length > 0);
-                        const groups = formGroups.length ? formGroups : [{ heading: '申請用紙', items: styleForms }];
                         return (
                           <div key={option} className='border-t border-solid-gray-300 pt-3'>
                             <p className='text-std-16B-150'>
@@ -470,36 +547,39 @@ export const PatchformProcedureEditPage = () => {
                             </p>
                             <fieldset className='mt-2'>
                               <legend className='text-dns-14N-130 text-solid-gray-700'>
-                                このとき出す申請用紙
+                                このとき追加するフォーム
                               </legend>
-                              <div className='mt-1 flex flex-col gap-3'>
-                                {groups.map((group) => (
-                                  <div key={group.heading}>
-                                    <p className='text-dns-14N-130 text-solid-gray-600'>{group.heading}</p>
-                                    <div className='mt-1 flex flex-col gap-1'>
-                                      {group.items.map((f) => {
-                                        const checked = Boolean(rule?.form_ids.includes(f.id));
-                                        return (
-                                          <label key={f.id} className='flex items-center gap-2 text-std-16N-170'>
-                                            <input
-                                              type='checkbox'
-                                              checked={checked}
-                                              disabled={!procedure.can_edit}
-                                              onChange={(e) => {
-                                                const current = rule?.form_ids || [];
-                                                const next = e.target.checked
-                                                  ? [...current, f.id]
-                                                  : current.filter((id) => id !== f.id);
-                                                updateRule(field.id, option, { form_ids: next });
-                                              }}
-                                            />
-                                            {f.title}
-                                          </label>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                ))}
+                              <div className='mt-1 flex flex-col gap-1'>
+                                {styleForms.map((f) => {
+                                  const checked = Boolean(rule?.form_ids.includes(f.id));
+                                  return (
+                                    <label key={f.id} className='flex items-center gap-2 text-std-16N-170'>
+                                      <input
+                                        type='checkbox'
+                                        checked={checked}
+                                        disabled={!procedure.can_edit}
+                                        onChange={(e) => {
+                                          const current = rule?.form_ids || [];
+                                          const next = e.target.checked
+                                            ? [...current, f.id]
+                                            : current.filter((id) => id !== f.id);
+                                          updateRule(field.id, option, { form_ids: next });
+                                        }}
+                                      />
+                                      <span>{f.title}</span>
+                                      {checked && !f.has_opening ? (
+                                        <span className='rounded-4 bg-orange-50 px-1.5 py-0.5 text-dns-14N-130 text-orange-800'>
+                                          未公開
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                  );
+                                })}
+                                {styleForms.length === 0 ? (
+                                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                                    追加できるフォームがありません。先に申請フォームを作成してください。
+                                  </p>
+                                ) : null}
                               </div>
                             </fieldset>
                             <div className='mt-2'>
@@ -515,23 +595,6 @@ export const PatchformProcedureEditPage = () => {
                                 onChange={(e) => updateRule(field.id, option, { notes: e.target.value })}
                               />
                             </div>
-                            <div className='mt-2'>
-                              <Label htmlFor={`prep-${field.id}-${option}`} size='sm'>
-                                準備するもの（1行1つ）
-                              </Label>
-                              <textarea
-                                id={`prep-${field.id}-${option}`}
-                                className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                                rows={2}
-                                value={(rule?.prepare || []).join('\n')}
-                                disabled={!procedure.can_edit}
-                                onChange={(e) =>
-                                  updateRule(field.id, option, {
-                                    prepare: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
-                                  })
-                                }
-                              />
-                            </div>
                           </div>
                         );
                       })}
@@ -545,8 +608,169 @@ export const PatchformProcedureEditPage = () => {
                 </p>
               )}
               </>
-              )}
             </section>
+            ) : null}
+            </>
+            )}
+
+            {pane === 'preview' && (
+              <section className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
+                <h2 className='text-std-20B-160'>{name || procedure.name}</h2>
+                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                  申請者が最初に見る{singleForm ? '申請フォーム' : 'ナビゲーションフォーム'}
+                  のプレビューです。入力しても保存されません。
+                </p>
+                {guideDefinition ? (
+                  <div className='mt-4'>
+                    <FillForm
+                      definition={guideDefinition}
+                      values={previewValues}
+                      onChange={(id, v) => setPreviewValues((p) => ({ ...p, [id]: v }))}
+                      onExtract={extractPatchformFile}
+                      onPostalLookup={lookupPatchformPostal}
+                      onCorporateLookup={lookupPatchformCorporate}
+                    />
+                  </div>
+                ) : (
+                  <p className='mt-4 text-std-16N-170 text-solid-gray-700'>
+                    {guideLoading
+                      ? 'プレビューを読み込み中...'
+                      : guideFormId
+                        ? 'このフォームはプレビューを表示できませんでした。'
+                        : '申請用紙が選ばれていません。編集タブで用紙を選んでください。'}
+                  </p>
+                )}
+                {guideDefinition && !singleForm ? (
+                  <div className='mt-6 border-t border-solid-gray-300 pt-4'>
+                    <h3 className='flex items-center gap-2 text-std-16B-150'>
+                      <PiFileTextBold aria-hidden={true} className='size-5 text-solid-gray-700' />
+                      この答えのときに申請者へ出る書類
+                      {!resolveUnavailable
+                        ? `（${(resolvePreview?.items.length ?? 0) + unpublishedMapped.length}件）`
+                        : ''}
+                      {resolveBusy ? (
+                        <span className='text-dns-14N-130 text-solid-gray-500'>判定中…</span>
+                      ) : null}
+                    </h3>
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      上の案内フォームの答えを選ぶと、その申請者に出る書類がここに並びます。答えを変えると自動で切り替わります。
+                    </p>
+                    {resolveUnavailable ? (
+                      <div className='mt-3'>
+                        <p className='rounded-8 bg-solid-gray-50 p-3 text-dns-14N-130 text-solid-gray-700'>
+                          必要書類の事前確認は利用できませんでした。登録済みのひな型のみ表示します。
+                        </p>
+                        {templateEntries.length > 0 ? (
+                          <ul className='mt-3 flex flex-col gap-2'>
+                            {templateEntries.map((t) => (
+                              <li
+                                key={t.key}
+                                className='flex flex-wrap items-center justify-between gap-2 rounded-8 border border-solid-gray-300 bg-white px-3 py-2'
+                              >
+                                <span className='min-w-0 flex-1'>
+                                  <span className='block text-std-16N-170'>{t.title}</span>
+                                  <span className='block truncate text-dns-14N-130 text-solid-gray-600'>
+                                    {t.template.filename}
+                                  </span>
+                                </span>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  className='inline-flex shrink-0 items-center justify-center whitespace-nowrap'
+                                  onClick={() => void downloadFormTemplate(t.formId, t.template)}
+                                >
+                                  ダウンロード
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : (resolvePreview && resolvePreview.items.length > 0) ||
+                      unpublishedMapped.length > 0 ? (
+                      <>
+                        <ul className='mt-3 divide-y divide-solid-gray-200 rounded-8 border border-solid-gray-300 bg-white'>
+                          {(resolvePreview?.items ?? []).map((it) => {
+                            const slot = catalogSlotById.get(it.slot_id);
+                            const tpl = slot?.template;
+                            const fid = slot?.form_id;
+                            return (
+                              <li
+                                key={it.slot_id || it.title}
+                                className='flex flex-wrap items-center gap-3 px-3 py-2'
+                              >
+                                {previewKindIcon(it.kind)}
+                                <div className='min-w-0 flex-1'>
+                                  <p className='truncate text-std-16N-170 text-solid-gray-900'>
+                                    {it.title}
+                                    {it.cardinality === 'many' ? (
+                                      <span className='ml-2 text-dns-14N-130 text-solid-gray-500'>
+                                        （複数可）
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  <p className='text-dns-14N-130 text-solid-gray-500'>
+                                    {[
+                                      requiredLabel[it.required] || it.required,
+                                      it.can_fill_online ? 'オンライン記入可' : null,
+                                      it.has_template ? 'ひな型あり' : null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' / ')}
+                                  </p>
+                                </div>
+                                {tpl && fid ? (
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    className='inline-flex shrink-0 items-center justify-center whitespace-nowrap'
+                                    onClick={() => void downloadFormTemplate(fid, tpl)}
+                                  >
+                                    ひな型DL
+                                  </Button>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                          {unpublishedMapped.map((f) => (
+                            <li
+                              key={`unpub-${f.id}`}
+                              className='flex flex-wrap items-center gap-3 px-3 py-2'
+                            >
+                              <PiFileTextBold aria-hidden={true} className='size-4 text-solid-gray-600' />
+                              <div className='min-w-0 flex-1'>
+                                <p className='truncate text-std-16N-170 text-solid-gray-900'>
+                                  {f.title}
+                                </p>
+                                <p className='text-dns-14N-130 text-solid-gray-500'>
+                                  未公開（手続きを公開すると受付が開きます）
+                                </p>
+                              </div>
+                              <span className='rounded-4 bg-orange-50 px-1.5 py-0.5 text-dns-14N-130 text-orange-800'>
+                                未公開
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        {unpublishedMapped.length > 0 ? (
+                          <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>
+                            「未公開」の書類は、手続きを公開すると自動で受付が開き、申請者に出ます。
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className='mt-3 text-std-16N-170 text-solid-gray-700'>
+                        {resolveBusy
+                          ? '判定中…'
+                          : '今の答えでは出る書類はありません。案内フォームの答えを選ぶと表示されます。'}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            )}
 
             {error && (
               <p className='text-error-1' role='alert'>
@@ -561,7 +785,27 @@ export const PatchformProcedureEditPage = () => {
                 <Button type='button' variant='outline' size='md' aria-disabled={submitting} onClick={() => void onSave()}>
                   {submitting ? '保存中...' : '保存する'}
                 </Button>
-                {procedure.status === 'draft' ? (
+                {procedure.status === 'published' ? (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='md'
+                    aria-disabled={submitting}
+                    onClick={async () => {
+                      if (
+                        !window.confirm(
+                          'この手続きを非公開にしますか。新しい申請は止まります。届いている申請は残ります。',
+                        )
+                      ) {
+                        return;
+                      }
+                      const next = await setStatus(procedure.id, 'draft');
+                      if (next) await mutate();
+                    }}
+                  >
+                    手続きを非公開
+                  </Button>
+                ) : (
                   <Button
                     type='button'
                     variant='solid-fill'
@@ -583,27 +827,7 @@ export const PatchformProcedureEditPage = () => {
                       }
                     }}
                   >
-                    {procedure.guide_status === 'closed' ? '再公開する' : '公開する'}
-                  </Button>
-                ) : (
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='md'
-                    aria-disabled={submitting}
-                    onClick={async () => {
-                      if (
-                        !window.confirm(
-                          '受付を終了しますか。新しい申請は止まります。届いている申請は残ります。',
-                        )
-                      ) {
-                        return;
-                      }
-                      const next = await setStatus(procedure.id, 'draft');
-                      if (next) await mutate();
-                    }}
-                  >
-                    受付を終了
+                    手続きを公開
                   </Button>
                 )}
                 <Button
@@ -613,7 +837,7 @@ export const PatchformProcedureEditPage = () => {
                   aria-disabled={submitting || procedure.status === 'published'}
                   title={
                     procedure.status === 'published'
-                      ? '公開中は削除できません。先に受付を終了してください。'
+                      ? '公開中は削除できません。先に非公開にしてください。'
                       : undefined
                   }
                   onClick={async () => {
@@ -627,17 +851,6 @@ export const PatchformProcedureEditPage = () => {
                 </Button>
               </div>
             )}
-
-            <p className='text-std-16N-170 text-solid-gray-700'>
-              届いた申請は申請受付で見ます。
-            </p>
-            <div>
-              <Link to={`/patchform/inbox/${encodeURIComponent(procedure.id)}`} className='inline-flex'>
-                <Button type='button' variant='outline' size='sm'>
-                  申請受付を開く
-                </Button>
-              </Link>
-            </div>
           </>
         )}
       </div>

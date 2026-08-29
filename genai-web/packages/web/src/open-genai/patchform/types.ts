@@ -286,6 +286,24 @@ export type ApplicationStatus = {
   effective: string;
 };
 
+/** 記入内容の1フィールド分の変更（変更前→後）。 */
+export type ApplicationChange = {
+  label: string;
+  before: string;
+  after: string;
+};
+
+/** 申請束の変更履歴（誰が・いつ・何をしたか）。 */
+export type ApplicationEvent = {
+  actor_role: string;
+  actor_user_id: string;
+  action: string;
+  target: string;
+  detail: string;
+  changes?: ApplicationChange[];
+  created_at: string;
+};
+
 export type Application = {
   id: string;
   token: string;
@@ -305,6 +323,7 @@ export type Application = {
   notice: { notes?: string[]; prepare?: string[]; refs?: string[] };
   forms: ApplicationForm[];
   items: ApplicationItem[];
+  events?: ApplicationEvent[];
   public_url: string;
   created_at: string;
   updated_at?: string;
