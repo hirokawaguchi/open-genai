@@ -9,6 +9,7 @@ import { PatchformWizardPage } from '../PatchformWizardPage';
 import { FillForm } from '../runtime/FillForm';
 import { answerRows } from '../runtime/formatAnswer';
 import { sourcesFromApplication } from '../runtime/imiSuggest';
+import { downloadSingleFormReceipt } from '../runtime/receipt';
 import { lookupPostalDirect } from '../runtime/postalLookup';
 import { missingRequired } from '../runtime/visibility';
 import type { Application, FormDefinition, UploadedFile } from '../types';
@@ -554,7 +555,29 @@ const GuestForm = () => {
           <p className='mt-2'>
             控え番号: <strong>{receipt}</strong>
           </p>
-          <p className='mt-2'>この番号を控えてください。</p>
+          <p className='mt-2'>
+            この番号を控えてください。メールでの通知は行われません。念のため、下のボタンから控え（申請内容と控え番号）を保存できます。
+          </p>
+          <div className='mt-4'>
+            <Button
+              type='button'
+              variant='outline'
+              size='md'
+              onClick={() => {
+                if (!definition) return;
+                downloadSingleFormReceipt({
+                  title: form?.title || 'フォーム',
+                  receiptCode: receipt,
+                  components: definition.components,
+                  answers: values,
+                  submitterName: submitterName.trim() || undefined,
+                  note: 'この控え番号で、この受付画面から「取り下げ」ができます。番号を大切に保管してください。',
+                });
+              }}
+            >
+              控えをダウンロード（.txt）
+            </Button>
+          </div>
           {applicationToken ? (
             <p className='mt-4'>
               <a

@@ -2344,7 +2344,7 @@ def public_list_procedures(request: Request, q: str = "") -> JSONResponse:
     email, err = _verify_external(request)
     if err:
         return err
-    items = store.list_published_procedures(query=q or None)
+    items = store.list_published_procedures(query=q or None, external_only=True)
     return JSONResponse(content={"procedures": items})
 
 
@@ -2352,10 +2352,14 @@ def public_list_procedures(request: Request, q: str = "") -> JSONResponse:
 def public_get_procedure(procedure_id: str) -> JSONResponse:
     """公開中の手続き詳細（choice_fields 等）。匿名の共有リンク束が単票判定に使う。
 
-    公開情報（QR で配布される受付情報）に限るため認証不要。非公開は 404。
+    公開情報（QR で配布される受付情報）に限るため認証不要。非公開・庁内のみは 404。
     """
     detail = store.get_procedure(procedure_id)
-    if not detail or detail.get("status") != "published":
+    if (
+        not detail
+        or detail.get("status") != "published"
+        or detail.get("visibility") == "internal"
+    ):
         return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
     return JSONResponse(content=detail)
 
@@ -2992,7 +2996,7 @@ def mine_list_procedures(request: Request, q: str = "") -> JSONResponse:
     _email, err = _verify_external(request)
     if err:
         return err
-    items = store.list_published_procedures(query=q or None)
+    items = store.list_published_procedures(query=q or None, external_only=True)
     # 共通コンポーネント(DocmakerPage)は status==='published' で絞り込むため、
     # 公開一覧にも status を補って庁内と同じ形にする。
     for it in items:
@@ -3006,7 +3010,11 @@ def mine_get_procedure(procedure_id: str, request: Request) -> JSONResponse:
     if err:
         return err
     data = store.get_procedure(procedure_id)
-    if data is None or data.get("status") != "published":
+    if (
+        data is None
+        or data.get("status") != "published"
+        or data.get("visibility") == "internal"
+    ):
         return JSONResponse(status_code=404, content={"error": "手続きが見つかりません"})
     return JSONResponse(content=data)
 

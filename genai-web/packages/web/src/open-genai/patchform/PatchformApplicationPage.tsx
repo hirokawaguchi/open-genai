@@ -20,6 +20,7 @@ import { clearSession, readSession } from './guest/guestSession';
 import { PATCHFORM_LABEL } from './labels';
 import { usePatchformRoutes } from './routes';
 import { answerRows } from './runtime/formatAnswer';
+import { downloadApplicationReceipt } from './runtime/receipt';
 import { omitsNavigation } from './types';
 import type { ApplicationItem } from './types';
 import {
@@ -107,6 +108,10 @@ export const PatchformApplicationPage = () => {
   // 選択肢のない「申請用紙1枚」の手続きは、案内(nav)ではなく通常の申請フォーム
   // として扱う（上部の「申請条件」は出さず、提出書類一覧にそのまま並べる）。
   const singleForm = Boolean(procedure && omitsNavigation(procedure));
+  // 受付（受領側）で単一フォームを開いたときは、束向けの操作（もう1件・添付追加・
+  // 関連フォーム・記入修正）を出さず、「提出内容の閲覧＋添付DL＋変更履歴」だけの
+  // 簡易表示にする。単一フォームには束の運用が意味を持たないため。
+  const receptionSingle = readOnly && singleForm;
   // 案内（ナビ）は提出書類ではないので一覧から分け、上部の「申請条件」に集約する。
   const navItem = singleForm ? null : (allItems.find((it) => it.kind === 'data') ?? null);
   const items = singleForm ? allItems : allItems.filter((it) => it.kind !== 'data');
@@ -378,6 +383,10 @@ export const PatchformApplicationPage = () => {
                   </Button>
                 </div>
               </section>
+            ) : receptionSingle ? (
+              <p className='rounded-8 border border-blue-900/30 bg-blue-50/60 p-3 text-std-16N-170 text-solid-gray-800'>
+                これは申請受付（受領側）の画面です。提出された内容の確認と、添付ファイルのダウンロードができます。
+              </p>
             ) : readOnly ? (
               <p className='rounded-8 border border-blue-900/30 bg-blue-50/60 p-3 text-std-16N-170 text-solid-gray-800'>
                 これは申請受付（受領側）の画面です。ファイルの追加・差し替えや内容の修正ができ、変更はすべて<strong>変更履歴</strong>に記録されます。ただし<strong>条件の変更</strong>と<strong>提出</strong>は申請者本人が行います。
@@ -400,6 +409,19 @@ export const PatchformApplicationPage = () => {
                 )}
               </div>
               <div className='flex shrink-0 flex-wrap gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='md'
+                  onClick={() =>
+                    downloadApplicationReceipt({
+                      application,
+                      note: '内容は「マイ手続き」からいつでも確認・ダウンロードできます。メールでの通知は行われません。',
+                    })
+                  }
+                >
+                  控えをダウンロード（.txt）
+                </Button>
                 {submitted ? (
                   <Button
                     type='button'
@@ -499,10 +521,12 @@ export const PatchformApplicationPage = () => {
                   </span>
                 )}
               </div>
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                初期の並び順は「案内で必要になった様式 → 準備するもの（添付） → あとから足した枠」の順です。左の
-                ↑↓ で申請しやすい順に並び替えできます。
-              </p>
+              {!receptionSingle && (
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  初期の並び順は「案内で必要になった様式 → 準備するもの（添付） → あとから足した枠」の順です。左の
+                  ↑↓ で申請しやすい順に並び替えできます。
+                </p>
+              )}
               {itemError && (
                 <p className='text-error-1' role='alert'>
                   {itemError}
@@ -515,9 +539,11 @@ export const PatchformApplicationPage = () => {
                   <table className='w-full min-w-[calc(780/16*1rem)] border-collapse text-std-16N-170'>
                     <thead>
                       <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-dns-14N-130 text-solid-gray-600'>
-                        <th scope='col' className='w-[calc(56/16*1rem)] px-2 py-2 text-center font-normal'>
-                          並び
-                        </th>
+                        {!receptionSingle && (
+                          <th scope='col' className='w-[calc(56/16*1rem)] px-2 py-2 text-center font-normal'>
+                            並び
+                          </th>
+                        )}
                         <th scope='col' className='px-3 py-2 font-normal'>
                           書類名
                         </th>
@@ -575,6 +601,7 @@ export const PatchformApplicationPage = () => {
                               isNav ? 'bg-blue-50/40' : ''
                             }`}
                           >
+                            {!receptionSingle && (
                             <td className='px-2 py-2.5'>
                               <div className='flex flex-col items-center gap-1'>
                                 <button
@@ -597,6 +624,7 @@ export const PatchformApplicationPage = () => {
                                 </button>
                               </div>
                             </td>
+                            )}
                             <td className='px-3 py-2.5'>
                               <div className='flex items-start gap-2'>
                                 <span
@@ -619,7 +647,7 @@ export const PatchformApplicationPage = () => {
                                         {displayTitle}
                                         {f.copy_index ? `（${f.copy_index + 1}件目）` : ''}
                                       </Link>
-                                    ) : canFill ? (
+                                    ) : canFill && !receptionSingle ? (
                                       <button
                                         type='button'
                                         className='text-left text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
@@ -745,7 +773,7 @@ export const PatchformApplicationPage = () => {
                                 : '—'}
                             </td>
                             <td className='px-3 py-2.5'>
-                              {!isNav ? (
+                              {!isNav && !receptionSingle ? (
                                 <div className='flex flex-wrap gap-2'>
                                   {canFill && (
                                     <Button
@@ -821,6 +849,7 @@ export const PatchformApplicationPage = () => {
               )}
             </section>
 
+            {!receptionSingle && (
             <div className='flex flex-col gap-3'>
                 <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 bg-white p-4'>
                   <h3 className='text-std-16B-150'>関連するフォームを足す</h3>
@@ -901,6 +930,7 @@ export const PatchformApplicationPage = () => {
                   </div>
                 </div>
             </div>
+            )}
             {!anon && application.events && application.events.length > 0 && (
               <Disclosure className='rounded-8 border border-solid-gray-300 bg-white px-4 py-3'>
                 <DisclosureSummary>
