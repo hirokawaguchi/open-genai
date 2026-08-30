@@ -382,10 +382,20 @@ export type ProcedureResolvePreview = {
   count: number;
 };
 
+export type ReceptionStatus = '未確認' | '確認中' | '受理' | '差戻し';
+
+export const RECEPTION_STATUS_VALUES: ReceptionStatus[] = [
+  '未確認',
+  '確認中',
+  '受理',
+  '差戻し',
+];
+
 export type InboxItem = {
   kind: 'bundle' | 'form';
   id: string;
   created_at: string;
+  updated_at?: string;
   title: string;
   label: string;
   procedure_id?: string;
@@ -395,6 +405,8 @@ export type InboxItem = {
   form_id?: string;
   respondent_label?: string | null;
   withdrawn?: boolean;
+  status?: string;
+  reception_status?: ReceptionStatus;
 };
 
 export type InboxOpening = {

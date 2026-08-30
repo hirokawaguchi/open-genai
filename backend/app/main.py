@@ -4256,6 +4256,41 @@ async def patchform_set_application_status(
     )
 
 
+@app.post("/patchform/applications/bulk-reception")
+async def patchform_bulk_set_reception_status(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/applications/bulk-reception"), headers, body
+    )
+
+
+@app.post("/patchform/applications/bulk-delete")
+async def patchform_bulk_delete_applications(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url("/applications/bulk-delete"), headers, body
+    )
+
+
+@app.post("/patchform/applications/{application_id}/reception")
+async def patchform_set_reception_status(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/applications/{application_id}/reception"), headers, body
+    )
+
+
 @app.patch("/patchform/applications/{application_id}")
 async def patchform_rename_application(
     application_id: str, request: Request
@@ -4602,6 +4637,9 @@ async def _proxy_patchform_export(path: str, request: Request, fallback_name: st
     since = (request.query_params.get("since") or "").strip()
     if since:
         qs += f"&since={quote(since)}"
+    ids = (request.query_params.get("ids") or "").strip()
+    if ids:
+        qs += f"&ids={quote(ids)}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.get(_patchform_app_url(path) + qs, headers=headers)

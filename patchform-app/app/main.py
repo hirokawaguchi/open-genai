@@ -901,6 +901,105 @@ def delete_application(
     return JSONResponse(content={"message": "申請を削除しました"})
 
 
+@app.post("/applications/{application_id}/reception")
+async def set_reception_status(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.set_reception_status(
+        application_id=application_id,
+        reception_status=str(body.get("reception_status") or ""),
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/applications/bulk-reception")
+async def bulk_set_reception_status(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    ids = [str(i) for i in (body.get("ids") or []) if i]
+    reception_status = str(body.get("reception_status") or "")
+    groups = _groups(x_user_groups)
+    ok = 0
+    failed: list[str] = []
+    for aid in ids:
+        _result, msg = store.set_reception_status(
+            application_id=aid,
+            reception_status=reception_status,
+            actor_user_id=uid,
+            actor_groups=groups,
+        )
+        if msg:
+            failed.append(aid)
+        else:
+            ok += 1
+    return JSONResponse(content={"ok": ok, "failed": failed})
+
+
+@app.post("/applications/bulk-delete")
+async def bulk_delete_applications(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    ids = [str(i) for i in (body.get("ids") or []) if i]
+    groups = _groups(x_user_groups)
+    ok = 0
+    failed: list[str] = []
+    for aid in ids:
+        msg = store.delete_application(
+            application_id=aid,
+            actor_user_id=uid,
+            actor_groups=groups,
+        )
+        if msg:
+            failed.append(aid)
+        else:
+            ok += 1
+    return JSONResponse(content={"ok": ok, "failed": failed})
+
+
 @app.get("/applications/{application_id}/imi-sources")
 def application_imi_sources(
     application_id: str,
@@ -1145,6 +1244,7 @@ def export_procedure_applications(
     procedure_id: str,
     format: str = "csv",
     since: str | None = None,
+    ids: str | None = None,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -1168,12 +1268,14 @@ def export_procedure_applications(
     if err:
         return err
     fmt = (format or "csv").lower()
+    id_list = [i for i in (ids or "").split(",") if i.strip()] if ids else None
     body, msg = store.export_procedure_applications(
         procedure_id,
         actor_user_id=uid,
         actor_groups=_groups_for(uid, x_user_groups),
         fmt=fmt,
         since=since,
+        ids=id_list,
     )
     if msg and msg.startswith("since"):
         return JSONResponse(status_code=400, content={"error": msg})
