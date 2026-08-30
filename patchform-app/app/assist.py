@@ -316,7 +316,6 @@ async def draft_invite(title: str, public_url: str, tone: str = "丁寧") -> dic
 
 
 MAX_PROCEDURE_FORMS = 24
-MAX_PROCEDURE_TEXT = 12_000
 MAX_SELECT_CHAPTERS = 8
 MAX_LLM_CHAPTERS = 4
 MAX_CHAPTER_CHARS = 2_500

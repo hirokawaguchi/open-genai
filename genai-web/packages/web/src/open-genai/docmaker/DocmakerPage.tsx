@@ -144,7 +144,7 @@ export const DocmakerPage = () => {
           <BreadcrumbsNav items={[...routes.homeCrumbs, { label: routes.myListLabel }]} />
           <h1 className='flex items-center gap-2 text-std-20B-160 lg:text-std-24B-150'>
             <PiFoldersBold className='size-6' />
-            マイ手続き
+            {routes.myListLabel}
           </h1>
           <p className='text-std-16N-170 text-solid-gray-700'>
             自分の手続き（案件）を一覧で管理します。手続きを選んで始めると、案内に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。

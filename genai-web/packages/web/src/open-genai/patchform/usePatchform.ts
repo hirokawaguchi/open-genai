@@ -690,17 +690,6 @@ export const usePatchformFormTemplate = () => {
   return { setTemplate, removeTemplate, busy, error };
 };
 
-export const downloadApplicationExport = async (
-  applicationId: string,
-  format: 'csv' | 'jsonl' = 'csv',
-): Promise<void> => {
-  const { blob, disposition } = await teamApi.getBlob(
-    `patchform/applications/${encodeURIComponent(applicationId)}/export`,
-    { params: { format } },
-  );
-  saveBlob(blob, parseFilename(disposition) ?? `application_${applicationId}.${format}`);
-};
-
 export const usePatchformAssist = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -970,7 +959,6 @@ export const usePatchformInbox = (procedureId?: string) => {
   return {
     inbox: data,
     items: data?.items ?? [],
-    openings: data?.openings ?? [],
     procedures: data?.procedures ?? [],
     isLoading,
     loadError: error ? errorMessage(error, '申請受付の取得に失敗しました。') : null,

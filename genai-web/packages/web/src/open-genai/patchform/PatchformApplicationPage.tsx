@@ -212,7 +212,6 @@ export const PatchformApplicationPage = () => {
   const [claimError, setClaimError] = useState<string | null>(null);
   // 匿名束を「マイ手続き」へ引き取る。未ログインならログインへ誘導し、戻り先 token を
   // 保持して GuestVerify 側で自動 claim させる。ログイン済みならその場で claim する。
-  // ログイン画面へ誘導する。戻り先 token を保持して GuestVerify 側で自動 claim させる。
   const goLoginForClaim = (token: string) => {
     try {
       sessionStorage.setItem('pf_pending_claim', token);

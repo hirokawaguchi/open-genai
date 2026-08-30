@@ -100,6 +100,7 @@ def _cleanup_loop() -> None:
     while True:
         try:
             store.delete_old_forms(RETENTION_DAYS)
+            store.cleanup_expired_auth()
         except Exception as e:  # noqa: BLE001
             print(f"[patchform] cleanup error: {e}")
         time.sleep(3600)
