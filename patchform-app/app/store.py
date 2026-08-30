@@ -2841,16 +2841,21 @@ def _inspect_published(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, An
     }
 
 
-def list_published_procedures(*, query: str | None = None) -> list[dict[str, Any]]:
+def list_published_procedures(
+    *, query: str | None = None, external_only: bool = False
+) -> list[dict[str, Any]]:
+    """公開中の手続き一覧。external_only=True なら庁外公開(both/public)のみに絞る。"""
     needle = (query or "").strip().lower()
     db = connect()
     with _lock:
         rows = db.execute(
-            "SELECT id, name, description, updated_at FROM procedures "
+            "SELECT * FROM procedures "
             "WHERE status = 'published' ORDER BY updated_at DESC"
         ).fetchall()
         out: list[dict[str, Any]] = []
         for row in rows:
+            if external_only and _proc_visibility(row) == "internal":
+                continue
             hay = f"{row['name']} {row['description'] or ''}".lower()
             if needle and needle not in hay:
                 continue
