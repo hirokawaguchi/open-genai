@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 MAX_UPLOAD_BYTES = int(os.environ.get("PATCHFORM_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
@@ -141,12 +140,3 @@ def content_disposition(filename: str) -> str:
     name = safe_filename(filename)
     ascii_name = name.encode("ascii", "replace").decode("ascii").replace('"', "")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
-
-
-def public_meta(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "file_id": row["id"],
-        "filename": row["filename"],
-        "mime": row.get("mime") or "",
-        "size": int(row.get("size") or 0),
-    }

@@ -108,27 +108,6 @@ def pages_to_guide_text(pages: list[dict[str, Any]]) -> str:
     return "\n\n".join(out)
 
 
-def extract_text_bytes(blob: bytes, filename: str, mime: str) -> str | None:
-    """互換用。新規の読取は extract_payload → docextract を使う。"""
-    name = (filename or "").lower()
-    if (
-        mime.startswith("text/")
-        or name.endswith((".txt", ".csv", ".md", ".json"))
-        or mime in ("application/json", "text/csv")
-    ):
-        return blob.decode("utf-8", errors="replace")
-    if blob[:4] != b"%PDF":
-        sample = blob[:800]
-        if b"\x00" not in sample:
-            try:
-                text = blob.decode("utf-8")
-            except UnicodeDecodeError:
-                return None
-            if text.strip():
-                return text
-    return None
-
-
 async def extract_payload(
     *,
     kind: str,

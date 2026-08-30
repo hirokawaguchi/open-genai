@@ -383,7 +383,6 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_procedures_status ON procedures(status);
             CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token);
             CREATE INDEX IF NOT EXISTS idx_applications_proc ON applications(procedure_id);
-            CREATE INDEX IF NOT EXISTS idx_applications_owner ON applications(owner_kind, owner_key);
             CREATE INDEX IF NOT EXISTS idx_app_events_app ON application_events(application_id);
             CREATE INDEX IF NOT EXISTS idx_magic_email ON magic_tokens(email);
             CREATE INDEX IF NOT EXISTS idx_extsess_email ON external_sessions(email);
@@ -393,6 +392,13 @@ def init_db() -> None:
         _migrate_applications_optional_submission(db)
         file_moves = _migrate_legacy_receptions(db)
         _migrate_slot_templates_to_forms(db)
+        # owner_kind / owner_key は _ensure_columns で追加し、上記マイグレーションで
+        # applications テーブルを作り直すことがあるため、依存インデックスは全マイグ後に
+        # 作成する（新規DBでの初期化順エラーとインデックス消失を避ける）。
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_applications_owner "
+            "ON applications(owner_kind, owner_key)"
+        )
         db.commit()
     for old_id, new_id in file_moves:
         files.rename_form_dir(old_id, new_id)
