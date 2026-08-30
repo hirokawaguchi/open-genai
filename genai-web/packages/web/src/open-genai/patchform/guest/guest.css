@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+@plugin '@digital-go-jp/tailwind-theme-plugin';
+
+@theme {
+  --breakpoint-sm: 40em;
+  --breakpoint-md: 48em;
+  --breakpoint-lg: 64em;
+  --breakpoint-xl: 80em;
+  --breakpoint-2xl: 96em;
+  --spacing-px: 0.0625rem;
+  --radius-infinity: calc(infinity * 1px);
+  /* 庁内ページ（DocmakerPage 等）が使う最大幅トークン。庁内と同一の見た目にする。 */
+  --page-width: calc(1440 / 16 * 1rem);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+    line-height: 1.7;
+    @apply text-std-16N-170 text-solid-gray-800;
+    background: linear-gradient(180deg, #eef1f8 0%, #f8f8fb 40%, #fff 100%);
+  }
+}
+
+.pf-guest-wrap {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.pf-guest-brand {
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  @apply text-solid-gray-600;
+}
+
+.pf-guest-receipt {
+  padding: 1rem;
+  border: 1px solid #a5d6a7;
+  border-radius: 8px;
+  background: #e8f5e9;
+}

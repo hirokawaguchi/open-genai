@@ -1,5 +1,9 @@
 **/.DS_Store
 node_modules/
+
+# npm 運用のため pnpm のロック/ワークスペース定義は混入させない
+pnpm-lock.yaml
+pnpm-workspace.yaml
 cdk.out/
 /*/dist/**
 ToDo.md

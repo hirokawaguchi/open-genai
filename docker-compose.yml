@@ -68,6 +68,10 @@ services:
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-http://localhost:8011}
+      # フォーム（profiles: ["patchform"] で起動。未起動時は専用ページが案内を表示）
+      - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -452,6 +456,80 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: フォーム (`docker compose --profile patchform up -d`)
+  # 庁内は backend → 本サービス。外部ゲストは PATCHFORM_PUBLIC_ENDPOINT（開発時は :8012）。
+  # 本番の外部公開は /public のみを別プロキシで露出すること（proxy/patchform.public.conf.example）。
+  patchform-app:
+    profiles: ["patchform"]
+    build:
+      context: .
+      dockerfile: patchform-app/Dockerfile
+
+    container_name: open-genai-patchform-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - PATCHFORM_DB_PATH=/data/patchform.db
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
+      - PATCHFORM_RETENTION_DAYS=${PATCHFORM_RETENTION_DAYS:-365}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PATCHFORM_MODEL=${PATCHFORM_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma3:12b}}
+      - PATCHFORM_ENCRYPT_KEY=${PATCHFORM_ENCRYPT_KEY:-}
+      - PATCHFORM_FILES_DIR=/data/files
+      - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
+      - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
+      - PATCHFORM_SEED=${PATCHFORM_SEED:-1}
+      - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
+      - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
+      - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}
+      - PATCHFORM_SMTP_PASSWORD=${PATCHFORM_SMTP_PASSWORD:-}
+      - PATCHFORM_SMTP_STARTTLS=${PATCHFORM_SMTP_STARTTLS:-1}
+      - PATCHFORM_SMTP_SSL=${PATCHFORM_SMTP_SSL:-0}
+      - PATCHFORM_SMTP_FROM=${PATCHFORM_SMTP_FROM:-}
+      - PATCHFORM_STAFF_BASE_URL=${PATCHFORM_STAFF_BASE_URL:-${PUBLIC_URL:-http://localhost}}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
+      - PATCHFORM_MAIL_DUMP_DIR=${PATCHFORM_MAIL_DUMP_DIR:-/data/mail}
+      # 開発用ログイン: メール未連携でもログインできるよう、ログインリンクを応答に
+      # 直接返す（庁外マイ手続きの動作確認用）。本番は必ず 0。
+      - PATCHFORM_DEV_LOGIN=${PATCHFORM_DEV_LOGIN:-1}
+      # 庁外マイ手続き（外部セッション）。本番は EXT_SECRET を必ず固定値で設定する。
+      # 開発では固定の既定値を入れ、コンテナ再起動でログインセッションが失効しないように
+      # する（未設定・空だと起動ごとにランダム鍵になり、再起動で「セッションが不正」になる）。
+      - PATCHFORM_EXT_SECRET=${PATCHFORM_EXT_SECRET:-dev-ext-secret-change-me}
+      - PATCHFORM_MAGIC_TTL_MIN=${PATCHFORM_MAGIC_TTL_MIN:-15}
+      - PATCHFORM_EXT_SESSION_TTL_DAYS=${PATCHFORM_EXT_SESSION_TTL_DAYS:-30}
+    volumes:
+      - patchform_app_data:/data
+    ports:
+      # 開発用: ゲスト UI/API（/public）をホストから直接確認。本番はホスト公開せず別プロキシへ。
+      - "${PATCHFORM_PUBLIC_PORT:-8012}:8012"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 手続きマスタ MCP（Dify Agent 等向け Streamable HTTP）
+  # エンドポイント: http://host.docker.internal:8013/mcp
+  # 公開済みマスタのみ。下書き・提出・束トークンは出さない。
+  procedure-mcp:
+    profiles: ["patchform"]
+    build: ./procedure-mcp
+    container_name: open-genai-procedure-mcp
+    environment:
+      - PATCHFORM_BASE_URL=${PATCHFORM_BASE_URL:-http://patchform-app:8012}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8013
+    ports:
+      # 注意: procedure-mcp は無認証。到達できれば公開手続きの対応表を読める。
+      # 既定は 127.0.0.1。LGWAN-ASP の転送対象に載せないこと。
+      - "${PROCEDURE_MCP_BIND:-127.0.0.1}:${PROCEDURE_MCP_PORT:-8013}:8013"
+    depends_on:
+      - patchform-app
+    restart: unless-stopped
+
 volumes:
   backend_data:
   web_node_modules:
@@ -468,3 +546,4 @@ volumes:
   ollama_data:
   chosei_app_data:
   doccheck_app_data:
+  patchform_app_data:

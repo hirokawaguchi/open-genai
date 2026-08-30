@@ -1,0 +1,13 @@
+fastapi==0.139.0
+uvicorn[standard]==0.34.0
+bcrypt==4.2.1
+httpx==0.28.1
+cryptography==44.0.2
+pypdf==6.15.0
+python-docx==1.1.2
+openpyxl==3.1.5
+python-pptx==1.0.2
+xlrd==2.0.2
+olefile==0.47
+qrcode==8.2
+
