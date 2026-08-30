@@ -864,18 +864,19 @@ const Field = ({
   }
   if (c.type === 'rating') {
     return (
-      <div className='mt-1 flex gap-2'>
+      <div className='mt-1 flex flex-wrap gap-2'>
         {[1, 2, 3, 4, 5].map((n) => (
-          <label key={n} className='text-std-16N-170'>
-            <input
-              type='radio'
-              name={c.id}
-              checked={Number(value) === n}
-              disabled={disabled}
-              onChange={() => onChange(n)}
-            />{' '}
+          <Radio
+            key={n}
+            size='md'
+            name={c.id}
+            value={String(n)}
+            checked={Number(value) === n}
+            disabled={disabled}
+            onChange={() => onChange(n)}
+          >
             {n}
-          </label>
+          </Radio>
         ))}
       </div>
     );
@@ -903,9 +904,10 @@ const Field = ({
                 <td className='pr-2'>{row}</td>
                 {cols.map((col) => (
                   <td key={col} className='text-center'>
-                    <input
-                      type='radio'
+                    <Radio
+                      size='md'
                       name={`${c.id}-${row}`}
+                      value={col}
                       checked={obj[row] === col}
                       disabled={disabled}
                       onChange={() => onChange({ ...obj, [row]: col })}
