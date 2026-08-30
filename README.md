@@ -84,6 +84,8 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `prompt-app/` | プロンプトテンプレートカタログ（標準／個人／グループ共有） |
 | `chosei-app/` | 日程調整（オプション・`profiles: ["chosei"]`。詳細は [`docs/chosei.md`](docs/chosei.md)） |
 | `doccheck-app/` | 書類領域分割チェック（オプション・`profiles: ["doccheck"]`。詳細は [`docs/doccheck.md`](docs/doccheck.md)） |
+| `patchform-app/` | フォーム（オプション・`profiles: ["patchform"]`。詳細は [`docs/patchform.md`](docs/patchform.md)） |
+| `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
 | `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md)） |
@@ -787,6 +789,9 @@ SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 > `scope`(teamId) を呼び出し側が任意指定できるため、到達できる者は全チームのナレッジを読めます。
 > 既定の `KNOWLEDGE_MCP_BIND` は **`127.0.0.1`**（同一ホストの Dify 向け）。
 > LGWAN-ASP の転送対象に載せないでください（詳細: [docs/knowledge-mcp.md](docs/knowledge-mcp.md)）。
+>
+> `procedure-mcp`（`profiles: ["patchform"]`）も無認証です。到達できる者は公開済み手続きの対応表を読めます。
+> 既定の `PROCEDURE_MCP_BIND` は `127.0.0.1`。詳細: [docs/procedure-mcp.md](docs/procedure-mcp.md)。
 
 源内登録の例（workflow / chat）:
 

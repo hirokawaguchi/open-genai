@@ -25,7 +25,7 @@ const errorMessage = (e: unknown, fallback: string): string => {
 };
 
 export const useDoccheckConfig = () => {
-  const { data, error, isLoading, mutate } = useSWR<DoccheckConfig>(
+  const { data, isLoading, mutate } = useSWR<DoccheckConfig>(
     'doccheck/config',
     async () => {
       try {

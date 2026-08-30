@@ -48,3 +48,4 @@ deletion-report-*.txt
 !/docs/dify-knowledge.md
 !/docs/chosei.md
 !/docs/doccheck.md
+!/docs/patchform.md

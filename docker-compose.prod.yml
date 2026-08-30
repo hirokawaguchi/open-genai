@@ -86,6 +86,10 @@ services:
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-}
+      # フォーム（profiles: ["patchform"]）
+      - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -438,6 +442,71 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: フォーム（`COMPOSE_PROFILES=patchform` または `--profile patchform`）
+  # ホストポートは公開しない。外部ゲストは別プロキシで /public のみ露出すること。
+  patchform-app:
+    profiles: ["patchform"]
+    build:
+      context: .
+      dockerfile: patchform-app/Dockerfile
+
+    container_name: open-genai-patchform-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - PATCHFORM_DB_PATH=/data/patchform.db
+      - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-}
+      - PATCHFORM_RETENTION_DAYS=${PATCHFORM_RETENTION_DAYS:-365}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PATCHFORM_MODEL=${PATCHFORM_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma3:12b}}
+      - PATCHFORM_ENCRYPT_KEY=${PATCHFORM_ENCRYPT_KEY:-}
+      - PATCHFORM_FILES_DIR=/data/files
+      - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
+      - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
+      - PATCHFORM_SEED=${PATCHFORM_SEED:-0}
+      - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
+      - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
+      - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}
+      - PATCHFORM_SMTP_PASSWORD=${PATCHFORM_SMTP_PASSWORD:-}
+      - PATCHFORM_SMTP_STARTTLS=${PATCHFORM_SMTP_STARTTLS:-1}
+      - PATCHFORM_SMTP_SSL=${PATCHFORM_SMTP_SSL:-0}
+      - PATCHFORM_SMTP_FROM=${PATCHFORM_SMTP_FROM:-}
+      - PATCHFORM_STAFF_BASE_URL=${PATCHFORM_STAFF_BASE_URL:-${PUBLIC_URL:-}}
+      - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
+      - PATCHFORM_MAIL_DUMP_DIR=${PATCHFORM_MAIL_DUMP_DIR:-}
+      # 本番は開発用ログインを無効（既定 0）。ログインリンク露出を防ぐ。
+      - PATCHFORM_DEV_LOGIN=${PATCHFORM_DEV_LOGIN:-0}
+      # 庁外マイ手続き（外部セッション）。本番は必ず固定の秘密鍵を設定する。
+      - PATCHFORM_EXT_SECRET=${PATCHFORM_EXT_SECRET:-}
+      - PATCHFORM_MAGIC_TTL_MIN=${PATCHFORM_MAGIC_TTL_MIN:-15}
+      - PATCHFORM_EXT_SESSION_TTL_DAYS=${PATCHFORM_EXT_SESSION_TTL_DAYS:-30}
+    volumes:
+      - patchform_app_data:/data
+    expose:
+      - "8012"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 手続きマスタ MCP（同一サーバ Dify 向け。LGWAN-ASP 転送対象に載せない）
+  procedure-mcp:
+    profiles: ["patchform"]
+    build: ./procedure-mcp
+    container_name: open-genai-procedure-mcp
+    environment:
+      - PATCHFORM_BASE_URL=${PATCHFORM_BASE_URL:-http://patchform-app:8012}
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8013
+    ports:
+      - "${PROCEDURE_MCP_BIND:-127.0.0.1}:${PROCEDURE_MCP_PORT:-8104}:8013"
+    depends_on:
+      - patchform-app
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -471,3 +540,4 @@ volumes:
   seaweedfs_data:
   chosei_app_data:
   doccheck_app_data:
+  patchform_app_data:

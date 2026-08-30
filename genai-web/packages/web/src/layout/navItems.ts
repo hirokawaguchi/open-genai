@@ -31,6 +31,12 @@ export const DOCCHECK_PATH = '/doccheck';
 /** 書類読取とチェック exApp の識別子（専用ページへ振り替える対象） */
 export const DOCCHECK_EXAPP_ID = 'doccheck';
 
+/** フォームは汎用 exApp フォームではなく専用ページで提供する */
+export const PATCHFORM_PATH = '/patchform';
+
+/** フォーム exApp の識別子（専用ページへ振り替える対象） */
+export const PATCHFORM_EXAPP_ID = 'patchform';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -121,13 +127,19 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     items.push({
       label: '日程調整',
       to: CHOSEI_PATH,
-      description: '庁内・外部向けの日程調整（要 profile chosei）',
+      description: '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
     });
 
     items.push({
       label: '書類読取とチェック',
       to: DOCCHECK_PATH,
-      description: '領域分割 OCR と分散チェック（要 profile doccheck）',
+      description: '申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。',
+    });
+
+    items.push({
+      label: 'フォーム',
+      to: PATCHFORM_PATH,
+      description: '庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。',
     });
 
     items.push({
@@ -161,6 +173,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 書類読取とチェックは専用ページへ振り替える
   if (item.app.value === DOCCHECK_EXAPP_ID) {
     return DOCCHECK_PATH;
+  }
+  // フォームは専用ページへ振り替える
+  if (item.app.value === PATCHFORM_EXAPP_ID) {
+    return PATCHFORM_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

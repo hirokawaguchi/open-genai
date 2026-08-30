@@ -96,7 +96,7 @@ export const deleteUploadedFile = async (fileName: string) => {
   if (!res.ok) {
     throw new Error(`Failed to delete file: ${res.status}`);
   }
-  return { data: {} as DeleteFileResponse, status: res.status };
+  return { data: null as DeleteFileResponse, status: res.status };
 };
 
 export const getS3Uri = (s3Url: string) => {

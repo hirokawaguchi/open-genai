@@ -7,4 +7,7 @@ python-multipart==0.0.31
 pypdf==6.15.0
 python-docx==1.1.2
 openpyxl==3.1.5
+python-pptx==1.0.2
+xlrd==2.0.2
+olefile==0.47
 boto3==1.35.99
