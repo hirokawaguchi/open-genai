@@ -526,10 +526,13 @@ const saveBlob = (blob: Blob, filename: string) => {
 export const downloadProcedureExport = async (
   procedureId: string,
   format: 'csv' | 'jsonl' | 'aligned' = 'csv',
+  ids?: string[],
 ): Promise<void> => {
+  const params: Record<string, string> = { format };
+  if (ids && ids.length > 0) params.ids = ids.join(',');
   const { blob, disposition } = await teamApi.getBlob(
     `patchform/procedures/${encodeURIComponent(procedureId)}/export`,
-    { params: { format } },
+    { params },
   );
   const ext = format === 'jsonl' ? 'jsonl' : 'csv';
   saveBlob(blob, parseFilename(disposition) ?? `procedure_${procedureId}_${format}.${ext}`);
@@ -1115,7 +1118,85 @@ export const usePatchformProjectActions = () => {
     }
   }, [api]);
 
-  return { create, setStatus, rename, updateMeta, remove, busy, error, setError };
+  const setReceptionStatus = useCallback(
+    async (
+      applicationId: string,
+      receptionStatus: string,
+    ): Promise<Application | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await api.post<Application>(
+          `patchform/applications/${encodeURIComponent(applicationId)}/reception`,
+          { reception_status: receptionStatus },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '受付ステータスの変更に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
+
+  const bulkSetReceptionStatus = useCallback(
+    async (
+      ids: string[],
+      receptionStatus: string,
+    ): Promise<{ ok: number; failed: string[] } | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await api.post<{ ok: number; failed: string[] }>(
+          'patchform/applications/bulk-reception',
+          { ids, reception_status: receptionStatus },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '受付ステータスの一括変更に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
+
+  const bulkRemove = useCallback(
+    async (ids: string[]): Promise<{ ok: number; failed: string[] } | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await api.post<{ ok: number; failed: string[] }>(
+          'patchform/applications/bulk-delete',
+          { ids },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '申請の一括削除に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
+
+  return {
+    create,
+    setStatus,
+    rename,
+    updateMeta,
+    remove,
+    setReceptionStatus,
+    bulkSetReceptionStatus,
+    bulkRemove,
+    busy,
+    error,
+    setError,
+  };
 };
 
 /** 作成ウィザード用: 案内回答から必要書類を dry-run で解決してプレビューする。 */

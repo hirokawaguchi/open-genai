@@ -485,6 +485,8 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "next_action_date", "TEXT NOT NULL DEFAULT ''"),
         # 申請（提出）した時点。これ以降の変更だけを履歴に残す。
         ("applications", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
+        # 受付（受領側）が回す処理ステータス。申請者側の提出状態とは独立。
+        ("applications", "reception_status", "TEXT NOT NULL DEFAULT '未確認'"),
         # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
         ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
         # 添付ファイルの由来（internal=庁内 / external=庁外アップロード）。
@@ -3540,6 +3542,18 @@ APP_STATUS_AUTO = (APP_STATUS_TODO, APP_STATUS_WORKING, APP_STATUS_READY)
 # 手動上書きで許可する状態（自動値＋提出/終端の状態）
 APP_STATUS_OVERRIDE_ALLOWED = APP_STATUS_AUTO + (APP_STATUS_SUBMITTED, "取下げ", "完了")
 
+# 受付（受領側）の処理ステータス。申請者側の提出状態とは独立に受付が回す。
+RECEPTION_TODO = "未確認"
+RECEPTION_REVIEWING = "確認中"
+RECEPTION_ACCEPTED = "受理"
+RECEPTION_RETURNED = "差戻し"
+RECEPTION_STATUS_VALUES = (
+    RECEPTION_TODO,
+    RECEPTION_REVIEWING,
+    RECEPTION_ACCEPTED,
+    RECEPTION_RETURNED,
+)
+
 
 def _auto_status(items: list[dict[str, Any]]) -> str:
     """枠の充足状況から状態を導出する。
@@ -3777,6 +3791,11 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "owner_kind": str(row["owner_kind"]) if "owner_kind" in keys and row["owner_kind"] else "",
         "owner_key": str(row["owner_key"]) if "owner_key" in keys and row["owner_key"] else "",
         "status": _status_block(items, override),
+        "reception_status": (
+            str(row["reception_status"])
+            if "reception_status" in keys and row["reception_status"]
+            else RECEPTION_TODO
+        ),
         "guide_form_id": row["guide_form_id"],
         "guide_submission_id": row["guide_submission_id"],
         "form_ids": form_ids,
@@ -4634,6 +4653,56 @@ def set_application_status(
         return _application_payload(db, row), None
 
 
+def set_reception_status(
+    *,
+    application_id: str,
+    reception_status: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """受付（受領側）の処理ステータスを変更する。手続きの編集者/管理者のみ。"""
+    value = (reception_status or "").strip()
+    if value not in RECEPTION_STATUS_VALUES:
+        return None, "不正な受付ステータスです"
+    db = connect()
+    with _lock:
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if not row:
+            return None, "申請が見つかりません"
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+        ).fetchone()
+        if not proc or not _can_edit_procedure(proc, actor_user_id, actor_groups):
+            return None, "この手続きを操作する権限がありません"
+        keys = row.keys()
+        current = (
+            str(row["reception_status"])
+            if "reception_status" in keys and row["reception_status"]
+            else RECEPTION_TODO
+        )
+        now = _now_iso()
+        db.execute(
+            "UPDATE applications SET reception_status = ?, updated_at = ? WHERE id = ?",
+            (value, now, application_id),
+        )
+        if value != current:
+            _log_app_event(
+                db,
+                application_id,
+                actor_role="受付",
+                actor_user_id=actor_user_id,
+                action="受付ステータスを変更",
+                detail=value,
+            )
+        row = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        db.commit()
+        return _application_payload(db, row), None
+
+
 def _normalize_date(value: str) -> str | None:
     """空文字は許可（クリア）。YYYY-MM-DD のみ受け付け、不正は None を返す。"""
     v = (value or "").strip()
@@ -4811,12 +4880,16 @@ def list_inbox(
                     "kind": "bundle",
                     "id": app["id"],
                     "created_at": app["created_at"],
+                    "updated_at": app.get("updated_at") or app["created_at"],
                     "title": app["procedure_name"],
                     "label": app["token"],
                     "procedure_id": app["procedure_id"],
                     "submitted": submitted,
                     "total": len(app["forms"]),
                     "public_url": app["public_url"],
+                    "status": app["status"]["effective"],
+                    "reception_status": app.get("reception_status") or RECEPTION_TODO,
+                    "respondent_label": app.get("owner_key") or "-",
                 }
             )
             counts[app["procedure_id"]] = counts.get(app["procedure_id"], 0) + 1
@@ -5687,6 +5760,7 @@ def export_procedure_applications(
     actor_groups: list[str] | None = None,
     fmt: str = "csv",
     since: str | None = None,
+    ids: list[str] | None = None,
 ) -> tuple[str | None, str | None]:
     items, err = list_applications(
         procedure_id,
@@ -5696,6 +5770,9 @@ def export_procedure_applications(
     )
     if err or items is None:
         return None, err
+    if ids:
+        wanted = {i for i in ids if i}
+        items = [app for app in items if app.get("id") in wanted]
     kind = (fmt or "csv").lower()
     if kind == "jsonl":
         return "\n".join(json.dumps(item, ensure_ascii=False) for item in items) + (
