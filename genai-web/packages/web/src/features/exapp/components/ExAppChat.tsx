@@ -74,6 +74,21 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
   const isComposing = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // ユーザーが最下部付近にいるときだけ自動追尾する（上へ読み返し中は追尾しない）。
+  const stickToBottomRef = useRef(true);
+  // 逐次トークンごとの scrollIntoView 連打を rAF で 1 フレームに間引く。
+  const scrollRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // ページ（ウィンドウ）スクロールを監視し、最下部付近にいるかを記録する。
+    const handleScroll = () => {
+      const distanceFromBottom =
+        document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+      stickToBottomRef.current = distanceFromBottom < 120;
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   useEffect(() => {
     // 初期表示（会話が空）では自動スクロールしない。開いた直後に入力欄（最下部）へ
@@ -81,7 +96,28 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
     if (messages.length === 0) {
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 上へ読み返している間は追尾しない。
+    if (!stickToBottomRef.current) {
+      return;
+    }
+    if (scrollRafRef.current != null) {
+      cancelAnimationFrame(scrollRafRef.current);
+    }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      // 配信中は smooth を使わず即時追従（トークンごとにアニメを再起動しないため
+      // カクつきを防ぐ）。完了時のみ smooth で最後をなめらかに寄せる。
+      bottomRef.current?.scrollIntoView({
+        behavior: isLoading ? 'auto' : 'smooth',
+        block: 'end',
+      });
+    });
+    return () => {
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, [messages, isLoading]);
 
   const send = async () => {
@@ -90,6 +126,12 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
       return;
     }
     setError('');
+    // 送信直後は最新へ追尾する。また、送信ボタンにフォーカスが残ると配信中の
+    // 再描画で見た目が落ち着かないため、フォーカスを外す。
+    stickToBottomRef.current = true;
+    if (typeof document !== 'undefined') {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
     const sendingFiles = files;
     const userMessage: ChatMessage = {
       role: 'user',
