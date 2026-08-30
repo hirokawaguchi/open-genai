@@ -109,6 +109,16 @@ def _cleanup_loop() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     store.init_db()
+    if _dev_login_enabled():
+        print(
+            "[patchform] WARNING: PATCHFORM_DEV_LOGIN が有効です。"
+            "ログインリンクが認証なしで応答に露出します。本番では必ず無効化してください。"
+        )
+    if seed.seed_enabled():
+        print(
+            "[patchform] WARNING: PATCHFORM_SEED が有効です。"
+            "サンプルデータを投入します。本番では無効化してください。"
+        )
     try:
         n = store.delete_old_forms(RETENTION_DAYS)
         if n:
