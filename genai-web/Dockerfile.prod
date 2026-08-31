@@ -20,11 +20,18 @@ ARG VITE_APP_NAV_LAYOUT=header
 # 画像生成の初期 step/cfg（既定 50/7。CPU-only の FastSD/LCM 向けは 4/1 を指定）
 ARG VITE_APP_IMAGE_DEFAULT_STEP=50
 ARG VITE_APP_IMAGE_DEFAULT_CFG=7
+ARG VITE_APP_MODEL_IDS
 ENV VITE_APP_API_ENDPOINT=${VITE_APP_API_ENDPOINT} \
     VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=${VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT} \
     VITE_APP_NAV_LAYOUT=${VITE_APP_NAV_LAYOUT} \
     VITE_APP_IMAGE_DEFAULT_STEP=${VITE_APP_IMAGE_DEFAULT_STEP} \
     VITE_APP_IMAGE_DEFAULT_CFG=${VITE_APP_IMAGE_DEFAULT_CFG}
+# compose から渡されたモデル一覧があれば .env を上書き（空なら packages/web/.env のまま）
+RUN if [ -n "$VITE_APP_MODEL_IDS" ]; then \
+      grep -v '^VITE_APP_MODEL_IDS=' packages/web/.env > packages/web/.env.tmp && \
+      mv packages/web/.env.tmp packages/web/.env && \
+      printf '%s\n' "VITE_APP_MODEL_IDS=${VITE_APP_MODEL_IDS}" >> packages/web/.env; \
+    fi
 
 RUN npm run web:build
 

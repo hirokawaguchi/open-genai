@@ -513,6 +513,10 @@ export const modelMetadata: Record<string, ModelMetadata> = {
 
   // ==== Open GENAI: 他の OpenAI 互換プロバイダ（LLM_PROVIDERS で併用）====
   // OpenAI
+  'gpt-4.1': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'GPT-4.1（OpenAI）',
+  },
   'gpt-4o': {
     flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
     displayName: 'GPT-4o（OpenAI）',
@@ -521,7 +525,16 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: { ...MODEL_FEATURE.TEXT_DOC_IMAGE, ...MODEL_FEATURE.LIGHT },
     displayName: 'GPT-4o mini（OpenAI）',
   },
+  // Anthropic（OpenAI 互換エンドポイント）
+  'claude-sonnet-4-6': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE_REASONING,
+    displayName: 'Claude Sonnet 4.6（Anthropic）',
+  },
   // Google Gemini（OpenAI 互換エンドポイント）
+  'gemini-3.6-flash': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemini 3.6 Flash（Google）',
+  },
   'gemini-2.5-flash': {
     flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
     displayName: 'Gemini 2.5 Flash（Google）',
@@ -530,8 +543,8 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
     displayName: 'Gemini 2.5 Pro（Google）',
   },
-  // Azure OpenAI（modelId はデプロイ名に一致させる）
-  'gpt-4.1': {
+  // Azure OpenAI（modelId はデプロイ名に一致させる。公式 GPT-4.1 と衝突しないよう別名）
+  'gpt-4.1-azure': {
     flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
     displayName: 'GPT-4.1（Azure）',
   },
