@@ -20,8 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
-    "types": ["vitest/globals"],
-
     "paths": {
       "@/*": ["./src/*", "./tests/*"]
     }
