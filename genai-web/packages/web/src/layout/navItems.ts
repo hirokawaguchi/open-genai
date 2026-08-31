@@ -2,6 +2,10 @@ import { useMemo } from 'react';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
+import {
+  useDoccheckAvailable,
+  usePatchformAvailable,
+} from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
 /** Open GENAI の文字起こしは Amazon Transcribe ではなく Whisper exApp */
@@ -69,9 +73,11 @@ export type NavLinkItem = {
   description?: string;
 };
 
-/** おすすめ（組み込みユースケース）リンク。画像は health を見て出し分け。 */
+/** おすすめ（組み込みユースケース）リンク。任意起動アプリは health を見て出し分け。 */
 export const useRecommendedNavItems = (): NavLinkItem[] => {
   const imageAvailable = useImageAvailable();
+  const doccheckAvailable = useDoccheckAvailable();
+  const patchformAvailable = usePatchformAvailable();
 
   return useMemo(() => {
     const items: NavLinkItem[] = [
@@ -130,17 +136,22 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       description: '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
     });
 
-    items.push({
-      label: '書類読取とチェック',
-      to: DOCCHECK_PATH,
-      description: '申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。',
-    });
+    if (doccheckAvailable) {
+      items.push({
+        label: '書類読取とチェック',
+        to: DOCCHECK_PATH,
+        description:
+          '申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。',
+      });
+    }
 
-    items.push({
-      label: 'フォーム',
-      to: PATCHFORM_PATH,
-      description: '庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。',
-    });
+    if (patchformAvailable) {
+      items.push({
+        label: 'フォーム',
+        to: PATCHFORM_PATH,
+        description: '庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。',
+      });
+    }
 
     items.push({
       label: 'ナレッジ管理',
@@ -149,7 +160,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     return items;
-  }, [imageAvailable]);
+  }, [imageAvailable, doccheckAvailable, patchformAvailable]);
 };
 
 export const ALL_APPS_NAV_ITEM: NavLinkItem = {
