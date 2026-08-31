@@ -58,6 +58,7 @@ services:
       # LLM_PROVIDERS の api_key_env から参照されるプロバイダ別キー
       - SAKURA_API_KEY=${SAKURA_API_KEY:-}
       - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       # Ollama Cloud 等を LLM_PROVIDERS の api_key_env=OLLAMA_API_KEY で使う場合に受け渡す
@@ -200,6 +201,7 @@ services:
         # 画像生成の初期 step/cfg（既定 50/7。FastSD/LCM を使うビルドでは 4/1 を指定）
         VITE_APP_IMAGE_DEFAULT_STEP: ${VITE_APP_IMAGE_DEFAULT_STEP:-50}
         VITE_APP_IMAGE_DEFAULT_CFG: ${VITE_APP_IMAGE_DEFAULT_CFG:-7}
+        VITE_APP_MODEL_IDS: ${VITE_APP_MODEL_IDS:-}
     container_name: open-genai-web
     expose:
       - "80"

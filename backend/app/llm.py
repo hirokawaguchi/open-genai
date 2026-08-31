@@ -47,11 +47,15 @@ class Provider:
     query: dict[str, str] = field(default_factory=dict)
     # 明示モデル一覧（空なら /models を照会）。
     models: list[str] = field(default_factory=list)
+    # 追加ヘッダ / リクエスト本文（Anthropic の max_tokens 等）。
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
     def headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}
         if self.api_key:
             h[self.auth_header] = f"{self.auth_prefix}{self.api_key}"
+        h.update(self.extra_headers)
         return h
 
 
@@ -75,6 +79,10 @@ def _build_providers() -> tuple[list[Provider], dict[str, Provider]]:
                     key = os.environ.get(str(e["api_key_env"])) or None
                 elif e.get("api_key"):
                     key = str(e["api_key"]) or None
+                extra_headers = {
+                    str(k): str(v) for k, v in (e.get("extra_headers") or {}).items()
+                }
+                extra_body = dict(e.get("extra_body") or {})
                 providers.append(
                     Provider(
                         name=str(e.get("name") or e["base_url"]),
@@ -88,6 +96,8 @@ def _build_providers() -> tuple[list[Provider], dict[str, Provider]]:
                         ),
                         query={str(k): str(v) for k, v in (e.get("query") or {}).items()},
                         models=[str(m) for m in (e.get("models") or [])],
+                        extra_headers=extra_headers,
+                        extra_body=extra_body,
                     )
                 )
         except (ValueError, TypeError) as exc:  # noqa: BLE001
@@ -140,6 +150,26 @@ def _provider_for(model_id: str) -> Provider:
     return _MODEL_INDEX.get(model_id, _DEFAULT_PROVIDER)
 
 
+def _chat_payload(
+    provider: Provider,
+    model_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    stream: bool,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    """chat/completions 用ペイロード。provider.extra_body を後勝ちでマージする。"""
+    payload: dict[str, Any] = {
+        "model": model_id,
+        "messages": messages,
+        "stream": stream,
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    payload.update(provider.extra_body)
+    return payload
+
+
 def _data_url(media_type: str, data: str) -> str:
     """base64(prefix有無どちらでも)を data URL に正規化する。"""
     if data.startswith("data:"):
@@ -165,12 +195,9 @@ async def _complete(
 ) -> str:
     """内部利用の非ストリーム補完（添付の要約/読み計画に使う）。"""
     provider = _provider_for(model_id)
-    payload = {
-        "model": model_id,
-        "messages": messages,
-        "stream": False,
-        "temperature": temperature,
-    }
+    payload = _chat_payload(
+        provider, model_id, messages, stream=False, temperature=temperature
+    )
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{provider.base_url}/chat/completions",
@@ -262,11 +289,7 @@ async def chat_once(
     model_id = _resolve_model(model)
     provider = _provider_for(model_id)
     openai_messages, notes = await _prepare_openai_messages(messages, model)
-    payload = {
-        "model": model_id,
-        "messages": openai_messages,
-        "stream": False,
-    }
+    payload = _chat_payload(provider, model_id, openai_messages, stream=False)
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{provider.base_url}/chat/completions",
@@ -327,11 +350,7 @@ async def chat_stream(
     prefix = _notes_prefix(notes)
     if prefix:
         yield json.dumps({"text": prefix}, ensure_ascii=False) + "\n"
-    payload = {
-        "model": model_id,
-        "messages": openai_messages,
-        "stream": True,
-    }
+    payload = _chat_payload(provider, model_id, openai_messages, stream=True)
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             async with client.stream(
