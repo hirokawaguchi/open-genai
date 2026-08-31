@@ -5,7 +5,10 @@ import { SideNav } from '@/components/ui/SideNav';
 import { isSidebarNavLayout } from '@/constants/navLayout';
 import { useScrollRestoration } from '@/layout/hooks/useScrollRestoration';
 
-const FOOTER_HIDDEN_PATHS = ['/chat', '/image'];
+// ストリーミングで本文が伸びる画面では、文書末のフッターが
+// 自動スクロール（scrollIntoView）と干渉して表示がカクつく。
+// /apps は Dify 対話など exApp（/apps/:teamId/:exAppId）を含む。
+const FOOTER_HIDDEN_PATHS = ['/chat', '/image', '/apps'];
 
 export const Layout = () => {
   const { pathname } = useLocation();
