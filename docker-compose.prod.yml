@@ -18,6 +18,11 @@
 #   Docker 内部ネットワークでのみ到達（proxy がパスで振り分ける）。
 # - フロントの API 参照は相対パス /api（genai-web 無改修・.env 設定のみ）。
 
+# サイト用 overlay（DGX Spark 等）。ファイルが無い環境では無視する。
+include:
+  - path: docker-compose.spark.yml
+    required: false
+
 services:
   # 唯一の公開点: TLS を終端し /、/api/、/kc/ を内部サービスへ振り分ける
   proxy:

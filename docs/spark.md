@@ -13,17 +13,20 @@ NVIDIA DGX Spark（aarch64 / GB10 / CUDA 13）向けの現場メモです。
 
 ## 起動
 
-閉域 HTTP 検証（`docker-compose.verify.yml`）に、サイト用 overlay を足します。
+`docker-compose.prod.yml` は `docker-compose.spark.yml` を **任意 include** します。
+ファイルがあるホストでは、`-f docker-compose.spark.yml` を付けなくても Whisper GPU と `sd-server` が載ります。
+無いホスト（本家の既定 clone）では無視されます。
 
 ```bash
+# このホスト（閉域 HTTP 検証）
 docker compose -f docker-compose.prod.yml -f docker-compose.verify.yml \
-  -f docker-compose.spark.yml --env-file .env up -d
+  --env-file .env up -d
 ```
 
 `docker-compose.spark.yml` は **gitignore**（`/docker-compose.spark.yml`）。
-次の `up` で overlay を忘れると、Whisper が本家既定の CPU イメージで作り直されます。
+サイトの `.env` に `COMPOSE_FILE` を書いておくと、`-f` 省略時も同じファイル順になります。
 
-TLS 本番にするときは `verify` を外し、`proxy/certs/` を置いて `docker-compose.prod.yml` + overlay にします。
+TLS 本番にするときは `verify` を外し、`proxy/certs/` を置いて `docker-compose.prod.yml` だけにします（spark overlay は include される）。
 
 ## `.env` で足す値
 
