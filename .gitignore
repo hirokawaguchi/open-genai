@@ -61,3 +61,4 @@ deletion-report-*.txt
 !/docs/chosei.md
 !/docs/doccheck.md
 !/docs/patchform.md
+!/docs/spark.md
