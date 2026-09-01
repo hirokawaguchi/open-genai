@@ -390,12 +390,13 @@ CHOSEI_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": "",
-    "description": "庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。",
+    "description": "庁内利用者と外部参加者の日程を調整します。共有 URL からログインなしで回答できます。",
     "howToUse": (
         "## 使い方\n\n"
-        "- 専用ページ「日程調整」からイベントを作成し、共有 URL を配布します。\n"
-        "- 庁内利用者はログインしたまま回答できます。外部は公開 URL から回答します。\n"
-        "- 有効化: `docker compose --profile chosei up -d` または `COMPOSE_PROFILES=chosei`。\n"
+        "- この画面でイベントを作成すると、庁内用ページと外部共有 URL が発行されます。\n"
+        "- 外部共有 URL を相手に送ると、ログインなしで出欠を入れられます。\n"
+        "- 外部 URL に届かない場合は、リンクファイルを持ち出して別端末で開いてください。\n"
+        "- 作成から一定日数（既定 90 日）経過したイベントは自動削除されます。\n"
     ),
     "copyable": False,
     "status": "published",
@@ -526,10 +527,16 @@ def _ensure_team_rag_search() -> None:
         retired = [a for a in apps if _rag_role_of(a) in _RETIRED_RAG_ROLES]
 
         if search_apps:
-            # 検索アプリを最新化し、重複のみ削除
-            teams_store.update_exapp(
-                team_id, search_apps[0]["exAppId"], _team_rag_search_app(tname)
-            )
+            # 配線だけ最新化。名前・紹介・使い方は管理者が編集していることがある。
+            current = search_apps[0]
+            payload = _team_rag_search_app(tname)
+            if (current.get("exAppName") or "").strip():
+                payload["exAppName"] = current["exAppName"]
+            if (current.get("description") or "").strip():
+                payload["description"] = current["description"]
+            if (current.get("howToUse") or "").strip():
+                payload["howToUse"] = current["howToUse"]
+            teams_store.update_exapp(team_id, current["exAppId"], payload)
             for extra in search_apps[1:]:
                 teams_store.delete_exapp(team_id, extra["exAppId"])
         else:
@@ -1457,7 +1464,9 @@ async def predict(request: Request) -> Response:
     ng = _ngword_denied(request, _last_user_text(messages))
     if ng:
         return JSONResponse(status_code=403, content={"error": ng})
-    text = await llm.chat_once(messages, body.get("model"))
+    text = await llm.chat_once(
+        messages, body.get("model"), request_id=body.get("id")
+    )
     return JSONResponse(content=text)
 
 
@@ -1600,7 +1609,7 @@ async def predict_stream(request: Request) -> StreamingResponse:
 
         return StreamingResponse(_blocked(), media_type="application/x-ndjson")
 
-    generator = llm.chat_stream(messages, model)
+    generator = llm.chat_stream(messages, model, request_id=body.get("id"))
     # 監査ログ（内容ログ）: 入力（最終ユーザー発話）と集約した出力を1件記録
     audited = audit.wrap_stream(
         generator,
@@ -5004,10 +5013,15 @@ async def list_teams(request: Request) -> dict[str, Any]:
         teams = teams_store.list_teams()
     else:
         teams = teams_store.list_teams_for_admin(_user_id(claims))
-    # 共通チーム・管理者ツールチームはシステム管理下の固定チームのため管理対象から除外
-    teams = [
-        t for t in teams if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
-    ]
+    # 管理者ツールは管理一覧から除外。共通アプリはシステム管理者が AI アプリを
+    # 登録できるよう、管理者にだけ一覧へ出す。
+    if _is_system_admin(claims):
+        teams = [t for t in teams if t["teamId"] != ADMIN_TEAM_ID]
+        teams.sort(key=lambda t: (0 if t["teamId"] == COMMON_TEAM_ID else 1, t.get("teamName", "")))
+    else:
+        teams = [
+            t for t in teams if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+        ]
     return {"teams": teams, "lastEvaluatedKey": None}
 
 
@@ -5062,6 +5076,8 @@ async def get_team_raw(team_id: str, request: Request) -> JSONResponse:
 @app.put("/teams/{team_id}")
 async def update_team(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
+    if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+        return _forbidden("固定チームの名称は変更できません")
     if not _is_system_admin(claims) and not teams_store.is_team_admin(
         team_id, _user_id(claims)
     ):
@@ -5076,6 +5092,8 @@ async def update_team(team_id: str, request: Request) -> JSONResponse:
 @app.delete("/teams/{team_id}")
 async def delete_team(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
+    if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+        return _forbidden("固定チームは削除できません")
     if not _is_system_admin(claims):
         return _forbidden("チーム削除はシステム管理者のみ可能です")
     teams_store.delete_team(team_id)
@@ -5275,14 +5293,28 @@ async def copy_exapp(team_id: str, ex_app_id: str, request: Request) -> JSONResp
     return JSONResponse(content=app_def)
 
 
+def _delete_exapp_history_artifacts(histories: list[dict[str, Any]]) -> None:
+    if not objstore.is_configured():
+        return
+    keys: list[str] = []
+    for hist in histories:
+        keys.extend(objstore.keys_from_artifacts(hist.get("artifacts")))
+    if keys:
+        objstore.delete_keys(keys)
+
+
 @app.delete("/teams/{team_id}/exapps/{ex_app_id}/history")
 async def delete_exapp_history(
     team_id: str,
     ex_app_id: str,
     request: Request,
     createdDate: str = Query(default=""),
+    sessionId: str = Query(default=""),
 ) -> JSONResponse:
-    """AI アプリの実行履歴を 1 件削除する（共通 / システム管理者 / 所属メンバー）。"""
+    """AI アプリの実行履歴を削除する（共通 / システム管理者 / 所属メンバー）。
+
+    createdDate: 1 往復を削除。sessionId: その会話の全往復を削除。
+    """
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
     if (
@@ -5291,19 +5323,23 @@ async def delete_exapp_history(
         and not teams_store.is_team_member(team_id, user_id)
     ):
         return _forbidden()
+    owner_id = None if _is_system_admin(claims) else user_id
+    if sessionId:
+        hists = teams_store.list_exapp_histories_by_session(
+            team_id, ex_app_id, sessionId, owner_id
+        )
+        _delete_exapp_history_artifacts(hists)
+        teams_store.delete_exapp_histories_by_session(
+            team_id, ex_app_id, sessionId, owner_id
+        )
+        return JSONResponse(content={})
     if createdDate:
-        if _is_system_admin(claims):
-            hist = teams_store.get_exapp_history(team_id, ex_app_id, createdDate)
-        else:
-            hist = teams_store.get_exapp_history(
-                team_id, ex_app_id, createdDate, user_id
-            )
-        if hist and objstore.is_configured():
-            objstore.delete_keys(objstore.keys_from_artifacts(hist.get("artifacts")))
-        if _is_system_admin(claims):
-            teams_store.delete_exapp_history(team_id, ex_app_id, createdDate)
-        else:
-            teams_store.delete_exapp_history(
-                team_id, ex_app_id, createdDate, user_id
-            )
+        hist = teams_store.get_exapp_history(
+            team_id, ex_app_id, createdDate, owner_id
+        )
+        if hist:
+            _delete_exapp_history_artifacts([hist])
+        teams_store.delete_exapp_history(
+            team_id, ex_app_id, createdDate, owner_id
+        )
     return JSONResponse(content={})

@@ -586,6 +586,20 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'gpt-oss 20B (ローカル)',
   },
+  // ==== Open GENAI: DGX Spark llama.cpp / vLLM ====
+  // modelId は各サーバの /v1/models と一致させる。
+  'qwen3.5-9b': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Qwen3.5 9B (Spark・画像対応)',
+  },
+  'qwen3.6-35b-a3b': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Qwen3.6 35B-A3B (3fbd vLLM)',
+  },
+  'gpt-oss-20b': {
+    flags: MODEL_FEATURE.TEXT_DOC,
+    displayName: 'gpt-oss 20B (Spark)',
+  },
 
   // ==== Open GENAI: ホスト Ollama（Cloud モデル含む）====
   // modelId は `ollama list` の NAME と一致させる（さくら gpt-oss-120b とは別 ID）。

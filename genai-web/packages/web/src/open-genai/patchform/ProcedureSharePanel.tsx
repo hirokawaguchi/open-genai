@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/dads/Button';
+import { copyToClipboard } from '@/utils/copyToClipboard';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import {
   downloadProcedureLinkFile,
@@ -10,14 +11,7 @@ import {
 
 const svgSrc = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
-const copyText = async (value: string) => {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const copyText = (value: string) => copyToClipboard(value);
 
 const QrBlock = ({
   title,

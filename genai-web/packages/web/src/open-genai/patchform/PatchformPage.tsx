@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { PiBookOpenBold, PiListBold, PiNotePencilBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { PiListBold, PiNotePencilBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { PATCHFORM_EXAPP_ID } from '@/layout/navItems';
 import { FormTagList, FormTagsField } from './FormTagsField';
 import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
 import { PatchformPaneTabs } from './PatchformPaneTabs';
@@ -359,27 +360,13 @@ export const PatchformPage = () => {
     <LayoutBody>
       <PageTitle title={PATCHFORM_LABEL} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-        <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: PATCHFORM_LABEL },
-            ]}
-          />
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>{PATCHFORM_LABEL}</h1>
-          <PatchformSubnav current='forms' />
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            申請フォームとナビゲーションフォームは、それぞれの「一覧」で確認し、「作成」タブから作れます。
-          </p>
-          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-            <DisclosureSummary>
-              <span className='flex items-center text-std-16B-150'>
-                <PiBookOpenBold className='mr-2 size-5 flex-none' />
-                使い方（クリックで開閉）
-              </span>
-            </DisclosureSummary>
-            <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={PATCHFORM_EXAPP_ID}
+          fallbackTitle={PATCHFORM_LABEL}
+          fallbackDescription='申請フォームとナビゲーションフォームは、それぞれの「一覧」で確認し、「作成」タブから作れます。'
+          fallbackHowTo={
+            <>
               <p>・「申請フォーム」は記入してもらう1枚の用紙です。「ナビゲーションフォーム」は申請者の状況を聞いて必要な用紙を出し分ける入口で、それぞれ専用タブから作成・一覧できます。ナビゲーションフォームにはラジオやプルダウンを入れてください（作成時に「ナビゲーション」タグが自動で付きます）。</p>
               <p>・受付は「手続き」を公開すると始まります。届いた件は「申請受付」にあります。</p>
               <p>・外部 URL は「手続きを公開」にあります。LGWAN から届かない場合は、そこのリンクファイルを持ち出して別端末で開いてください。</p>
@@ -390,9 +377,11 @@ export const PatchformPage = () => {
               {config?.retention_days != null && (
                 <p>・既定の保持期間は {config.retention_days} 日です（フォームごとに変更できます）。</p>
               )}
-            </div>
-          </Disclosure>
-        </div>
+            </>
+          }
+        >
+          <PatchformSubnav current='forms' />
+        </ManagedAppHeader>
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <div

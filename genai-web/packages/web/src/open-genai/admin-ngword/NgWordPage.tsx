@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import {
   CustomDialog,
   CustomDialogBody,
@@ -8,13 +6,15 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Label } from '@/components/ui/dads/Label';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { Textarea } from '@/components/ui/dads/Textarea';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { NGWORD_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import type { NgWordRules } from './types';
 import { useNgword, useNgwordActions } from './useNgword';
@@ -43,19 +43,21 @@ export const NgWordPage = () => {
   const { save, submitting, error, setError } = useNgwordActions(mutate);
 
   const header = (
-    <div className='flex flex-col gap-4'>
-      <BreadcrumbsNav
-        items={[
-          { label: 'ホーム', to: '/' },
-          { label: 'AIアプリ', to: '/apps' },
-          { label: '入力制限（禁止ワード）' },
-        ]}
-      />
-      <h1 className='text-std-20B-160 lg:text-std-24B-150'>入力制限（禁止ワード・機密情報）</h1>
-      <p className='text-std-16N-170 text-solid-gray-700'>
-        チャット・AIアプリの入力に対する禁止ワード・機密情報の制限を設定します（システム管理者のみ）。有効時、推論前に入力を検査し該当時はブロックします。
-      </p>
-    </div>
+    <ManagedAppHeader
+      teamId={ADMIN_EXAPPS_TEAM_ID}
+      exAppId={NGWORD_EXAPP_ID}
+      fallbackTitle='入力制限（禁止ワード・機密情報）'
+      fallbackDescription='チャット・AIアプリの入力に対する禁止ワード・機密情報の制限を設定します（システム管理者のみ）。有効時、推論前に入力を検査し該当時はブロックします。'
+      fallbackHowTo={
+        <>
+          <p>・「入力制限」を有効にすると、禁止ワード・機密情報を含む入力をブロックします。</p>
+          <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
+          <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
+          <p>・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。</p>
+          <p>・システム管理者による管理系アプリの実行は本制限の対象外です。</p>
+        </>
+      }
+    />
   );
 
   if (!isSystemAdminGroup) {
@@ -77,22 +79,6 @@ export const NgWordPage = () => {
       <PageTitle title='入力制限（禁止ワード）' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
-
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-            <p>・「入力制限」を有効にすると、禁止ワード・機密情報を含む入力をブロックします。</p>
-            <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
-            <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
-            <p>・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。</p>
-            <p>・システム管理者による管理系アプリの実行は本制限の対象外です。</p>
-          </div>
-        </Disclosure>
 
         {isLoading ? (
           <p className='text-std-16N-170 text-solid-gray-600'>読み込み中...</p>

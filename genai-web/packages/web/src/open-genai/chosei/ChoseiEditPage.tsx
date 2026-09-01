@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { newId } from '@/utils/uuid';
 import type { ChoseiDateInput } from './types';
 import { useChoseiActions, useChoseiEvent } from './useChosei';
 
@@ -216,7 +217,7 @@ export const ChoseiEditPage = () => {
               onClick={() =>
                 setDates((p) => [
                   ...p,
-                  { id: crypto.randomUUID(), start: '', end: '', allDay: false },
+                  { id: newId(), start: '', end: '', allDay: false },
                 ])
               }
             >

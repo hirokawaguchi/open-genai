@@ -5,6 +5,7 @@ import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Ul } from '@/components/ui/dads/Ul';
 import { useGenerateImageStore } from '@/features/generate-image/stores/useGenerateImageStore';
+import { resolveAssistantImageContent } from '@/features/generate-image/utils/parseAssistantImageContent';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useFollow } from '@/hooks/useFollow';
@@ -14,31 +15,6 @@ import { useScreen } from '@/hooks/useScreen';
 type Props = {
   isGeneratingImage: boolean;
   onGenerate: (prompt: string, negativePrompt: string, stylePreset?: string) => Promise<void>;
-};
-
-type AssistantImageContent = {
-  prompt: string | null;
-  negativePrompt: string | null;
-  comment: string;
-  recommendedStylePreset: string[];
-  error?: boolean;
-};
-
-const parseAssistantImageContent = (content: string): AssistantImageContent => {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = (fenced ? fenced[1] : content).trim();
-  const start = candidate.indexOf('{');
-  const end = candidate.lastIndexOf('}');
-  if (start < 0 || end <= start) {
-    throw new Error('JSON not found');
-  }
-  const parsed = JSON.parse(candidate.slice(start, end + 1)) as Partial<AssistantImageContent>;
-  return {
-    prompt: parsed.prompt ?? null,
-    negativePrompt: parsed.negativePrompt ?? null,
-    comment: parsed.comment ?? '',
-    recommendedStylePreset: parsed.recommendedStylePreset ?? [],
-  };
 };
 
 export const GenerateImageAssistant = (props: Props) => {
@@ -92,9 +68,10 @@ export const GenerateImageAssistant = (props: Props) => {
         };
       }
       try {
+        const prevUser = [...messages.slice(0, idx)].reverse().find((x) => x.role === 'user');
         return {
           role: 'assistant',
-          content: parseAssistantImageContent(m.content),
+          content: resolveAssistantImageContent(m.content, prevUser?.content ?? ''),
         };
       } catch (e) {
         console.error(e);

@@ -15,6 +15,7 @@ import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { isJSON } from '@/utils/isJSON';
 import { submitKeyHint } from '@/utils/keyboard';
+import { newId } from '@/utils/uuid';
 import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
 import { getExAppHistoriesKey } from '../hooks/useFetchInvokedExAppHistories';
 import { useResolveExAppSchema } from '../hooks/useResolveExAppSchema';
@@ -255,7 +256,7 @@ ${parsedHistory.outputs}
         teamId: exApp.teamId,
         exAppId: exApp.exAppId,
         inputs: payload,
-        sessionId: invokeHistory?.sessionId ?? crypto.randomUUID(),
+        sessionId: invokeHistory?.sessionId ?? newId(),
       });
     } catch (error: unknown) {
       if (error instanceof Error) {

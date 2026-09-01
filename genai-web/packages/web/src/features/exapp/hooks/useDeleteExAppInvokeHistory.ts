@@ -8,7 +8,14 @@ export const useDeleteExAppInvokeHistory = () => {
     );
   };
 
+  const deleteConversation = async (teamId: string, exAppId: string, sessionId: string) => {
+    await teamApi.delete(`/teams/${teamId}/exapps/${exAppId}/history`, undefined, {
+      params: { sessionId },
+    });
+  };
+
   return {
     deleteHistory,
+    deleteConversation,
   };
 };

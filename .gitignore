@@ -29,6 +29,12 @@ genai-web/packages/web/dist/
 # --- デジタル庁オリジナルの 源内 AI アプリ（未改変・別途 clone のため除外） ---
 /genai-ai-api/
 
+# --- 学習済み画像モデル（巨大。sd-server はホストの ./sd-models をマウント） ---
+/sd-models/
+
+# --- サイト固有の Keycloak 管理コンソール許可 ---
+/proxy/kc-admin-allow.d/10-local.conf
+
 # --- TLS 証明書・秘密鍵（本番/自己署名とも公開しない） ---
 proxy/certs/*.pem
 proxy/certs/*.key

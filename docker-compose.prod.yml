@@ -29,6 +29,7 @@ services:
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
+      - ./proxy/kc-admin-allow.d:/etc/nginx/kc-admin-allow.d:ro
       - ./proxy/certs:/etc/nginx/certs:ro
     depends_on:
       - web
@@ -83,7 +84,7 @@ services:
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
-      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-}
@@ -196,6 +197,8 @@ services:
       args:
         VITE_APP_API_ENDPOINT: /api
         VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
+        # 画面に出すサービス名称（ヘッダー・フッター・ブラウザタブ）
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-Open GENAI}
         # header | sidebar（.env.prod の VITE_APP_NAV_LAYOUT で上書き可）
         VITE_APP_NAV_LAYOUT: ${VITE_APP_NAV_LAYOUT:-header}
         # 画像生成の初期 step/cfg（既定 50/7。FastSD/LCM を使うビルドでは 4/1 を指定）
@@ -262,6 +265,8 @@ services:
       - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
       - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
+      # 通常チャットと同じ思考オフ。空なら rag-app 既定 (enable_thinking:false)
+      - RAG_EXTRA_BODY=${RAG_EXTRA_BODY:-}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       # 起動時のサンプル自動投入。false で無効（本番でサンプル不要なら false）。
       - RAG_SEED_SAMPLES=${RAG_SEED_SAMPLES:-true}
@@ -307,6 +312,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache
@@ -394,12 +400,15 @@ services:
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       - CHOSEI_DB_PATH=/data/chosei.db
       # profile 有効時は外部公開 URL を必ず設定すること（例: https://chosei.example.lg.jp）
-      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       - CHOSEI_RETENTION_DAYS=${CHOSEI_RETENTION_DAYS:-90}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      # 通常チャットと同じ思考オフ。空なら chosei-app 既定 (enable_thinking:false)
+      - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - chosei_app_data:/data
     expose:
@@ -436,6 +445,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - doccheck_app_data:/data
     expose:
@@ -469,6 +479,7 @@ services:
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
       - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
       - PATCHFORM_SEED=${PATCHFORM_SEED:-0}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
       - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
       - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}

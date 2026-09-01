@@ -4,7 +4,7 @@ import { isApiError, teamApiFetcher } from '@/lib/fetcher';
 
 export const useFetchExApp = (teamId: string, exAppId: string) => {
   const { data, isLoading, error } = useSWR<ExApp>(
-    `/teams/${teamId}/exapps/${exAppId}`,
+    teamId && exAppId ? `/teams/${teamId}/exapps/${exAppId}` : null,
     teamApiFetcher,
   );
 

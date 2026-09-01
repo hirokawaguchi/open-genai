@@ -23,6 +23,39 @@ EMBED_BASE_URL = (os.environ.get("EMBED_BASE_URL") or OPENAI_BASE_URL).rstrip("/
 EMBED_API_KEY = os.environ.get("EMBED_API_KEY") or OPENAI_API_KEY
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")
 RAG_MODEL = os.environ.get("RAG_MODEL", "gpt-oss:20b")
+# Qwen3.x は既定で思考モードになり、content が空のまま数分待たされる。
+# 通常チャット (LLM_PROVIDERS.extra_body) と同じく、既定は思考オフ。
+# 上書き例: RAG_EXTRA_BODY={"chat_template_kwargs":{"enable_thinking":true}}
+def _rag_extra_body() -> dict[str, Any]:
+    raw = (os.environ.get("RAG_EXTRA_BODY") or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            print(f"[rag-app] RAG_EXTRA_BODY が不正な JSON です: {raw[:80]}")
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str):
+        return reasoning
+    return content if isinstance(content, str) else ""
+
+
+def _chat_payload(messages: list[dict[str, Any]], *, stream: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": RAG_MODEL,
+        "messages": messages,
+        "stream": stream,
+    }
+    payload.update(_rag_extra_body())
+    return payload
 
 # 検索クエリ / 文書に付ける prefix はモデル依存（本プロジェクトは任意の埋め込みモデルを
 # 差し替え可能）。既定は現行 mxbai-embed-large 互換（クエリのみ英語 prefix・文書は無し）で、
@@ -66,13 +99,13 @@ async def generate(messages: list[dict[str, Any]]) -> str:
     async with httpx.AsyncClient(timeout=600) as client:
         res = await client.post(
             f"{OPENAI_BASE_URL}/chat/completions",
-            json={"model": RAG_MODEL, "messages": messages, "stream": False},
+            json=_chat_payload(messages, stream=False),
             headers=_headers(),
         )
         res.raise_for_status()
         data = res.json()
     choices = data.get("choices") or [{}]
-    return (choices[0].get("message") or {}).get("content", "") or ""
+    return _message_text((choices[0].get("message") or {}))
 
 
 async def generate_stream(messages: list[dict[str, Any]]) -> AsyncIterator[str]:
@@ -80,7 +113,7 @@ async def generate_stream(messages: list[dict[str, Any]]) -> AsyncIterator[str]:
         async with client.stream(
             "POST",
             f"{OPENAI_BASE_URL}/chat/completions",
-            json={"model": RAG_MODEL, "messages": messages, "stream": True},
+            json=_chat_payload(messages, stream=True),
             headers=_headers(),
         ) as res:
             res.raise_for_status()

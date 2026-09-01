@@ -29,7 +29,7 @@ import { FILE_LIMIT } from '../constants';
 import { ChatFormSchema, chatFormSchema } from '../schema';
 
 type Props = {
-  onSend: () => void;
+  onSend: (content?: string) => void;
   fileUpload: boolean;
   accept: string[];
 };
@@ -137,7 +137,7 @@ export const ChatInput = (props: Props) => {
     setFileErrorMessage('');
     setContent(data.content);
     setHasSent(true);
-    onSend();
+    onSend(data.content);
   });
 
   return (

@@ -39,6 +39,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
       - DB_PATH=/data/open-genai.db
       # --- 監査ログ（8-(1)）/ チャット履歴ユーザー別分離（6-(8)）---
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
@@ -178,8 +179,15 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-open_genai_rag}
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
+      - EMBED_DIM=${EMBED_DIM:-1024}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-}
+      - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
+      - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
+      - RAG_EXTRA_BODY=${RAG_EXTRA_BODY:-}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       # 内部サービス間署名の共有鍵（backend と同一値。x-user-*/x-scope 偽装対策）
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
@@ -234,13 +242,14 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  # 文字起こしを「AI アプリ」として提供（faster-whisper / CPU）
+  # 文字起こしを「AI アプリ」として提供（faster-whisper）。GPU は docker-compose.spark.yml。
   whisper-app:
     build: ./whisper-app
     container_name: open-genai-whisper-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache
@@ -365,6 +374,7 @@ services:
       # proxy 経由の相対 API パス（genai-web 無改修）
       - VITE_APP_API_ENDPOINT=/api
       - VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
+      - VITE_APP_TITLE=${VITE_APP_TITLE:-Open GENAI}
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
     volumes:
       - ./genai-web:/app
@@ -408,6 +418,8 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - chosei_app_data:/data
     ports:
@@ -448,6 +460,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - doccheck_app_data:/data
     ports:
@@ -482,6 +495,7 @@ services:
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
       - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
       - PATCHFORM_SEED=${PATCHFORM_SEED:-1}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
       - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
       - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}

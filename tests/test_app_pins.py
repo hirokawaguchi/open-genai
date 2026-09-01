@@ -39,6 +39,44 @@ def _make_team_with_app(store, team_name="テストチーム", admin="admin@exam
     return team, app
 
 
+def test_seed_preserves_edited_description_and_howto(teams_store) -> None:
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "chosei",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "日程調整",
+            "endpoint": "http://chosei/invoke",
+            "description": "初期の紹介",
+            "howToUse": "初期の使い方",
+            "status": "published",
+        }
+    )
+    teams_store.update_exapp(
+        teams_store.COMMON_TEAM_ID,
+        "chosei",
+        {
+            "exAppName": "管理者が直した名前",
+            "description": "管理者が直した紹介",
+            "howToUse": "管理者が直した使い方",
+        },
+    )
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "chosei",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "日程調整",
+            "endpoint": "http://chosei/invoke",
+            "description": "シードの紹介",
+            "howToUse": "シードの使い方",
+            "status": "published",
+        }
+    )
+    app = teams_store.get_exapp(teams_store.COMMON_TEAM_ID, "chosei")
+    assert app["exAppName"] == "管理者が直した名前"
+    assert app["description"] == "管理者が直した紹介"
+    assert app["howToUse"] == "管理者が直した使い方"
+
+
 def test_pin_and_list(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
     pins, error = teams_store.add_user_app_pin(

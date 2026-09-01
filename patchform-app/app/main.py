@@ -30,8 +30,16 @@ CLEANUP_HOUR = int(os.environ.get("PATCHFORM_CLEANUP_HOUR", "2"))
 SERVICE_USER_ID = "service"
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+APP_TITLE = (os.environ.get("APP_TITLE") or "Open GENAI").strip() or "Open GENAI"
 
 app = FastAPI(title="Open GENAI Patchform App", version="0.1.0")
+
+
+def _branded_html(path: Path) -> HTMLResponse:
+    text = path.read_text(encoding="utf-8")
+    if APP_TITLE != "Open GENAI":
+        text = text.replace("Open GENAI", APP_TITLE)
+    return HTMLResponse(text)
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -3298,7 +3306,7 @@ def _public_shell() -> FileResponse | HTMLResponse:
     """庁外 SPA のシェル HTML（#root + guest.js）を返す。"""
     path = PUBLIC_DIR / "form.html"
     if path.is_file():
-        return FileResponse(path, media_type="text/html; charset=utf-8")
+        return _branded_html(path)
     return HTMLResponse("<p>ゲスト UI が未配置です</p>", status_code=500)
 
 
