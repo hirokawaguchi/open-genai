@@ -29,8 +29,14 @@ genai-web/packages/web/dist/
 # --- デジタル庁オリジナルの 源内 AI アプリ（未改変・別途 clone のため除外） ---
 /genai-ai-api/
 
-# --- 学習済み画像モデル（巨大。sd-server はホストの ./sd-models をマウント） ---
+# --- 学習済み画像モデル（巨大。リポジトリに含めない） ---
 /sd-models/
+
+# --- サイト固有の画像生成・文字起こし実装（本家は URL 差し替え） ---
+/docker-compose.spark.yml
+/whisper-app/Dockerfile.spark
+/sd-server/
+/scripts/open-genai-ts-forward.sh
 
 # --- サイト固有の Keycloak 管理コンソール許可 ---
 /proxy/kc-admin-allow.d/10-local.conf

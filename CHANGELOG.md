@@ -40,7 +40,7 @@
 - 画像プロンプトと日程候補を JSON Schema で固定（思考文や会話文で画面が壊れる問題）
 - 未登録のフロント `modelId` は既定モデルへフォールバック
 - Keycloak 静的リソース `/kc/resources/` をログイン用 rate limit から除外。管理コンソール許可は `proxy/kc-admin-allow.d/`（サイト固有 CIDR は gitignore）
-- Whisper に `WHISPER_DEVICE` を追加。DGX Spark 向け GPU 文字起こしと A1111 互換 `sd-server` は `docker-compose.spark.yml` に分離
+- Whisper に `WHISPER_DEVICE` を追加（既定は CPU）。画像生成・文字起こしの本体は環境側で差し替え（`SD_API_URL` / `WHISPER_APP_URL`）
 
 ## [0.8.0] - 2026-08-30
 

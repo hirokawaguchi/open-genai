@@ -242,7 +242,7 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  # 文字起こしを「AI アプリ」として提供（faster-whisper）。GPU は docker-compose.spark.yml。
+  # 文字起こしを「AI アプリ」として提供（faster-whisper / CPU）。GPU 実装は環境側で差し替え。
   whisper-app:
     build: ./whisper-app
     container_name: open-genai-whisper-app
