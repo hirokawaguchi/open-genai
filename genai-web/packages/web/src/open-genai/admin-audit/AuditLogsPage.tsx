@@ -1,14 +1,14 @@
-import { useMemo, useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { useState } from 'react';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
 import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { AUDIT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import { AUDIT_ACTION_OPTIONS, type AuditFilters, type AuditLog } from './types';
 import { useAuditExport, useAuditLogs } from './useAuditLogs';
@@ -84,23 +84,20 @@ export const AuditLogsPage = () => {
     setExpandedId(null);
   };
 
-  const header = useMemo(
-    () => (
-      <div className='flex flex-col gap-4'>
-        <BreadcrumbsNav
-          items={[
-            { label: 'ホーム', to: '/' },
-            { label: 'AIアプリ', to: '/apps' },
-            { label: '監査ログ' },
-          ]}
-        />
-        <h1 className='text-std-20B-160 lg:text-std-24B-150'>監査ログ</h1>
-        <p className='text-std-16N-170 text-solid-gray-700'>
-          利用者単位の利用状況・利用内容ログを確認します（管理者限定）。監査ログには入力・出力の本文が含まれる場合があります。取り扱いに注意してください。
-        </p>
-      </div>
-    ),
-    [],
+  const header = (
+    <ManagedAppHeader
+      teamId={ADMIN_EXAPPS_TEAM_ID}
+      exAppId={AUDIT_EXAPP_ID}
+      fallbackTitle='監査ログ'
+      fallbackDescription='利用者単位の利用状況・利用内容ログを確認します（管理者限定）。監査ログには入力・出力の本文が含まれる場合があります。取り扱いに注意してください。'
+      fallbackHowTo={
+        <>
+          <p>・条件を入力して「検索」を押すと絞り込めます。日付は JST の 0:00〜23:59 で扱います。</p>
+          <p>・各行の「全文」を開くと、入力・出力の本文をそのまま確認できます。</p>
+          <p>・「エクスポート」で、現在の期間（開始日・終了日）の全件を JSONL でダウンロードできます。</p>
+        </>
+      }
+    />
   );
 
   if (!isSystemAdminGroup) {
@@ -122,20 +119,6 @@ export const AuditLogsPage = () => {
       <PageTitle title='監査ログ' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
-
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-            <p>・条件を入力して「検索」を押すと絞り込めます。日付は JST の 0:00〜23:59 で扱います。</p>
-            <p>・各行の「全文」を開くと、入力・出力の本文をそのまま確認できます。</p>
-            <p>・「エクスポート」で、現在の期間（開始日・終了日）の全件を JSONL でダウンロードできます。</p>
-          </div>
-        </Disclosure>
 
         {/* 絞り込みフォーム */}
         <div className='grid grid-cols-1 gap-4 rounded-8 border border-solid-gray-300 p-4 sm:grid-cols-2 lg:grid-cols-3'>

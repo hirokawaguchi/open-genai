@@ -1,14 +1,14 @@
-import { useMemo, useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { useState } from 'react';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
 import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { USERMGMT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import { UserCsvSection } from './UserCsvSection';
 import { useUsers } from './useUserMgmt';
@@ -31,23 +31,21 @@ export const UserMgmtPage = () => {
   const { isSystemAdminGroup } = useTeamAuth();
   const [mode, setMode] = useState<Mode>('list');
 
-  const header = useMemo(
-    () => (
-      <div className='flex flex-col gap-4'>
-        <BreadcrumbsNav
-          items={[
-            { label: 'ホーム', to: '/' },
-            { label: 'AIアプリ', to: '/apps' },
-            { label: '利用者一括管理' },
-          ]}
-        />
-        <h1 className='text-std-20B-160 lg:text-std-24B-150'>利用者一括管理</h1>
-        <p className='text-std-16N-170 text-solid-gray-700'>
-          利用者アカウント（Keycloak）の一覧表示と、CSV による一括登録・更新・削除ができます（システム管理者のみ）。
-        </p>
-      </div>
-    ),
-    [],
+  const header = (
+    <ManagedAppHeader
+      teamId={ADMIN_EXAPPS_TEAM_ID}
+      exAppId={USERMGMT_EXAPP_ID}
+      fallbackTitle='利用者一括管理'
+      fallbackDescription='利用者アカウント（Keycloak）の一覧表示と、CSV による一括登録・更新・削除ができます（システム管理者のみ）。'
+      fallbackHowTo={
+        <>
+          <p>・「利用者一覧」で現在のアカウントを検索・確認できます（変更はされません）。</p>
+          <p>・「CSV一括処理」でCSVを貼り付け／読み込み、まず「ドライラン」で内容を確認します。</p>
+          <p>・問題なければ「適用」で Keycloak に反映します（作成・更新・削除。削除は元に戻せません）。</p>
+          <p>・password 列を含む CSV の保管・共有には十分注意してください。</p>
+        </>
+      }
+    />
   );
 
   if (!isSystemAdminGroup) {
@@ -69,21 +67,6 @@ export const UserMgmtPage = () => {
       <PageTitle title='利用者一括管理' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
-
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-            <p>・「利用者一覧」で現在のアカウントを検索・確認できます（変更はされません）。</p>
-            <p>・「CSV一括処理」でCSVを貼り付け／読み込み、まず「ドライラン」で内容を確認します。</p>
-            <p>・問題なければ「適用」で Keycloak に反映します（作成・更新・削除。削除は元に戻せません）。</p>
-            <p>・password 列を含む CSV の保管・共有には十分注意してください。</p>
-          </div>
-        </Disclosure>
 
         <div role='tablist' aria-label='操作' className='flex gap-1 border-b border-solid-gray-300'>
           {MODES.map((m) => {
