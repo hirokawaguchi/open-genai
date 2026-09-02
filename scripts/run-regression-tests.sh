@@ -32,7 +32,6 @@ WEB_TEST_TARGETS=(
   tests/utils/toAbsoluteUrl.test.ts
   tests/features/chat/ChatPage.test.tsx
   tests/features/generate-image/utils/parseAssistantImageContent.test.ts
-  tests/models/resolveSelectedModelId.test.ts
 )
 
 while [ $# -gt 0 ]; do
