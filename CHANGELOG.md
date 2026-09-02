@@ -46,6 +46,7 @@
 - 固定チーム（共通アプリ / 管理者ツール）の名称変更・削除を禁止し、システム管理者は共通アプリに AI アプリを登録可能に
 - AI アプリ実行履歴のシード再投入で、管理者が編集した名称・紹介・使い方を保持
 - Keycloak 静的リソース `/kc/resources/` をログイン用 rate limit から除外。管理コンソール許可は `proxy/kc-admin-allow.d/`（サイト固有 CIDR は gitignore）
+- Whisper に `WHISPER_DEVICE` を追加（既定は CPU）。画像生成・文字起こしの本体は環境側で差し替え（`SD_API_URL` / `WHISPER_APP_URL`）。サイト overlay（`docker-compose.spark.yml`）は `-f` マージで opt-in（`include` は非対応ファイルや同名サービス上書きで失敗するため不使用）。構築メモは `docs/spark.md`
 
 ## [0.8.0] - 2026-08-30
 

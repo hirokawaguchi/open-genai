@@ -18,6 +18,14 @@
 #   Docker 内部ネットワークでのみ到達（proxy がパスで振り分ける）。
 # - フロントの API 参照は相対パス /api（genai-web 無改修・.env 設定のみ）。
 
+# サイト用 overlay（DGX Spark 等）はこの本番 compose には include しない。
+# overlay を使うホストは `-f docker-compose.spark.yml` を後ろに足す（既存サービスの
+# 上書きも可能。verify 構成と同じ流儀）。`.env` に COMPOSE_FILE を書けば -f を省略できる。
+# 例: docker compose -f docker-compose.prod.yml -f docker-compose.spark.yml up -d
+# ※ Compose の `include` には required フィールドが無く、実在しないファイルを指すと
+#   compose 全体が失敗する。また include は同名サービスを上書きできない（衝突エラー）
+#   ため、overlay の汎用機構としては -f マージを採用する。
+
 services:
   # 唯一の公開点: TLS を終端し /、/api/、/kc/ を内部サービスへ振り分ける
   proxy:
@@ -84,7 +92,7 @@ services:
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
-      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-}
@@ -312,6 +320,7 @@ services:
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache
@@ -399,7 +408,7 @@ services:
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       - CHOSEI_DB_PATH=/data/chosei.db
       # profile 有効時は外部公開 URL を必ず設定すること（例: https://chosei.example.lg.jp）
-      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-}
+      - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       - CHOSEI_RETENTION_DAYS=${CHOSEI_RETENTION_DAYS:-90}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
