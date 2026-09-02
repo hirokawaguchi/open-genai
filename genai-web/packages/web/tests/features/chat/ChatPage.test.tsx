@@ -35,16 +35,18 @@ vi.mock('react-router', async () => {
   };
 });
 
-vi.mock('@/features/chat/stores/useChatStore', () => ({
-  useChatStore: () => ({
+vi.mock('@/features/chat/stores/useChatStore', () => {
+  const useChatStore = () => ({
     ...mockStoreState,
     setContent: mockSetContent,
     setInputSystemContext: mockSetInputSystemContext,
     setSaveSystemContext: vi.fn(),
     setIsDragOver: vi.fn(),
     setShouldAutoSubmit: mockSetShouldAutoSubmit,
-  }),
-}));
+  });
+  useChatStore.getState = () => ({ ...mockStoreState });
+  return { useChatStore };
+});
 
 vi.mock('@/hooks/useChat', () => ({
   useChat: () => ({
@@ -181,7 +183,7 @@ describe('ChatPage', () => {
     );
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockIsSticky = false;
     mockStoreState = {
@@ -191,6 +193,14 @@ describe('ChatPage', () => {
       isDragOver: false,
       shouldAutoSubmit: false,
     };
+    const { useLocation } = await import('react-router');
+    vi.mocked(useLocation).mockReturnValue({
+      pathname: '/chat',
+      search: '',
+      hash: '',
+      state: null,
+      key: 'default',
+    });
   });
 
   describe('auto-submit', () => {
@@ -248,6 +258,30 @@ describe('ChatPage', () => {
       await waitFor(() => {
         expect(mockPostChat).not.toHaveBeenCalled();
       });
+    });
+
+    it('does not clear prefilled content from location state when messages are empty', async () => {
+      const { useLocation } = await import('react-router');
+      vi.mocked(useLocation).mockReturnValue({
+        pathname: '/chat',
+        search: '',
+        hash: '',
+        state: { content: 'テンプレート本文', autoSubmit: false, shouldReset: false },
+        key: 'default',
+      });
+      mockStoreState = {
+        content: 'テンプレート本文',
+        inputSystemContext: 'システムプロンプト',
+        saveSystemContext: '',
+        isDragOver: false,
+        shouldAutoSubmit: false,
+      };
+
+      await act(async () => {
+        renderComponent();
+      });
+
+      expect(mockSetContent).not.toHaveBeenCalledWith('');
     });
 
     it('does not send chat when shouldAutoSubmit is false', async () => {

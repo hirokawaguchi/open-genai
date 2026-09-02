@@ -7,6 +7,8 @@ import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { formatDateTime, STATUS_LABEL, STATUS_MARK } from './format';
 import type { InviteDraftResult, RecommendResult, ResponseStatus } from './types';
+import { copyToClipboard } from '@/utils/copyToClipboard';
+import { toAbsoluteUrl } from '@/utils/toAbsoluteUrl';
 import {
   downloadChoseiCarrier,
   useChoseiActions,
@@ -115,14 +117,17 @@ export const ChoseiEventPage = () => {
     if (ok) navigate('/chosei');
   };
 
+  const publicUrl = toAbsoluteUrl(ev.public_url);
+
   const copyPublic = async () => {
-    try {
-      await navigator.clipboard.writeText(ev.public_url);
+    const ok = await copyToClipboard(publicUrl);
+    if (ok) {
+      setError(null);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError('コピーに失敗しました。URL を手動で選択してください。');
+      return;
     }
+    setError('コピーに失敗しました。URL を手動で選択してください。');
   };
 
   return (
@@ -163,7 +168,7 @@ export const ChoseiEventPage = () => {
 
         <section className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
           <h2 className='text-std-16B-150'>外部共有 URL</h2>
-          <p className='mt-1 break-all text-dns-14N-130 text-blue-900'>{ev.public_url}</p>
+          <p className='mt-1 break-all text-dns-14N-130 text-blue-900'>{publicUrl}</p>
           <div className='mt-3 flex flex-wrap gap-2'>
             <Button type='button' variant='solid-fill' size='sm' onClick={copyPublic}>
               {copied ? 'コピーしました' : 'URL をコピー'}
@@ -345,9 +350,8 @@ export const ChoseiEventPage = () => {
                   size='sm'
                   onClick={async () => {
                     const text = `${invite.subject}\n\n${invite.body}`;
-                    try {
-                      await navigator.clipboard.writeText(text);
-                    } catch {
+                    const ok = await copyToClipboard(text);
+                    if (!ok) {
                       setAssistError('コピーに失敗しました。');
                     }
                   }}

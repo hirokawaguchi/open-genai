@@ -1,5 +1,6 @@
 import mermaid, { type MermaidConfig } from 'mermaid';
 import { useCallback, useEffect, useState } from 'react';
+import { newId } from '@/utils/uuid';
 
 const defaultConfig: MermaidConfig = {
   suppressErrorRendering: true,
@@ -76,7 +77,7 @@ export const MermaidRenderer = (props: Props) => {
           },
         );
 
-      const { svg } = await mermaid.render(`m-${crypto.randomUUID()}`, correctedCode);
+      const { svg } = await mermaid.render(`m-${newId()}`, correctedCode);
 
       // SVG文字列をパースしてDOMオブジェクトに変換
       const parser = new DOMParser();

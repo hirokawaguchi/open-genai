@@ -79,12 +79,18 @@ export const ChatPage = () => {
   }, [chatId, loadingMessages, isEmpty, setFollowing]);
 
   // 画面遷移時に出力が残る問題の対応
-  // メッセージが空の時はテキストをクリア（自動送信時・クエリパラメータ指定時は除く）
+  // メッセージが空の時はテキストをクリア（自動送信時・クエリパラメータ指定時・
+  // プロンプトテンプレートからの本文引き継ぎ時は除く）
   useEffect(() => {
-    if (messages.length === 0 && !shouldAutoSubmit && search === '') {
+    if (
+      messages.length === 0 &&
+      !shouldAutoSubmit &&
+      search === '' &&
+      !state?.content
+    ) {
       setContent('');
     }
-  }, [messages, setContent, shouldAutoSubmit, search]);
+  }, [messages, setContent, shouldAutoSubmit, search, state]);
 
   const { title } = useChatTitle(chatTitle);
 

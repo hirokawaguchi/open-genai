@@ -50,8 +50,8 @@ export const PromptUseSection = ({ templates }: Props) => {
     const filled = substitute(selected.body, variables);
     const state =
       selected.target === 'system'
-        ? { systemContext: filled, autoSubmit: false }
-        : { content: filled, autoSubmit: false };
+        ? { systemContext: filled, autoSubmit: false, shouldReset: false }
+        : { content: filled, autoSubmit: false, shouldReset: false };
     navigate('/chat', { state });
   };
 

@@ -1,5 +1,6 @@
 import { createChat, createMessages } from '@/lib/chatApi';
 import { decomposeId } from '@/utils/decomposeId';
+import { newId } from '@/utils/uuid';
 
 export const buildDirectImageAssistantContent = (
   prompt: string,
@@ -33,7 +34,7 @@ export async function ensureImagePersistTarget(params: {
     chatIdForApi = decomposeId(chat.chatId) ?? chat.chatId.replace(/^chat#/, '');
   }
 
-  const messageId = crypto.randomUUID();
+  const messageId = newId();
   const { messages } = await createMessages(chatIdForApi, {
     messages: [
       {
