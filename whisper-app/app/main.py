@@ -1,4 +1,4 @@
-"""文字起こし「AI アプリ」マイクロサービス（faster-whisper / CPU）。
+"""文字起こし「AI アプリ」マイクロサービス（faster-whisper / CUDA or CPU）。
 
 源内の AI アプリ同期プロトコルに準拠:
 - リクエスト: { "inputs": { "audio": ..., "language": "auto|ja|en", "files": [...] } }
@@ -35,7 +35,14 @@ def _get_model():
     if _model is not None:
         return _model
     try:
+        import ctranslate2
         from faster_whisper import WhisperModel
+
+        if WHISPER_DEVICE == "cuda" and ctranslate2.get_cuda_device_count() < 1:
+            raise RuntimeError(
+                "WHISPER_DEVICE=cuda ですが CUDA デバイスが見つかりません。"
+                "コンテナに GPU が渡されているか確認してください。"
+            )
 
         _model = WhisperModel(
             WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE
@@ -55,7 +62,13 @@ def _check_key(x_api_key: str | None) -> JSONResponse | None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "model": WHISPER_MODEL, "loaded": _model is not None}
+    return {
+        "status": "ok",
+        "model": WHISPER_MODEL,
+        "device": WHISPER_DEVICE,
+        "compute": WHISPER_COMPUTE,
+        "loaded": _model is not None,
+    }
 
 
 def _extract_audio(inputs: dict[str, Any]) -> tuple[str, bytes] | None:
