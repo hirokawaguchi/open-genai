@@ -37,6 +37,9 @@
 - ナレッジ検索・日程調整の回答生成で Qwen 思考モードをオフ（`RAG_EXTRA_BODY` / `CHOSEI_EXTRA_BODY`。空なら `enable_thinking: false`）
 - チャット／RAG／日程調整で `content` が空のとき `reasoning` / `reasoning_content` を本文として読む
 - 画像プロンプトと日程候補を JSON Schema で固定（思考文や会話文で画面が壊れる問題）
+- 未登録・無効なフロント `modelId` は有効な先頭モデルへフォールバック（選択と送信の不一致を防ぐ）
+- チャットのストリーム中断・削除済みチャットの復旧処理を堅牢化
+- DGX Spark 向けモデル（Qwen3.5 / 3.6、gpt-oss 20B）の表示名を追加
 
 ## [0.8.0] - 2026-08-30
 
