@@ -34,6 +34,9 @@
 
 - プロンプトテンプレートの「チャットで開く」で入力欄が空になる不具合を修正
 - HTTP/LAN 環境（非セキュアオリジン）向けに UUID 生成とクリップボードコピーのフォールバックを共通化
+- ナレッジ検索・日程調整の回答生成で Qwen 思考モードをオフ（`RAG_EXTRA_BODY` / `CHOSEI_EXTRA_BODY`。空なら `enable_thinking: false`）
+- チャット／RAG／日程調整で `content` が空のとき `reasoning` / `reasoning_content` を本文として読む
+- 画像プロンプトと日程候補を JSON Schema で固定（思考文や会話文で画面が壊れる問題）
 
 ## [0.8.0] - 2026-08-30
 
