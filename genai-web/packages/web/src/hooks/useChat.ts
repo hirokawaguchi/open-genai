@@ -16,9 +16,16 @@ import { useEffect, useMemo } from 'react';
 import { SWRInfiniteKeyedMutator } from 'swr/infinite';
 import { createWithEqualityFn as create } from 'zustand/traditional';
 import { createChat, createMessages, predictStream, predictTitle } from '@/lib/chatApi';
+import { isApiError } from '@/lib/fetcher';
 import { decomposeId } from '@/utils/decomposeId';
+import { newId } from '@/utils/uuid';
 import { getS3Uri } from '@/lib/fileApi';
-import { findModelByModelId, MODELS } from '@/models';
+import {
+  findModelByModelId,
+  MODELS,
+  resolveSelectedModel,
+  resolveSelectedModelId,
+} from '@/models';
 import { getPrompter } from '../prompts';
 import { useChatApi } from './useChatApi';
 import { useChatList } from './useChatList';
@@ -197,7 +204,7 @@ const useChatStore = create<{
         for (const m of draft[id].messages) {
           if (!m.createdDate) {
             if (!m.messageId) {
-              m.messageId = crypto.randomUUID();
+              m.messageId = newId();
             }
             const match = id.match(/([^/]+)/);
             if (match) {
@@ -364,12 +371,20 @@ const useChatStore = create<{
       base64Cache,
     } = options;
 
-    const { modelIds } = MODELS;
-    const modelId = localStorage.getItem('modelId_v20260218') ?? modelIds[0];
-    const model = findModelByModelId(modelId);
+    if (!get().chats[id]) {
+      initChatWithSystemContext(id);
+    }
+
+    const resolvedId = resolveSelectedModelId() ?? MODELS.modelIds[0];
+    const model = resolveSelectedModel() ??
+      findModelByModelId(resolvedId) ??
+      (resolvedId ? { modelId: resolvedId, type: 'bedrock' as const } : undefined);
 
     if (!model) {
-      console.error(`model not found for ${modelId}`);
+      const err = '利用可能なモデルがありません。管理者にモデル設定を確認してください。';
+      console.error(err);
+      addChunkToAssistantMessage(id, err);
+      setLoading(id, false);
       return;
     }
 
@@ -457,45 +472,50 @@ const useChatStore = create<{
     // Assistant の発言を更新
     let tmpChunk = '';
 
-    for await (const chunk of stream) {
-      const chunks = chunk.split('\n');
+    try {
+      for await (const chunk of stream) {
+        const chunks = chunk.split('\n');
 
-      for (const c of chunks) {
-        if (c && c.length > 0) {
-          const payload = JSON.parse(c) as StreamingChunk;
+        for (const c of chunks) {
+          if (c && c.length > 0) {
+            const payload = JSON.parse(c) as StreamingChunk;
 
-          if (payload.text.length > 0) {
-            tmpChunk += payload.text;
+            if (payload.text.length > 0) {
+              tmpChunk += payload.text;
+            }
+
+            if (payload.stopReason && payload.stopReason.length > 0) {
+              updateStopReason(id, payload.stopReason);
+            }
+
+            // Trace
+            if (payload.trace) {
+              addChunkToAssistantMessage(id, '', payload.trace, model);
+            }
+
+            // SessionId
+            if (payload.sessionId) {
+              setSessionId(payload.sessionId);
+            }
           }
+        }
 
-          if (payload.stopReason && payload.stopReason.length > 0) {
-            updateStopReason(id, payload.stopReason);
-          }
-
-          // Trace
-          if (payload.trace) {
-            addChunkToAssistantMessage(id, '', payload.trace, model);
-          }
-
-          // SessionId
-          if (payload.sessionId) {
-            setSessionId(payload.sessionId);
-          }
+        // chunk は 10 文字以上でまとめて処理する
+        // バッファリングしないと以下のエラーが出る
+        // Maximum update depth exceeded
+        if (tmpChunk.length >= 10) {
+          addChunkToAssistantMessage(id, tmpChunk, undefined, model);
+          tmpChunk = '';
         }
       }
 
-      // chunk は 10 文字以上でまとめて処理する
-      // バッファリングしないと以下のエラーが出る
-      // Maximum update depth exceeded
-      if (tmpChunk.length >= 10) {
+      // tmpChunk に文字列が残っている場合は処理する
+      if (tmpChunk.length > 0) {
         addChunkToAssistantMessage(id, tmpChunk, undefined, model);
-        tmpChunk = '';
       }
-    }
-
-    // tmpChunk に文字列が残っている場合は処理する
-    if (tmpChunk.length > 0) {
-      addChunkToAssistantMessage(id, tmpChunk, undefined, model);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addChunkToAssistantMessage(id, `\n[エラー] ${msg}`, undefined, model);
     }
 
     // メッセージの後処理（例：footnote の付与）
@@ -544,11 +564,28 @@ const useChatStore = create<{
       toBeRecordedMessages.push(updatedAssistantMessage);
     }
 
-    const { messages } = await createMessages(chatId, {
-      messages: toBeRecordedMessages,
-    });
-
-    replaceMessages(id, messages);
+    try {
+      const { messages } = await createMessages(chatId, {
+        messages: toBeRecordedMessages,
+      });
+      replaceMessages(id, messages);
+    } catch (e) {
+      // 履歴削除後も URL に古い chatId が残ると 404 になる。新規チャットへ付け替える。
+      if (!isApiError(e) || e.status !== 404) {
+        throw e;
+      }
+      const { chat: newChat } = await createChat({ usecase: id });
+      set((state) => {
+        const newChats = produce(state.chats, (draft) => {
+          draft[id].chat = newChat;
+        });
+        return { chats: newChats };
+      });
+      const { messages } = await createMessages(newChat.chatId, {
+        messages: toBeRecordedMessages,
+      });
+      replaceMessages(id, messages);
+    }
   };
 
   return {
@@ -628,10 +665,15 @@ const useChatStore = create<{
     post: async (id: string, content: string, mutateListChat, options: GenerateOptions = {}) => {
       const { uploadedFiles, extraData } = options;
 
+      try {
+      if (!get().chats[id]) {
+        initChatWithSystemContext(id);
+      }
+
       const userMessage: ShownMessage = {
         role: 'user',
         content,
-        messageId: crypto.randomUUID(),
+        messageId: newId(),
         // DDB に保存する形式で、extraData を設定する
         extraData: [
           ...(uploadedFiles?.map(
@@ -653,12 +695,15 @@ const useChatStore = create<{
       const assistantMessage: ShownMessage = {
         role: 'assistant',
         content: '',
-        messageId: crypto.randomUUID(),
+        messageId: newId(),
       };
 
       // User/Assistant の発言を反映
       set((state) => {
         const newChats = produce(state.chats, (draft) => {
+          if (!draft[id]) {
+            draft[id] = { messages: [], stopReason: '' };
+          }
           draft[id].messages.push(userMessage);
           draft[id].messages.push(assistantMessage);
         });
@@ -668,7 +713,15 @@ const useChatStore = create<{
         };
       });
 
-      await generateMessage('normal', id, mutateListChat, options);
+        await generateMessage('normal', id, mutateListChat, options);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (get().chats[id]?.messages?.some((m) => m.role === 'assistant')) {
+          addChunkToAssistantMessage(id, `\n[エラー] ${msg}`);
+        }
+        setLoading(id, false);
+        throw e;
+      }
     },
 
     continueGeneration: (id, mutateListChat, options) =>
