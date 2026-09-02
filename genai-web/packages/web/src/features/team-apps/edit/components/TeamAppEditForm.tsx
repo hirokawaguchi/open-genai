@@ -149,6 +149,14 @@ export const TeamAppEditForm = (props: Props) => {
         {errors.howToUse && (
           <ErrorText id={`team-app-how-to-use-error`}>＊{errors.howToUse.message}</ErrorText>
         )}
+        <SupportText>
+          専用ページの紹介・使い方もこの内容です。保存は下の「更新」、または画面最下部の「更新」です。
+        </SupportText>
+        <div className='mt-2 flex justify-start'>
+          <LoadingButton type='submit' variant='solid-fill' size='md' loading={isLoading}>
+            {isLoading ? '更新中' : '更新'}
+          </LoadingButton>
+        </div>
         <Disclosure>
           <DisclosureSummary>マークダウン記法の入力例</DisclosureSummary>
           <div className='mt-2'>

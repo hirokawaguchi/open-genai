@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { PiFoldersBold, PiMagnifyingGlassBold, PiPlusBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { PiMagnifyingGlassBold, PiPlusBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { DOCMAKER_EXAPP_ID } from '@/layout/navItems';
 import type { MyApplication } from '../patchform/types';
 import { usePatchformRoutes } from '../patchform/routes';
 import {
@@ -140,16 +142,14 @@ export const DocmakerPage = () => {
     <LayoutBody>
       <PageTitle title={DOCMAKER_LABEL} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-        <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav items={[...routes.homeCrumbs, { label: routes.myListLabel }]} />
-          <h1 className='flex items-center gap-2 text-std-20B-160 lg:text-std-24B-150'>
-            <PiFoldersBold className='size-6' />
-            {routes.myListLabel}
-          </h1>
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            自分の手続き（案件）を一覧で管理します。手続きを選んで始めると、案内に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。
-          </p>
-        </div>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={DOCMAKER_EXAPP_ID}
+          enabled={routes.mode === 'internal'}
+          fallbackTitle={routes.myListLabel}
+          fallbackDescription='自分の手続き（案件）を一覧で管理します。手続きを選んで始めると、案内に答えるだけで提出書類一覧ができ、記入や添付を少しずつ進められます。'
+          breadcrumbItems={[...routes.homeCrumbs, { label: routes.myListLabel }]}
+        />
 
         <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
           <h2 className='flex items-center gap-2 text-std-18B-160'>

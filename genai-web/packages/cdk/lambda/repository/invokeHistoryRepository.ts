@@ -338,3 +338,42 @@ export const deleteInvokeExAppHistory = async (
     }),
   );
 };
+
+export const listInvokeExAppHistoriesBySession = async (
+  _teamId: string,
+  _exAppId: string,
+  _userId: string,
+  _sessionId: string,
+): Promise<InvokeExAppHistory[]> => {
+  const res = await dynamoDbDocument.send(
+    new QueryCommand({
+      TableName: INVOKE_HISTORY_TABLE_NAME,
+      KeyConditionExpression: 'pk = :pk',
+      FilterExpression: 'sessionId = :sessionId',
+      ExpressionAttributeValues: {
+        ':pk': `${_teamId}#${_exAppId}#${_userId}`,
+        ':sessionId': _sessionId,
+      },
+      ScanIndexForward: false,
+    }),
+  );
+
+  return res.Items ? res.Items.map((item) => itemToInvokeExAppHistory(item)) : [];
+};
+
+export const deleteInvokeExAppHistoriesBySession = async (
+  _teamId: string,
+  _exAppId: string,
+  _userId: string,
+  _sessionId: string,
+): Promise<void> => {
+  const histories = await listInvokeExAppHistoriesBySession(
+    _teamId,
+    _exAppId,
+    _userId,
+    _sessionId,
+  );
+  for (const history of histories) {
+    await deleteInvokeExAppHistory(_teamId, _exAppId, _userId, history.createdDate);
+  }
+};
