@@ -242,13 +242,14 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  # 文字起こしを「AI アプリ」として提供（faster-whisper / CPU）
+  # 文字起こしを「AI アプリ」として提供（faster-whisper / CPU）。GPU 実装は環境側で差し替え。
   whisper-app:
     build: ./whisper-app
     container_name: open-genai-whisper-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - WHISPER_MODEL=${WHISPER_MODEL:-medium}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
       - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
     volumes:
       - whisper_cache:/cache

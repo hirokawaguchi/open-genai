@@ -88,7 +88,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
-| `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md)） |
+| `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md) / [DGX Spark](docs/spark.md)） |
 | `docker-compose.yml` | **開発用**。proxy + web(Vite dev server) / backend / … をまとめて起動（HTTP :80 のみ公開、コード変更は無ビルドで即時反映） |
 | `docker-compose.prod.yml` | **本番 TLS 構成**（proxy :80/:443 のみ公開。web は静的ビルド `genai-web/Dockerfile.prod` を nginx で配信） |
 | `docker-compose.verify.yml` | 本番スタックを HTTP で検証／閉域運用するオーバーライド（自己署名不要。web は本番同様の静的ビルド） |
@@ -661,7 +661,7 @@ Open GENAI では **機能ごとに入口を分けています**（どちらも�
 
 `backend` の `/image/generate` が画像生成サーバへプロキシします。バックエンドは `.env` の
 **`SD_BACKEND`** で切り替えます（既定 `a1111`）。画像生成サーバ本体はいずれも**アプリ外で運用**します
-（RAG 埋め込みと同様、環境に応じて差し替える方針）。
+（RAG 埋め込みと同様、環境に応じて差し替える方針）。DGX Spark での一例は [docs/spark.md](docs/spark.md)。
 
 | `SD_BACKEND` | 用途 | サーバ | 既定接続先 | 初期 step/cfg 目安 |
 | --- | --- | --- | --- | --- |
