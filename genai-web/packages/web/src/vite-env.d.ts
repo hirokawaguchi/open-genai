@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /** 画面に出すサービス名称（ヘッダー・フッター・ブラウザタブ） */
+  readonly VITE_APP_TITLE: string;
   readonly VITE_APP_ENV: string;
   readonly VITE_APP_API_ENDPOINT: string;
   readonly VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: string;
