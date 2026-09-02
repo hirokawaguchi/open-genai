@@ -373,6 +373,7 @@ services:
       # proxy 経由の相対 API パス（genai-web 無改修）
       - VITE_APP_API_ENDPOINT=/api
       - VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
+      - VITE_APP_TITLE=${VITE_APP_TITLE:-Open GENAI}
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
     volumes:
       - ./genai-web:/app
@@ -417,6 +418,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - chosei_app_data:/data
     ports:
@@ -457,6 +459,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - doccheck_app_data:/data
     ports:
@@ -491,6 +494,7 @@ services:
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
       - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
       - PATCHFORM_SEED=${PATCHFORM_SEED:-1}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
       - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
       - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}

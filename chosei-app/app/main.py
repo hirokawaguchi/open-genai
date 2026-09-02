@@ -26,8 +26,19 @@ RETENTION_DAYS = int(os.environ.get("CHOSEI_RETENTION_DAYS", "90"))
 CLEANUP_HOUR = int(os.environ.get("CHOSEI_CLEANUP_HOUR", "2"))
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+APP_TITLE = (os.environ.get("APP_TITLE") or "Open GENAI").strip() or "Open GENAI"
 
 app = FastAPI(title="Open GENAI Chosei App", version="0.1.0")
+
+
+def _public_html(name: str) -> FileResponse | HTMLResponse:
+    path = PUBLIC_DIR / name
+    if not path.is_file():
+        return HTMLResponse("<p>ゲスト UI が未配置です</p>", status_code=500)
+    text = path.read_text(encoding="utf-8")
+    if APP_TITLE != "Open GENAI":
+        text = text.replace("Open GENAI", APP_TITLE)
+    return HTMLResponse(text)
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -598,10 +609,7 @@ async def public_delete_participant(
 
 @app.get("/public/e/{guest_token}", response_model=None)
 def public_event_page(guest_token: str) -> FileResponse | HTMLResponse:
-    path = PUBLIC_DIR / "event.html"
-    if path.is_file():
-        return FileResponse(path, media_type="text/html; charset=utf-8")
-    return HTMLResponse("<p>ゲスト UI が未配置です</p>", status_code=500)
+    return _public_html("event.html")
 
 
 @app.get("/public/", response_class=HTMLResponse)
