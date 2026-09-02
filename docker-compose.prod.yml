@@ -262,6 +262,8 @@ services:
       - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
       - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
+      # 通常チャットと同じ思考オフ。空なら rag-app 既定 (enable_thinking:false)
+      - RAG_EXTRA_BODY=${RAG_EXTRA_BODY:-}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       # 起動時のサンプル自動投入。false で無効（本番でサンプル不要なら false）。
       - RAG_SEED_SAMPLES=${RAG_SEED_SAMPLES:-true}
@@ -400,6 +402,8 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      # 通常チャットと同じ思考オフ。空なら chosei-app 既定 (enable_thinking:false)
+      - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
     volumes:
       - chosei_app_data:/data
     expose:

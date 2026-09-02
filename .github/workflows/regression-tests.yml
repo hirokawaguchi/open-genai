@@ -66,4 +66,5 @@ jobs:
             tests/utils/ensureImagePersistTarget.test.ts \
             tests/utils/copyToClipboard.test.ts \
             tests/utils/toAbsoluteUrl.test.ts \
-            tests/features/chat/ChatPage.test.tsx
+            tests/features/chat/ChatPage.test.tsx \
+            tests/features/generate-image/utils/parseAssistantImageContent.test.ts

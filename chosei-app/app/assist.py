@@ -191,6 +191,7 @@ async def parse_dates_from_text(text: str, *, now: datetime | None = None) -> di
                 '"is_all_day":false,"label":"8/14 12:00"}],"notes":""}。'
                 "タイムゾーンは必ず +09:00。"
                 "候補は最大14件まで。平日連続などは必要な日だけ列挙し、冗長な説明は notes に書かない。"
+                "「午後」は 13:00〜18:00、「午前」は 9:00〜12:00 を目安にし、その範囲だけ出す。深夜まで伸ばさない。"
                 "終日なら is_all_day=true、start_time はその日 00:00:00+09:00、end_time は null。"
                 "必ず完全な JSON で閉じること。"
             ),
@@ -203,7 +204,46 @@ async def parse_dates_from_text(text: str, *, now: datetime | None = None) -> di
             ),
         },
     ]
-    raw = await llm.chat(messages, temperature=0.1, max_tokens=4096)
+    raw = await llm.chat(
+        messages,
+        temperature=0.1,
+        max_tokens=4096,
+        extra={
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "chosei_dates",
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "dates": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "start_time": {"type": "string"},
+                                        "end_time": {"type": ["string", "null"]},
+                                        "is_all_day": {"type": "boolean"},
+                                        "label": {"type": "string"},
+                                    },
+                                    "required": [
+                                        "start_time",
+                                        "end_time",
+                                        "is_all_day",
+                                        "label",
+                                    ],
+                                },
+                            },
+                            "notes": {"type": "string"},
+                        },
+                        "required": ["dates", "notes"],
+                    },
+                },
+            }
+        },
+    )
     data = llm.extract_json(raw)
     if not isinstance(data, dict):
         raise ValueError("モデル応答の形式が不正です")
