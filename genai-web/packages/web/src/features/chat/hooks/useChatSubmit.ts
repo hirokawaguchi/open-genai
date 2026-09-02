@@ -35,14 +35,20 @@ export const useChatSubmit = ({
 
   const currentSystemContext = getCurrentSystemContext();
 
-  const onSend = useCallback(() => {
+  const onSend = useCallback((overrideContent?: string) => {
     if (inputSystemContext !== currentSystemContext) {
       updateSystemContext(inputSystemContext);
     }
     setFollowing(true);
-    postChat(prompter.chatPrompt({ content }), {
-      uploadedFiles: fileUploadable ? uploadedFiles : undefined,
-      base64Cache,
+    const text = (overrideContent ?? useChatStore.getState().content) || content;
+    void Promise.resolve(
+      postChat(prompter.chatPrompt({ content: text }), {
+        uploadedFiles: fileUploadable ? uploadedFiles : undefined,
+        base64Cache,
+      }),
+    ).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      window.alert(`送信に失敗しました: ${msg}`);
     });
     setContent('');
     clearFiles();

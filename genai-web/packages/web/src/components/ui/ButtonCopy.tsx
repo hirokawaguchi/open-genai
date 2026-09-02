@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useState } from 'react';
+import { copyToClipboard } from '@/utils/copyToClipboard';
 import { Button } from './dads/Button';
 import { CheckmarkIcon } from './icons/CheckmarkIcon';
 import { CopyIcon } from './icons/CopyIcon';
@@ -24,10 +25,9 @@ export const ButtonCopy = (props: Props) => {
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(message);
-    } catch (error) {
-      console.error('クリップボードへのコピーに失敗しました', error);
+    const ok = await copyToClipboard(message);
+    if (!ok) {
+      console.error('クリップボードへのコピーに失敗しました');
       return;
     }
 

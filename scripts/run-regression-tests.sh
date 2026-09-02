@@ -28,6 +28,9 @@ WEB_TEST_TARGETS=(
   tests/hooks/useSyncUsecaseChatUrl.test.ts
   tests/utils/imageResultExtraData.test.ts
   tests/utils/ensureImagePersistTarget.test.ts
+  tests/utils/copyToClipboard.test.ts
+  tests/utils/toAbsoluteUrl.test.ts
+  tests/features/chat/ChatPage.test.tsx
 )
 
 while [ $# -gt 0 ]; do
