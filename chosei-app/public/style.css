@@ -104,6 +104,7 @@ input[type="password"] {
 }
 
 .statuses label {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -116,8 +117,17 @@ input[type="password"] {
   font-size: 0.85rem;
 }
 
-.statuses input {
-  margin: 0;
+/* ネイティブ radio の○を隠し、○△✕だけ見せる（キーボード操作は残す） */
+.statuses input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .statuses label:has(input[value="ok"]:checked) {

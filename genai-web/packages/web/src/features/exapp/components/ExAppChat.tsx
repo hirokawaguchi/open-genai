@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { isApiError } from '@/lib/fetcher';
 import { submitKeyHint, isSubmitKey } from '@/utils/keyboard';
+import { newId } from '@/utils/uuid';
 import { ExAppConversation, useExAppConversations } from '../hooks/useExAppConversations';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
 import { processFormFiles } from '../utils/processFormFiles';
@@ -70,7 +71,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
   const [files, setFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const [sessionId, setSessionId] = useState<string>(() => newId());
   const isComposing = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -226,7 +227,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
     setInput('');
     setFiles([]);
     setError('');
-    setSessionId(crypto.randomUUID());
+    setSessionId(newId());
   };
 
   // 「過去の会話」を選ぶと、その sessionId とやり取りを復元する。
@@ -265,7 +266,15 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
       <ExAppConversationList
         conversations={conversations}
         activeSessionId={sessionId}
+        teamId={exApp.teamId}
+        exAppId={exApp.exAppId}
         onSelect={restoreConversation}
+        onDeleted={(conversation) => {
+          void mutateConversations();
+          if (conversation.sessionId === sessionId) {
+            startNewConversation();
+          }
+        }}
       />
 
       <div className='min-h-[40vh] rounded-8 border border-solid-gray-420 p-4'>

@@ -41,6 +41,12 @@ export const PATCHFORM_PATH = '/patchform';
 /** フォーム exApp の識別子（専用ページへ振り替える対象） */
 export const PATCHFORM_EXAPP_ID = 'patchform';
 
+/** マイ手続きは汎用 exApp フォームではなく専用ページで提供する */
+export const DOCMAKER_PATH = '/docmaker';
+
+/** マイ手続き exApp の識別子（専用ページへ振り替える対象） */
+export const DOCMAKER_EXAPP_ID = 'docmaker';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -188,6 +194,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // フォームは専用ページへ振り替える
   if (item.app.value === PATCHFORM_EXAPP_ID) {
     return PATCHFORM_PATH;
+  }
+  if (item.app.value === DOCMAKER_EXAPP_ID) {
+    return DOCMAKER_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import {
   CustomDialog,
   CustomDialogBody,
@@ -13,8 +11,11 @@ import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { MODELPOLICY_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import type { ModelPolicyConfig } from './types';
 import { useModelPolicy, useModelPolicyActions } from './useModelPolicy';
@@ -30,19 +31,20 @@ export const ModelPolicyPage = () => {
   const { save, submitting, error, setError } = useModelPolicyActions(mutate);
 
   const header = (
-    <div className='flex flex-col gap-4'>
-      <BreadcrumbsNav
-        items={[
-          { label: 'ホーム', to: '/' },
-          { label: 'AIアプリ', to: '/apps' },
-          { label: 'モデル利用制御' },
-        ]}
-      />
-      <h1 className='text-std-20B-160 lg:text-std-24B-150'>モデル利用制御</h1>
-      <p className='text-std-16N-170 text-solid-gray-700'>
-        利用可能な LLM をチーム単位で管理します（システム管理者のみ）。利用者は所属する各チームの許可モデルの和集合を使えます。
-      </p>
-    </div>
+    <ManagedAppHeader
+      teamId={ADMIN_EXAPPS_TEAM_ID}
+      exAppId={MODELPOLICY_EXAPP_ID}
+      fallbackTitle='モデル利用制御'
+      fallbackDescription='利用可能な LLM をチーム単位で管理します（システム管理者のみ）。利用者は所属する各チームの許可モデルの和集合を使えます。'
+      fallbackHowTo={
+        <>
+          <p>・「制御」を有効にすると、許可したモデルのみ利用できます（無効の間は全モデル利用可）。</p>
+          <p>・「全ユーザー共通で許可」は全員が使えるモデルです。</p>
+          <p>・「チーム別の追加許可」は各チームに追加で許可するモデルです。</p>
+          <p>・システム管理者は常に全モデルを利用できます。</p>
+        </>
+      }
+    />
   );
 
   if (!isSystemAdminGroup) {
@@ -64,21 +66,6 @@ export const ModelPolicyPage = () => {
       <PageTitle title='モデル利用制御' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
-
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-            <p>・「制御」を有効にすると、許可したモデルのみ利用できます（無効の間は全モデル利用可）。</p>
-            <p>・「全ユーザー共通で許可」は全員が使えるモデルです。</p>
-            <p>・「チーム別の追加許可」は各チームに追加で許可するモデルです。</p>
-            <p>・システム管理者は常に全モデルを利用できます。</p>
-          </div>
-        </Disclosure>
 
         {isLoading ? (
           <p className='text-std-16N-170 text-solid-gray-600'>読み込み中...</p>
