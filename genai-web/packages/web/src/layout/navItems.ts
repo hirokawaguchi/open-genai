@@ -5,6 +5,7 @@ import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import {
   useDoccheckAvailable,
   usePatchformAvailable,
+  useProcuretechAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -47,6 +48,12 @@ export const DOCMAKER_PATH = '/docmaker';
 /** マイ手続き exApp の識別子（専用ページへ振り替える対象） */
 export const DOCMAKER_EXAPP_ID = 'docmaker';
 
+/** 情報化企画書ナビは汎用 exApp フォームではなく専用ページで提供する */
+export const PROCURETECH_PATH = '/procuretech';
+
+/** 情報化企画書ナビ exApp の識別子（専用ページへ振り替える対象） */
+export const PROCURETECH_EXAPP_ID = 'procuretech';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -84,6 +91,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const imageAvailable = useImageAvailable();
   const doccheckAvailable = useDoccheckAvailable();
   const patchformAvailable = usePatchformAvailable();
+  const procuretechAvailable = useProcuretechAvailable();
 
   return useMemo(() => {
     const items: NavLinkItem[] = [
@@ -159,6 +167,15 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (procuretechAvailable) {
+      items.push({
+        label: '情報化企画書ナビ',
+        to: PROCURETECH_PATH,
+        description:
+          '情報化企画書（Excel）を読み込み、4分野をAIとの対話で整理して各欄へ書き出します。',
+      });
+    }
+
     items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
@@ -166,7 +183,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     return items;
-  }, [imageAvailable, doccheckAvailable, patchformAvailable]);
+  }, [imageAvailable, doccheckAvailable, patchformAvailable, procuretechAvailable]);
 };
 
 export const ALL_APPS_NAV_ITEM: NavLinkItem = {
@@ -197,6 +214,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   }
   if (item.app.value === DOCMAKER_EXAPP_ID) {
     return DOCMAKER_PATH;
+  }
+  // 情報化企画書ナビは専用ページへ振り替える
+  if (item.app.value === PROCURETECH_EXAPP_ID) {
+    return PROCURETECH_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

@@ -115,6 +115,15 @@ DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rs
 # フォーム（Compose profiles: ["patchform"]）。実 API は /patchform/* プロキシ。
 PATCHFORM_APP_URL = os.environ.get("PATCHFORM_APP_URL", "http://patchform-app:8012/invoke")
 PATCHFORM_PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
+# procureTech Navigator（Compose profiles: ["procuretech"]）。実 API は /procuretech/* プロキシ。
+PROCURETECH_APP_URL = os.environ.get(
+    "PROCURETECH_APP_URL", "http://procuretech-navigator-app:8014/invoke"
+)
+# 更新版 xlsx を SeaweedFS(S3 互換) 経由で配信するか。有効かつ objstore 構成済みのときのみ、
+# 署名付き URL を返す（未構成・失敗時は直接ダウンロードにフォールバック）。
+PROCURETECH_DOWNLOAD_VIA_S3 = os.environ.get(
+    "PROCURETECH_DOWNLOAD_VIA_S3", ""
+).strip().lower() in ("1", "true", "yes", "on")
 PATCHFORM_SERVICE_USER = "service"
 _PATCHFORM_SERVICE_PATHS = re.compile(
     r"^/patchform/(?:procedures(?:/[^/]+(?:/(?:applications|export))?)?|applications/[^/]+(?:/export)?)$"
@@ -477,6 +486,32 @@ DOCMAKER_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# procureTech Navigator（共通アプリ）。UI は専用ページ /procuretech。
+# Compose profile `procuretech` 未起動時は /health 失敗で一覧非表示。
+PROCURETECH_SEED: dict[str, Any] = {
+    "exAppId": "procuretech",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "情報化企画書ナビ",
+    "endpoint": (
+        PROCURETECH_APP_URL
+        if PROCURETECH_APP_URL.endswith("/invoke")
+        else PROCURETECH_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "情報化企画書（Excel）を読み込み、4分野をAIとの対話で整理して各欄へ書き出します。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「情報化企画書ナビ」から情報化企画書（.xlsx）を読み込みます。\n"
+        "- 事業の背景・業務の状況・現行システム・目標の4分野をタブで切り替えて対話します。\n"
+        "- 各分野で「まとめて」または書き出しボタンを押すと該当欄へ反映し、更新版を取得できます。\n"
+        "- 有効化: `docker compose --profile procuretech up -d` または `COMPOSE_PROFILES=procuretech`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -559,6 +594,7 @@ EXAPP_SEEDS = [
     DOCCHECK_SEED,
     PATCHFORM_SEED,
     DOCMAKER_SEED,
+    PROCURETECH_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -3262,6 +3298,254 @@ async def chosei_event_carrier(
     return Response(
         content=content.encode("utf-8"),
         media_type=media,
+        headers={"Content-Disposition": disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 情報化企画書ナビ専用ページ(/procuretech) 用プロキシ
+#
+# Compose profiles: ["procuretech"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _procuretech_app_url(path: str) -> str:
+    if PROCURETECH_APP_URL.endswith("/invoke"):
+        base = PROCURETECH_APP_URL[: -len("/invoke")]
+    else:
+        base = PROCURETECH_APP_URL.rstrip("/")
+    return base + path
+
+
+def _procuretech_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_procuretech(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 240,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "情報化企画書ナビに接続できませんでした。"
+                    "有効化するには `docker compose --profile procuretech up -d` "
+                    "または `COMPOSE_PROFILES=procuretech` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "情報化企画書ナビから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+def _procuretech_stream(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 600,
+) -> StreamingResponse:
+    """ExApp の NDJSON ストリーム応答をそのまま中継する（チャットの逐次表示用）。"""
+
+    def _line(obj: dict[str, Any]) -> str:
+        return json.dumps(obj, ensure_ascii=False) + "\n"
+
+    async def _gen():
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    method, url, headers=headers, json=json_body
+                ) as res:
+                    if res.status_code != 200:
+                        raw = (await res.aread()).decode("utf-8", "replace")
+                        try:
+                            data = json.loads(raw)
+                            msg = (
+                                data.get("error")
+                                if isinstance(data, dict)
+                                else None
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            msg = None
+                        yield _line(
+                            {"event": "error", "error": msg or "情報化企画書ナビでエラーが発生しました"}
+                        )
+                        return
+                    async for line in res.aiter_lines():
+                        if line.strip():
+                            yield line + "\n"
+        except httpx.HTTPError as e:
+            yield _line(
+                {
+                    "event": "error",
+                    "error": (
+                        "情報化企画書ナビに接続できませんでした。"
+                        "有効化するには `docker compose --profile procuretech up -d` "
+                        "または `COMPOSE_PROFILES=procuretech` を設定してください。"
+                        f"（詳細: {e}）"
+                    ),
+                }
+            )
+
+    return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
+
+@app.get("/procuretech/config")
+async def procuretech_config(request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech("GET", _procuretech_app_url("/config"), headers)
+
+
+@app.get("/procuretech/sessions")
+async def procuretech_list_sessions(request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech("GET", _procuretech_app_url("/sessions"), headers)
+
+
+@app.post("/procuretech/sessions")
+async def procuretech_create_session(request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech(
+        "POST", _procuretech_app_url("/sessions"), headers, body
+    )
+
+
+@app.get("/procuretech/sessions/{session_id}")
+async def procuretech_get_session(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech(
+        "GET", _procuretech_app_url(f"/sessions/{session_id}"), headers
+    )
+
+
+@app.delete("/procuretech/sessions/{session_id}")
+async def procuretech_delete_session(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech(
+        "DELETE", _procuretech_app_url(f"/sessions/{session_id}"), headers
+    )
+
+
+@app.post("/procuretech/sessions/{session_id}/chat")
+async def procuretech_chat(session_id: str, request: Request) -> Response:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return _procuretech_stream(
+        "POST", _procuretech_app_url(f"/sessions/{session_id}/chat"), headers, body
+    )
+
+
+@app.post("/procuretech/sessions/{session_id}/finalize")
+async def procuretech_finalize(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech(
+        "POST", _procuretech_app_url(f"/sessions/{session_id}/finalize"), headers, body
+    )
+
+
+@app.post("/procuretech/sessions/{session_id}/sections/{section_key}/clear")
+async def procuretech_clear_section(
+    session_id: str, section_key: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech(
+        "POST",
+        _procuretech_app_url(f"/sessions/{session_id}/sections/{section_key}/clear"),
+        headers,
+    )
+
+
+@app.get("/procuretech/sessions/{session_id}/download")
+async def procuretech_download(session_id: str, request: Request) -> Response:
+    """更新済み xlsx を base64 応答から復号し、添付ファイルとして返す。"""
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    res = await _proxy_procuretech(
+        "GET", _procuretech_app_url(f"/sessions/{session_id}/download"), headers
+    )
+    if res.status_code != 200:
+        return res
+    try:
+        data = json.loads(res.body)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "不正な応答です"})
+    filename = data.get("filename") or "systemplan.xlsx"
+    mime = data.get("mime_type") or (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    try:
+        raw = base64.b64decode(data.get("content") or "")
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "ファイルの復号に失敗しました"})
+
+    # 設定で有効かつ objstore 構成済みなら SeaweedFS(S3) 経由の署名付き URL を返す。
+    if PROCURETECH_DOWNLOAD_VIA_S3 and objstore.is_configured():
+        claims = _claims_from_request(request)
+        uid = _user_id(claims)
+        presigned, _key = objstore.put_and_presign(
+            raw, filename=filename, content_type=mime, user_id=uid
+        )
+        if presigned:
+            return JSONResponse(content={"mode": "s3", "url": presigned, "filename": filename})
+        # アップロード失敗時は直接ダウンロードにフォールバック
+
+    ascii_name = "".join(c if c.isascii() and c not in '"\\' else "_" for c in filename)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; ' f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=raw,
+        media_type=mime,
         headers={"Content-Disposition": disposition},
     )
 
