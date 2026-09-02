@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { APP_TITLE } from '@/constants';
 import { usePatchformApi } from '../PatchformApiContext';
 import { GuestLogin } from './GuestLogin';
 import { GuestNarrow } from './GuestNarrow';
@@ -29,7 +30,7 @@ export const GuestChrome = ({ children }: { children: ReactNode }) => {
   return (
     <div className='min-h-screen bg-white'>
       <header className='flex flex-wrap items-center justify-between gap-2 border-b border-solid-gray-300 bg-white px-6 py-2 lg:px-8'>
-        <span className='text-dns-14N-130 text-solid-gray-600'>Open GENAI・マイ手続き</span>
+        <span className='text-dns-14N-130 text-solid-gray-600'>{APP_TITLE}・マイ手続き</span>
         <div className='flex items-center gap-3'>
           {session.email ? (
             <span className='text-dns-14N-130 text-solid-gray-600'>{session.email}</span>

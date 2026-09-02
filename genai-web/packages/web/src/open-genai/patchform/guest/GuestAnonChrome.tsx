@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import { APP_TITLE } from '@/constants';
 import { usePatchformApi } from '../PatchformApiContext';
 import { clearSession, readSession } from './guestSession';
 
@@ -19,7 +20,7 @@ export const GuestAnonChrome = ({ children }: { children: ReactNode }) => {
   return (
     <div className='min-h-screen bg-white'>
       <header className='flex flex-wrap items-center justify-between gap-2 border-b border-solid-gray-300 bg-white px-6 py-2 lg:px-8'>
-        <span className='text-dns-14N-130 text-solid-gray-600'>Open GENAI・申請</span>
+        <span className='text-dns-14N-130 text-solid-gray-600'>{APP_TITLE}・申請</span>
         <div className='flex items-center gap-3'>
           {session?.email ? (
             <>

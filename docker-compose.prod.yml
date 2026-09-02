@@ -196,6 +196,8 @@ services:
       args:
         VITE_APP_API_ENDPOINT: /api
         VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT: /api
+        # 画面に出すサービス名称（ヘッダー・フッター・ブラウザタブ）
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-Open GENAI}
         # header | sidebar（.env.prod の VITE_APP_NAV_LAYOUT で上書き可）
         VITE_APP_NAV_LAYOUT: ${VITE_APP_NAV_LAYOUT:-header}
         # 画像生成の初期 step/cfg（既定 50/7。FastSD/LCM を使うビルドでは 4/1 を指定）
@@ -404,6 +406,7 @@ services:
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       # 通常チャットと同じ思考オフ。空なら chosei-app 既定 (enable_thinking:false)
       - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - chosei_app_data:/data
     expose:
@@ -440,6 +443,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
       - doccheck_app_data:/data
     expose:
@@ -473,6 +477,7 @@ services:
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
       - PATCHFORM_GBIZ_TOKEN=${PATCHFORM_GBIZ_TOKEN:-}
       - PATCHFORM_SEED=${PATCHFORM_SEED:-0}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - PATCHFORM_SMTP_HOST=${PATCHFORM_SMTP_HOST:-}
       - PATCHFORM_SMTP_PORT=${PATCHFORM_SMTP_PORT:-587}
       - PATCHFORM_SMTP_USER=${PATCHFORM_SMTP_USER:-}
