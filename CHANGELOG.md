@@ -32,6 +32,7 @@
 
 ## [Unreleased]
 
+- 情報化企画書ナビ（procuretech）を追加。情報化企画書（Excel）を読み込み、4分野（背景・業務・現行システム・目標）を AI 対話で整理し、各欄（`B10/B14/B19/B23`）へ書き戻して更新版をダウンロードできる専用ページ（`/procuretech`）。Compose profile `procuretech` でオプション起動（詳細は `docs/procuretech.md`）
 - プロンプトテンプレートの「チャットで開く」で入力欄が空になる不具合を修正
 - HTTP/LAN 環境（非セキュアオリジン）向けに UUID 生成とクリップボードコピーのフォールバックを共通化
 - ナレッジ検索・日程調整の回答生成で Qwen 思考モードをオフ（`RAG_EXTRA_BODY` / `CHOSEI_EXTRA_BODY`。空なら `enable_thinking: false`）

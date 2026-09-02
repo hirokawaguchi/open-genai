@@ -79,6 +79,21 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/layout/navItems.ts` | おすすめに「フォーム」、`pinnedAppHref` で `patchform` を `/patchform` に振替 |
 | `packages/web/src/open-genai/patchform/` | 専用ページ（一覧・編集・詳細）と共通ランタイム `FillForm` |
 
+### 情報化企画書ナビ専用ページ（Open GENAI 拡張・オプション）
+
+情報化企画書（Excel）を読み込み、4分野（項番1〜4）をチャットで整理して各欄へ書き出す
+ため専用ページ（`/procuretech`）を提供する。多ターン会話＋Excel のセッション保持＋
+セル書き戻しが必要なため汎用 exApp フォームではなく専用ページ化した。Compose
+`profiles: ["procuretech"]` 未起動時は有効化案内を表示。外部公開面は持たない（庁内のみ）。
+旧 `/apps/:teamId/procuretech` は `/procuretech` へリダイレクトする。
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `packages/web/src/routes.tsx` | `/procuretech` ルート追加、`/apps/:teamId/procuretech` → `/procuretech` リダイレクト |
+| `packages/web/src/layout/navItems.ts` | おすすめに「情報化企画書ナビ」、`pinnedAppHref` で `procuretech` を `/procuretech` に振替 |
+| `packages/web/src/open-genai/procuretech/` | 専用ページ（アップロード・4分野タブ・チャット・書き出し・DL）と SWR フック・型 |
+| `packages/web/src/open-genai/optional-app-health/useOptionalAppAvailable.ts` | `useProcuretechAvailable` を追加 |
+
 ### 監査ログ専用ページ（Open GENAI 拡張・管理者限定）
 
 管理系の第一弾。汎用 exApp フォーム（Markdown 出力）では詳細確認・全文閲覧・エクスポート
@@ -135,9 +150,10 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/open-genai/admin-ngword/` | 入力制限（禁止ワード）専用ページ（`NgWordPage`・`useNgword`・`types`／管理者限定） |
 | `packages/web/src/open-genai/doccheck/` | 書類領域分割チェック専用ページ（`DoccheckPage`・`useDoccheck`・`types`。Compose profile `doccheck`） |
 | `packages/web/src/open-genai/patchform/` | フォーム専用ページ（`PatchformPage`・編集・詳細・`FillForm`。Compose profile `patchform`） |
+| `packages/web/src/open-genai/procuretech/` | 情報化企画書ナビ専用ページ（`ProcuretechPage`・`useProcuretech`・`types`。Compose profile `procuretech`） |
 | `backend/app/teams_store.py` | `user_app_pins` テーブル |
 | `backend/app/image_gen.py` | `is_sd_up()` による SD 稼働確認 |
-| `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword` |
+| `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword`, `/procuretech/*`（情報化企画書ナビのプロキシ・`PROCURETECH_SEED`） |
 | `prompt-app/app/main.py` | 構造化 REST（`/templates` 一覧・作成・削除、`/templates/{id}/render`）。`/schema`・`/resolve`・`/invoke` も後方互換で維持 |
 | `usermgmt-app/app/main.py` | 構造化 REST（`GET /users`、`POST /users/plan`、`POST /users/apply`）。`/invoke`（Markdown）も後方互換で維持 |
 | `modelpolicy-app/app/main.py` | 構造化 REST（`POST /policy` 書き込み）。`/schema`・`/invoke` も後方互換で維持（読取は backend が直接参照） |

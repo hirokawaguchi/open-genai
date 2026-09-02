@@ -32,3 +32,6 @@ const useOptionalAppAvailable = (path: string): boolean => {
 export const useDoccheckAvailable = (): boolean => useOptionalAppAvailable('doccheck/config');
 
 export const usePatchformAvailable = (): boolean => useOptionalAppAvailable('patchform/config');
+
+export const useProcuretechAvailable = (): boolean =>
+  useOptionalAppAvailable('procuretech/config');
