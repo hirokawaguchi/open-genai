@@ -1,5 +1,5 @@
-// サービス名称
-export const APP_TITLE = '';
+// サービス名称（VITE_APP_TITLE。未設定時は Open GENAI）
+export const APP_TITLE = (import.meta.env.VITE_APP_TITLE ?? 'Open GENAI').trim();
 
 export const EXAPP_STATUS_OPTIONS = [
   { value: 'draft', label: '下書き' },

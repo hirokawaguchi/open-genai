@@ -21,8 +21,19 @@ from . import intauth, store
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rstrip("/")
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+APP_TITLE = (os.environ.get("APP_TITLE") or "Open GENAI").strip() or "Open GENAI"
 
 app = FastAPI(title="Open GENAI Doccheck App", version="0.1.0")
+
+
+def _public_html(name: str) -> FileResponse | HTMLResponse:
+    path = PUBLIC_DIR / name
+    if not path.is_file():
+        return HTMLResponse("<p>check.html がありません</p>", status_code=500)
+    text = path.read_text(encoding="utf-8")
+    if APP_TITLE != "Open GENAI":
+        text = text.replace("Open GENAI", APP_TITLE)
+    return HTMLResponse(text)
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -905,8 +916,7 @@ def score_leaderboard(
 @app.get("/public", response_model=None)
 @app.get("/public/", response_model=None)
 def public_index() -> HTMLResponse:
-    return HTMLResponse(
-        """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"/>
+    html = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"/>
 <title>書類読取とチェック</title>
 <link rel="stylesheet" href="/public/assets/style.css"/>
 </head><body><div class="wrap">
@@ -937,15 +947,14 @@ document.getElementById('claim').addEventListener('click', async (e) => {
   else alert(j.error || 'ただいまチェック可能な項目がありません');
 });
 </script></body></html>"""
-    )
+    if APP_TITLE != "Open GENAI":
+        html = html.replace("Open GENAI", APP_TITLE)
+    return HTMLResponse(html)
 
 
 @app.get("/public/c/{token}", response_model=None)
 def public_check_page(token: str) -> FileResponse | HTMLResponse:
-    path = PUBLIC_DIR / "check.html"
-    if path.is_file():
-        return FileResponse(path, media_type="text/html; charset=utf-8")
-    return HTMLResponse("<p>check.html がありません</p>", status_code=500)
+    return _public_html("check.html")
 
 
 @app.get("/public/api/task/{token}")
