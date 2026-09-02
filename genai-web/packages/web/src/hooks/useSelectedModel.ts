@@ -1,14 +1,23 @@
+import { useEffect } from 'react';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
-import { MODELS } from '@/models';
+import { MODEL_ID_STORAGE_KEY, MODELS, resolveSelectedModelId } from '@/models';
 
 export const useSelectedModel = () => {
-  const [modelId, setModelId] = useLocalStorage('modelId_v20260218', '');
+  const [modelId, setModelId] = useLocalStorage(MODEL_ID_STORAGE_KEY, '');
   const { modelIds: availableModels } = MODELS;
 
-  const hasModelId = availableModels.includes(modelId);
+  useEffect(() => {
+    const resolved = resolveSelectedModelId();
+    if (resolved && modelId !== resolved) {
+      setModelId(resolved);
+    }
+  }, [modelId, setModelId]);
+
+  const selectedModelId =
+    modelId && availableModels.includes(modelId) ? modelId : (resolveSelectedModelId() ?? '');
 
   return {
-    selectedModelId: hasModelId && modelId.length !== 0 ? modelId : availableModels[0],
+    selectedModelId,
     setSelectedModelId: (id: string) => {
       setModelId(id);
     },
