@@ -39,6 +39,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
       - DB_PATH=/data/open-genai.db
       # --- 監査ログ（8-(1)）/ チャット履歴ユーザー別分離（6-(8)）---
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
@@ -178,8 +179,15 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-open_genai_rag}
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
+      - EMBED_DIM=${EMBED_DIM:-1024}
+      - EMBED_BASE_URL=${EMBED_BASE_URL:-}
+      - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
+      - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
+      - RAG_EXTRA_BODY=${RAG_EXTRA_BODY:-}
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       # 内部サービス間署名の共有鍵（backend と同一値。x-user-*/x-scope 偽装対策）
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
@@ -408,6 +416,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
     volumes:
       - chosei_app_data:/data
     ports:

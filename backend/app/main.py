@@ -1457,7 +1457,9 @@ async def predict(request: Request) -> Response:
     ng = _ngword_denied(request, _last_user_text(messages))
     if ng:
         return JSONResponse(status_code=403, content={"error": ng})
-    text = await llm.chat_once(messages, body.get("model"))
+    text = await llm.chat_once(
+        messages, body.get("model"), request_id=body.get("id")
+    )
     return JSONResponse(content=text)
 
 
@@ -1600,7 +1602,7 @@ async def predict_stream(request: Request) -> StreamingResponse:
 
         return StreamingResponse(_blocked(), media_type="application/x-ndjson")
 
-    generator = llm.chat_stream(messages, model)
+    generator = llm.chat_stream(messages, model, request_id=body.get("id"))
     # 監査ログ（内容ログ）: 入力（最終ユーザー発話）と集約した出力を1件記録
     audited = audit.wrap_stream(
         generator,
