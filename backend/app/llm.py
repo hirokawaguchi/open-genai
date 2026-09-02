@@ -136,7 +136,12 @@ for _p in _PROVIDERS:
 
 def _resolve_model(model: dict[str, Any] | None) -> str:
     if model and model.get("modelId"):
-        return str(model["modelId"])
+        mid = str(model["modelId"])
+        # フロントに残った旧 modelId は、登録済みならそれを、未登録なら既定へ。
+        if mid in _MODEL_INDEX or not _MODEL_INDEX:
+            return mid
+        print(f"[llm] 未登録モデル '{mid}' → 既定 '{DEFAULT_MODEL}'")
+        return DEFAULT_MODEL
     return DEFAULT_MODEL
 
 
@@ -150,6 +155,71 @@ def _provider_for(model_id: str) -> Provider:
     return _MODEL_INDEX.get(model_id, _DEFAULT_PROVIDER)
 
 
+# 画像生成アシスタントは JSON のみを期待する。Qwen が会話文を返すと UI が落ちる。
+IMAGE_PROMPT_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "prompt": {"type": "string"},
+        "negativePrompt": {"type": "string"},
+        "comment": {"type": "string"},
+        "recommendedStylePreset": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": [
+        "prompt",
+        "negativePrompt",
+        "comment",
+        "recommendedStylePreset",
+    ],
+}
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                parts.append(str(part.get("text") or ""))
+            else:
+                parts.append(str(part))
+        return " ".join(parts)
+    return str(content or "")
+
+
+def _is_image_prompt_task(
+    messages: list[dict[str, Any]], request_id: str | None = None
+) -> bool:
+    rid = (request_id or "").split("?")[0]
+    if rid == "/image" or rid.startswith("/image/"):
+        return True
+    for message in messages:
+        if message.get("role") != "system":
+            continue
+        text = _content_text(message.get("content"))
+        if "Stable Diffusionのプロンプト" in text:
+            return True
+        if "recommendedStylePreset" in text and "negativePrompt" in text:
+            return True
+    return False
+
+
+def _image_prompt_extra_body() -> dict[str, Any]:
+    return {
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "sd_image_prompt",
+                "schema": IMAGE_PROMPT_JSON_SCHEMA,
+            },
+        }
+    }
+
+
 def _chat_payload(
     provider: Provider,
     model_id: str,
@@ -157,6 +227,7 @@ def _chat_payload(
     *,
     stream: bool,
     temperature: float | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """chat/completions 用ペイロード。provider.extra_body を後勝ちでマージする。"""
     payload: dict[str, Any] = {
@@ -167,6 +238,8 @@ def _chat_payload(
     if temperature is not None:
         payload["temperature"] = temperature
     payload.update(provider.extra_body)
+    if extra:
+        payload.update(extra)
     return payload
 
 
@@ -208,7 +281,13 @@ async def _complete(
         res.raise_for_status()
         data = res.json()
     choices = data.get("choices") or [{}]
-    return (choices[0].get("message") or {}).get("content", "") or ""
+    message = choices[0].get("message") or {}
+    return (
+        message.get("content")
+        or message.get("reasoning_content")
+        or message.get("reasoning")
+        or ""
+    )
 
 
 def _extract_doc_texts_full(message: dict[str, Any]) -> list[tuple[str, str]]:
@@ -283,13 +362,23 @@ def _notes_prefix(notes: list[str]) -> str:
 
 
 async def chat_once(
-    messages: list[dict[str, Any]], model: dict[str, Any] | None
+    messages: list[dict[str, Any]],
+    model: dict[str, Any] | None,
+    *,
+    request_id: str | None = None,
 ) -> str:
     """ストリームなしでチャット補完を取得する。"""
     model_id = _resolve_model(model)
     provider = _provider_for(model_id)
     openai_messages, notes = await _prepare_openai_messages(messages, model)
-    payload = _chat_payload(provider, model_id, openai_messages, stream=False)
+    extra = (
+        _image_prompt_extra_body()
+        if _is_image_prompt_task(messages, request_id)
+        else None
+    )
+    payload = _chat_payload(
+        provider, model_id, openai_messages, stream=False, extra=extra
+    )
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{provider.base_url}/chat/completions",
@@ -300,12 +389,21 @@ async def chat_once(
         res.raise_for_status()
         data = res.json()
     choices = data.get("choices") or [{}]
-    answer = (choices[0].get("message") or {}).get("content", "") or ""
+    message = choices[0].get("message") or {}
+    answer = (
+        message.get("content")
+        or message.get("reasoning_content")
+        or message.get("reasoning")
+        or ""
+    )
     return _notes_prefix(notes) + answer
 
 
 async def chat_stream(
-    messages: list[dict[str, Any]], model: dict[str, Any] | None
+    messages: list[dict[str, Any]],
+    model: dict[str, Any] | None,
+    *,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """源内 Web 互換の改行区切り JSON (StreamingChunk) を yield する。
 
@@ -350,7 +448,14 @@ async def chat_stream(
     prefix = _notes_prefix(notes)
     if prefix:
         yield json.dumps({"text": prefix}, ensure_ascii=False) + "\n"
-    payload = _chat_payload(provider, model_id, openai_messages, stream=True)
+    extra = (
+        _image_prompt_extra_body()
+        if _is_image_prompt_task(messages, request_id)
+        else None
+    )
+    payload = _chat_payload(
+        provider, model_id, openai_messages, stream=True, extra=extra
+    )
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             async with client.stream(
@@ -382,7 +487,13 @@ async def chat_stream(
                         continue
                     choice = (chunk.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
-                    text = delta.get("content") or ""
+                    # vLLM reasoning は content が null で reasoning / reasoning_content に載る
+                    text = (
+                        delta.get("content")
+                        or delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or ""
+                    )
                     if text:
                         yield json.dumps({"text": text}, ensure_ascii=False) + "\n"
                     if choice.get("finish_reason"):

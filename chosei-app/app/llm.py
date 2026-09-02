@@ -28,12 +28,37 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _extra_body() -> dict[str, Any]:
+    """Qwen3.x は既定で思考モードになり、content が空のまま数分待たされる。"""
+    raw = (os.environ.get("CHOSEI_EXTRA_BODY") or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            print(f"[chosei] CHOSEI_EXTRA_BODY が不正な JSON です: {raw[:80]}")
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return content.strip() if isinstance(content, str) else ""
+
+
 async def chat(
     messages: list[dict[str, str]],
     *,
     temperature: float = 0.2,
     model: str | None = None,
     max_tokens: int | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "model": model or CHOSEI_MODEL,
@@ -42,6 +67,9 @@ async def chat(
         "temperature": temperature,
         "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
+    payload.update(_extra_body())
+    if extra:
+        payload.update(extra)
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         res = await client.post(
             f"{OPENAI_BASE_URL}/chat/completions",
@@ -51,7 +79,10 @@ async def chat(
         res.raise_for_status()
         data = res.json()
     choices = data.get("choices") or [{}]
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    text = _message_text(choices[0].get("message") or {})
+    if not text:
+        raise ValueError("モデルの本文が空です")
+    return text
 
 
 def _strip_fences(raw: str) -> str:
