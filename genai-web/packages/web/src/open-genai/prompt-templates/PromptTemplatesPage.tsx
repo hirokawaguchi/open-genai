@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { PageTitle } from '@/components/PageTitle';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { PROMPT_EXAPP_ID } from '@/layout/navItems';
 import { PromptCreateSection } from './PromptCreateSection';
 import { PromptManageSection } from './PromptManageSection';
 import { PromptUseSection } from './PromptUseSection';
@@ -37,33 +37,20 @@ export const PromptTemplatesPage = () => {
     <LayoutBody>
       <PageTitle title='プロンプトテンプレート' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-        <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: 'プロンプトテンプレート' },
-            ]}
-          />
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>プロンプトテンプレート</h1>
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            標準テンプレートの利用や、個人／チーム共有テンプレートの作成ができます。選ぶとそのままチャットへ流し込めます。
-          </p>
-          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-            <DisclosureSummary>
-              <span className='flex items-center text-std-16B-150'>
-                <PiBookOpenBold className='mr-2 size-5 flex-none' />
-                使い方（クリックで開閉）
-              </span>
-            </DisclosureSummary>
-            <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={PROMPT_EXAPP_ID}
+          fallbackTitle='プロンプトテンプレート'
+          fallbackDescription='標準テンプレートの利用や、個人／チーム共有テンプレートの作成ができます。選ぶとそのままチャットへ流し込めます。'
+          fallbackHowTo={
+            <>
               <p>・「使う」でテンプレートを選び、本文の {'{{変数}}'} に値を入れるとプレビューに反映されます。</p>
               <p>・「チャットで開く」で、組み上がった文面がチャットに入ります（送信前に編集できます）。</p>
               <p>・「作成」で個人／チーム共有／全体公開のテンプレートを追加できます（標準は管理者のみ）。</p>
               <p>・「管理」で自分が作成したテンプレートを削除できます。</p>
-            </div>
-          </Disclosure>
-        </div>
+            </>
+          }
+        />
 
         <div role='tablist' aria-label='操作' className='flex gap-1 border-b border-solid-gray-300'>
           {MODES.map((m) => {

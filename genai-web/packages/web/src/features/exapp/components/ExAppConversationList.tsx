@@ -1,18 +1,31 @@
 import { useState } from 'react';
+import { PiTrash } from 'react-icons/pi';
 import { formatDateTime } from '@/utils/formatDateTime';
 import { ExAppConversation } from '../hooks/useExAppConversations';
+import { ExAppConversationDeleteDialog } from './ExAppConversationDeleteDialog';
 
 type Props = {
   conversations: ExAppConversation[];
   // 現在表示中の会話（sessionId）。一覧上でハイライトする。
   activeSessionId: string;
+  teamId: string;
+  exAppId: string;
   onSelect: (conversation: ExAppConversation) => void;
+  onDeleted: (conversation: ExAppConversation) => void;
 };
 
 // チャット画面の「過去の会話」一覧。sessionId ごとにまとめた会話を選ぶと
 // ExAppChat 側で復元される。会話が 1 件も無いときは何も表示しない。
-export const ExAppConversationList = ({ conversations, activeSessionId, onSelect }: Props) => {
+export const ExAppConversationList = ({
+  conversations,
+  activeSessionId,
+  teamId,
+  exAppId,
+  onSelect,
+  onDeleted,
+}: Props) => {
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ExAppConversation | null>(null);
 
   if (conversations.length === 0) {
     return null;
@@ -51,7 +64,7 @@ export const ExAppConversationList = ({ conversations, activeSessionId, onSelect
             return (
               <li
                 key={conversation.sessionId}
-                className='border-b border-solid-gray-420 last:border-b-0'
+                className='grid grid-cols-[1fr_auto] items-stretch border-b border-solid-gray-420 last:border-b-0'
               >
                 <button
                   type='button'
@@ -68,10 +81,39 @@ export const ExAppConversationList = ({ conversations, activeSessionId, onSelect
                     {formatDateTime(conversation.updatedAt)}・{conversation.turnCount}往復
                   </span>
                 </button>
+                <div className='flex items-center pr-2'>
+                  <button
+                    type='button'
+                    aria-label={`会話「${conversation.title}」を削除`}
+                    aria-haspopup='dialog'
+                    onClick={() => setPendingDelete(conversation)}
+                    className={`flex size-9 items-center justify-center rounded-4 text-error-1 hover:bg-red-50 hover:text-error-2 focus-visible:bg-yellow-300 focus-visible:ring-[calc(2/16*1rem)] focus-visible:ring-yellow-300 focus-visible:outline-4 focus-visible:outline-offset-[calc(2/16*1rem)] focus-visible:outline-black focus-visible:outline-solid`}
+                  >
+                    <PiTrash aria-hidden={true} className='text-lg' />
+                  </button>
+                </div>
               </li>
             );
           })}
         </ul>
+      )}
+
+      {pendingDelete && (
+        <ExAppConversationDeleteDialog
+          conversation={pendingDelete}
+          teamId={teamId}
+          exAppId={exAppId}
+          isOpen={true}
+          setIsOpen={(next) => {
+            if (!next) {
+              setPendingDelete(null);
+            }
+          }}
+          onDeleted={(conversation) => {
+            setPendingDelete(null);
+            onDeleted(conversation);
+          }}
+        />
       )}
     </div>
   );

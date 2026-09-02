@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent, type ComponentType } from 'react';
 import {
-  PiBookOpenBold,
   PiCheckSquareBold,
   PiFilesBold,
   PiGaugeBold,
@@ -9,12 +8,13 @@ import {
   PiTrophyBold,
   PiUploadSimpleBold,
 } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { DOCCHECK_EXAPP_ID } from '@/layout/navItems';
 import { DoccheckFilePicker } from './DoccheckFilePicker';
 import { RegionEditor, regionsFromEditor } from './RegionEditor';
 import type {
@@ -497,27 +497,13 @@ export const DoccheckPage = () => {
     <LayoutBody>
       <PageTitle title='書類読取とチェック' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-        <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: '書類読取とチェック' },
-            ]}
-          />
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>書類読取とチェック</h1>
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            申請書類を領域分割し、OCR 候補と画像を分散チェックして補正データを作ります。外部公開は別ホストの
-            /public のみです。
-          </p>
-          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-            <DisclosureSummary>
-              <span className='flex items-center text-std-16B-150'>
-                <PiBookOpenBold className='mr-2 size-5 flex-none' />
-                使い方（クリックで開閉）
-              </span>
-            </DisclosureSummary>
-            <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={DOCCHECK_EXAPP_ID}
+          fallbackTitle='書類読取とチェック'
+          fallbackDescription='申請書類を領域分割し、OCR 候補と画像を分散チェックして補正データを作ります。外部公開は別ホストの /public のみです。'
+          fallbackHowTo={
+            <>
               <p>・帳票テンプレートの領域（正規化座標）に沿ってスキャン画像を切り出します。</p>
               <p>・配信後、庁内キューと外部トークン URL でチェックできます。</p>
               <p>
@@ -533,9 +519,9 @@ export const DoccheckPage = () => {
               {config?.public_endpoint && (
                 <p>・外部公開 endpoint: {config.public_endpoint}</p>
               )}
-            </div>
-          </Disclosure>
-        </div>
+            </>
+          }
+        />
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <div

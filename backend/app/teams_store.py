@@ -149,18 +149,23 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
 def upsert_seed_exapp(app: dict[str, Any]) -> None:
     """固定 exAppId の既定アプリを冪等に登録する（RAG など）。
 
-    既存の場合も、システム管理の表示・配線項目（フォーム定義 placeholder・説明・
-    エンドポイント・API キー・config・状態）を最新のシード定義へ**更新**する。
-    これにより、フォーム項目（タグ/URL 等）の追加が再起動で反映される。
+    既存の場合も、配線項目（フォーム定義 placeholder・エンドポイント・API キー・
+    config・状態）は最新のシードへ更新する。名前・紹介文・使い方は管理者が共通アプリ
+    編集で直していることがあるので、空のときだけシードで埋める。
     """
     with _lock, _connect() as conn:
         exists = conn.execute(
-            "SELECT exAppId, teamId FROM exapps WHERE exAppId = ?", (app["exAppId"],)
+            "SELECT exAppId, teamId, exAppName, description, howToUse"
+            " FROM exapps WHERE exAppId = ?",
+            (app["exAppId"],),
         ).fetchone()
         now = _now()
         new_team = app.get("teamId", COMMON_TEAM_ID)
         if exists:
             old_team = exists["teamId"]
+            name = (exists["exAppName"] or "").strip() or app.get("exAppName", "")
+            description = (exists["description"] or "").strip() or app.get("description", "")
+            how_to_use = (exists["howToUse"] or "").strip() or app.get("howToUse", "")
             # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）
             conn.execute(
                 "UPDATE exapps SET teamId=?, exAppName=?, endpoint=?, apiKey=?, config=?,"
@@ -168,13 +173,13 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
                 " updatedDate=? WHERE exAppId=?",
                 (
                     new_team,
-                    app.get("exAppName", ""),
+                    name,
                     app.get("endpoint", ""),
                     app.get("apiKey", ""),
                     app.get("config", ""),
                     app.get("placeholder", ""),
-                    app.get("description", ""),
-                    app.get("howToUse", ""),
+                    description,
+                    how_to_use,
                     1 if app.get("copyable") else 0,
                     app.get("status", "published"),
                     now,
@@ -862,3 +867,49 @@ def delete_exapp_history(
                 (team_id, ex_app_id, created_date),
             )
         return cur.rowcount > 0
+
+
+def list_exapp_histories_by_session(
+    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+) -> list[dict[str, Any]]:
+    """同一 sessionId の実行履歴を古い順で返す（会話単位の削除用）。"""
+    if not session_id:
+        return []
+    with _lock, _connect() as conn:
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM exapp_histories"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?"
+                " ORDER BY createdDate ASC",
+                (team_id, ex_app_id, session_id, user_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM exapp_histories"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " ORDER BY createdDate ASC",
+                (team_id, ex_app_id, session_id),
+            ).fetchall()
+    return [_row_to_history(r) for r in rows]
+
+
+def delete_exapp_histories_by_session(
+    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+) -> int:
+    """同一 sessionId の実行履歴をまとめて削除する。削除件数を返す。"""
+    if not session_id:
+        return 0
+    with _lock, _connect() as conn:
+        if user_id is not None:
+            cur = conn.execute(
+                "DELETE FROM exapp_histories"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?",
+                (team_id, ex_app_id, session_id, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "DELETE FROM exapp_histories"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?",
+                (team_id, ex_app_id, session_id),
+            )
+        return cur.rowcount

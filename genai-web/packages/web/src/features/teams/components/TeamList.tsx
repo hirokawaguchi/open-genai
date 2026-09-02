@@ -7,6 +7,7 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { useFocusNewItemOnLoadMore } from '@/hooks/useFocusNewItemOnLoadMore';
 import { download } from '@/utils/createDownloadLink';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { useFetchTeamForJsonDownload } from '../hooks/useFetchTeamForJsonDownload';
 import { useTeams } from '../hooks/useTeams';
 
@@ -70,6 +71,7 @@ export const TeamList = (props: Props) => {
                   modal={false}
                   className={`absolute top-full right-0 z-10 w-auto min-w-fit rounded-8 border border-solid-gray-420 bg-white py-2 shadow-1 focus:outline-hidden`}
                 >
+                  {team.teamId !== COMMON_EXAPPS_TEAM_ID && (
                   <MenuItem>
                     {({ focus }) => (
                       <Link
@@ -81,6 +83,7 @@ export const TeamList = (props: Props) => {
                       </Link>
                     )}
                   </MenuItem>
+                  )}
                   <MenuItem>
                     {({ focus }) => (
                       <button
@@ -101,6 +104,7 @@ export const TeamList = (props: Props) => {
                       </button>
                     )}
                   </MenuItem>
+                  {team.teamId !== COMMON_EXAPPS_TEAM_ID && (
                   <MenuItem>
                     {({ focus }) => (
                       <button
@@ -116,6 +120,7 @@ export const TeamList = (props: Props) => {
                       </button>
                     )}
                   </MenuItem>
+                  )}
                 </MenuItems>
               </Menu>
             </div>

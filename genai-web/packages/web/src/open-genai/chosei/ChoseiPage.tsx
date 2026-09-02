@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { PiBookOpenBold, PiCalendarBlankBold } from 'react-icons/pi';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { PiCalendarBlankBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { CHOSEI_EXAPP_ID } from '@/layout/navItems';
 import { toLocalInputValue } from './format';
 import type { ChoseiDateInput } from './types';
+import { newId } from '@/utils/uuid';
 import {
   useChoseiActions,
   useChoseiAssist,
@@ -19,7 +21,7 @@ import {
 type DateRow = { id: string; start: string; end: string; allDay: boolean };
 
 const newRow = (): DateRow => ({
-  id: crypto.randomUUID(),
+  id: newId(),
   start: '',
   end: '',
   allDay: false,
@@ -80,38 +82,22 @@ export const ChoseiPage = () => {
     <LayoutBody>
       <PageTitle title='日程調整' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-        <div className='flex flex-col gap-4'>
-          <BreadcrumbsNav
-            items={[
-              { label: 'ホーム', to: '/' },
-              { label: 'AIアプリ', to: '/apps' },
-              { label: '日程調整' },
-            ]}
-          />
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>日程調整</h1>
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            庁内利用者と外部参加者の日程を調整します。外部には別 URL（公開エンドポイント）で回答してもらえます。
-          </p>
-          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-            <DisclosureSummary>
-              <span className='flex items-center text-std-16B-150'>
-                <PiBookOpenBold className='mr-2 size-5 flex-none' />
-                使い方（クリックで開閉）
-              </span>
-            </DisclosureSummary>
-            <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-              <p>・イベントを作成すると庁内用ページと外部共有 URL が発行されます。</p>
-              <p>・外部 URL は LGWAN から届かない場合、リンクファイルを持ち出して別端末で開いてください。</p>
-              <p>
-                ・有効化: <code>docker compose --profile chosei up -d</code> または{' '}
-                <code>COMPOSE_PROFILES=chosei</code>
-              </p>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={CHOSEI_EXAPP_ID}
+          fallbackTitle='日程調整'
+          fallbackDescription='庁内利用者と外部参加者の日程を調整します。共有 URL からログインなしで回答できます。'
+          fallbackHowTo={
+            <>
+              <p>・この画面でイベントを作成すると、庁内用ページと外部共有 URL が発行されます。</p>
+              <p>・外部共有 URL を相手に送ると、ログインなしで出欠を入れられます。</p>
+              <p>・外部 URL に届かない場合は、リンクファイルを持ち出して別端末で開いてください。</p>
               {config?.retention_days != null && (
                 <p>・作成から {config.retention_days} 日経過したイベントは自動削除されます。</p>
               )}
-            </div>
-          </Disclosure>
-        </div>
+            </>
+          }
+        />
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <div
@@ -232,7 +218,7 @@ export const ChoseiPage = () => {
                         }
                         setDates(
                           res.dates.map((d) => ({
-                            id: crypto.randomUUID(),
+                            id: newId(),
                             start: toLocalInputValue(d.start_time, !!d.is_all_day),
                             end:
                               d.end_time && !d.is_all_day
