@@ -20,3 +20,4 @@ services:
     volumes: !override
       - ./proxy/nginx.verify.conf:/etc/nginx/nginx.conf:ro
       - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
+      - ./proxy/kc-admin-allow.d:/etc/nginx/kc-admin-allow.d:ro
