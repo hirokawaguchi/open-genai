@@ -1,5 +1,6 @@
 import mermaid, { type MermaidConfig } from 'mermaid';
 import { useCallback, useEffect, useState } from 'react';
+import { newId } from '@/utils/uuid';
 
 const defaultConfig: MermaidConfig = {
   // syntax error が dom node に勝手に追加されないようにする
@@ -31,7 +32,7 @@ export const Mermaid = (props: Props) => {
 
     try {
       // 一意な ID を指定する必要あり
-      const { svg } = await mermaid.render(`m${crypto.randomUUID()}`, code);
+      const { svg } = await mermaid.render(`m${newId()}`, code);
       // SVG文字列をパースしてDOMオブジェクトに変換
       const parser = new DOMParser();
       const doc = parser.parseFromString(svg, 'image/svg+xml');

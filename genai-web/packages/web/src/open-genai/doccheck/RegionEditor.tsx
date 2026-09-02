@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
+import { newId } from '@/utils/uuid';
 import type { DoccheckFieldType, RegionTemplate } from './types';
 
 type DraftRegion = RegionTemplate & { localId: string };
@@ -40,10 +41,7 @@ const normalizeFieldType = (value: unknown): DoccheckFieldType => {
 const isTextType = (t: DoccheckFieldType) => t === 'text_single' || t === 'text_multi';
 const isChoiceType = (t: DoccheckFieldType) => t === 'choice' || t === 'choice_multi';
 
-const newLocalId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `r-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const newLocalId = () => newId();
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
