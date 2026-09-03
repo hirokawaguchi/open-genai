@@ -35,3 +35,6 @@ export const usePatchformAvailable = (): boolean => useOptionalAppAvailable('pat
 
 export const useProcuretechAvailable = (): boolean =>
   useOptionalAppAvailable('procuretech/config');
+
+export const useProcuretechEditorAvailable = (): boolean =>
+  useOptionalAppAvailable('procuretech-editor/config');

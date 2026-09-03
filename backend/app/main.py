@@ -124,6 +124,10 @@ PROCURETECH_APP_URL = os.environ.get(
 PROCURETECH_DOWNLOAD_VIA_S3 = os.environ.get(
     "PROCURETECH_DOWNLOAD_VIA_S3", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+# 情報化企画書エディタ（Compose profiles: ["procuretech-editor"]）。実 API は /procuretech-editor/* プロキシ。
+PROCURETECH_EDITOR_APP_URL = os.environ.get(
+    "PROCURETECH_EDITOR_APP_URL", "http://procuretech-editor-app:8015/invoke"
+)
 PATCHFORM_SERVICE_USER = "service"
 _PATCHFORM_SERVICE_PATHS = re.compile(
     r"^/patchform/(?:procedures(?:/[^/]+(?:/(?:applications|export))?)?|applications/[^/]+(?:/export)?)$"
@@ -512,6 +516,33 @@ PROCURETECH_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 情報化企画書エディタ（共通アプリ）。UI は専用ページ /procuretech-editor。
+# Compose profile `procuretech-editor` 未起動時は /config 失敗で一覧・ナビ非表示。
+PROCURETECH_EDITOR_SEED: dict[str, Any] = {
+    "exAppId": "procuretech-editor",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "情報化企画書エディタ",
+    "endpoint": (
+        PROCURETECH_EDITOR_APP_URL
+        if PROCURETECH_EDITOR_APP_URL.endswith("/invoke")
+        else PROCURETECH_EDITOR_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "案件フォルダ内の生成文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「情報化企画書エディタ」で案件フォルダ（プロジェクト）を選択します。\n"
+        "- ファイル管理から Markdown を作成・アップロード・リネーム・削除できます。\n"
+        "- エディタで内容を編集・保存し、「書き出し・統合」から Word 変換 API へ送信します。\n"
+        "- 有効化: `docker compose --profile procuretech-editor up -d` "
+        "または `COMPOSE_PROFILES=procuretech-editor`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -595,6 +626,7 @@ EXAPP_SEEDS = [
     PATCHFORM_SEED,
     DOCMAKER_SEED,
     PROCURETECH_SEED,
+    PROCURETECH_EDITOR_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -3547,6 +3579,287 @@ async def procuretech_download(session_id: str, request: Request) -> Response:
         content=raw,
         media_type=mime,
         headers={"Content-Disposition": disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 情報化企画書エディタ専用ページ(/procuretech-editor) 用プロキシ
+#
+# Compose profiles: ["procuretech-editor"] 未起動時は接続失敗 → 専用ページが案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _procuretech_editor_app_url(path: str) -> str:
+    if PROCURETECH_EDITOR_APP_URL.endswith("/invoke"):
+        base = PROCURETECH_EDITOR_APP_URL[: -len("/invoke")]
+    else:
+        base = PROCURETECH_EDITOR_APP_URL.rstrip("/")
+    return base + path
+
+
+def _procuretech_editor_headers(
+    request: Request,
+) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_procuretech_editor(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    params: dict[str, Any] | None = None,
+    timeout: float = 240,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(
+                method, url, headers=headers, json=json_body, params=params
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "情報化企画書エディタに接続できませんでした。"
+                    "有効化するには `docker compose --profile procuretech-editor up -d` "
+                    "または `COMPOSE_PROFILES=procuretech-editor` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "情報化企画書エディタから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/procuretech-editor/config")
+async def procuretech_editor_config(request: Request) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET", _procuretech_editor_app_url("/config"), headers
+    )
+
+
+@app.get("/procuretech-editor/projects")
+async def procuretech_editor_list_projects(request: Request) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET", _procuretech_editor_app_url("/projects"), headers
+    )
+
+
+@app.post("/procuretech-editor/projects")
+async def procuretech_editor_create_project(request: Request) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST", _procuretech_editor_app_url("/projects"), headers, body
+    )
+
+
+@app.get("/procuretech-editor/projects/{project_id}")
+async def procuretech_editor_get_project(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET", _procuretech_editor_app_url(f"/projects/{project_id}"), headers
+    )
+
+
+@app.delete("/procuretech-editor/projects/{project_id}")
+async def procuretech_editor_delete_project(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "DELETE", _procuretech_editor_app_url(f"/projects/{project_id}"), headers
+    )
+
+
+@app.get("/procuretech-editor/projects/{project_id}/files")
+async def procuretech_editor_list_files(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET", _procuretech_editor_app_url(f"/projects/{project_id}/files"), headers
+    )
+
+
+@app.get("/procuretech-editor/projects/{project_id}/files/content")
+async def procuretech_editor_file_content(
+    project_id: str, path: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/content"),
+        headers,
+        params={"path": path},
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/files/save")
+async def procuretech_editor_save_file(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/save"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/files/upload")
+async def procuretech_editor_upload_file(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/upload"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/dir")
+async def procuretech_editor_create_dir(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/dir"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/files/rename")
+async def procuretech_editor_rename_file(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/rename"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/files/duplicate")
+async def procuretech_editor_duplicate_file(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/duplicate"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/files/delete")
+async def procuretech_editor_delete_file(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/files/delete"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/export")
+async def procuretech_editor_export(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/export"),
+        headers,
+        body,
+    )
+
+
+@app.get("/procuretech-editor/conversions/{request_id}")
+async def procuretech_editor_conversion_status(
+    request_id: str, request: Request, project_id: str | None = None
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    params = {"project_id": project_id} if project_id else None
+    return await _proxy_procuretech_editor(
+        "GET",
+        _procuretech_editor_app_url(f"/conversions/{request_id}"),
+        headers,
+        params=params,
     )
 
 

@@ -40,6 +40,7 @@ import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProc
 import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
 import { PatchformWizardPage } from '@/open-genai/patchform/PatchformWizardPage';
 import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
+import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { NotFound } from '@/NotFound';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -103,6 +104,12 @@ export const createRoutes = (): RouteObject[] => {
     // 情報化企画書ナビは専用ページへ（Compose profiles: ["procuretech"]）。
     { path: 'procuretech', element: <ProcuretechPage /> },
     { path: 'apps/:teamId/procuretech', element: <Navigate to='/procuretech' replace /> },
+    // 情報化企画書エディタ（Compose profiles: ["procuretech-editor"]）。
+    { path: 'procuretech-editor', element: <ProcuretechEditorPage /> },
+    {
+      path: 'apps/:teamId/procuretech-editor',
+      element: <Navigate to='/procuretech-editor' replace />,
+    },
     // 旧 URL 互換：フォーム配下の「マイ手続き」は docmaker へ寄せる。
     { path: 'patchform/my', element: <Navigate to='/docmaker' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。

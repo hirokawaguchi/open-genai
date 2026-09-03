@@ -6,6 +6,7 @@ import {
   useDoccheckAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
+  useProcuretechEditorAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -54,6 +55,12 @@ export const PROCURETECH_PATH = '/procuretech';
 /** 情報化企画書ナビ exApp の識別子（専用ページへ振り替える対象） */
 export const PROCURETECH_EXAPP_ID = 'procuretech';
 
+/** 情報化企画書エディタは汎用 exApp フォームではなく専用ページで提供する */
+export const PROCURETECH_EDITOR_PATH = '/procuretech-editor';
+
+/** 情報化企画書エディタ exApp の識別子（専用ページへ振り替える対象） */
+export const PROCURETECH_EDITOR_EXAPP_ID = 'procuretech-editor';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -92,6 +99,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const doccheckAvailable = useDoccheckAvailable();
   const patchformAvailable = usePatchformAvailable();
   const procuretechAvailable = useProcuretechAvailable();
+  const procuretechEditorAvailable = useProcuretechEditorAvailable();
 
   return useMemo(() => {
     const items: NavLinkItem[] = [
@@ -176,6 +184,15 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (procuretechEditorAvailable) {
+      items.push({
+        label: '情報化企画書エディタ',
+        to: PROCURETECH_EDITOR_PATH,
+        description:
+          '案件フォルダ内の生成文書（Markdown）を編集・校正し、Word 文書へ統合します。',
+      });
+    }
+
     items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
@@ -183,7 +200,13 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     });
 
     return items;
-  }, [imageAvailable, doccheckAvailable, patchformAvailable, procuretechAvailable]);
+  }, [
+    imageAvailable,
+    doccheckAvailable,
+    patchformAvailable,
+    procuretechAvailable,
+    procuretechEditorAvailable,
+  ]);
 };
 
 export const ALL_APPS_NAV_ITEM: NavLinkItem = {
@@ -218,6 +241,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 情報化企画書ナビは専用ページへ振り替える
   if (item.app.value === PROCURETECH_EXAPP_ID) {
     return PROCURETECH_PATH;
+  }
+  // 情報化企画書エディタは専用ページへ振り替える
+  if (item.app.value === PROCURETECH_EDITOR_EXAPP_ID) {
+    return PROCURETECH_EDITOR_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
