@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { baseName, dirOf, formatBytes } from './format';
+import {
+  baseName,
+  dirOf,
+  extractImageSources,
+  formatBytes,
+  rewriteImageSources,
+} from './format';
 
 describe('procuretech-editor/format', () => {
   describe('formatBytes', () => {
@@ -38,6 +44,30 @@ describe('procuretech-editor/format', () => {
     it('ファイル名部分を返す', () => {
       expect(baseName('a/b/c.md')).toBe('c.md');
       expect(baseName('c.md')).toBe('c.md');
+    });
+  });
+
+  describe('extractImageSources', () => {
+    it('相対パス画像 src を重複なく取り出す', () => {
+      const md = '![a](images/a.png)\n\n![b](図/b.jpg "title")\n\n![again](images/a.png)';
+      expect(extractImageSources(md).sort()).toEqual(['images/a.png', '図/b.jpg'].sort());
+    });
+    it('外部 URL・data URI・絶対パスは除外する', () => {
+      const md =
+        '![h](https://x/y.png) ![d](data:image/png;base64,AAA) ![abs](/files/z.png) ![rel](images/r.png)';
+      expect(extractImageSources(md)).toEqual(['images/r.png']);
+    });
+  });
+
+  describe('rewriteImageSources', () => {
+    it('マップにある相対パスのみ URL へ置換し、title/alt を保持する', () => {
+      const md = '![図1](図/b.jpg "キャプション") と ![x](images/none.png)';
+      const out = rewriteImageSources(md, { '図/b.jpg': 'https://s3/signed' });
+      expect(out).toBe('![図1](https://s3/signed "キャプション") と ![x](images/none.png)');
+    });
+    it('外部 URL は書き換えない', () => {
+      const md = '![h](https://x/y.png)';
+      expect(rewriteImageSources(md, { 'https://x/y.png': 'nope' })).toBe(md);
     });
   });
 });
