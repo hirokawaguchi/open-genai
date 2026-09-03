@@ -77,6 +77,8 @@ services:
       - PROCURETECH_APP_URL=${PROCURETECH_APP_URL:-http://procuretech-navigator-app:8014/invoke}
       # 更新版 xlsx を SeaweedFS(S3) 経由の署名付き URL で配信する（既定は直接ダウンロード）
       - PROCURETECH_DOWNLOAD_VIA_S3=${PROCURETECH_DOWNLOAD_VIA_S3:-}
+      # 情報化企画書エディタ（profiles: ["procuretech-editor"]。未起動時は専用ページが案内を表示）
+      - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -576,6 +578,49 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 情報化企画書エディタ (`docker compose --profile procuretech-editor up -d`)
+  # 案件フォルダ内の生成文書（Markdown）を編集・保存し、Word 変換 API へ統合する。
+  # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
+  procuretech-editor-app:
+    profiles: ["procuretech-editor"]
+    build: ./procuretech-editor-app
+    container_name: open-genai-procuretech-editor-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - EDITOR_DB_PATH=/data/procuretech_editor.db
+      - EDITOR_MAX_UPLOAD_BYTES=${EDITOR_MAX_UPLOAD_BYTES:-20971520}
+      # ファイル本体の保存先（backend と同じ SeaweedFS / S3 互換）
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
+      - S3_PUBLIC_ENDPOINT=${S3_PUBLIC_ENDPOINT:-http://localhost:8333}
+      - S3_BUCKET=${S3_BUCKET:-open-genai}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-opengenai}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-opengenai-secret}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
+      - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
+      # 外部 Word 変換 API（未設定なら書き出しは無効表示）
+      - EDITOR_CONVERT_URL=${EDITOR_CONVERT_URL:-}
+      - EDITOR_CONVERT_TIMEOUT=${EDITOR_CONVERT_TIMEOUT:-120}
+      # 変換結果の受け取り（任意: Nextcloud/WebDAV）
+      - NEXTCLOUD_URL=${NEXTCLOUD_URL:-}
+      - NEXTCLOUD_USERNAME=${NEXTCLOUD_USERNAME:-}
+      - NEXTCLOUD_PASSWORD=${NEXTCLOUD_PASSWORD:-}
+      - NEXTCLOUD_DAV_ROOT=${NEXTCLOUD_DAV_ROOT:-remote.php/dav/files/sync}
+      # 将来の AI 校正用（OpenAI 互換）
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_editor_app_data:/data
+    ports:
+      - "${PROCURETECH_EDITOR_PORT:-8015}:8015"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 volumes:
   backend_data:
   web_node_modules:
@@ -594,3 +639,4 @@ volumes:
   doccheck_app_data:
   patchform_app_data:
   procuretech_app_data:
+  procuretech_editor_app_data:

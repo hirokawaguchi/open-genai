@@ -1,0 +1,34 @@
+/* @uiw/react-md-editor のツールバーを大きく見やすくする（.pte-md でスコープ） */
+.pte-md .w-md-editor-toolbar {
+  padding: 6px 8px;
+}
+
+.pte-md .w-md-editor-toolbar ul > li > button {
+  height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pte-md .w-md-editor-toolbar ul > li > button > svg {
+  width: 18px;
+  height: 18px;
+}
+
+/*
+ * 本文フォントを少し大きくする。
+ * 重要: textarea（キャレット層）とハイライト用 pre 層の font-size / line-height を
+ * 完全に一致させること。片方だけ変えるとカーソル位置と表示文字がずれる。
+ * そのため全レイヤーへ同一値を !important で適用する。
+ */
+.pte-md .w-md-editor-text,
+.pte-md .w-md-editor-text-input,
+.pte-md .w-md-editor-text-pre,
+.pte-md .w-md-editor-text-pre > code {
+  /* biome-ignore lint/complexity/noImportantStyles: ライブラリ側が 14px を !important 指定しており、上書きには !important が必須。textarea と pre の計量一致にも必要。 */
+  font-size: 16px !important;
+  /* biome-ignore lint/complexity/noImportantStyles: 同上（line-height を両レイヤーで一致させないとカーソルがずれる） */
+  line-height: 24px !important;
+}
