@@ -1,8 +1,9 @@
 import MDEditor from '@uiw/react-md-editor';
 import * as commands from '@uiw/react-md-editor/commands';
-import type { ICommand } from '@uiw/react-md-editor/commands';
+import type { ICommand, TextAreaTextApi } from '@uiw/react-md-editor/commands';
 import '@uiw/react-md-editor/markdown-editor.css';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import type { PredictRequest } from 'genai-web';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   PiColumns,
   PiCopySimple,
@@ -17,6 +18,7 @@ import {
   PiPencilSimple,
   PiTable,
   PiTrash,
+  PiTreeStructure,
   PiUploadSimple,
 } from 'react-icons/pi';
 import { Markdown } from '@/components/Markdown';
@@ -28,8 +30,21 @@ import {
   CustomDialogHeader,
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
+import { MERMAID_DIAGRAM_TYPES } from '@/features/generate-diagram/constants';
+import type { MermaidDiagramType } from '@/features/generate-diagram/types';
+import { extractDiagramCode } from '@/features/generate-diagram/utils/extractDiagram';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { baseName, fileToBase64, formatBytes, triggerDownload } from './format';
+import { predict } from '@/lib/chatApi';
+import { findModelByModelId, resolveSelectedModelId } from '@/models';
+import { getPrompter } from '@/prompts';
+import {
+  baseName,
+  extractImageSources,
+  fileToBase64,
+  formatBytes,
+  rewriteImageSources,
+  triggerDownload,
+} from './format';
 import type { EditorConversion, EditorExportOptions, EditorFile, EditorFileKind } from './types';
 import {
   fetchConversion,
@@ -130,27 +145,15 @@ const headingGroup: ICommand = commands.group(
   },
 );
 
-const EDITOR_COMMANDS: ICommand[] = [
-  headingGroup,
-  commands.divider,
-  commands.bold,
-  commands.italic,
-  commands.strikethrough,
-  commands.hr,
-  commands.divider,
-  commands.link,
-  commands.quote,
-  commands.code,
-  commands.codeBlock,
-  commands.image,
-  insertTable,
-  commands.divider,
-  commands.unorderedListCommand,
-  commands.orderedListCommand,
-  commands.checkedListCommand,
-];
-
 const EDITOR_EXTRA_COMMANDS: ICommand[] = [aiProofread];
+
+// AI 図生成で選べるタイプ（AI 自動 + Mermaid 各種）。
+const DIAGRAM_TYPE_OPTIONS: { value: 'AI' | MermaidDiagramType; label: string }[] = [
+  { value: 'AI', label: 'AI におまかせ（自動判定）' },
+  ...(Object.entries(MERMAID_DIAGRAM_TYPES) as [MermaidDiagramType, string][]).map(
+    ([value, label]) => ({ value, label }),
+  ),
+];
 
 type ViewMode = 'split' | 'edit' | 'preview';
 
@@ -346,6 +349,19 @@ export const ProcuretechEditorPage = () => {
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
+
+  // 画像挿入・AI 図生成の挿入先（ツールバーコマンド実行時の TextArea API を保持）。
+  const insertApiRef = useRef<TextAreaTextApi | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  // プレビュー用: 相対パス画像 → presigned URL のマップ（表示専用、保存内容には影響しない）。
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+
+  // AI 図生成モーダルの状態。
+  const [diagramOpen, setDiagramOpen] = useState(false);
+  const [diagramDesc, setDiagramDesc] = useState('');
+  const [diagramType, setDiagramType] = useState<'AI' | MermaidDiagramType>('AI');
+  const [diagramBusy, setDiagramBusy] = useState(false);
+  const [diagramError, setDiagramError] = useState<string | null>(null);
 
   // 書き出し（変換）の進行状態。
   const [exportOptions, setExportOptions] = useState<EditorExportOptions>(
@@ -606,6 +622,177 @@ export const ProcuretechEditorPage = () => {
       setConversion({ phase: 'error', message: '変換を開始できませんでした。' });
     }
   };
+
+  // --- 画像挿入 / AI 図生成 -----------------------------------------------
+  // ツールバーコマンドが保持した TextArea API へ挿入する（無ければ末尾に追記）。
+  const insertAtCursor = useCallback((text: string) => {
+    const api = insertApiRef.current;
+    if (api) {
+      api.replaceSelection(text);
+    } else {
+      setDraft((d) => (d ? `${d}\n\n${text}` : text));
+    }
+  }, []);
+
+  const onInsertImageClick = useCallback((api: TextAreaTextApi) => {
+    insertApiRef.current = api;
+    imageInputRef.current?.click();
+  }, []);
+
+  const onOpenDiagram = useCallback((api: TextAreaTextApi) => {
+    insertApiRef.current = api;
+    setDiagramError(null);
+    setDiagramOpen(true);
+  }, []);
+
+  // 画像を案件フォルダ（images/）へアップロードし、相対パスで本文へ埋め込む。
+  const onImagePicked = async (fileList: FileList | null) => {
+    const file = fileList?.[0];
+    if (!file || !projectId) return;
+    const content_b64 = await fileToBase64(file);
+    const f = await actions.uploadFile(projectId, {
+      filename: file.name,
+      content_b64,
+      dir: 'images',
+    });
+    if (f) {
+      await mutateProject();
+      mutateProjects();
+      const alt = baseName(f.rel_path).replace(/\.[^.]+$/, '');
+      insertAtCursor(`![${alt}](${f.rel_path})`);
+    }
+  };
+
+  // 既存「ダイアグラムを生成」と同じ genU predict + プロンプトで Mermaid を生成し、
+  // ```mermaid ブロックとして本文へ挿入する（プレビューは Markdown 側で図描画）。
+  const onGenerateDiagram = async () => {
+    const desc = diagramDesc.trim();
+    if (!desc) return;
+    const modelId = resolveSelectedModelId();
+    const model = modelId ? findModelByModelId(modelId) : undefined;
+    if (!modelId || !model) {
+      setDiagramError('利用可能な生成 AI モデルがありません。管理者に確認してください。');
+      return;
+    }
+    setDiagramBusy(true);
+    setDiagramError(null);
+    try {
+      const prompter = getPrompter(modelId);
+      let type: MermaidDiagramType | 'AI' = diagramType;
+      if (type === 'AI') {
+        const selReq: PredictRequest = {
+          model,
+          id: 'procuretech-editor-diagram',
+          messages: [
+            { role: 'system', content: prompter.diagramPrompt({ determineType: true }) },
+            { role: 'user', content: `<content>${desc}</content>` },
+          ],
+        };
+        const sel = await predict(selReq);
+        const cand = (sel.match(/<output>(.*?)<\/output>/i)?.[1] ?? '').toLowerCase().trim();
+        const keys = Object.keys(MERMAID_DIAGRAM_TYPES) as MermaidDiagramType[];
+        type = keys.find((k) => k === cand || cand.includes(k) || k.includes(cand)) ?? 'flowchart';
+      }
+      const req: PredictRequest = {
+        model,
+        id: 'procuretech-editor-diagram',
+        messages: [
+          {
+            role: 'system',
+            content: prompter.diagramPrompt({ determineType: false, diagramType: type }),
+          },
+          { role: 'user', content: `<content>${desc}</content>` },
+        ],
+      };
+      const res = await predict(req);
+      const code = extractDiagramCode(res);
+      if (!code) {
+        setDiagramError('図を生成できませんでした。説明を具体的にして再度お試しください。');
+        return;
+      }
+      insertAtCursor(`\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
+      setDiagramOpen(false);
+      setDiagramDesc('');
+    } catch (_e) {
+      setDiagramError('図の生成中にエラーが発生しました。時間をおいて再度お試しください。');
+    } finally {
+      setDiagramBusy(false);
+    }
+  };
+
+  // ツールバーのコマンド一式（画像＝アップロード埋め込み、AI 図生成を含む）。
+  const editorCommands = useMemo<ICommand[]>(() => {
+    const imageCommand: ICommand = {
+      name: 'image',
+      keyCommand: 'image',
+      buttonProps: { 'aria-label': '画像を挿入', title: '画像を挿入（アップロードして埋め込み）' },
+      icon: <PiImage style={{ width: 16, height: 16 }} />,
+      execute: (_state, api) => onInsertImageClick(api),
+    };
+    const diagramCommand: ICommand = {
+      name: 'ai-diagram',
+      keyCommand: 'ai-diagram',
+      buttonProps: { 'aria-label': 'AI で図を生成', title: 'AI で図（Mermaid）を生成して挿入' },
+      icon: <PiTreeStructure style={{ width: 16, height: 16 }} />,
+      execute: (_state, api) => onOpenDiagram(api),
+    };
+    return [
+      headingGroup,
+      commands.divider,
+      commands.bold,
+      commands.italic,
+      commands.strikethrough,
+      commands.hr,
+      commands.divider,
+      commands.link,
+      commands.quote,
+      commands.code,
+      commands.codeBlock,
+      imageCommand,
+      insertTable,
+      diagramCommand,
+      commands.divider,
+      commands.unorderedListCommand,
+      commands.orderedListCommand,
+      commands.checkedListCommand,
+    ];
+  }, [onInsertImageClick, onOpenDiagram]);
+
+  // プレビューに現れる相対パス画像の presigned URL を必要に応じて取得・キャッシュする。
+  useEffect(() => {
+    if (!projectId) return;
+    const need = extractImageSources(draft).filter(
+      (p) => !imageUrls[p] && files.some((f) => f.rel_path === p && f.kind === 'image'),
+    );
+    if (need.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        need.map(async (p) => {
+          try {
+            const c = await fetchFileContent(projectId, p);
+            return [p, c.download_url ?? ''] as const;
+          } catch {
+            return [p, ''] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const add = Object.fromEntries(entries.filter(([, u]) => u));
+      if (Object.keys(add).length > 0) {
+        setImageUrls((prev) => ({ ...prev, ...add }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draft, files, projectId, imageUrls]);
+
+  // 保存内容は相対パスのまま。プレビュー時だけ presigned URL へ差し替える。
+  const previewSource = useMemo(
+    () => rewriteImageSources(draft || '（本文がありません）', imageUrls),
+    [draft, imageUrls],
+  );
 
   const viewBtn = (mode: ViewMode, label: string, icon: ReactNode) => (
     <button
@@ -899,7 +1086,7 @@ export const ProcuretechEditorPage = () => {
                       preview='edit'
                       height='100%'
                       visibleDragbar={false}
-                      commands={EDITOR_COMMANDS}
+                      commands={editorCommands}
                       extraCommands={EDITOR_EXTRA_COMMANDS}
                     />
                   </div>
@@ -909,7 +1096,7 @@ export const ProcuretechEditorPage = () => {
                     ref={previewRef}
                     className='h-full overflow-auto rounded-8 border border-solid-gray-300 bg-white p-4'
                   >
-                    <Markdown>{draft || '（本文がありません）'}</Markdown>
+                    <Markdown>{previewSource}</Markdown>
                   </div>
                 )}
               </div>
@@ -1011,6 +1198,91 @@ export const ProcuretechEditorPage = () => {
         onDuplicate={onDuplicatePath}
         onDelete={onDeletePath}
       />
+
+      {/* 画像挿入用の隠しファイル入力（ツールバーの画像ボタンから呼ぶ）。 */}
+      <input
+        ref={imageInputRef}
+        type='file'
+        accept='image/*'
+        className='sr-only'
+        onChange={(e) => {
+          onImagePicked(e.target.files);
+          if (imageInputRef.current) imageInputRef.current.value = '';
+        }}
+      />
+
+      {/* AI 図（Mermaid）生成モーダル。 */}
+      <CustomDialog isOpen={diagramOpen} onClose={() => (diagramBusy ? undefined : setDiagramOpen(false))}>
+        <CustomDialogPanel className='max-w-xl'>
+          <CustomDialogHeader hasClose onClose={() => setDiagramOpen(false)}>
+            <span className='inline-flex items-center gap-2'>
+              <PiTreeStructure className='size-6 text-solid-gray-700' />
+              AI で図を生成（Mermaid）
+            </span>
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            <div className='flex flex-col gap-3'>
+              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+                図の種類
+                <select
+                  value={diagramType}
+                  disabled={diagramBusy}
+                  onChange={(e) => setDiagramType(e.target.value as 'AI' | MermaidDiagramType)}
+                  className='rounded-8 border border-solid-gray-300 px-3 py-2 text-std-16N-170'
+                >
+                  {DIAGRAM_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+                図にしたい内容の説明
+                <textarea
+                  value={diagramDesc}
+                  disabled={diagramBusy}
+                  onChange={(e) => setDiagramDesc(e.target.value)}
+                  rows={6}
+                  placeholder='例）調達の申請から契約締結までの承認フローを図にして。差し戻しの分岐も含める。'
+                  className='rounded-8 border border-solid-gray-300 px-3 py-2 text-std-16N-170'
+                />
+              </label>
+              {diagramError && (
+                <p className='rounded-8 border border-error-2 bg-error-3 px-3 py-2 text-dns-14N-130 text-error-1'>
+                  {diagramError}
+                </p>
+              )}
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                生成された Mermaid はカーソル位置に挿入され、プレビューに図として表示されます。
+              </p>
+              <div className='mt-1 flex items-center justify-end gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='md'
+                  disabled={diagramBusy}
+                  onClick={() => setDiagramOpen(false)}
+                >
+                  キャンセル
+                </Button>
+                <Button
+                  type='button'
+                  variant='solid-fill'
+                  size='md'
+                  disabled={diagramBusy || !diagramDesc.trim()}
+                  onClick={onGenerateDiagram}
+                >
+                  <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                    <PiMagicWand className='size-4' />
+                    {diagramBusy ? '生成中…' : '生成して挿入'}
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
     </LayoutBody>
   );
 };

@@ -33,6 +33,8 @@
 ## [Unreleased]
 
 - 情報化企画書エディタ（procuretech-editor）を追加。案件フォルダ（プロジェクト）内の生成文書（Markdown）をブラウザで編集・保存し、外部 Word 変換 API へ統合できる専用ページ（`/procuretech-editor`）。ファイル本体は SeaweedFS（S3 互換）に保存、メタデータは SQLite で管理。ファイル管理（新規/アップロード/リネーム/複製/削除）、分割プレビュー、スクロール連動、書き出し（zip 送信→ステータス polling→結果 DL）に対応。Compose profile `procuretech-editor` でオプション起動（詳細は `docs/procuretech-editor.md`）
+  - 画像の埋め込みに対応。ツールバーの画像ボタンからローカル画像を案件フォルダ（`images/`）へアップロードし、相対パスで本文へ埋め込む。保存内容は相対パスのまま保持し、プレビュー時のみ presigned URL に差し替えて表示（書き出し zip にも画像が含まれるため Word 変換側でも解決可能）
+  - AI 図生成に対応。ツールバーの図ボタンから、既存「ダイアグラムを生成」と同じ genU 推論（`/predict` + 図タイプ別プロンプト）で Mermaid を生成し、` ```mermaid ` ブロックとして本文へ挿入。プレビューは共通 Markdown で図（SVG）として描画
 - 情報化企画書ナビ（procuretech）を追加。情報化企画書（Excel）を読み込み、4分野（背景・業務・現行システム・目標）を AI 対話で整理し、各欄（`B10/B14/B19/B23`）へ書き戻して更新版をダウンロードできる専用ページ（`/procuretech`）。Compose profile `procuretech` でオプション起動（詳細は `docs/procuretech.md`）
 - プロンプトテンプレートの「チャットで開く」で入力欄が空になる不具合を修正
 - HTTP/LAN 環境（非セキュアオリジン）向けに UUID 生成とクリップボードコピーのフォールバックを共通化
