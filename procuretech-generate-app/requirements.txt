@@ -1,5 +1,5 @@
 fastapi==0.139.0
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+python-multipart==0.0.31
 openpyxl==3.1.5
 python-docx==1.1.2
