@@ -5,11 +5,7 @@ import { AccountIcon } from '@/components/ui/icons/AccountIcon';
 import { isSidebarNavLayout } from '@/constants/navLayout';
 import { useExApps } from '@/features/exapps/hooks/useExApps';
 import { useFilteredTeams } from '@/features/exapps/hooks/useFilteredTeams';
-import {
-  ALL_APPS_NAV_ITEM,
-  pinnedAppHref,
-  useRecommendedNavItems,
-} from '@/layout/navItems';
+import { ALL_APPS_NAV_ITEM, pinnedAppHref, useRecommendedNavItems } from '@/layout/navItems';
 import { partitionPinnedApps } from '@/open-genai/app-pins/partitionPinnedApps';
 import { useFetchAppPins } from '@/open-genai/app-pins/useFetchAppPins';
 import { MobileMenuItemButton, MobileMenuItemLink } from './MobileMenuItem';
@@ -119,7 +115,8 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
                 <ul>
                   {userDisplayName?.trim() && (
                     <li className='px-4 py-2 text-dns-14N-130 text-solid-gray-600'>
-                      ログイン中: <span className='font-bold text-solid-gray-800'>{userDisplayName}</span>
+                      ログイン中:{' '}
+                      <span className='font-bold text-solid-gray-800'>{userDisplayName}</span>
                     </li>
                   )}
                   {isShowTeamManagementMenu && (
@@ -127,6 +124,9 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
                       <MobileMenuItemLink label='チーム管理' to='/teams' />
                     </li>
                   )}
+                  <li>
+                    <MobileMenuItemLink label='アカウント設定' to='/settings' />
+                  </li>
                   <li>
                     <MobileMenuItemLink label='利用履歴' to='/history' />
                   </li>

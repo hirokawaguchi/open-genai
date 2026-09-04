@@ -8,7 +8,6 @@ import { GenerateDiagramPage } from '@/features/generate-diagram/GenerateDiagram
 import { GenerateImagePage } from '@/features/generate-image/GenerateImagePage';
 import { GenerateTextPage } from '@/features/generate-text/GenerateTextPage';
 import { LandingPage } from '@/features/landing/LandingPage';
-import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
 import { TeamAppCopyPage } from '@/features/team-apps/copy/TeamAppCopyPage';
 import { TeamAppCreatePage } from '@/features/team-apps/create/TeamAppCreatePage';
 import { TeamAppEditPage } from '@/features/team-apps/edit/TeamAppEditPage';
@@ -21,6 +20,7 @@ import { TeamEditPage } from '@/features/teams/edit/TeamEditPage';
 import { TeamsPage } from '@/features/teams/TeamsPage';
 import { TranslatePage } from '@/features/translate/TranslatePage';
 import { WHISPER_EXAPP_PATH } from '@/layout/navItems';
+import { NotFound } from '@/NotFound';
 import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
 import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
 import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
@@ -30,6 +30,7 @@ import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
+import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
 import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
@@ -42,7 +43,7 @@ import { PatchformWizardPage } from '@/open-genai/patchform/PatchformWizardPage'
 import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
 import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
-import { NotFound } from '@/NotFound';
+import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { Layout } from './layout/Layout';
@@ -141,6 +142,8 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'chat', element: <ChatPage /> },
     { path: 'chat/:chatId', element: <ChatPage /> },
     { path: 'history', element: <ChatHistoryPage /> },
+    // 本人のアカウント設定（表示名・パスワード変更）。
+    { path: 'settings', element: <SettingsPage /> },
     ...optionalUseCaseRoutes.flatMap((routes) => routes ?? []),
     // 源内 /transcribe は Amazon Transcribe 前提。Open GENAI は Whisper exApp へ誘導する。
     { path: 'transcribe', element: <Navigate to={WHISPER_EXAPP_PATH} replace /> },
