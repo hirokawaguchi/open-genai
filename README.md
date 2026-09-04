@@ -1,6 +1,6 @@
 # Open GENAI
 
-![Version](https://img.shields.io/badge/version-0.8.0-blue)
+![Version](https://img.shields.io/badge/version-0.9.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI--compatible-0a7)
 ![Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Qdrant%20%7C%20Keycloak-success)
@@ -10,7 +10,7 @@
 デジタル庁がオープンソースで公開したガバメント AI「源内（GENAI）」を、
 **完全ローカル環境 × ローカル LLM（OpenAI 互換 API）** で動かすためのプロジェクトです。
 
-> **バージョン:** 現在 **v0.8.0**（提案実装 第2弾：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP。いずれもオプション profile）。v0.7.0 = 提案実装（書類読取とチェック・日程調整・様式 Excel 文書生成）、v0.6.0 = 添付・ナレッジの個人情報検知／ナレッジ専用ページ／チャット大容量添付の mapreduce／Dify エラー分類、v0.5.0 = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.x = 出典表示・画像生成一本化等、v0.2.x = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
+> **バージョン:** 現在 **v0.9.0**（提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成。調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で作成でき、生成 API はプラガブル＝契約は OSS 公開・生成ロジックは非公開アプリに閉じ込め可能。いずれもオプション profile）。v0.8.0 = 提案実装 第2弾：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP、v0.7.0 = 提案実装（書類読取とチェック・日程調整・様式 Excel 文書生成）、v0.6.0 = 添付・ナレッジの個人情報検知／ナレッジ専用ページ／チャット大容量添付の mapreduce／Dify エラー分類、v0.5.0 = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.x = 出典表示・画像生成一本化等、v0.2.x = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
 > 変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
 
 > **免責 / Disclaimer**: 本リポジトリは有志による**非公式フォーク**です。デジタル庁とは一切関係がなく、
@@ -40,7 +40,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 本番は `docker-compose.prod.yml` で TLS(443) 終端。閉域検証は HTTP(80) のみ（`docker-compose.verify.yml`）。SeaweedFS（8333）は本番 compose ではホスト非公開で、成果物のダウンロードは `S3_PUBLIC_ENDPOINT` 経由のリバースプロキシを別途用意します（詳細は「成果物ファイル」節）。
 
-> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.8.0** = 提案実装 第2弾：オンラインフォーム（patchform）・手続き（申請束）・申請受付・マイ手続き（docmaker）・手続き MCP、**v0.7.0** = 提案実装：書類読取とチェック・日程調整・様式 Excel 文書生成、**v0.6.0** = PII 検知・ナレッジ専用ページ・大容量添付 mapreduce 等、**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデル差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、それ以前は CHANGELOG 参照）
+> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.9.0** = 提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成（生成 API はプラガブル・契約は OSS 公開）、**v0.8.0** = 提案実装 第2弾：オンラインフォーム（patchform）・手続き（申請束）・申請受付・マイ手続き（docmaker）・手続き MCP、**v0.7.0** = 提案実装：書類読取とチェック・日程調整・様式 Excel 文書生成、**v0.6.0** = PII 検知・ナレッジ専用ページ・大容量添付 mapreduce 等、**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデル差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、それ以前は CHANGELOG 参照）
 
 ## 設計思想：自治体・閉域運用への拡張
 
@@ -61,7 +61,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 ### 4 つの柱
 
-1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、日程調整（オプション profile）、書類領域分割チェック（オプション profile）、オンライン申請フォーム・手続き（申請束）・マイ手続き（オプション profile）、契約終了時の完全削除と報告書生成
+1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、日程調整（オプション profile）、書類領域分割チェック（オプション profile）、オンライン申請フォーム・手続き（申請束）・マイ手続き（オプション profile）、Markdown エディタ＋各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で。生成 API はプラガブル、オプション profile）、契約終了時の完全削除と報告書生成
 2. **チーム主体・複数所属** — 親子階層のないフラットなチーム。利用者は複数チームに所属可能。AI アプリ・RAG ナレッジ・保存プロンプトの共有は **所属チーム** を軸に制御
 3. **源内 UI 制約の opt-in 拡張** — Form Spec v1（条件表示・リアクティブフォーム・プレビュー）、`dynamic_schema` による動的フォーム、各画面の折りたたみヘルプ。既存 exApp は無改修で従来どおり動作
 4. **成果物のオブジェクトストレージ** — AI アプリ（Dify 等）が生成したファイルを SeaweedFS に保存し、backend 経由で署名付き URL を提示
@@ -86,6 +86,10 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `doccheck-app/` | 書類領域分割チェック（オプション・`profiles: ["doccheck"]`。詳細は [`docs/doccheck.md`](docs/doccheck.md)） |
 | `patchform-app/` | フォーム（オプション・`profiles: ["patchform"]`。詳細は [`docs/patchform.md`](docs/patchform.md)） |
 | `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |
+| `procuretech-navigator-app/` | 情報化企画書ナビ（オプション・`profiles: ["procuretech"]`。詳細は [`docs/procuretech.md`](docs/procuretech.md)） |
+| `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（オプション・`profiles: ["procuretech-editor"]`。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
+| `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（`procuretech-editor` プロファイルで同時起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
+| `procuretech-spec-app/` | 調達仕様書の生成/合成（オプション・`profiles: ["procuretech-spec"]`） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |
 | `docs/` | Open GENAI レイヤのガイド（[ナレッジ API](docs/knowledge-api.md) / [MCP](docs/knowledge-mcp.md) / [Dify 事例](docs/dify-knowledge.md) / [DGX Spark](docs/spark.md)） |
