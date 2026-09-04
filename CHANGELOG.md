@@ -16,6 +16,7 @@
 | [v0.6.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.6.0) | `340e88e` | 添付・ナレッジの個人情報検知、ナレッジ専用ページ、チャット大容量添付、Dify エラー分類、OSS ガバナンス整備 |
 | [v0.7.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.7.0) | `d7ae61e` | 提案実装：書類読取とチェック・日程調整（chosei）・様式 Excel 文書生成（自治体の「あったらいいな」を AI で実現） |
 | [v0.8.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.8.0) | `b1943d1` 以降 | 提案実装（第2弾）：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP |
+| [v0.9.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.9.0) | `d48cb96` 以降 | 提案実装（第3弾）：Markdown エディタ＋オプションの各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で作成。生成 API はプラガブル＝契約は OSS 公開・生成ロジックは非公開アプリに閉じ込め可能） |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -31,6 +32,32 @@
 ---
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-04
+
+このリリースのテーマは前回・前々回に続く **「提案実装」**（第3弾）。今回の主役は、
+ブラウザ完結の **Markdown エディタ** と、その上に載る **オプションの各種文書作成** です。
+「AI と対話しながら実務文書を仕上げ、最後は Word（一部 Excel）へ書き出す」までを
+1 つの流れとして通しました。**調達仕様書**のほか、**セキュリティポリシー及び実施手順**・
+**業務マニュアル**・**計画のアクションプラン**……といった文書を、テーマを選んで
+ヒアリングシートから章別ドラフトを生成し、編集・AI 加筆／要約／整形し、図（Mermaid）や
+画像を差し込み、出力ファイルへ章を並べて合成できます。
+
+要点は **「文書の種類（テーマ）ごとに専用の生成アプリを差し替えられる」構造** です。
+生成ロジック（テンプレート＋LLM/Dify プロンプト）そのものは業務ノウハウを含むため
+**非公開の専用アプリに閉じ込められます**（OSS として公開しない運用が可能）。一方で、
+それらを **追加するためのインターフェース（テーマ↔ヒアリングシート↔生成/合成 API の契約）は
+OSS として公開** しているため、利用者は同じ契約を満たす **自前の文書作成アプリ** を足すだけで、
+エディタから使えるようになります。公開リポジトリには契約を満たす **汎用リファレンス実装
+`procuretech-generate-app`**（LLM/Dify なしで生成〜Word 合成〜様式配布まで一通り動く）と、
+**調達仕様書の参考実装 `procuretech-spec-app`** を同梱しています。
+
+いずれも既定では無効（opt-in の Compose `profiles`）で、既存環境への影響はありません。
+併せて、本人によるアカウント設定（表示名・パスワード変更）やアプリ名・説明の一元化などの
+改善も取り込んでいます。仕様の詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md) /
+[`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md) を参照してください。
+
+---
 
 - 情報化企画書エディタ（procuretech-editor）を追加。案件フォルダ（プロジェクト）内の生成文書（Markdown）をブラウザで編集・保存し、出力ファイルごとに章を並べて Word 文書へ合成できる専用ページ（`/procuretech-editor`）。ファイル本体は SeaweedFS（S3 互換）に保存、メタデータは SQLite で管理。ファイル管理（新規/アップロード/リネーム/複製/削除）、分割プレビュー、スクロール連動に対応。Compose profile `procuretech-editor` でオプション起動（詳細は `docs/procuretech-editor.md`）
   - 画像の埋め込みに対応。ツールバーの画像ボタンからローカル画像を案件フォルダ（`images/`）へアップロードし、相対パスで本文へ埋め込む。保存内容は相対パスのまま保持し、プレビュー時のみ presigned URL に差し替えて表示（書き出し zip にも画像が含まれるため Word 変換側でも解決可能）
@@ -516,7 +543,9 @@ Dify エラー分類の改善に加え、公式リポジトリとしてのガバ
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.4.0...v0.5.0
