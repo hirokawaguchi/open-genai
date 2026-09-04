@@ -8,6 +8,7 @@ import { isSidebarNavLayout } from '@/constants/navLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useMobileMenuHandler } from '@/layout/hooks/useMobileMenuHandler';
 import { signOut as localSignOut } from '@/local/localAuth';
+import { useMyProfile } from '@/open-genai/settings/useMyProfile';
 
 type Props = {
   className?: string;
@@ -22,11 +23,14 @@ export const Header = (props: Props) => {
   const { data } = useAuth();
   const groups =
     (data?.tokens?.accessToken.payload['cognito:groups'] as unknown as string[] | undefined) ?? [];
-  const userDisplayName =
+  const loginName =
     (data?.tokens?.accessToken.payload['username'] as string | undefined) ||
     (data?.tokens?.idToken.payload['cognito:username'] as string | undefined) ||
     (data?.tokens?.idToken.payload['email'] as string | undefined) ||
     '';
+  // 表示名（姓名）は Keycloak のプロフィールから取得する。未取得時はログイン名に退避。
+  const { profile } = useMyProfile(Boolean(loginName));
+  const userDisplayName = profile?.displayName?.trim() || loginName;
 
   const { cache } = useSWRConfig();
 

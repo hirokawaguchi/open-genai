@@ -38,6 +38,10 @@ KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM", "open-genai")
 KC_ADMIN = os.environ.get("KEYCLOAK_ADMIN", "admin")
 KC_ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
 KC_ADMIN_CLIENT = os.environ.get("KEYCLOAK_ADMIN_CLIENT", "admin-cli")
+# 本人パスワード変更時、現行パスワードを検証するための realm 内 OIDC クライアント。
+# Keycloak 既定の admin-cli は各 realm に存在し direct access grants(パスワード付与)が
+# 有効なため、これを使って「現行パスワードが正しいか」を realm に対して確認する。
+KC_PASSWORD_CLIENT = os.environ.get("KEYCLOAK_PASSWORD_VERIFY_CLIENT", "admin-cli")
 
 app = FastAPI(title="Open GENAI User Management App", version="0.1.0")
 
@@ -106,6 +110,24 @@ async def _find_user(client: httpx.AsyncClient, token: str, username: str) -> di
     users = res.json()
     for u in users:
         if u.get("username") == username:
+            return u
+    return users[0] if users else None
+
+
+async def _find_user_by_email(
+    client: httpx.AsyncClient, token: str, email: str
+) -> dict[str, Any] | None:
+    """メール（backend が署名付与する信頼済み x-user-id）で厳密検索する。"""
+    res = await client.get(
+        f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users",
+        params={"email": email, "exact": "true"},
+        headers=_auth_headers(token),
+    )
+    res.raise_for_status()
+    users = res.json()
+    target = (email or "").strip().lower()
+    for u in users:
+        if (u.get("email") or "").strip().lower() == target:
             return u
     return users[0] if users else None
 
@@ -509,6 +531,164 @@ async def apply_users_api(request: Request) -> Any:
             status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
         )
     return {"results": results, "count": len(results)}
+
+
+# ---------------------------------------------------------------------------
+# 本人向け（自己サービス）エンドポイント
+#
+# 一般利用者が自分自身のプロフィール（姓名）とパスワードを変更できるようにする。
+# 管理者権限は不要だが、対象ユーザーは backend が署名付与する x-user-id（メール）
+# から厳密に解決し、リクエスト本文の指定は信用しない（他人のなりすまし防止）。
+# ---------------------------------------------------------------------------
+def _verify_self(request: Request) -> tuple[JSONResponse | None, str]:
+    """内部署名を検証し、対象ユーザーのメール（x-user-id）を返す。管理者権限は不要。"""
+    h = request.headers
+    err = _check_key(h.get("x-api-key"))
+    if err:
+        return err, ""
+    if not intauth.verify(
+        h.get("x-user-id"),
+        h.get("x-user-groups"),
+        h.get("x-scope"),
+        h.get("x-user-ts"),
+        h.get("x-user-sig"),
+        h.get("x-user-tags"),
+    ):
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"}), ""
+    uid = (h.get("x-user-id") or "").strip()
+    if not uid:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"}), ""
+    return None, uid
+
+
+def _display_name(user: dict[str, Any]) -> str:
+    """姓 名（firstName/lastName）から表示名を組み立てる。未設定なら username に退避。"""
+    first = (user.get("firstName") or "").strip()
+    last = (user.get("lastName") or "").strip()
+    joined = " ".join(x for x in [last, first] if x)
+    return joined or (user.get("username") or "").strip() or (user.get("email") or "").strip()
+
+
+def _profile_payload(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "username": user.get("username") or "",
+        "email": user.get("email") or "",
+        "firstName": (user.get("firstName") or "").strip(),
+        "lastName": (user.get("lastName") or "").strip(),
+        "displayName": _display_name(user),
+    }
+
+
+@app.get("/me/profile")
+async def get_me_profile(request: Request) -> Any:
+    err, email = _verify_self(request)
+    if err:
+        return err
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            token = await _admin_token(client)
+            user = await _find_user_by_email(client, token, email)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "ユーザーが見つかりません"})
+    return _profile_payload(user)
+
+
+@app.put("/me/profile")
+async def update_me_profile(request: Request) -> Any:
+    err, email = _verify_self(request)
+    if err:
+        return err
+    body = await request.json()
+    first = (body.get("firstName") or "").strip()
+    last = (body.get("lastName") or "").strip()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            token = await _admin_token(client)
+            user = await _find_user_by_email(client, token, email)
+            if not user:
+                return JSONResponse(status_code=404, content={"error": "ユーザーが見つかりません"})
+            rep = {"firstName": first, "lastName": last}
+            r = await client.put(
+                f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users/{user['id']}",
+                json=rep,
+                headers=_auth_headers(token),
+            )
+            if r.status_code not in (200, 204):
+                return JSONResponse(
+                    status_code=502, content={"error": f"プロフィール更新に失敗しました HTTP {r.status_code}"}
+                )
+            user = {**user, "firstName": first, "lastName": last}
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
+    return {"ok": True, **_profile_payload(user)}
+
+
+async def _verify_current_password(
+    client: httpx.AsyncClient, username: str, password: str
+) -> bool:
+    """realm 内クライアント(既定 admin-cli)へのパスワード付与で現行パスワードを検証する。"""
+    try:
+        res = await client.post(
+            f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token",
+            data={
+                "grant_type": "password",
+                "client_id": KC_PASSWORD_CLIENT,
+                "username": username,
+                "password": password,
+            },
+        )
+    except httpx.HTTPError:
+        return False
+    return res.status_code == 200
+
+
+@app.post("/me/password")
+async def change_me_password(request: Request) -> Any:
+    err, email = _verify_self(request)
+    if err:
+        return err
+    body = await request.json()
+    current = body.get("currentPassword") or ""
+    new_password = body.get("newPassword") or ""
+    if len(new_password) < 8:
+        return JSONResponse(
+            status_code=400, content={"error": "新しいパスワードは8文字以上にしてください"}
+        )
+    if not current:
+        return JSONResponse(
+            status_code=400, content={"error": "現在のパスワードを入力してください"}
+        )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            token = await _admin_token(client)
+            user = await _find_user_by_email(client, token, email)
+            if not user:
+                return JSONResponse(status_code=404, content={"error": "ユーザーが見つかりません"})
+            username = user.get("username") or ""
+            if not await _verify_current_password(client, username, current):
+                return JSONResponse(
+                    status_code=400, content={"error": "現在のパスワードが正しくありません"}
+                )
+            r = await client.put(
+                f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users/{user['id']}/reset-password",
+                json={"type": "password", "value": new_password, "temporary": False},
+                headers=_auth_headers(token),
+            )
+            if r.status_code not in (200, 204):
+                return JSONResponse(
+                    status_code=502, content={"error": f"パスワード更新に失敗しました HTTP {r.status_code}"}
+                )
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
+    return {"ok": True}
 
 
 @app.post("/invoke")

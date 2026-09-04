@@ -5535,6 +5535,32 @@ def _usermgmt_headers(request: Request) -> tuple[JSONResponse | None, dict[str, 
     return None, headers
 
 
+def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    """本人向け（自己プロフィール/パスワード）用の署名ヘッダ。管理者権限は不要。
+
+    対象ユーザーは JWT の sub（正規化メール）を x-user-id として署名付与し、
+    usermgmt-app 側でこのメールから Keycloak ユーザーを厳密解決する。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
 async def _proxy_usermgmt(
     method: str,
     url: str,
@@ -5558,6 +5584,35 @@ async def _proxy_usermgmt(
     except ValueError:
         payload = {"error": "利用者管理サービスから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/my/profile")
+async def get_my_profile(request: Request) -> JSONResponse:
+    """本人のプロフィール（姓名・表示名）を取得する。"""
+    err, headers = _usermgmt_self_headers(request)
+    if err:
+        return err
+    return await _proxy_usermgmt("GET", _usermgmt_app_url("/me/profile"), headers)
+
+
+@app.put("/my/profile")
+async def update_my_profile(request: Request) -> JSONResponse:
+    """本人のプロフィール（姓・名）を更新する。"""
+    err, headers = _usermgmt_self_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_usermgmt("PUT", _usermgmt_app_url("/me/profile"), headers, body)
+
+
+@app.post("/my/password")
+async def change_my_password(request: Request) -> JSONResponse:
+    """本人のパスワードを変更する（現行パスワード検証あり）。"""
+    err, headers = _usermgmt_self_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_usermgmt("POST", _usermgmt_app_url("/me/password"), headers, body)
 
 
 @app.get("/admin/users")
