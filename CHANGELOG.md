@@ -47,6 +47,7 @@
   - テーマ無し（ヒアリングシート未生成）の素のプロジェクトは、合成タブでテーマの章立てを並べず**空の Word 出力を 1 つだけ**表示する。素の文書の Word 化はテーマ固有の生成 API（例: 調達仕様書=spec-app）に依存させず、汎用サービス `procuretech-generate-app`（`EDITOR_COMPOSE_URL`、`procuretech-editor` プロファイルで同時起動）へ振り分ける
   - 公開の汎用リファレンス実装を `procuretech-generate-sample` → **`procuretech-generate-app`** に改称（既定の合成バックエンドを兼ねるため）。合成サービスの env を `GENERATE_SAMPLE_*` → `GENERATE_*` に統一（旧名も後方互換で参照）
   - 「調達仕様書」生成・合成サービス `procuretech-spec-app` を追加（非公開参考実装のドメインを移植し、Nextcloud→zip 返却・Dify キー外出し・`/generate`・`/status`・`/result`・`/compose` を実装。Compose profile `procuretech-spec`）
+- アカウント設定（本人）を追加。ヘッダー右上メニューの「アカウント設定」から、自分の表示名（姓名）とパスワードを変更できる専用ページ（`/settings`）。ヘッダー等のユーザー表示をログイン名ではなく**表示名（姓名）**に変更（Keycloak の firstName/lastName から組み立て、未取得時はログイン名にフォールバック）。パスワード変更は現行パスワードを realm 内 OIDC クライアント（既定 `admin-cli`、`KEYCLOAK_PASSWORD_VERIFY_CLIENT` で変更可）で検証してから更新する。処理は既存の利用者一括管理サービス（`usermgmt-app`）の Keycloak Admin API に**本人スコープ**の新エンドポイント（`GET/PUT /me/profile`・`POST /me/password`）を追加し、backend が非管理者プロキシ（`/my/profile`・`/my/password`）として仲介する（対象ユーザーは署名付き `x-user-id`（メール）から厳密解決し、本文指定は信用しない）
 - 情報化企画書ナビ（procuretech）を追加。情報化企画書（Excel）を読み込み、4分野（背景・業務・現行システム・目標）を AI 対話で整理し、各欄（`B10/B14/B19/B23`）へ書き戻して更新版をダウンロードできる専用ページ（`/procuretech`）。Compose profile `procuretech` でオプション起動（詳細は `docs/procuretech.md`）
 - プロンプトテンプレートの「チャットで開く」で入力欄が空になる不具合を修正
 - HTTP/LAN 環境（非セキュアオリジン）向けに UUID 生成とクリップボードコピーのフォールバックを共通化
