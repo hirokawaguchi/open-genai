@@ -5,13 +5,15 @@
 サービス**に委譲します。生成ロジック（テンプレート・プロンプト・LLM/Dify 連携）は非公開の
 別サービスに閉じ込め、Open GENAI 本体はこの契約に沿って HTTP で呼び出すだけです。
 
-公開リポジトリには、この契約を満たす**動作する実装サンプル（参照実装）** `procuretech-generate-sample/`
+公開リポジトリには、この契約を満たす**公開の汎用リファレンス実装** `procuretech-generate-app/`
 を同梱しています。LLM/Dify には依存せず、同梱の簡単なヒアリングシート
 （`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown の生成・Word(.docx) 合成・
-様式ダウンロードまで一通り動作します。本番の生成サービスは非公開のため本リポジトリには含めません。
+様式ダウンロードまで一通り動作します。テーマ無しの「素の文書」の Word 化の既定バックエンドでもあり
+（`EDITOR_COMPOSE_URL`）、`procuretech-editor` プロファイルで同時起動します。本番のテーマ固有
+生成サービス（例: 調達仕様書）は非公開のため本リポジトリには含めません。
 
 - 呼び出し元クライアント: `procuretech-editor-app/app/generate.py`
-- 実装サンプル（生成側）: `procuretech-generate-sample/app/main.py`
+- 汎用リファレンス実装（生成側）: `procuretech-generate-app/app/main.py`
 
 ## エンドポイント一覧
 
@@ -185,17 +187,19 @@ Excel 出力（見積費用総括表・プロポーザル一次審査表など�
 | `EDITOR_GENERATE_TIMEOUT` | `180` | 呼び出しタイムアウト（秒） |
 | `EDITOR_GENERATE_DOC_TYPE` | `specification` | 既定テーマの `doc_type` |
 | `EDITOR_GENERATE_THEMES` | （空） | テーマ定義（JSON 配列） |
+| `EDITOR_COMPOSE_URL` | `http://procuretech-generate-app:8016` | 素の文書（テーマ無し）の Word 合成先（汎用サービス） |
+| `EDITOR_COMPOSE_API_KEY` | `EDITOR_GENERATE_API_KEY` | 汎用合成サービスへ付与するキー |
 
-## ローカル検証（実装サンプル）
+## ローカル検証（汎用リファレンス実装）
 
-契約を満たす**動作する実装サンプル**を Compose profile で起動できます。`/generate`・`/status`・
-`/result`・`/compose`・`/template` をすべて実装し、同梱の簡単なヒアリングシートで生成〜Word 合成〜
-様式ダウンロードまで一通り確認できます（LLM/Dify 不要）。
+契約を満たす**公開の汎用リファレンス実装** `procuretech-generate-app` は `procuretech-editor`
+プロファイルで同時起動します。`/generate`・`/status`・`/result`・`/compose`・`/excel`・`/template`
+を実装し、同梱の簡単なヒアリングシートで生成〜Word 合成〜様式ダウンロードまで一通り確認できます
+（LLM/Dify 不要）。テーマ無しの素の文書の Word 化は既定でこのサービスが担います。
 
 ```bash
-docker compose \
-  --profile procuretech-editor --profile procuretech-editor-sample up -d
-# .env で EDITOR_GENERATE_URL=http://procuretech-generate-sample:8016 を設定
+docker compose --profile procuretech-editor up -d
+# これ単体を生成 API にも使う場合は EDITOR_GENERATE_URL=http://procuretech-generate-app:8016 を設定
 ```
 
 単一入力のサンプルテーマ（ヒアリングシート 1 枚）を試すには、`EDITOR_GENERATE_THEMES` に次を設定します。
@@ -206,7 +210,7 @@ docker compose \
     "id": "sample",
     "label": "サンプル文書",
     "doc_type": "sample",
-    "api_url": "http://procuretech-generate-sample:8016",
+    "api_url": "http://procuretech-generate-app:8016",
     "inputs": [
       { "key": "hearing", "label": "ヒアリングシート（hearing-sample.xlsx）", "marker": "hearing-sample", "accept": ".xlsx", "template": true }
     ],

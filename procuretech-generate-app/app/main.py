@@ -1,9 +1,10 @@
-"""文書生成・合成サービスの実装サンプル（動作する参照実装）。
+"""文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
 
 Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合成 API の
-「そのまま動く」最小実装。LLM/Dify には依存せず、同梱の簡単なヒアリングシート
+「そのまま動く」実装。LLM/Dify には依存せず、同梱の簡単なヒアリングシート
 （`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown を生成し、
-Word(.docx) 合成まで一通り行える。本番の非公開サービスを差し替える際の雛形。
+Word(.docx) 合成まで一通り行える。テーマ固有の非公開サービス（例: 調達仕様書=spec-app）を
+差し替える際の雛形であり、テーマ無しの「素の文書」の Word 化の既定バックエンドでもある。
 
 契約:
 - POST /generate            multipart: 任意キーの Excel / form: username, doc_type, options
@@ -16,7 +17,7 @@ Word(.docx) 合成まで一通り行える。本番の非公開サービスを�
                                `![](相対パス)` に一致すれば .docx へ埋め込む。
 - GET  /template/{key}      -> 同梱のヒアリングシート様式（xlsx）をダウンロード
 
-`GENERATE_SAMPLE_API_KEY` が設定されていれば `X-API-Key` を検証する。
+`GENERATE_API_KEY` が設定されていれば `X-API-Key` を検証する。
 ジョブ状態はメモリ保持（プロセス再起動で消える）。
 """
 
@@ -35,9 +36,13 @@ from typing import Any
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
 
-API_KEY = os.environ.get("GENERATE_SAMPLE_API_KEY", "")
+# API キー（旧名 GENERATE_SAMPLE_API_KEY も後方互換で参照）。
+API_KEY = os.environ.get("GENERATE_API_KEY") or os.environ.get("GENERATE_SAMPLE_API_KEY", "")
 # success になるまでの擬似処理時間（polling UI を確認できるように少し待たせる）。
-PROCESS_SECONDS = float(os.environ.get("GENERATE_SAMPLE_PROCESS_SECONDS", "2"))
+PROCESS_SECONDS = float(
+    os.environ.get("GENERATE_PROCESS_SECONDS")
+    or os.environ.get("GENERATE_SAMPLE_PROCESS_SECONDS", "2")
+)
 
 # 同梱のヒアリングシート様式（key -> ファイル名）。/template/{key} で配信する。
 HEARING_DIR = Path(os.environ.get("HEARING_DIR", "materials/hearing"))
@@ -53,7 +58,7 @@ FIELDS: list[tuple[str, str, str, str, int]] = [
 ]
 TITLE_LABEL = "案件名"
 
-app = FastAPI(title="ProcureTech Generate Sample", version="1.0.0")
+app = FastAPI(title="ProcureTech Generate", version="1.0.0")
 
 # request_id -> {"created": float, "zip": bytes, "doc_type": str}
 _JOBS: dict[str, dict[str, Any]] = {}
@@ -112,7 +117,7 @@ def _build_zip(files: dict[str, bytes], doc_type: str) -> bytes:
     ]
     outputs["README.md"] = (
         f"# {title}\n\n"
-        f"> このファイルは実装サンプル（procuretech-generate-sample）が生成しました"
+        f"> このファイルは汎用生成サービス（procuretech-generate-app）が生成しました"
         f"（doc_type: `{doc_type}`）。\n"
         f"> 本番では非公開の生成サービスがテンプレート＋LLM/Dify で章別 Markdown を生成します。\n\n"
         f"- 生成日時: {ts}\n"
@@ -137,7 +142,61 @@ def _build_zip(files: dict[str, bytes], doc_type: str) -> bytes:
     return buf.getvalue()
 
 
+# 画像のみの行（ブロック画像として大きく埋め込む）。
 _IMAGE_LINE_RE = re.compile(r"^!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)$")
+# 行内（インライン）画像。テキストと混在していても抽出できる。
+_INLINE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+
+
+def _rel_of(match_group: str) -> str:
+    return match_group.replace("\\", "/").lstrip("/")
+
+
+def _add_code_block(doc: Any, lang: str, lines: list[str]) -> None:
+    """フェンス付きコードブロックを等幅段落で出力する。
+
+    Mermaid はサーバ側では描画できない（本来はクライアントが合成前に PNG 化して画像へ差し替える）。
+    未変換のまま届いた場合の保険として、注記＋ソースを崩さず出力する。
+    """
+    from docx.shared import Pt
+
+    if lang == "mermaid":
+        note = doc.add_paragraph()
+        run = note.add_run("【Mermaid 図（画像未変換のためソースを表示）】")
+        run.italic = True
+    para = doc.add_paragraph()
+    run = para.add_run("\n".join(lines))
+    run.font.name = "Courier New"
+    run.font.size = Pt(9)
+
+
+def _add_line_with_inline_images(doc: Any, line: str, assets: dict[str, bytes]) -> None:
+    """テキストと行内画像が混在する行を、画像を埋め込みつつ 1 段落で出力する。"""
+    from docx.shared import Cm
+
+    matches = list(_INLINE_IMAGE_RE.finditer(line))
+    if not matches:
+        doc.add_paragraph(line)
+        return
+    para = doc.add_paragraph()
+    last = 0
+    for m in matches:
+        pre = line[last : m.start()]
+        if pre:
+            para.add_run(pre)
+        rel = _rel_of(m.group(1))
+        data = assets.get(rel)
+        if data:
+            try:
+                para.add_run().add_picture(io.BytesIO(data), width=Cm(12))
+            except Exception:  # noqa: BLE001
+                para.add_run(f"[画像: {rel}]")
+        else:
+            para.add_run(f"[画像: {rel}]")
+        last = m.end()
+    tail = line[last:]
+    if tail:
+        para.add_run(tail)
 
 
 def _markdown_to_docx(
@@ -145,8 +204,10 @@ def _markdown_to_docx(
 ) -> bytes:
     """章（Markdown 文字列）を連結し、簡易パースで .docx を作る（python-docx）。
 
-    画像のみの行 `![alt](相対パス)` は assets（{相対パス: バイト列}）にあれば画像として
-    埋め込む（無ければリンク文字列のままにせず、代替テキストを段落として出力する）。
+    spec-app（pandoc）と同等に、本文が参照する画像を assets（{相対パス: バイト列}）から
+    埋め込む。画像のみの行はブロック画像、テキスト混在はインライン画像として配置する。
+    Mermaid は合成前にクライアントが PNG 画像へ差し替える運用のため、ここでは通常画像として
+    埋め込まれる（未変換で届いた場合はコードブロックとして安全に出力する）。
     """
     from docx import Document
     from docx.shared import Cm
@@ -156,13 +217,27 @@ def _markdown_to_docx(
     doc.add_heading(name, level=0)
     for sec in sections:
         content = str(sec.get("content") or "")
+        in_code = False
+        code_lang = ""
+        code_lines: list[str] = []
         for raw_line in content.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                if in_code:
+                    _add_code_block(doc, code_lang, code_lines)
+                    in_code, code_lang, code_lines = False, "", []
+                else:
+                    in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
+                continue
+            if in_code:
+                code_lines.append(raw_line)
+                continue
             line = raw_line.rstrip()
             if not line.strip():
                 continue
             m = _IMAGE_LINE_RE.match(line.strip())
             if m:
-                rel = m.group(1).lstrip("/")
+                rel = _rel_of(m.group(1))
                 data = assets.get(rel)
                 if data:
                     try:
@@ -181,7 +256,9 @@ def _markdown_to_docx(
             elif line.lstrip().startswith(("- ", "* ")):
                 doc.add_paragraph(line.lstrip()[2:].strip(), style="List Bullet")
             else:
-                doc.add_paragraph(line)
+                _add_line_with_inline_images(doc, line, assets)
+        if in_code and code_lines:  # フェンス閉じ忘れの保険
+            _add_code_block(doc, code_lang, code_lines)
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
@@ -282,7 +359,12 @@ def result(request_id: str, x_api_key: str | None = Header(default=None)) -> Res
 async def compose(
     request: Request, x_api_key: str | None = Header(default=None)
 ) -> Response:
-    """順序付き Markdown（出力ファイル毎）を .docx に合成して zip で返す。"""
+    """順序付き Markdown（出力ファイル毎）を .docx に合成して zip で返す。
+
+    body.assets（{相対パス: base64}）に本文の `![](相対パス)` と一致する画像を渡すと、
+    ブロック／インラインいずれの画像も .docx へ埋め込む（Mermaid はクライアントが PNG 化して
+    画像として渡す運用）。
+    """
     err = _check_key(x_api_key)
     if err:
         return err

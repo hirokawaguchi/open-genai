@@ -1,5 +1,5 @@
 import MDEditor from '@uiw/react-md-editor';
-import type { ICommand, TextAreaTextApi } from '@uiw/react-md-editor/commands';
+import type { ExecuteState, ICommand, TextAreaTextApi } from '@uiw/react-md-editor/commands';
 import * as commands from '@uiw/react-md-editor/commands';
 import '@uiw/react-md-editor/markdown-editor.css';
 import type { PredictRequest } from 'genai-web';
@@ -34,11 +34,14 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
+import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
 import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { MERMAID_DIAGRAM_TYPES } from '@/features/generate-diagram/constants';
 import type { MermaidDiagramType } from '@/features/generate-diagram/types';
 import { extractDiagramCode } from '@/features/generate-diagram/utils/extractDiagram';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { PROCURETECH_EDITOR_EXAPP_ID } from '@/layout/navItems';
 import { predict } from '@/lib/chatApi';
 import { findModelByModelId, resolveSelectedModelId } from '@/models';
 import { getPrompter } from '@/prompts';
@@ -133,12 +136,40 @@ const insertTable: ICommand = {
   },
 };
 
-const aiProofread: ICommand = {
-  name: 'ai-proofread',
-  keyCommand: 'ai-proofread',
-  buttonProps: { 'aria-label': 'AI校正（近日対応）', title: 'AI校正（近日対応）', disabled: true },
-  icon: <PiMagicWand style={{ width: 16, height: 16 }} />,
-  execute: () => {},
+// AI 文書構成（編集アシスト）で選べる操作。テーマ非依存の汎用機能。
+type AiEditAction = 'expand' | 'summarize' | 'format' | 'rewrite';
+const AI_EDIT_ACTIONS: {
+  value: AiEditAction;
+  label: string;
+  instruction: string;
+}[] = [
+  {
+    value: 'rewrite',
+    label: 'リライト',
+    instruction: '次の文章を、意味を保ちつつ、より明確で読みやすい表現に書き直してください。',
+  },
+  {
+    value: 'expand',
+    label: '加筆',
+    instruction: '次の文章を、意味を変えずに具体例や補足説明を加えて自然に加筆してください。',
+  },
+  {
+    value: 'summarize',
+    label: '要約',
+    instruction: '次の文章の要点を保ちながら、簡潔に要約してください。',
+  },
+  {
+    value: 'format',
+    label: '整形',
+    instruction:
+      '次の文章を、内容を変えずに表現・体裁（見出し・箇条書き・句読点・表記ゆれ）を整えてください。',
+  },
+];
+
+// AI 応答が丸ごとコードフェンスで囲まれている場合に中身だけを取り出す。
+const stripCodeFence = (s: string): string => {
+  const m = s.trim().match(/^```[^\n]*\n([\s\S]*?)\n```$/);
+  return m ? m[1] : s.trim();
 };
 
 // 見出しは H1〜H6 を選べるドロップダウン（参考実装のプルダウン相当）。
@@ -157,8 +188,6 @@ const headingGroup: ICommand = commands.group(
     buttonProps: { 'aria-label': '見出し (H1〜H6)', title: '見出し (H1〜H6)' },
   },
 );
-
-const EDITOR_EXTRA_COMMANDS: ICommand[] = [aiProofread];
 
 // AI 図生成で選べるタイプ（AI 自動 + Mermaid 各種）。
 const DIAGRAM_TYPE_OPTIONS: { value: 'AI' | MermaidDiagramType; label: string }[] = [
@@ -610,9 +639,8 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       <div className='rounded-8 border border-solid-gray-300 p-4'>
         <h2 className='text-std-18B-160 text-solid-gray-900'>文書の書き出し・合成</h2>
         <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-          出力ファイルごとに含める章（Markdown）と順番を指定して Word へ合成します。見積総括表・
-          一次審査表は生成時に作られる Excel をそのまま同梱します。
-          {theme ? `（テーマ: ${theme.label}）` : ''}
+          出力ファイル（Word形式）に含めたいMarkdownファイルを順番に追加します。
+          {theme?.label ? `（テーマ: ${theme.label}）` : ''}
         </p>
         {!composeConfigured && (
           <p className='mt-2 rounded-8 border border-amber-300 bg-amber-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
@@ -700,7 +728,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                 <div className='flex flex-col gap-1 p-3'>
                   {out.items.length === 0 && (
                     <p className='px-1 py-2 text-dns-14N-130 text-solid-gray-500'>
-                      章が未設定です。下の「章を追加」から追加してください。
+                      Markdownファイルが未設定です。下の「Markdownファイルを追加」から追加してください。
                     </p>
                   )}
                   {out.items.map((item, ii) => {
@@ -765,7 +793,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                       }}
                       className='rounded-6 border border-solid-gray-300 px-2 py-1 text-dns-14N-130 text-solid-gray-700'
                     >
-                      <option value=''>章を追加…</option>
+                      <option value=''>Markdownファイルを追加</option>
                       {sectionOptions.length > 0 && (
                         <optgroup label='章（生成）'>
                           {sectionOptions.map((s) => (
@@ -881,6 +909,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
 
 export const ProcuretechEditorPage = () => {
   const { config, unavailable } = useEditorConfig();
+  // アプリ名・説明は「AIアプリの編集」（レジストリ）の内容に追従させ、取得前は既定値を使う。
+  const { data: registryApp } = useFetchExApp(COMMON_EXAPPS_TEAM_ID, PROCURETECH_EDITOR_EXAPP_ID);
+  const appTitle = (registryApp?.exAppName || '').trim() || 'Markdown エディタ';
+  const appDescription =
+    (registryApp?.description || '').trim() ||
+    'プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。';
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const {
@@ -915,12 +949,30 @@ export const ProcuretechEditorPage = () => {
   // プレビュー用: 相対パス画像 → presigned URL のマップ（表示専用、保存内容には影響しない）。
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
 
+  // 画像挿入モーダルの状態（既存のプロジェクト画像から選択 or 新規アップロード）。
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
+
   // AI 図生成モーダルの状態。
   const [diagramOpen, setDiagramOpen] = useState(false);
   const [diagramDesc, setDiagramDesc] = useState('');
   const [diagramType, setDiagramType] = useState<'AI' | MermaidDiagramType>('AI');
   const [diagramBusy, setDiagramBusy] = useState(false);
   const [diagramError, setDiagramError] = useState<string | null>(null);
+
+  // AI 文書構成（編集アシスト）モーダルの状態。
+  const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [aiEditAction, setAiEditAction] = useState<AiEditAction>('rewrite');
+  const [aiEditInstruction, setAiEditInstruction] = useState('');
+  const [aiEditBusy, setAiEditBusy] = useState(false);
+  const [aiEditError, setAiEditError] = useState<string | null>(null);
+  const [aiEditResult, setAiEditResult] = useState<string | null>(null);
+  // 実行時の対象範囲（選択が無ければ本文全体を対象にする）。
+  const aiEditTargetRef = useRef<{
+    start: number;
+    end: number;
+    hasSelection: boolean;
+    text: string;
+  }>({ start: 0, end: 0, hasSelection: false, text: '' });
 
   // ヒアリングシート → 章別 Markdown 生成モーダルの状態（テーマ選択→入力の2ステップ）。
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -1238,8 +1290,14 @@ export const ProcuretechEditorPage = () => {
     }
   }, []);
 
-  const onInsertImageClick = useCallback((api: TextAreaTextApi) => {
+  // ツールバーの画像ボタン: 挿入先 API を控えて画像選択モーダルを開く。
+  const onOpenImagePicker = useCallback((api: TextAreaTextApi) => {
     insertApiRef.current = api;
+    setImagePickerOpen(true);
+  }, []);
+
+  // モーダル内「新しい画像をアップロード」: 隠しファイル入力を開く。
+  const onInsertImageClick = useCallback(() => {
     imageInputRef.current?.click();
   }, []);
 
@@ -1264,7 +1322,15 @@ export const ProcuretechEditorPage = () => {
       mutateProjects();
       const alt = baseName(f.rel_path).replace(/\.[^.]+$/, '');
       insertAtCursor(`![${alt}](${f.rel_path})`);
+      setImagePickerOpen(false);
     }
+  };
+
+  // 既にプロジェクト内にある画像を本文へ挿入する（相対パスで参照）。
+  const onInsertExistingImage = (f: EditorFile) => {
+    const alt = baseName(f.rel_path).replace(/\.[^.]+$/, '');
+    insertAtCursor(`![${alt}](${f.rel_path})`);
+    setImagePickerOpen(false);
   };
 
   // 既存「ダイアグラムを生成」と同じ genU predict + プロンプトで Mermaid を生成し、
@@ -1324,14 +1390,114 @@ export const ProcuretechEditorPage = () => {
     }
   };
 
+  // --- AI 文書構成（編集アシスト） ---------------------------------------
+  // ツールバーの AI ボタン実行時に、選択範囲（無ければ本文全体）を対象として控える。
+  const onOpenAiEdit = useCallback(
+    (state: ExecuteState, api: TextAreaTextApi) => {
+      insertApiRef.current = api;
+      const sel = state.selection;
+      const selectedText = state.selectedText ?? '';
+      const hasSelection = selectedText.trim().length > 0 && sel != null;
+      aiEditTargetRef.current = hasSelection
+        ? {
+            start: sel?.start ?? 0,
+            end: sel?.end ?? 0,
+            hasSelection: true,
+            text: selectedText,
+          }
+        : { start: 0, end: 0, hasSelection: false, text: draft ?? '' };
+      setAiEditResult(null);
+      setAiEditError(null);
+      setAiEditInstruction('');
+      setAiEditOpen(true);
+    },
+    [draft],
+  );
+
+  // 選択範囲（または本文全体）に対して AI 操作を実行し、結果を控える（自動では反映しない）。
+  const onRunAiEdit = async () => {
+    const target = aiEditTargetRef.current.text.trim();
+    if (!target) {
+      setAiEditError('対象のテキストがありません。本文を入力するか選択してください。');
+      return;
+    }
+    const modelId = resolveSelectedModelId();
+    const model = modelId ? findModelByModelId(modelId) : undefined;
+    if (!modelId || !model) {
+      setAiEditError('利用可能な生成 AI モデルがありません。管理者に確認してください。');
+      return;
+    }
+    const preset = AI_EDIT_ACTIONS.find((a) => a.value === aiEditAction);
+    if (!preset) return;
+    setAiEditBusy(true);
+    setAiEditError(null);
+    try {
+      const extra = aiEditInstruction.trim();
+      const system = [
+        'あなたは日本語の文書編集アシスタントです。',
+        preset.instruction,
+        extra ? `追加の指示: ${extra}` : '',
+        '出力は編集後の本文のみを返し、前置き・説明・コードフェンスは付けないでください。',
+        '元の Markdown 記法（見出し・表・箇条書き・リンク・画像）は保持してください。',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const req: PredictRequest = {
+        model,
+        id: 'procuretech-editor-ai-edit',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: `<content>\n${aiEditTargetRef.current.text}\n</content>` },
+        ],
+      };
+      const res = await predict(req);
+      const cleaned = stripCodeFence(res);
+      if (!cleaned) {
+        setAiEditError('結果を生成できませんでした。指示を具体的にして再度お試しください。');
+        return;
+      }
+      setAiEditResult(cleaned);
+    } catch (_e) {
+      setAiEditError('AI 処理中にエラーが発生しました。時間をおいて再度お試しください。');
+    } finally {
+      setAiEditBusy(false);
+    }
+  };
+
+  // 生成結果を本文へ反映する（置換 or 対象の後ろに挿入）。api に依存せず draft を直接編集。
+  const applyAiEdit = useCallback(
+    (mode: 'replace' | 'insert') => {
+      const result = aiEditResult;
+      if (result == null) return;
+      const t = aiEditTargetRef.current;
+      setDraft((cur) => {
+        const doc = cur ?? '';
+        if (t.hasSelection) {
+          const before = doc.slice(0, t.start);
+          const after = doc.slice(t.end);
+          const mid = mode === 'replace' ? result : `${doc.slice(t.start, t.end)}\n\n${result}`;
+          return before + mid + after;
+        }
+        // 選択が無い場合は本文全体が対象。
+        return mode === 'replace' ? result : `${doc}\n\n${result}`;
+      });
+      setAiEditOpen(false);
+      setAiEditResult(null);
+    },
+    [aiEditResult],
+  );
+
   // ツールバーのコマンド一式（画像＝アップロード埋め込み、AI 図生成を含む）。
   const editorCommands = useMemo<ICommand[]>(() => {
     const imageCommand: ICommand = {
       name: 'image',
       keyCommand: 'image',
-      buttonProps: { 'aria-label': '画像を挿入', title: '画像を挿入（アップロードして埋め込み）' },
+      buttonProps: {
+        'aria-label': '画像を挿入',
+        title: '画像を挿入（プロジェクト内の画像から選択 / 新規アップロード）',
+      },
       icon: <PiImage style={{ width: 16, height: 16 }} />,
-      execute: (_state, api) => onInsertImageClick(api),
+      execute: (_state, api) => onOpenImagePicker(api),
     };
     const diagramCommand: ICommand = {
       name: 'ai-diagram',
@@ -1360,7 +1526,22 @@ export const ProcuretechEditorPage = () => {
       commands.orderedListCommand,
       commands.checkedListCommand,
     ];
-  }, [onInsertImageClick, onOpenDiagram]);
+  }, [onOpenImagePicker, onOpenDiagram]);
+
+  // 右側の追加コマンド：AI 文書構成（選択＝その部分、未選択＝本文全体を編集）。
+  const editorExtraCommands = useMemo<ICommand[]>(() => {
+    const aiEditCommand: ICommand = {
+      name: 'ai-edit',
+      keyCommand: 'ai-edit',
+      buttonProps: {
+        'aria-label': 'AI 文書構成',
+        title: 'AI 文書構成（選択部分／本文全体を加筆・要約・整形・リライト）',
+      },
+      icon: <PiMagicWand style={{ width: 16, height: 16 }} />,
+      execute: (state, api) => onOpenAiEdit(state, api),
+    };
+    return [aiEditCommand];
+  }, [onOpenAiEdit]);
 
   // プレビューに現れる相対パス画像の presigned URL を必要に応じて取得・キャッシュする。
   useEffect(() => {
@@ -1391,6 +1572,35 @@ export const ProcuretechEditorPage = () => {
       cancelled = true;
     };
   }, [draft, files, projectId, imageUrls]);
+
+  // プロジェクト内の画像ファイル一覧（画像選択モーダル用）。
+  const projectImages = useMemo(() => files.filter((f) => f.kind === 'image'), [files]);
+
+  // 画像選択モーダルを開いたら、サムネイル用に presigned URL を取得・キャッシュする。
+  useEffect(() => {
+    if (!imagePickerOpen || !projectId) return;
+    const need = projectImages.map((f) => f.rel_path).filter((p) => !imageUrls[p]);
+    if (need.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        need.map(async (p) => {
+          try {
+            const c = await fetchFileContent(projectId, p);
+            return [p, c.download_url ?? ''] as const;
+          } catch {
+            return [p, ''] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const add = Object.fromEntries(entries.filter(([, u]) => u));
+      if (Object.keys(add).length > 0) setImageUrls((prev) => ({ ...prev, ...add }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePickerOpen, projectImages, projectId, imageUrls]);
 
   // 保存内容は相対パスのまま。プレビュー時だけ presigned URL へ差し替える。
   const previewSource = useMemo(
@@ -1431,14 +1641,12 @@ export const ProcuretechEditorPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='Markdown エディタ' />
+      <PageTitle title={appTitle} />
 
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'>
         <div className='flex flex-col gap-1'>
-          <h1 className='text-std-22B-150 text-solid-gray-900'>Markdown エディタ</h1>
-          <p className='text-dns-16N-170 text-solid-gray-700'>
-            プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。
-          </p>
+          <h1 className='text-std-22B-150 text-solid-gray-900'>{appTitle}</h1>
+          <p className='text-dns-16N-170 text-solid-gray-700'>{appDescription}</p>
         </div>
 
         {unavailable && (
@@ -1446,7 +1654,7 @@ export const ProcuretechEditorPage = () => {
             className='rounded-8 border border-amber-300 bg-amber-50 px-4 py-2 text-dns-14N-130 text-solid-gray-800'
             role='status'
           >
-            Markdown エディタは現在利用できません（サービス未起動）。
+            {appTitle}は現在利用できません（サービス未起動）。
             {config?.error ? ` ${config.error}` : ''}
           </div>
         )}
@@ -1677,8 +1885,19 @@ export const ProcuretechEditorPage = () => {
                 <p>
                   {selected.kind === 'excel'
                     ? 'Excel ファイル（情報化企画書 / 全般的事項）はエディタでは編集しません。'
-                    : 'このファイル形式はエディタでの編集に対応していません。'}
+                    : selected.kind === 'image'
+                      ? '画像はエディタでは編集できません（プレビューのみ）。'
+                      : 'このファイル形式はエディタでの編集に対応していません。'}
                 </p>
+                {selected.kind === 'image' && binaryUrl && (
+                  <div className='flex justify-center rounded-8 border border-solid-gray-200 bg-white p-4'>
+                    <img
+                      src={binaryUrl}
+                      alt={baseName(selected.rel_path)}
+                      className='max-h-[calc(100dvh-360px)] max-w-full object-contain'
+                    />
+                  </div>
+                )}
                 {binaryUrl && (
                   <div>
                     <Button
@@ -1717,7 +1936,7 @@ export const ProcuretechEditorPage = () => {
                       height='100%'
                       visibleDragbar={false}
                       commands={editorCommands}
-                      extraCommands={EDITOR_EXTRA_COMMANDS}
+                      extraCommands={editorExtraCommands}
                     />
                   </div>
                 )}
@@ -1768,6 +1987,67 @@ export const ProcuretechEditorPage = () => {
           if (imageInputRef.current) imageInputRef.current.value = '';
         }}
       />
+
+      {/* 画像挿入モーダル（プロジェクト内の画像から選択 / 新規アップロード）。 */}
+      <CustomDialog isOpen={imagePickerOpen} onClose={() => setImagePickerOpen(false)}>
+        <CustomDialogPanel className='max-w-2xl'>
+          <CustomDialogHeader hasClose onClose={() => setImagePickerOpen(false)}>
+            <span className='inline-flex items-center gap-2'>
+              <PiImage className='size-5' />
+              画像を挿入
+            </span>
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            <div className='flex flex-col gap-4'>
+              <div className='flex flex-wrap items-center justify-between gap-2'>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  プロジェクト内の画像を選ぶか、新しい画像をアップロードして挿入します。
+                </p>
+                <Button type='button' variant='outline' size='sm' onClick={onInsertImageClick}>
+                  <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                    <PiUploadSimple className='size-4' />
+                    新しい画像をアップロード
+                  </span>
+                </Button>
+              </div>
+
+              {projectImages.length === 0 ? (
+                <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-center text-std-16N-170 text-solid-gray-600'>
+                  プロジェクト内に画像がありません。「新しい画像をアップロード」から追加してください。
+                </div>
+              ) : (
+                <ul className='grid max-h-[60dvh] grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3'>
+                  {projectImages.map((f) => (
+                    <li key={f.id}>
+                      <button
+                        type='button'
+                        onClick={() => onInsertExistingImage(f)}
+                        title={`挿入: ${f.rel_path}`}
+                        className='flex w-full flex-col gap-1 rounded-8 border border-solid-gray-300 bg-white p-2 text-left hover:border-blue-700 hover:bg-blue-50'
+                      >
+                        <span className='flex h-28 items-center justify-center overflow-hidden rounded-4 bg-solid-gray-50'>
+                          {imageUrls[f.rel_path] ? (
+                            <img
+                              src={imageUrls[f.rel_path]}
+                              alt={baseName(f.rel_path)}
+                              className='max-h-28 max-w-full object-contain'
+                            />
+                          ) : (
+                            <PiImage className='size-8 text-solid-gray-400' />
+                          )}
+                        </span>
+                        <span className='truncate text-dns-14N-130 text-solid-gray-700'>
+                          {baseName(f.rel_path)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
 
       {/* AI 図（Mermaid）生成モーダル。 */}
       <CustomDialog
@@ -1837,6 +2117,132 @@ export const ProcuretechEditorPage = () => {
                   <span className='inline-flex items-center gap-1 whitespace-nowrap'>
                     <PiMagicWand className='size-4' />
                     {diagramBusy ? '生成中…' : '生成して挿入'}
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
+
+      {/* AI 文書構成（編集アシスト）モーダル。選択部分／本文全体を対象に加筆・要約等。 */}
+      <CustomDialog
+        isOpen={aiEditOpen}
+        onClose={() => (aiEditBusy ? undefined : setAiEditOpen(false))}
+      >
+        <CustomDialogPanel className='max-w-2xl'>
+          <CustomDialogHeader hasClose onClose={() => setAiEditOpen(false)}>
+            <span className='inline-flex items-center gap-2'>
+              <PiMagicWand className='size-6 text-solid-gray-700' />
+              AI 文書構成
+            </span>
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            <div className='flex flex-col gap-3'>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                対象：
+                {aiEditTargetRef.current.hasSelection
+                  ? `選択したテキスト（${aiEditTargetRef.current.text.length} 文字）`
+                  : '本文全体'}
+              </p>
+              <div className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+                操作
+                <div className='flex flex-wrap gap-2'>
+                  {AI_EDIT_ACTIONS.map((a) => (
+                    <button
+                      key={a.value}
+                      type='button'
+                      disabled={aiEditBusy}
+                      onClick={() => setAiEditAction(a.value)}
+                      className={`rounded-8 border px-3 py-1.5 text-std-16N-170 ${
+                        aiEditAction === a.value
+                          ? 'border-blue-600 bg-blue-50 text-blue-800'
+                          : 'border-solid-gray-300 text-solid-gray-700 hover:bg-solid-gray-50'
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+                追加の指示（任意）
+                <input
+                  type='text'
+                  value={aiEditInstruction}
+                  disabled={aiEditBusy}
+                  onChange={(e) => setAiEditInstruction(e.target.value)}
+                  placeholder='例）です・ます調に統一し、専門用語には簡単な補足を付ける'
+                  className='rounded-8 border border-solid-gray-300 px-3 py-2 text-std-16N-170'
+                />
+              </label>
+              {aiEditError && (
+                <p className='rounded-8 border border-error-2 bg-error-3 px-3 py-2 text-dns-14N-130 text-error-1'>
+                  {aiEditError}
+                </p>
+              )}
+              {aiEditResult != null && (
+                <div className='flex flex-col gap-1'>
+                  <span className='text-dns-14N-130 text-solid-gray-700'>結果（プレビュー）</span>
+                  <textarea
+                    value={aiEditResult}
+                    onChange={(e) => setAiEditResult(e.target.value)}
+                    rows={10}
+                    className='rounded-8 border border-solid-gray-300 px-3 py-2 font-mono text-std-16N-170'
+                  />
+                  <span className='text-dns-14N-130 text-solid-gray-500'>
+                    そのまま編集してから反映できます。
+                  </span>
+                </div>
+              )}
+              <div className='mt-1 flex items-center justify-end gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='md'
+                  disabled={aiEditBusy}
+                  onClick={() => setAiEditOpen(false)}
+                >
+                  キャンセル
+                </Button>
+                {aiEditResult != null && (
+                  <>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      disabled={aiEditBusy}
+                      onClick={() => applyAiEdit('insert')}
+                    >
+                      後ろに挿入
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      disabled={aiEditBusy}
+                      onClick={onRunAiEdit}
+                    >
+                      再生成
+                    </Button>
+                  </>
+                )}
+                <Button
+                  type='button'
+                  variant='solid-fill'
+                  size='md'
+                  disabled={aiEditBusy}
+                  onClick={aiEditResult == null ? onRunAiEdit : () => applyAiEdit('replace')}
+                >
+                  <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                    <PiMagicWand className='size-4' />
+                    {aiEditBusy
+                      ? '処理中…'
+                      : aiEditResult == null
+                        ? '実行'
+                        : aiEditTargetRef.current.hasSelection
+                          ? '選択を置換'
+                          : '本文を置換'}
                   </span>
                 </Button>
               </div>

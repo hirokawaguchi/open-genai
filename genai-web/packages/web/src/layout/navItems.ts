@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
+import { useExAppStore } from '@/features/exapps/stores/useExAppStore';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import {
@@ -100,8 +101,23 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const patchformAvailable = usePatchformAvailable();
   const procuretechAvailable = useProcuretechAvailable();
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
+  // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
+  // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
+  const registryApps = useExAppStore((s) => s.exApps);
 
   return useMemo(() => {
+    const metaById = new Map<string, { name: string; description: string }>();
+    for (const a of registryApps || []) {
+      if (a?.exAppId && !metaById.has(a.exAppId)) {
+        metaById.set(a.exAppId, {
+          name: (a.exAppName || '').trim(),
+          description: (a.description || '').trim(),
+        });
+      }
+    }
+    const nameOf = (id: string, fallback: string) => metaById.get(id)?.name || fallback;
+    const descOf = (id: string, fallback: string) => metaById.get(id)?.description || fallback;
+
     const items: NavLinkItem[] = [
       {
         label: 'チャット',
@@ -141,54 +157,67 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     }
 
     items.push({
-      label: '文字起こし',
+      label: nameOf('whisper', '文字起こし'),
       to: WHISPER_EXAPP_PATH,
-      description: '音声ファイルから文字起こし',
+      description: descOf('whisper', '音声ファイルから文字起こし'),
     });
 
     items.push({
-      label: 'プロンプトテンプレート',
+      label: nameOf(PROMPT_EXAPP_ID, 'プロンプトテンプレート'),
       to: PROMPT_TEMPLATES_PATH,
-      description: '標準／共有テンプレートを選んでチャットへ',
+      description: descOf(PROMPT_EXAPP_ID, '標準／共有テンプレートを選んでチャットへ'),
     });
 
     items.push({
-      label: '日程調整',
+      label: nameOf(CHOSEI_EXAPP_ID, '日程調整'),
       to: CHOSEI_PATH,
-      description: '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
+      description: descOf(
+        CHOSEI_EXAPP_ID,
+        '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
+      ),
     });
 
     if (doccheckAvailable) {
       items.push({
-        label: '書類読取とチェック',
+        label: nameOf(DOCCHECK_EXAPP_ID, '書類読取とチェック'),
         to: DOCCHECK_PATH,
-        description:
+        description: descOf(
+          DOCCHECK_EXAPP_ID,
           '申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。',
+        ),
       });
     }
 
     if (patchformAvailable) {
       items.push({
-        label: 'フォーム',
+        label: nameOf(PATCHFORM_EXAPP_ID, 'フォーム'),
         to: PATCHFORM_PATH,
-        description: '庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。',
+        description: descOf(
+          PATCHFORM_EXAPP_ID,
+          '庁内・外部向けのオンラインフォーム。専用画面で作成・回答・集計できます。',
+        ),
       });
     }
 
     if (procuretechAvailable) {
       items.push({
-        label: '情報化企画書ナビ',
+        label: nameOf(PROCURETECH_EXAPP_ID, '情報化企画書ナビ'),
         to: PROCURETECH_PATH,
-        description:
+        description: descOf(
+          PROCURETECH_EXAPP_ID,
           '情報化企画書（Excel）を読み込み、4分野をAIとの対話で整理して各欄へ書き出します。',
+        ),
       });
     }
 
     if (procuretechEditorAvailable) {
       items.push({
-        label: 'Markdown エディタ',
+        label: nameOf(PROCURETECH_EDITOR_EXAPP_ID, 'Markdown エディタ'),
         to: PROCURETECH_EDITOR_PATH,
-        description: 'プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合します。',
+        description: descOf(
+          PROCURETECH_EDITOR_EXAPP_ID,
+          'プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合します。',
+        ),
       });
     }
 
@@ -205,6 +234,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     patchformAvailable,
     procuretechAvailable,
     procuretechEditorAvailable,
+    registryApps,
   ]);
 };
 

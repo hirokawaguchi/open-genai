@@ -890,14 +890,18 @@ def _resolve_theme_for_project(
 ) -> dict[str, Any] | None:
     """プロジェクトの合成に用いるテーマを解決する。
 
-    優先順: 明示指定(hint) → 保存済み定義のテーマ → 直近生成ジョブのテーマ → 先頭テーマ。
+    優先順: 明示指定(hint) → 保存済み定義のテーマ → 直近生成ジョブのテーマ。
+    いずれも無い（ヒアリングシート未生成の素の）プロジェクトは、テーマ固有の生成 API に
+    依存しない「素のテーマ」を返す（汎用の合成サービスで Word 化する）。
     """
     theme_id = (
         (hint or "").strip()
         or (str(saved.get("theme")) if isinstance(saved, dict) and saved.get("theme") else "")
         or (store.latest_generation_theme(project_id, uid) or "")
     )
-    return generate.get_theme(theme_id or None)
+    if not theme_id or theme_id == generate.PLAIN_THEME_ID:
+        return generate.plain_theme()
+    return generate.get_theme(theme_id) or generate.plain_theme()
 
 
 def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:

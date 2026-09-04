@@ -422,6 +422,21 @@ def test_composition_default_from_theme(client, monkeypatch):
     assert any(s["key"] == "background" for s in body["theme"]["sections"])
 
 
+def test_composition_plain_default_for_empty_project(client):
+    """ヒアリングシート未生成の空プロジェクトは、素の Word 出力を 1 つだけ返す。"""
+    p = _create_project(client)
+    res = client.get(f"/projects/{p['id']}/composition", headers=USER_A)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["saved"] is False
+    outputs = body["composition"]["outputs"]
+    assert len(outputs) == 1
+    assert outputs[0]["kind"] == "markdown"
+    assert outputs[0]["items"] == []
+    # 調達仕様書テーマの章立て（背景〜その他）が並んでいないこと
+    assert outputs[0]["id"] != "specification"
+
+
 def test_composition_save_and_get(client, monkeypatch):
     p = _create_project(client)
     _run_generation_with_sections(client, monkeypatch, p["id"])
