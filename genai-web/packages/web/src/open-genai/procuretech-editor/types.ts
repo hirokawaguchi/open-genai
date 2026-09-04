@@ -63,6 +63,8 @@ export type EditorGenerateThemeInput = {
   /** B1 マーカー（様式検証用。任意） */
   marker?: string | null;
   accept?: string;
+  /** 生成サービスが様式（ヒアリングシート）を配信する場合 true */
+  template?: boolean;
 };
 
 /** 生成される章（section key ↔ 表示名）。 */
@@ -75,8 +77,10 @@ export type EditorThemeSection = {
 export type EditorThemeOutput = {
   id: string;
   name: string;
-  /** markdown: 章を並べて Word 合成 / excel: 生成された単一 Excel をそのまま出力 */
+  /** markdown: 章を並べて Word 合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
   kind?: 'markdown' | 'excel';
+  /** excel の生成方法（例: quotation=見積総括表 / primaryexam=一次審査表） */
+  builder?: string;
   sections: string[];
 };
 
@@ -105,8 +109,10 @@ export type EditorCompositionItem = {
 export type EditorCompositionOutput = {
   id: string;
   name: string;
-  /** markdown: 章を並べて Word 合成 / excel: 生成された単一 Excel をそのまま出力 */
+  /** markdown: 章を並べて Word 合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
   kind?: 'markdown' | 'excel';
+  /** excel の生成方法（例: quotation / primaryexam） */
+  builder?: string;
   enabled: boolean;
   items: EditorCompositionItem[];
 };
@@ -144,6 +150,8 @@ export type EditorComposeResult = {
   download_url?: string;
   download_filename?: string;
   outputs?: string[];
+  /** 生成をスキップした出力（例: 一次審査表の対象章が無い等）。 */
+  skipped?: { name: string; reason: string }[];
   error?: string;
 };
 
