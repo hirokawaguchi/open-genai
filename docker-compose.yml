@@ -600,12 +600,15 @@ services:
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
       - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
       # 外部「文書生成」API（Excel→章別 Markdown。未設定なら「Excel から生成」は無効表示）
-      # ローカル検証は procuretech-editor-sample プロファイルの実装サンプルを併用し、
-      #   EDITOR_GENERATE_URL=http://procuretech-generate-sample:8016 を設定する。
+      # テーマ固有の生成/合成先（例: 調達仕様書=spec-app）。テーマ定義の api_url で上書き可。
       - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
       - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
       - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
       - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
+      # 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API に依存させないため、
+      #   汎用サービス procuretech-generate-app を既定にする（editor プロファイルで同時起動）。
+      - EDITOR_COMPOSE_URL=${EDITOR_COMPOSE_URL:-http://procuretech-generate-app:8016}
+      - EDITOR_COMPOSE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
       # テーマ定義(JSON)。テーマ↔ヒアリングシート↔API を管理者が設定。未設定なら
       #   EDITOR_GENERATE_URL を使う単一テーマ（調達仕様書）が既定で使われる。
       - EDITOR_GENERATE_THEMES=${EDITOR_GENERATE_THEMES:-}
@@ -623,27 +626,26 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-  # 文書生成・合成サービスの「実装サンプル（動作する参照実装）」
-  #   (`docker compose --profile procuretech-editor --profile procuretech-editor-sample up -d`)
-  # 非公開の本番サービスと同じ契約を実装。LLM/Dify は呼ばず、同梱の簡単な
-  # ヒアリングシート（materials/hearing/hearing-sample.xlsx）から章別 Markdown を
-  # 生成し、Word(.docx) 合成・様式ダウンロードまで一通り動作する。
-  # 併用時は EDITOR_GENERATE_URL=http://procuretech-generate-sample:8016 を設定する。
-  procuretech-generate-sample:
-    profiles: ["procuretech-editor-sample"]
-    build: ./procuretech-generate-sample
-    container_name: open-genai-procuretech-generate-sample
+  # 文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
+  # procuretech-editor プロファイルで同時起動し、テーマ無しの「素の文書」の Word 化を担う
+  # （EDITOR_COMPOSE_URL=http://procuretech-generate-app:8016）。テーマ固有の非公開サービス
+  # （例: 調達仕様書=spec-app）を差し替える際の契約リファレンスにもなる。LLM/Dify 非依存で、
+  # 同梱のヒアリングシート（materials/hearing/hearing-sample.xlsx）から生成〜合成まで動作する。
+  procuretech-generate-app:
+    profiles: ["procuretech-editor"]
+    build: ./procuretech-generate-app
+    container_name: open-genai-procuretech-generate-app
     environment:
-      - GENERATE_SAMPLE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
-      - GENERATE_SAMPLE_PROCESS_SECONDS=${GENERATE_SAMPLE_PROCESS_SECONDS:-2}
+      - GENERATE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
+      - GENERATE_PROCESS_SECONDS=${GENERATE_PROCESS_SECONDS:-2}
     ports:
-      - "${PROCURETECH_GENERATE_SAMPLE_PORT:-8016}:8016"
+      - "${PROCURETECH_GENERATE_PORT:-8016}:8016"
     restart: unless-stopped
 
   # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装）----
   # 生成ロジック（テンプレート/プロンプト/Dify 連携）を含むため非公開。サービス定義は
   # gitignore 対象のオーバーレイ docker-compose.procuretech-spec.yml に分離している。
-  # 公開リポジトリでは上記のモック（procuretech-generate-mock）を契約リファレンスとして使う。
+  # 公開リポジトリでは上記の procuretech-generate-app を契約リファレンス兼既定合成に使う。
   # 実サービスを使う場合:
   #   docker compose -f docker-compose.yml -f docker-compose.procuretech-spec.yml \
   #     --profile procuretech-editor --profile procuretech-spec up -d

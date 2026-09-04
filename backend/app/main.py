@@ -642,6 +642,47 @@ RETIRED_SEED_EXAPP_IDS = [
 ]
 
 
+# リネーム前の既定シード文言（未編集で DB に残っている場合のみ現行シードへ揃える移行に使う）。
+# 管理者が意図的に変更した文言は上書きしない（旧文言に完全一致する場合だけ更新）。
+_STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
+    {
+        "seed": PROCURETECH_EDITOR_SEED,
+        "old_name": "情報化企画書エディタ",
+        "old_description": (
+            "案件フォルダ内の生成文書（Markdown）を編集・校正し、"
+            "Word 文書へ統合する準備を行います。"
+        ),
+        # 使い方は旧文言（「情報化企画書エディタ」「案件フォルダ」）を含む場合のみ差し替える。
+        "old_howto_markers": ("情報化企画書エディタ", "案件フォルダ"),
+    },
+]
+
+
+def _reconcile_stale_seed_labels() -> None:
+    """リネーム前の未編集シード文言が残っていれば現行シード値へ揃える（冪等・保守的）。
+
+    表示名・説明・使い方はハードコードせずレジストリ（＝「AIアプリの編集」）へ一本化したため、
+    既存 DB に古い既定文言が残っていると全画面で古い名称が表示されてしまう。旧文言に完全一致
+    （使い方は旧マーカーを含む）する場合だけ、現行シードの値に更新する。
+    """
+    for mig in _STALE_SEED_LABEL_MIGRATIONS:
+        seed = mig["seed"]
+        team_id = seed.get("teamId", COMMON_TEAM_ID)
+        app = teams_store.get_exapp(team_id, seed["exAppId"])
+        if not app:
+            continue
+        updates: dict[str, Any] = {}
+        if (app.get("exAppName") or "").strip() == mig["old_name"]:
+            updates["exAppName"] = seed.get("exAppName")
+        if (app.get("description") or "").strip() == mig["old_description"]:
+            updates["description"] = seed.get("description")
+        howto = app.get("howToUse") or ""
+        if any(marker in howto for marker in mig["old_howto_markers"]):
+            updates["howToUse"] = seed.get("howToUse")
+        if updates:
+            teams_store.update_exapp(team_id, seed["exAppId"], updates)
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1109,6 +1150,11 @@ def _startup() -> None:
     security_warn.warn_insecure_defaults()
     storage.init_db()
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
+    # リネーム前の未編集シード文言（例: 旧「情報化企画書エディタ」）を現行シードへ揃える。
+    try:
+        _reconcile_stale_seed_labels()
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] 旧シード文言の整理に失敗: {e}")
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
         teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
     # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。

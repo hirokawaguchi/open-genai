@@ -13,7 +13,7 @@
       "label": "調達仕様書",
       "description": "情報化企画書と全般的事項から調達仕様書の章別 Markdown を生成します。",
       "doc_type": "specification",
-      "api_url": "http://procuretech-generate-mock:8016",   // 省略時は EDITOR_GENERATE_URL
+      "api_url": "http://procuretech-generate-app:8016",    // 省略時は EDITOR_GENERATE_URL
       "api_key": "...",                                       // 省略時は EDITOR_GENERATE_API_KEY
       "inputs": [
         {"key": "systemplan", "label": "情報化企画書（systemplan.xlsx）",
@@ -46,6 +46,11 @@ EDITOR_GENERATE_URL = os.environ.get("EDITOR_GENERATE_URL", "").rstrip("/")
 EDITOR_GENERATE_API_KEY = os.environ.get("EDITOR_GENERATE_API_KEY", "")
 TIMEOUT = float(os.environ.get("EDITOR_GENERATE_TIMEOUT", "180"))
 DEFAULT_DOC_TYPE = os.environ.get("EDITOR_GENERATE_DOC_TYPE", "specification")
+
+# 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API（例: 調達仕様書＝spec-app）に
+# 依存させないため、汎用の合成サービス（既定: procuretech-generate-app）へ振り分ける。
+EDITOR_COMPOSE_URL = os.environ.get("EDITOR_COMPOSE_URL", "").rstrip("/")
+EDITOR_COMPOSE_API_KEY = os.environ.get("EDITOR_COMPOSE_API_KEY", EDITOR_GENERATE_API_KEY)
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -150,6 +155,31 @@ def _load_themes() -> list[dict[str, Any]]:
 
 
 THEMES: list[dict[str, Any]] = _load_themes()
+
+
+PLAIN_THEME_ID = "plain"
+
+
+def plain_theme() -> dict[str, Any]:
+    """テーマ無し（ヒアリングシート未生成）のプロジェクト向けの素のテーマ。
+
+    調達仕様書などテーマ固有の生成 API には送らず、汎用の合成サービス
+    （`EDITOR_COMPOSE_URL`、既定は procuretech-generate-app）で Word 化する。既定の出力は
+    空の Word 1 つのみで、章は利用者が手動の Markdown を追加して構成する。
+    """
+    return {
+        "id": PLAIN_THEME_ID,
+        "label": "",
+        "doc_type": "",
+        # 汎用合成サービス。未設定時のみ EDITOR_GENERATE_URL にフォールバック（theme_base_url）。
+        "api_url": EDITOR_COMPOSE_URL,
+        "api_key": EDITOR_COMPOSE_API_KEY,
+        "inputs": [],
+        "sections": [],
+        "outputs": [
+            {"id": "document", "name": "文書", "kind": "markdown", "sections": []}
+        ],
+    }
 
 
 def get_theme(theme_id: str | None) -> dict[str, Any] | None:
