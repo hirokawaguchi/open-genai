@@ -251,14 +251,29 @@ export const useEditorActions = () => {
   );
 
   const composeProject = useCallback(
-    (projectId: string, composition?: EditorComposition) =>
+    (projectId: string, composition?: EditorComposition, overrides?: Record<string, string>) =>
       run(async () => {
+        const body: Record<string, unknown> = {};
+        if (composition) body.composition = composition;
+        if (overrides && Object.keys(overrides).length > 0) body.overrides = overrides;
         const res = await teamApi.post<EditorComposeResult>(
           `${BASE}/projects/${enc(projectId)}/compose`,
-          composition ? { composition } : {},
+          body,
         );
         return res.data ?? null;
       }, 'Word 合成に失敗しました。'),
+    [run],
+  );
+
+  const downloadInputTemplate = useCallback(
+    (themeId: string, inputKey: string) =>
+      run(async () => {
+        const res = await teamApi.get<{
+          download_url?: string;
+          download_filename?: string;
+        }>(`${BASE}/themes/${enc(themeId)}/inputs/${enc(inputKey)}/template`);
+        return res.data ?? null;
+      }, '様式のダウンロードに失敗しました。'),
     [run],
   );
 
@@ -274,6 +289,7 @@ export const useEditorActions = () => {
     startGeneration,
     saveComposition,
     composeProject,
+    downloadInputTemplate,
     submitting,
     error,
     setError,

@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import uuid
 import zipfile
 from typing import Any
@@ -166,6 +167,50 @@ def get_config(
             "markers": excel.MARKERS,
         }
     )
+
+
+@app.get("/themes/{theme_id}/inputs/{input_key}/template")
+async def download_input_template(
+    theme_id: str,
+    input_key: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """テーマの入力に対応する様式（ヒアリングシート）を生成サービスから取得し、
+    署名付き URL で返す（生成サービスが `GET /template/{key}` を実装している場合）。"""
+    err, _uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    theme = generate.get_theme(theme_id)
+    if theme is None:
+        return JSONResponse(status_code=404, content={"error": "テーマが見つかりません。"})
+    base_url = generate.theme_base_url(theme)
+    if not base_url:
+        return JSONResponse(
+            status_code=503, content={"error": "このテーマの生成 API が未設定です。"}
+        )
+    if not objstore.is_configured():
+        return JSONResponse(status_code=503, content={"error": "ストレージが未設定です。"})
+    try:
+        data, filename, ctype = await generate.fetch_template(
+            input_key, base_url=base_url, api_key=generate.theme_api_key(theme)
+        )
+    except generate.GenerateError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+    safe_theme = "".join(c for c in theme_id if c.isalnum() or c in "-_") or "theme"
+    safe_key = "".join(c for c in input_key if c.isalnum() or c in "-_") or "input"
+    obj_key = "/".join([objstore.EDITOR_S3_PREFIX, "_templates", f"{safe_theme}-{safe_key}.xlsx"])
+    if not objstore.put_bytes(obj_key, data, content_type=ctype):
+        return JSONResponse(status_code=502, content={"error": "様式の保存に失敗しました。"})
+    url = objstore.presign_get(obj_key, filename=filename, expiry=3600)
+    return JSONResponse(content={"download_url": url, "download_filename": filename})
 
 
 # --- projects -----------------------------------------------------------------
@@ -569,7 +614,29 @@ async def delete_file(
 # --- generation（Excel → 章別 Markdown 生成） ---------------------------------
 
 # 生成結果 zip から取り込まない内部ファイル（テンプレのメタ情報等）。
-_SKIP_IMPORT_NAMES = {".keep", "hidden_template_data.json", ".gitkeep", "sections.json"}
+# template_data.json は書き出し時の Excel 生成（見積総括表の nextyear/phaselist）に使うため、
+# ファイルとして取り込まず gen_params として保存する。
+_SKIP_IMPORT_NAMES = {
+    ".keep",
+    "hidden_template_data.json",
+    ".gitkeep",
+    "sections.json",
+    "template_data.json",
+}
+
+
+def _parse_gen_params(zf: zipfile.ZipFile, prefix: str) -> dict[str, Any] | None:
+    """生成結果 zip の `template_data.json` を読み、書き出し用パラメータを返す。"""
+    for name in zf.namelist():
+        inner = name[len(prefix):] if prefix and name.startswith(prefix) else name
+        if inner.rsplit("/", 1)[-1] != "template_data.json":
+            continue
+        try:
+            data = json.loads(zf.read(name).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+    return None
 
 
 def _strip_common_prefix(names: list[str]) -> str:
@@ -615,6 +682,9 @@ def _import_zip_to_project(zip_bytes: bytes, project_id: str, uid: str) -> list[
         names = [n for n in zf.namelist() if not n.endswith("/")]
         prefix = _strip_common_prefix(names)
         section_map = _parse_sections_manifest(zf, prefix)
+        gen_params = _parse_gen_params(zf, prefix)
+        if gen_params:
+            store.save_gen_params(project_id, uid, gen_params)
         for name in names:
             inner = name[len(prefix):] if prefix and name.startswith(prefix) else name
             base = inner.rsplit("/", 1)[-1]
@@ -832,16 +902,18 @@ def _resolve_theme_for_project(
 
 def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:
     """テーマ既定から合成定義（出力ファイル毎の順序付き section）を作る。"""
-    outputs = [
-        {
+    outputs = []
+    for o in generate.theme_outputs(theme):
+        entry: dict[str, Any] = {
             "id": o["id"],
             "name": o["name"],
             "kind": o.get("kind", "markdown"),
             "enabled": True,
             "items": [{"section_key": k} for k in o.get("sections", [])],
         }
-        for o in generate.theme_outputs(theme)
-    ]
+        if o.get("builder"):
+            entry["builder"] = o["builder"]
+        outputs.append(entry)
     return {"theme": theme.get("id"), "outputs": outputs}
 
 
@@ -870,15 +942,16 @@ def _normalize_composition(data: Any, theme: dict[str, Any]) -> dict[str, Any]:
             if fid:
                 entry["file_id"] = fid
             items.append(entry)
-        outputs.append(
-            {
-                "id": str(o.get("id") or f"output{i}"),
-                "name": str(o.get("name") or f"output{i}"),
-                "kind": "excel" if str(o.get("kind") or "") == "excel" else "markdown",
-                "enabled": o.get("enabled", True) is not False,
-                "items": items,
-            }
-        )
+        entry = {
+            "id": str(o.get("id") or f"output{i}"),
+            "name": str(o.get("name") or f"output{i}"),
+            "kind": "excel" if str(o.get("kind") or "") == "excel" else "markdown",
+            "enabled": o.get("enabled", True) is not False,
+            "items": items,
+        }
+        if o.get("builder"):
+            entry["builder"] = str(o.get("builder"))
+        outputs.append(entry)
     return {"theme": str(data.get("theme") or theme.get("id") or ""), "outputs": outputs}
 
 
@@ -970,11 +1043,31 @@ async def put_composition(
     return JSONResponse(content={"saved": True, "composition": composition})
 
 
+# Markdown 本文中の画像参照 `![alt](path)` を抽出する（http/https/data: は除外）。
+_IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+
+
+def _extract_image_refs(content: str) -> list[str]:
+    refs: list[str] = []
+    for m in _IMAGE_REF_RE.finditer(content or ""):
+        p = (m.group(1) or "").strip()
+        if not p or "://" in p or p.startswith("data:") or p.startswith("#"):
+            continue
+        refs.append(p.lstrip("/"))
+    return refs
+
+
 def _collect_output_sections(
     output: dict[str, Any], files_by_key: dict[str, dict[str, Any]],
     files_by_id: dict[str, dict[str, Any]],
+    overrides: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
-    """合成定義の 1 出力について、順序通りに {filename, content} を集約する。"""
+    """合成定義の 1 出力について、順序通りに {filename, content} を集約する。
+
+    overrides（{file_id: content}）が与えられた場合は S3 の内容より優先する
+    （クライアントが Mermaid ブロックを画像参照へ差し替えた本文など）。
+    """
+    overrides = overrides or {}
     sections: list[dict[str, str]] = []
     for it in output.get("items", []) or []:
         if not isinstance(it, dict):
@@ -988,13 +1081,17 @@ def _collect_output_sections(
             f = files_by_id.get(fid)
         if f is None:
             continue
-        data = objstore.get_bytes(f["s3_key"])
-        if data is None:
-            continue
-        try:
-            content = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
+        ov = overrides.get(f["id"])
+        if isinstance(ov, str):
+            content = ov
+        else:
+            data = objstore.get_bytes(f["s3_key"])
+            if data is None:
+                continue
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
         sections.append({"filename": f["rel_path"].rsplit("/", 1)[-1], "content": content})
     return sections
 
@@ -1046,24 +1143,35 @@ async def compose_project(
         if sk and sk not in files_by_key:
             files_by_key[sk] = f
     files_by_id = {f["id"]: f for f in files}
+    files_by_rel = {f["rel_path"]: f for f in files}
+    # 本文が指定するファイル内容の差し替え（クライアントが Mermaid→画像化した結果など）。
+    overrides = payload.get("overrides")
+    overrides = overrides if isinstance(overrides, dict) else {}
 
-    def _resolve_single(output: dict[str, Any]) -> dict[str, Any] | None:
-        for it in output.get("items", []) or []:
-            if not isinstance(it, dict):
-                continue
-            sk = str(it.get("section_key") or "").strip()
-            fid = str(it.get("file_id") or "").strip()
-            f = files_by_key.get(sk) if sk else None
-            if f is None and fid:
-                f = files_by_id.get(fid)
-            if f is not None:
-                return f
-        return None
+    # 書き出し時の Excel 生成に使う「現時点の（編集済み）章本文」を集める（section key→本文）。
+    section_contents: dict[str, str] = {}
+    for sk, f in files_by_key.items():
+        if f.get("kind") != "markdown":
+            continue
+        data = objstore.get_bytes(f["s3_key"])
+        if data is None:
+            continue
+        try:
+            section_contents[sk] = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
 
-    # 出力を Markdown（Word 合成）と Excel（生成物をそのまま同梱）に振り分ける。
+    # テーマ既定から出力 id → builder を引けるようにする（builder はテーマ属性）。
+    theme_builder_by_id = {
+        o["id"]: o.get("builder") for o in generate.theme_outputs(theme_def) if o.get("builder")
+    }
+
+    # 出力を Markdown（Word 合成）と Excel（書き出し時に生成）に振り分ける。
     md_outputs: list[dict[str, Any]] = []
+    excel_outputs: list[tuple[str, str]] = []  # (name, builder)
     excel_files: list[tuple[str, bytes]] = []
     included_names: list[str] = []
+    skipped: list[dict[str, str]] = []
     used_names: set[str] = set()
 
     def _unique_arcname(base: str, ext: str) -> str:
@@ -1083,45 +1191,89 @@ async def compose_project(
             continue
         name = str(o.get("name") or o.get("id") or "output")
         if str(o.get("kind") or "") == "excel":
-            f = _resolve_single(o)
-            if f is None:
+            builder = str(o.get("builder") or theme_builder_by_id.get(o.get("id")) or "").strip()
+            if not builder:
+                skipped.append({"name": name, "reason": "生成方法（builder）が未設定です。"})
                 continue
-            data = objstore.get_bytes(f["s3_key"])
-            if data is None:
-                continue
-            ext = f["rel_path"].rsplit(".", 1)[-1].lower() if "." in f["rel_path"] else "xlsx"
-            excel_files.append((_unique_arcname(name, ext), data))
-            included_names.append(name)
+            excel_outputs.append((name, builder))
         else:
-            sections = _collect_output_sections(o, files_by_key, files_by_id)
+            sections = _collect_output_sections(o, files_by_key, files_by_id, overrides)
             if not sections:
                 continue
             md_outputs.append({"name": name, "sections": sections})
             included_names.append(name)
 
-    if not md_outputs and not excel_files:
+    # Markdown 本文が参照する画像を集約し、生成サービスへ同送する（Word へ埋め込むため）。
+    assets: dict[str, bytes] = {}
+    for o in md_outputs:
+        for sec in o["sections"]:
+            for rel in _extract_image_refs(sec.get("content", "")):
+                if rel in assets:
+                    continue
+                f = files_by_rel.get(rel)
+                if f is None:
+                    continue
+                data = objstore.get_bytes(f["s3_key"])
+                if data is not None:
+                    assets[rel] = data
+
+    if not md_outputs and not excel_outputs:
         return JSONResponse(
             status_code=400,
             content={"error": "出力できる内容がありません（章の設定や生成状況を確認してください）。"},
         )
 
+    # Markdown・Excel いずれの出力も生成サービス（spec-app）を使うため base_url が必須。
+    if (md_outputs or excel_outputs) and not base_url:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "このテーマの生成 API が未設定です（管理者に確認してください）。"},
+        )
+    api_key = generate.theme_api_key(theme_def)
+
     # Markdown 出力は生成サービスへ送って Word(.docx) 化する。
     docx_zip: bytes | None = None
     if md_outputs:
-        if not base_url:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "このテーマの Word 合成 API が未設定です（管理者に確認してください）。"},
-            )
         try:
             docx_zip = await generate.compose(
                 md_outputs,
                 base_url=base_url,
-                api_key=generate.theme_api_key(theme_def),
+                api_key=api_key,
                 reference=str(theme_def.get("doc_type") or ""),
+                assets=assets or None,
             )
         except generate.GenerateError as e:
             return JSONResponse(status_code=502, content={"error": str(e)})
+
+    # Excel 出力は、その時点の章本文＋保存パラメータから書き出し時に生成する。
+    if excel_outputs:
+        params = store.get_gen_params(project_id, uid)
+        params = dict(params) if isinstance(params, dict) else {}
+        params.setdefault("username", uid)
+        for name, builder in excel_outputs:
+            try:
+                data = await generate.build_excel(
+                    builder,
+                    base_url=base_url,
+                    api_key=api_key,
+                    params=params,
+                    sections=section_contents,
+                )
+            except generate.ExcelSkip as e:
+                skipped.append({"name": name, "reason": str(e)})
+                continue
+            except generate.GenerateError as e:
+                return JSONResponse(status_code=502, content={"error": f"{name}: {e}"})
+            excel_files.append((_unique_arcname(name, "xlsx"), data))
+            included_names.append(name)
+
+    if not md_outputs and not excel_files:
+        # 例: 一次審査表のみ指定したが対象章が無かった等。
+        detail = "; ".join(f"{s['name']}: {s['reason']}" for s in skipped) or "対象がありません。"
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"出力できる内容がありません（{detail}）。"},
+        )
 
     # docx（合成結果）と Excel（生成物）を 1 つの zip にまとめる。
     buf = io.BytesIO()
@@ -1156,5 +1308,6 @@ async def compose_project(
             "download_url": url,
             "download_filename": download_filename,
             "outputs": included_names,
+            "skipped": skipped,
         }
     )

@@ -32,3 +32,112 @@
   /* biome-ignore lint/complexity/noImportantStyles: 同上（line-height を両レイヤーで一致させないとカーソルがずれる） */
   line-height: 24px !important;
 }
+
+/*
+ * プレビュー・スタイルプリセット（表示専用。保存する Markdown 本文には影響しない）。
+ * フォントは現行のまま。見出しの採番と表の罫線のみを spec-app の Word 出力に寄せる。
+ * 参考実装（procureTechMarkdownEditor）の editor-themes.css の見出し接頭辞
+ * （第X章 / X.X. / (X) / ○）を踏襲しつつ、実番号を CSS カウンタで自動採番する。
+ */
+
+/* --- 共通: 表の罫線（プレーン以外） --- */
+.pte-preview table {
+  border-collapse: collapse;
+}
+
+.pte-preview :is(th, td) {
+  border: 1px solid #9ca3af;
+  padding: 4px 10px;
+}
+
+.pte-preview thead th {
+  background: #f3f4f6;
+}
+
+/* --- 調達仕様書風（第N章 / N.N / N.N.N / (N) / ○） --- */
+.pte-preview--spec {
+  counter-reset: pte-h1;
+}
+
+.pte-preview--spec h1 {
+  counter-reset: pte-h2;
+  counter-increment: pte-h1;
+  line-height: 2;
+}
+
+.pte-preview--spec h2 {
+  counter-reset: pte-h3;
+  counter-increment: pte-h2;
+  line-height: 2;
+}
+
+.pte-preview--spec h3 {
+  counter-reset: pte-h4;
+  counter-increment: pte-h3;
+  line-height: 2;
+}
+
+.pte-preview--spec h4 {
+  counter-increment: pte-h4;
+  line-height: 2;
+}
+
+.pte-preview--spec h1::before {
+  content: "第" counter(pte-h1) "章\3000";
+}
+
+.pte-preview--spec h2::before {
+  content: counter(pte-h1) "." counter(pte-h2) ".\3000";
+}
+
+.pte-preview--spec h3::before {
+  content: counter(pte-h1) "." counter(pte-h2) "." counter(pte-h3) ".\3000";
+}
+
+.pte-preview--spec h4::before {
+  content: "(" counter(pte-h4) ")\3000";
+}
+
+.pte-preview--spec h5::before {
+  content: "○\3000";
+}
+
+/* --- 番号付き（1 / 1.1 / 1.1.1 / 1.1.1.1） --- */
+.pte-preview--numbered {
+  counter-reset: pte-h1;
+}
+
+.pte-preview--numbered h1 {
+  counter-reset: pte-h2;
+  counter-increment: pte-h1;
+}
+
+.pte-preview--numbered h2 {
+  counter-reset: pte-h3;
+  counter-increment: pte-h2;
+}
+
+.pte-preview--numbered h3 {
+  counter-reset: pte-h4;
+  counter-increment: pte-h3;
+}
+
+.pte-preview--numbered h4 {
+  counter-increment: pte-h4;
+}
+
+.pte-preview--numbered h1::before {
+  content: counter(pte-h1) "\3000";
+}
+
+.pte-preview--numbered h2::before {
+  content: counter(pte-h1) "." counter(pte-h2) "\3000";
+}
+
+.pte-preview--numbered h3::before {
+  content: counter(pte-h1) "." counter(pte-h2) "." counter(pte-h3) "\3000";
+}
+
+.pte-preview--numbered h4::before {
+  content: counter(pte-h1) "." counter(pte-h2) "." counter(pte-h3) "." counter(pte-h4) "\3000";
+}

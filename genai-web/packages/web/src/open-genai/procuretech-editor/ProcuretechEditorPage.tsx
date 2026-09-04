@@ -9,6 +9,7 @@ import {
   PiArrowUp,
   PiColumns,
   PiCopySimple,
+  PiDownloadSimple,
   PiEye,
   PiFilePlus,
   PiFileText,
@@ -33,6 +34,7 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
+import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
 import { MERMAID_DIAGRAM_TYPES } from '@/features/generate-diagram/constants';
 import type { MermaidDiagramType } from '@/features/generate-diagram/types';
 import { extractDiagramCode } from '@/features/generate-diagram/utils/extractDiagram';
@@ -167,6 +169,22 @@ const DIAGRAM_TYPE_OPTIONS: { value: 'AI' | MermaidDiagramType; label: string }[
 ];
 
 type ViewMode = 'split' | 'edit' | 'preview';
+
+// プレビューの見出し・表スタイル（プレビュー表示専用。保存内容には影響しない）。
+// spec-app の Word 出力（custom-reference.docx）の見た目に寄せた「調達仕様書風」を含む。
+type PreviewStyle = 'plain' | 'spec' | 'numbered';
+const PREVIEW_STYLE_OPTIONS: { value: PreviewStyle; label: string }[] = [
+  { value: 'plain', label: 'プレーン' },
+  { value: 'spec', label: '調達仕様書風（第N章）' },
+  { value: 'numbered', label: '番号付き（1 / 1.1）' },
+];
+const PREVIEW_STYLE_STORAGE_KEY = 'procuretech-editor:previewStyle';
+const previewStyleClass = (style: PreviewStyle): string =>
+  style === 'spec'
+    ? 'pte-preview pte-preview--spec'
+    : style === 'numbered'
+      ? 'pte-preview pte-preview--numbered'
+      : '';
 
 const PROJECTS_TAB = 'projects';
 const EDIT_TAB = 'edit';
@@ -337,7 +355,13 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const [compose, setCompose] = useState<
     | { phase: 'idle' }
     | { phase: 'running' }
-    | { phase: 'done'; url?: string; filename?: string; names?: string[] }
+    | {
+        phase: 'done';
+        url?: string;
+        filename?: string;
+        names?: string[];
+        skipped?: { name: string; reason: string }[];
+      }
     | { phase: 'error'; message: string }
   >({ phase: 'idle' });
 
@@ -477,15 +501,82 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     }
   }, [actions, projectId, currentComposition, mutate]);
 
+  // 合成に含まれる Markdown ファイルのうち、``` mermaid ブロックを持つものを
+  // クライアント側で PNG 画像化し、画像参照へ差し替えた本文（overrides）を作る。
+  // pandoc は Mermaid をそのままでは図にできないため、画像にして埋め込む。
+  const materializeMermaid = useCallback(async (): Promise<Record<string, string>> => {
+    const overrides: Record<string, string> = {};
+    // 有効な Markdown 出力が参照するファイル（重複なし）を集める。
+    const targets = new Map<string, string>(); // file id -> rel_path
+    for (const o of outputs) {
+      if (o.enabled === false || o.kind === 'excel') continue;
+      for (const it of o.items) {
+        const f = it.section_key
+          ? fileByKey[it.section_key]
+          : it.file_id
+            ? fileById[it.file_id]
+            : undefined;
+        if (f && f.kind === 'markdown') targets.set(f.id, f.rel_path);
+      }
+    }
+    const fence = /```mermaid[^\n]*\n([\s\S]*?)```/g;
+    for (const [fileId, relPath] of targets) {
+      const content = (await fetchFileContent(projectId, relPath))?.content ?? '';
+      if (!/```mermaid/.test(content)) continue;
+      const blocks: string[] = [];
+      let m: RegExpExecArray | null;
+      fence.lastIndex = 0;
+      // biome-ignore lint/suspicious/noAssignInExpressions: 正規表現の逐次マッチ
+      while ((m = fence.exec(content)) !== null) blocks.push(m[1]);
+      if (blocks.length === 0) continue;
+
+      // ブロックを順に画像化してアップロードし、参照 rel_path を得る。
+      const replacements: string[] = [];
+      for (let i = 0; i < blocks.length; i++) {
+        try {
+          const dataUrl = await mermaidToPngDataUrl(blocks[i]);
+          const filename = `mermaid-${fileId}-${i}.png`;
+          const uploaded = await actions.uploadFile(projectId, {
+            filename,
+            content_b64: dataUrl,
+            dir: 'images',
+          });
+          replacements.push(uploaded ? `![diagram](${uploaded.rel_path})` : '');
+        } catch {
+          replacements.push(''); // 失敗時はそのブロックを空に（元コードは残さない）
+        }
+      }
+      let idx = 0;
+      fence.lastIndex = 0;
+      const rewritten = content.replace(fence, (whole) => {
+        const rep = replacements[idx++];
+        return rep || whole; // 画像化に失敗した場合は元のブロックを残す
+      });
+      overrides[fileId] = rewritten;
+    }
+    return overrides;
+  }, [outputs, fileByKey, fileById, projectId, actions]);
+
   const onCompose = useCallback(async () => {
     setCompose({ phase: 'running' });
-    const res = await actions.composeProject(projectId, currentComposition());
+    let overrides: Record<string, string> = {};
+    try {
+      overrides = await materializeMermaid();
+    } catch {
+      // 画像化に失敗しても合成自体は続行（Mermaid はコードのまま出力される）。
+      overrides = {};
+    }
+    if (Object.keys(overrides).length > 0) {
+      await mutate(); // 追加した画像ファイルを一覧へ反映
+    }
+    const res = await actions.composeProject(projectId, currentComposition(), overrides);
     if (res?.download_url) {
       setCompose({
         phase: 'done',
         url: res.download_url,
         filename: res.download_filename,
         names: res.outputs,
+        skipped: res.skipped,
       });
     } else if (res?.error) {
       setCompose({ phase: 'error', message: res.error });
@@ -494,7 +585,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     } else {
       setCompose({ phase: 'error', message: 'Word 合成に失敗しました。' });
     }
-  }, [actions, projectId, currentComposition]);
+  }, [actions, projectId, currentComposition, materializeMermaid, mutate]);
 
   if (isLoading && !data) {
     return (
@@ -534,7 +625,6 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
             // Excel 出力（見積総括表・一次審査表）は「生成された単一ファイル」を出力するだけ。
             // 章の並べ替え UI は出さず、生成状況のみ表示する。
             if (out.kind === 'excel') {
-              const info = out.items[0] ? resolveItem(out.items[0]) : null;
               return (
                 <div key={out.id} className='rounded-8 border border-solid-gray-300'>
                   <div className='flex items-center gap-2 border-b border-solid-gray-200 bg-solid-gray-50 px-3 py-2'>
@@ -562,17 +652,19 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                       <PiTrash className='size-4' />
                     </button>
                   </div>
-                  <div className='px-3 py-3 text-dns-14N-130'>
-                    {info?.available ? (
-                      <span className='inline-flex items-center gap-1.5 text-solid-gray-700'>
-                        <PiTable className='size-4 text-green-700' />
-                        生成済み: {info.path}
+                  <div className='px-3 py-3 text-dns-14N-130 text-solid-gray-600'>
+                    {out.builder === 'primaryexam' ? (
+                      <span>
+                        「書き出す」時に、その時点の各章（section2/4/5/6 相当）から
+                        一次審査表を生成します。対象章が無い場合はスキップします。
+                      </span>
+                    ) : out.builder === 'quotation' ? (
+                      <span>
+                        「書き出す」時に、生成時の保存パラメータ（年度・フェーズ）から
+                        見積総括表を生成します。
                       </span>
                     ) : (
-                      <span className='text-solid-gray-500'>
-                        未生成です。「ヒアリングシートから生成」を実行すると Excel
-                        が作成され、ここに表示されます。
-                      </span>
+                      <span>「書き出す」時に生成します。</span>
                     )}
                   </div>
                 </div>
@@ -771,6 +863,15 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                 ダウンロード
               </Button>
             )}
+            {compose.skipped && compose.skipped.length > 0 && (
+              <ul className='mt-2 list-disc pl-5 text-dns-14N-130 text-amber-800'>
+                {compose.skipped.map((s) => (
+                  <li key={s.name}>
+                    {s.name}: {s.reason}（生成をスキップしました）
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>
@@ -798,6 +899,11 @@ export const ProcuretechEditorPage = () => {
 
   const [activeTab, setActiveTab] = useState<string>(PROJECTS_TAB);
   const [viewMode, setViewMode] = useState<ViewMode>('split');
+  const [previewStyle, setPreviewStyle] = useState<PreviewStyle>(() => {
+    if (typeof window === 'undefined') return 'plain';
+    const saved = window.localStorage.getItem(PREVIEW_STYLE_STORAGE_KEY);
+    return saved === 'spec' || saved === 'numbered' || saved === 'plain' ? saved : 'plain';
+  });
   const [savedNotice, setSavedNotice] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -839,6 +945,12 @@ export const ProcuretechEditorPage = () => {
   const isMarkdown = selected?.kind === 'markdown';
   const isDirty = isEditable && draft !== baseline;
   const storageOk = config?.storage_configured !== false;
+
+  // プレビュー・スタイルの選択を保存する（次回以降も維持）。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PREVIEW_STYLE_STORAGE_KEY, previewStyle);
+  }, [previewStyle]);
 
   // 編集ペインとプレビューペインのスクロール連動（Markdown の分割表示時のみ）。
   const editorWrapRef = useRef<HTMLDivElement>(null);
@@ -1080,6 +1192,15 @@ export const ProcuretechEditorPage = () => {
     setInputFiles({});
     setGeneration({ phase: 'idle' });
     setGenerateStep('inputs');
+  };
+
+  // テーマ入力の様式（ヒアリングシート）を取得してダウンロードする。
+  const onDownloadTemplate = async (inputKey: string) => {
+    if (!selectedTheme) return;
+    const res = await actions.downloadInputTemplate(selectedTheme.id, inputKey);
+    if (res?.download_url) {
+      window.open(res.download_url, '_blank', 'noopener');
+    }
   };
 
   // 選択テーマのヒアリングシート（複数）から章別 Markdown 生成を開始する。
@@ -1500,6 +1621,23 @@ export const ProcuretechEditorPage = () => {
               </span>
 
               <span className='ml-auto flex items-center gap-2'>
+                {isMarkdown && viewMode !== 'edit' && (
+                  <label className='flex items-center gap-1 text-dns-14N-130 text-solid-gray-700'>
+                    <span className='whitespace-nowrap'>プレビュー表示</span>
+                    <select
+                      value={previewStyle}
+                      onChange={(e) => setPreviewStyle(e.target.value as PreviewStyle)}
+                      className='rounded-4 border border-solid-gray-300 bg-white px-2 py-1 text-dns-14N-130'
+                      title='プレビューの見出し・表スタイル（表示専用）'
+                    >
+                      {PREVIEW_STYLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {isMarkdown && (
                   <div className='flex items-center gap-0.5 rounded-4 border border-solid-gray-300 p-0.5'>
                     {viewBtn('split', '分割', <PiColumns className='size-4' />)}
@@ -1588,7 +1726,7 @@ export const ProcuretechEditorPage = () => {
                     ref={previewRef}
                     className='h-full overflow-auto rounded-8 border border-solid-gray-300 bg-white p-4'
                   >
-                    <Markdown>{previewSource}</Markdown>
+                    <Markdown className={previewStyleClass(previewStyle)}>{previewSource}</Markdown>
                   </div>
                 )}
               </div>
@@ -1828,6 +1966,18 @@ export const ProcuretechEditorPage = () => {
                             {picked ? picked.name : '未選択'}
                           </span>
                         </div>
+                        {spec.template && (
+                          <button
+                            type='button'
+                            onClick={() => onDownloadTemplate(spec.key)}
+                            disabled={actions.submitting}
+                            className='inline-flex w-fit items-center gap-1 text-dns-14N-130 text-blue-700 underline-offset-2 hover:underline disabled:text-solid-gray-400'
+                            title='この入力の様式（ヒアリングシート）をダウンロード'
+                          >
+                            <PiDownloadSimple className='size-4' />
+                            様式をダウンロード
+                          </button>
+                        )}
                       </div>
                     );
                   })}

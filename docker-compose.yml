@@ -600,8 +600,8 @@ services:
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
       - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
       # 外部「文書生成」API（Excel→章別 Markdown。未設定なら「Excel から生成」は無効表示）
-      # ローカル検証は procuretech-editor-mock プロファイルのモックを併用し、
-      #   EDITOR_GENERATE_URL=http://procuretech-generate-mock:8016 を設定する。
+      # ローカル検証は procuretech-editor-sample プロファイルの実装サンプルを併用し、
+      #   EDITOR_GENERATE_URL=http://procuretech-generate-sample:8016 を設定する。
       - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
       - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
       - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
@@ -623,20 +623,21 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-  # 任意（開発検証用）: 文書生成 API のモック
-  #   (`docker compose --profile procuretech-editor --profile procuretech-editor-mock up -d`)
-  # 本番の非公開生成サービスと同じ契約を実装したスタブ。LLM/Dify は呼ばず、
-  # Excel の一部セルを反映したサンプル章別 Markdown を zip で返す。
-  # 併用時は EDITOR_GENERATE_URL=http://procuretech-generate-mock:8016 を設定する。
-  procuretech-generate-mock:
-    profiles: ["procuretech-editor-mock"]
-    build: ./procuretech-generate-mock
-    container_name: open-genai-procuretech-generate-mock
+  # 文書生成・合成サービスの「実装サンプル（動作する参照実装）」
+  #   (`docker compose --profile procuretech-editor --profile procuretech-editor-sample up -d`)
+  # 非公開の本番サービスと同じ契約を実装。LLM/Dify は呼ばず、同梱の簡単な
+  # ヒアリングシート（materials/hearing/hearing-sample.xlsx）から章別 Markdown を
+  # 生成し、Word(.docx) 合成・様式ダウンロードまで一通り動作する。
+  # 併用時は EDITOR_GENERATE_URL=http://procuretech-generate-sample:8016 を設定する。
+  procuretech-generate-sample:
+    profiles: ["procuretech-editor-sample"]
+    build: ./procuretech-generate-sample
+    container_name: open-genai-procuretech-generate-sample
     environment:
-      - GENERATE_MOCK_API_KEY=${EDITOR_GENERATE_API_KEY:-}
-      - GENERATE_MOCK_PROCESS_SECONDS=${GENERATE_MOCK_PROCESS_SECONDS:-2}
+      - GENERATE_SAMPLE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - GENERATE_SAMPLE_PROCESS_SECONDS=${GENERATE_SAMPLE_PROCESS_SECONDS:-2}
     ports:
-      - "${PROCURETECH_GENERATE_MOCK_PORT:-8016}:8016"
+      - "${PROCURETECH_GENERATE_SAMPLE_PORT:-8016}:8016"
     restart: unless-stopped
 
   # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装）----

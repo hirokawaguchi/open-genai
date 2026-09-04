@@ -82,6 +82,13 @@ def init_db() -> None:
               updated_at TEXT NOT NULL,
               FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS gen_params (
+              project_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              data TEXT NOT NULL DEFAULT '{}',
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS generations (
               request_id TEXT PRIMARY KEY,
               project_id TEXT NOT NULL,
@@ -490,6 +497,40 @@ def save_composition(
     with _lock:
         db.execute(
             "INSERT INTO compositions (project_id, user_id, data, updated_at)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(project_id) DO UPDATE SET data = excluded.data,"
+            " updated_at = excluded.updated_at",
+            (project_id, user_id, payload, now),
+        )
+        db.commit()
+    return data
+
+
+def get_gen_params(project_id: str, user_id: str) -> dict[str, Any]:
+    """生成時に保存したパラメータ（nextyear/phaselist/projectName 等）を返す。"""
+    db = connect()
+    row = db.execute(
+        "SELECT data FROM gen_params WHERE project_id = ? AND user_id = ?",
+        (project_id, user_id),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        return json.loads(row["data"] or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_gen_params(
+    project_id: str, user_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """生成時パラメータを保存（上書き）する。書き出し時の Excel 生成で使う。"""
+    db = connect()
+    now = _now_iso()
+    payload = json.dumps(data, ensure_ascii=False)
+    with _lock:
+        db.execute(
+            "INSERT INTO gen_params (project_id, user_id, data, updated_at)"
             " VALUES (?, ?, ?, ?)"
             " ON CONFLICT(project_id) DO UPDATE SET data = excluded.data,"
             " updated_at = excluded.updated_at",

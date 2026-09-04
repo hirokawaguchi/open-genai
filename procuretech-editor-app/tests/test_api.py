@@ -457,9 +457,10 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
 
     captured = {}
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
         captured["outputs"] = outputs
         captured["reference"] = reference
+        captured["assets"] = assets
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for o in outputs:
@@ -467,6 +468,12 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
         return buf.getvalue()
 
     monkeypatch.setattr(generate, "compose", fake_compose)
+
+    # Excel 出力（見積/一次審査）は書き出し時生成。ここではスキップさせて Word のみ検証。
+    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+        raise generate.ExcelSkip("テスト: スキップ")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
     # 既定（テーマ）定義で合成
     res = client.post(f"/projects/{p['id']}/compose", json={}, headers=USER_A)
@@ -488,8 +495,95 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
     assert all("xlsx" not in (s.get("filename", "") or "") for s in spec["sections"])
 
 
-def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
-    """生成された Excel（見積総括表）は Word 合成を介さず zip に同梱される。"""
+def test_compose_overrides_and_embeds_image(client, monkeypatch):
+    """overrides で本文を差し替え、参照画像を assets として compose へ渡す。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+
+    files = client.get(f"/projects/{p['id']}/files", headers=USER_A).json()["files"]
+    bg_id = next(f["id"] for f in files if f["rel_path"] == "section1.md")
+
+    # 参照画像をアップロード（images/pic.png）。
+    client.post(
+        f"/projects/{p['id']}/files/upload",
+        json={"filename": "pic.png", "content_b64": base64.b64encode(b"PNGDATA").decode(),
+              "dir": "images"},
+        headers=USER_A,
+    )
+
+    captured = {}
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+        captured["outputs"] = outputs
+        captured["assets"] = assets
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                zf.writestr(f"{o['name']}.docx", b"DOCX")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+        raise generate.ExcelSkip("テスト: スキップ")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    override = "# 背景\n\n![diagram](images/pic.png)\n"
+    res = client.post(
+        f"/projects/{p['id']}/compose",
+        json={"overrides": {bg_id: override}},
+        headers=USER_A,
+    )
+    assert res.status_code == 200, res.text
+
+    spec = next(o for o in captured["outputs"] if o["name"] == "調達仕様書")
+    # override が S3 の内容より優先される
+    assert spec["sections"][0]["content"] == override
+    # 参照画像が assets として渡る
+    assert captured["assets"] is not None
+    assert captured["assets"]["images/pic.png"] == b"PNGDATA"
+
+
+def test_download_input_template(client, monkeypatch, _mem_objstore):
+    """テーマ入力の様式を生成サービスから取得し、署名付き URL を返す。"""
+    from app import generate
+
+    async def fake_fetch(input_key, *, base_url, api_key=""):
+        assert input_key == "systemplan"
+        return (b"XLSXFORM", "systemplan.xlsx", "application/vnd.ms-excel")
+
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://gen.test")
+    monkeypatch.setattr(generate, "fetch_template", fake_fetch)
+
+    res = client.get(
+        "/themes/procurement_spec/inputs/systemplan/template", headers=USER_A
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["download_filename"] == "systemplan.xlsx"
+    key = body["download_url"].split("https://dl/", 1)[1]
+    assert _mem_objstore[key] == b"XLSXFORM"
+
+
+def test_download_input_template_missing(client, monkeypatch):
+    """生成サービスが様式未対応(404)ならエラーを返す。"""
+    from app import generate
+
+    async def fake_fetch(input_key, *, base_url, api_key=""):
+        raise generate.GenerateError("この入力の様式は配信されていません。")
+
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://gen.test")
+    monkeypatch.setattr(generate, "fetch_template", fake_fetch)
+
+    res = client.get("/themes/procurement_spec/inputs/global/template", headers=USER_A)
+    assert res.status_code == 404
+
+
+def test_compose_builds_excel_at_export(client, monkeypatch, _mem_objstore):
+    """Excel（見積総括表）は書き出し時に、保存パラメータ＋現時点の章から生成される。"""
     from app import generate
 
     async def fake_start(files, *, base_url, api_key="", username, doc_type=None, options=None):
@@ -502,13 +596,18 @@ def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("section1.md", "# 背景\n本文1")
-            zf.writestr("quotation.xlsx", b"XLSXDATA-QUOTATION")
+            zf.writestr("section2.md", "# 目的\n本文2")
+            # 生成時に保存されるパラメータ（書き出し時の Excel 生成で使う）
+            zf.writestr(
+                "template_data.json",
+                '{"nextyear":"2027","phaselist":"1, 2","projectName":"P"}',
+            )
             zf.writestr(
                 "sections.json",
                 (
                     '{"theme":"procurement_spec","sections":['
                     '{"file":"section1.md","section_key":"background","order":1},'
-                    '{"file":"quotation.xlsx","section_key":"quotation","order":2}]}'
+                    '{"file":"section2.md","section_key":"businessPurpose","order":2}]}'
                 ),
             )
         return buf.getvalue()
@@ -523,6 +622,16 @@ def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
         raise AssertionError("generate.compose should not be called for excel-only")
 
     monkeypatch.setattr(generate, "compose", _boom)
+
+    captured = {}
+
+    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+        captured["builder"] = builder
+        captured["params"] = params
+        captured["sections"] = sections
+        return b"XLSXDATA-QUOTATION"
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
     p = _create_project(client)
     start = client.post(
@@ -539,7 +648,7 @@ def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
     rid = start.json()["request_id"]
     client.get(f"/projects/{p['id']}/generations/{rid}", headers=USER_A)
 
-    # 見積総括表（excel 出力）だけを対象に compose
+    # 見積総括表（excel 出力・builder=quotation）だけを対象に compose
     composition = {
         "theme": "procurement_spec",
         "outputs": [
@@ -547,8 +656,9 @@ def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
                 "id": "quotation",
                 "name": "見積費用総括表",
                 "kind": "excel",
+                "builder": "quotation",
                 "enabled": True,
-                "items": [{"section_key": "quotation"}],
+                "items": [],
             }
         ],
     }
@@ -563,3 +673,58 @@ def test_compose_includes_generated_excel(client, monkeypatch, _mem_objstore):
         names = zf.namelist()
         assert "見積費用総括表.xlsx" in names
         assert zf.read("見積費用総括表.xlsx") == b"XLSXDATA-QUOTATION"
+
+    # 保存パラメータ（nextyear/phaselist）と現時点の章本文が生成サービスへ渡る
+    assert captured["builder"] == "quotation"
+    assert captured["params"]["nextyear"] == "2027"
+    assert captured["params"]["phaselist"] == "1, 2"
+    assert captured["sections"]["background"].startswith("# 背景")
+
+
+def test_compose_skips_excel_when_no_source(client, monkeypatch, _mem_objstore):
+    """一次審査表の対象章が無い場合はスキップし、skipped に理由を返す。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+
+    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+        raise generate.ExcelSkip("一次審査表の対象章がありません。")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                zf.writestr(f"{o['name']}.docx", b"DOCX")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    composition = {
+        "theme": "procurement_spec",
+        "outputs": [
+            {
+                "id": "specification",
+                "name": "調達仕様書",
+                "kind": "markdown",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            },
+            {
+                "id": "primaryexam",
+                "name": "一次審査表",
+                "kind": "excel",
+                "builder": "primaryexam",
+                "enabled": True,
+                "items": [],
+            },
+        ],
+    }
+    res = client.post(
+        f"/projects/{p['id']}/compose", json={"composition": composition}, headers=USER_A
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert any(s["name"] == "一次審査表" for s in body.get("skipped", []))

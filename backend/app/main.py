@@ -3865,6 +3865,20 @@ async def procuretech_editor_generation_status(
     )
 
 
+@app.get("/procuretech-editor/themes/{theme_id}/inputs/{input_key}/template")
+async def procuretech_editor_input_template(
+    theme_id: str, input_key: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor(
+        "GET",
+        _procuretech_editor_app_url(f"/themes/{theme_id}/inputs/{input_key}/template"),
+        headers,
+    )
+
+
 @app.get("/procuretech-editor/projects/{project_id}/composition")
 async def procuretech_editor_get_composition(
     project_id: str, request: Request, theme: str | None = None

@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from typing import Any
@@ -72,12 +73,14 @@ def _default_theme() -> dict[str, Any]:
                 "label": "情報化企画書（systemplan.xlsx）",
                 "marker": "systemplan",
                 "accept": ".xlsx",
+                "template": True,
             },
             {
                 "key": "global",
                 "label": "全般的事項（global.xlsx）",
                 "marker": "global",
                 "accept": ".xlsx",
+                "template": True,
             },
         ],
         # 生成される章（section key ↔ 表示名）。合成定義（outputs）はこの key を並べて参照する。
@@ -92,12 +95,12 @@ def _default_theme() -> dict[str, Any]:
             {"key": "proposal", "label": "提案・見積に関する事項"},
             {"key": "other", "label": "その他"},
             {"key": "rfi", "label": "情報提供依頼（RFI）"},
-            {"key": "quotation", "label": "見積費用総括表（Excel）"},
-            {"key": "primaryexam", "label": "プロポーザル一次審査表（Excel）"},
         ],
         # 合成（Word/Excel 出力）の既定定義。
         # - kind=markdown: section key を順序付きで並べ、Word(.docx) に合成する。
-        # - kind=excel: 生成時に作られる単一 Excel ファイル（section key で参照）をそのまま出力する。
+        # - kind=excel: 書き出し時に、その時点の Markdown＋保存パラメータから Excel を生成する
+        #   （builder が生成方法を示す。quotation=見積総括表、primaryexam=一次審査表）。
+        #   ソース章は生成サービス側が決定するため items（section key）は持たない。
         # プロジェクト側で並べ替え・ON/OFF・出力追加の上書きが可能。
         "outputs": [
             {
@@ -120,13 +123,15 @@ def _default_theme() -> dict[str, Any]:
                 "id": "quotation",
                 "name": "見積費用総括表",
                 "kind": "excel",
-                "sections": ["quotation"],
+                "builder": "quotation",
+                "sections": [],
             },
             {
                 "id": "primaryexam",
                 "name": "プロポーザル一次審査表",
                 "kind": "excel",
-                "sections": ["primaryexam"],
+                "builder": "primaryexam",
+                "sections": [],
             },
         ],
     }
@@ -181,14 +186,15 @@ def theme_outputs(theme: dict[str, Any]) -> list[dict[str, Any]]:
     for o in theme.get("outputs", []) or []:
         if not isinstance(o, dict) or not o.get("id"):
             continue
-        out.append(
-            {
-                "id": o.get("id"),
-                "name": o.get("name", o.get("id")),
-                "kind": o.get("kind", "markdown"),
-                "sections": [str(k) for k in (o.get("sections") or [])],
-            }
-        )
+        entry: dict[str, Any] = {
+            "id": o.get("id"),
+            "name": o.get("name", o.get("id")),
+            "kind": o.get("kind", "markdown"),
+            "sections": [str(k) for k in (o.get("sections") or [])],
+        }
+        if o.get("builder"):
+            entry["builder"] = str(o.get("builder"))
+        out.append(entry)
     return out
 
 
@@ -209,6 +215,7 @@ def public_themes() -> list[dict[str, Any]]:
                         "label": i.get("label", i.get("key")),
                         "marker": i.get("marker"),
                         "accept": i.get("accept", ".xlsx"),
+                        "template": bool(i.get("template")),
                     }
                     for i in t.get("inputs", [])
                     if i.get("key")
@@ -307,10 +314,13 @@ async def compose(
     base_url: str,
     api_key: str = "",
     reference: str | None = None,
+    assets: dict[str, bytes] | None = None,
 ) -> bytes:
     """順序付き Markdown（出力ファイル毎）を生成サービスへ送り Word(.docx) zip を得る。
 
     outputs = [{"name": str, "sections": [{"filename": str, "content": str}, ...]}, ...]
+    assets  = {相対パス: バイト列}（本文が参照する画像。生成サービス側で同じ相対パスに
+              配置してから pandoc に渡すことで Word へ埋め込まれる）。
     """
     if not base_url:
         raise GenerateError("文書生成 API が未設定です（このテーマの合成先が未設定）。")
@@ -319,6 +329,10 @@ async def compose(
     body: dict[str, Any] = {"outputs": outputs}
     if reference:
         body["reference"] = reference
+    if assets:
+        body["assets"] = {
+            path: base64.b64encode(data).decode("ascii") for path, data in assets.items()
+        }
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         try:
             res = await client.post(
@@ -333,3 +347,89 @@ async def compose(
             msg = "Word 合成に失敗しました。"
         raise GenerateError(msg)
     return res.content
+
+
+class ExcelSkip(Exception):
+    """Excel を生成対象なし等でスキップすべきことを示す（422）。message に理由。"""
+
+
+async def build_excel(
+    builder: str,
+    *,
+    base_url: str,
+    api_key: str = "",
+    params: dict[str, Any] | None = None,
+    sections: dict[str, str] | None = None,
+) -> bytes:
+    """書き出し時に、その時点の Markdown＋保存パラメータから Excel を生成して受け取る。
+
+    builder = "quotation" | "primaryexam"
+    - 生成不可（対象章なし・パラメータ不足）のとき ExcelSkip を送出（呼び出し元でスキップ＆警告）。
+    - その他のエラーは GenerateError。
+    """
+    if not base_url:
+        raise GenerateError("文書生成 API が未設定です（このテーマの生成先が未設定）。")
+    body: dict[str, Any] = {
+        "builder": builder,
+        "params": params or {},
+        "sections": sections or {},
+    }
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            res = await client.post(
+                f"{base_url}/excel", json=body, headers=_headers(api_key)
+            )
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+    if res.status_code == 422:
+        try:
+            msg = res.json().get("error") or "生成対象がありません。"
+        except Exception:  # noqa: BLE001
+            msg = "生成対象がありません。"
+        raise ExcelSkip(msg)
+    if res.status_code != 200:
+        try:
+            msg = res.json().get("error") or "Excel の生成に失敗しました。"
+        except Exception:  # noqa: BLE001
+            msg = "Excel の生成に失敗しました。"
+        raise GenerateError(msg)
+    return res.content
+
+
+def _filename_from_disposition(value: str | None, default: str) -> str:
+    """Content-Disposition から filename を取り出す（無ければ default）。"""
+    if not value:
+        return default
+    for part in value.split(";"):
+        p = part.strip()
+        if p.lower().startswith("filename="):
+            name = p[len("filename=") :].strip().strip('"')
+            return name or default
+    return default
+
+
+async def fetch_template(
+    input_key: str, *, base_url: str, api_key: str = ""
+) -> tuple[bytes, str, str]:
+    """生成サービスの `GET /template/{key}` から様式ファイルを取得する。
+
+    returns (bytes, filename, content_type)。見つからない/未設定は GenerateError。
+    """
+    if not base_url:
+        raise GenerateError("文書生成 API が未設定です（このテーマの様式配信先が未設定）。")
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            res = await client.get(
+                f"{base_url}/template/{input_key}", headers=_headers(api_key)
+            )
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+    if res.status_code == 404:
+        raise GenerateError("この入力の様式は配信されていません。")
+    if res.status_code != 200:
+        raise GenerateError("様式の取得に失敗しました。")
+    ctype = res.headers.get("content-type") or XLSX_MIME
+    filename = _filename_from_disposition(
+        res.headers.get("content-disposition"), f"{input_key}.xlsx"
+    )
+    return res.content, filename, ctype
