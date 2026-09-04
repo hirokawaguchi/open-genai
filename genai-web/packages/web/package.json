@@ -17,6 +17,7 @@
     "@floating-ui/react": "^0.27.19",
     "@headlessui/react": "^2.2.10",
     "@hookform/resolvers": "^5.2.2",
+    "@uiw/react-md-editor": "^4.1.2",
     "file-type": "^22.0.1",
     "immer": "^11.1.4",
     "mermaid": "^11.15.0",

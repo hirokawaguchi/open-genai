@@ -73,6 +73,12 @@ services:
       - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
       - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
       - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
+      # 情報化企画書ナビ（profiles: ["procuretech"]。未起動時は専用ページが案内を表示）
+      - PROCURETECH_APP_URL=${PROCURETECH_APP_URL:-http://procuretech-navigator-app:8014/invoke}
+      # 更新版 xlsx を SeaweedFS(S3) 経由の署名付き URL で配信する（既定は直接ダウンロード）
+      - PROCURETECH_DOWNLOAD_VIA_S3=${PROCURETECH_DOWNLOAD_VIA_S3:-}
+      # 情報化企画書エディタ（profiles: ["procuretech-editor"]。未起動時は専用ページが案内を表示）
+      - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値。本番は必ず変更。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り, 空=内部宛先のみ拒否)とサイズ上限
@@ -544,6 +550,107 @@ services:
       - patchform-app
     restart: unless-stopped
 
+  # 任意: 情報化企画書ナビ (`docker compose --profile procuretech up -d`)
+  # 情報化企画書（Excel）を読み込み、4分野をチャットで整理して各欄へ書き出す。
+  # 庁内利用のみ（backend → 本サービス）。外部公開面は持たない。
+  procuretech-navigator-app:
+    profiles: ["procuretech"]
+    build: ./procuretech-navigator-app
+    container_name: open-genai-procuretech-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - PROCURETECH_DB_PATH=/data/procuretech.db
+      - PROCURETECH_RETENTION_DAYS=${PROCURETECH_RETENTION_DAYS:-30}
+      - PROCURETECH_MAX_UPLOAD_BYTES=${PROCURETECH_MAX_UPLOAD_BYTES:-10485760}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      # 通常チャットと同じ思考オフ。空なら procuretech-app 既定 (enable_thinking:false)
+      - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_app_data:/data
+    ports:
+      - "${PROCURETECH_PORT:-8014}:8014"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 任意: 情報化企画書エディタ (`docker compose --profile procuretech-editor up -d`)
+  # 案件フォルダ内の生成文書（Markdown）を編集・保存し、Word 変換 API へ統合する。
+  # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
+  procuretech-editor-app:
+    profiles: ["procuretech-editor"]
+    build: ./procuretech-editor-app
+    container_name: open-genai-procuretech-editor-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - EDITOR_DB_PATH=/data/procuretech_editor.db
+      - EDITOR_MAX_UPLOAD_BYTES=${EDITOR_MAX_UPLOAD_BYTES:-20971520}
+      # ファイル本体の保存先（backend と同じ SeaweedFS / S3 互換）
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
+      - S3_PUBLIC_ENDPOINT=${S3_PUBLIC_ENDPOINT:-http://localhost:8333}
+      - S3_BUCKET=${S3_BUCKET:-open-genai}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-opengenai}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-opengenai-secret}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
+      - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
+      # 外部「文書生成」API（Excel→章別 Markdown。未設定なら「Excel から生成」は無効表示）
+      # テーマ固有の生成/合成先（例: 調達仕様書=spec-app）。テーマ定義の api_url で上書き可。
+      - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
+      - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
+      - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
+      # 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API に依存させないため、
+      #   汎用サービス procuretech-generate-app を既定にする（editor プロファイルで同時起動）。
+      - EDITOR_COMPOSE_URL=${EDITOR_COMPOSE_URL:-http://procuretech-generate-app:8016}
+      - EDITOR_COMPOSE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
+      # テーマ定義(JSON)。テーマ↔ヒアリングシート↔API を管理者が設定。未設定なら
+      #   EDITOR_GENERATE_URL を使う単一テーマ（調達仕様書）が既定で使われる。
+      - EDITOR_GENERATE_THEMES=${EDITOR_GENERATE_THEMES:-}
+      # 将来の AI 校正用（OpenAI 互換）
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_editor_app_data:/data
+    ports:
+      - "${PROCURETECH_EDITOR_PORT:-8015}:8015"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
+  # procuretech-editor プロファイルで同時起動し、テーマ無しの「素の文書」の Word 化を担う
+  # （EDITOR_COMPOSE_URL=http://procuretech-generate-app:8016）。テーマ固有の非公開サービス
+  # （例: 調達仕様書=spec-app）を差し替える際の契約リファレンスにもなる。LLM/Dify 非依存で、
+  # 同梱のヒアリングシート（materials/hearing/hearing-sample.xlsx）から生成〜合成まで動作する。
+  procuretech-generate-app:
+    profiles: ["procuretech-editor"]
+    build: ./procuretech-generate-app
+    container_name: open-genai-procuretech-generate-app
+    environment:
+      - GENERATE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
+      - GENERATE_PROCESS_SECONDS=${GENERATE_PROCESS_SECONDS:-2}
+    ports:
+      - "${PROCURETECH_GENERATE_PORT:-8016}:8016"
+    restart: unless-stopped
+
+  # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装）----
+  # 生成ロジック（テンプレート/プロンプト/Dify 連携）を含むため非公開。サービス定義は
+  # gitignore 対象のオーバーレイ docker-compose.procuretech-spec.yml に分離している。
+  # 公開リポジトリでは上記の procuretech-generate-app を契約リファレンス兼既定合成に使う。
+  # 実サービスを使う場合:
+  #   docker compose -f docker-compose.yml -f docker-compose.procuretech-spec.yml \
+  #     --profile procuretech-editor --profile procuretech-spec up -d
+  #   （.env で EDITOR_GENERATE_URL=http://procuretech-spec-app:8016 を設定）
+
 volumes:
   backend_data:
   web_node_modules:
@@ -561,3 +668,5 @@ volumes:
   chosei_app_data:
   doccheck_app_data:
   patchform_app_data:
+  procuretech_app_data:
+  procuretech_editor_app_data:

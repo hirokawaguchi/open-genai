@@ -38,6 +38,12 @@ genai-web/packages/web/dist/
 /sd-server/
 /scripts/open-genai-ts-forward.sh
 
+# --- 非公開の文書生成サービス（調達仕様書テーマ専用。プロンプト/テンプレ/Dify 連携を含むため公開しない）---
+# 公開リポジトリには契約互換のモック（procuretech-generate-mock/）をリファレンスとして残す。
+/procuretech-spec-app/
+/procuretech-generate-app/
+/docker-compose.procuretech-spec.yml
+
 # --- サイト固有の Keycloak 管理コンソール許可 ---
 /proxy/kc-admin-allow.d/10-local.conf
 
@@ -62,3 +68,4 @@ deletion-report-*.txt
 !/docs/doccheck.md
 !/docs/patchform.md
 !/docs/spark.md
+!/docs/procuretech-generate-contract.md
