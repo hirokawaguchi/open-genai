@@ -521,7 +521,7 @@ PROCURETECH_SEED: dict[str, Any] = {
 PROCURETECH_EDITOR_SEED: dict[str, Any] = {
     "exAppId": "procuretech-editor",
     "teamId": COMMON_TEAM_ID,
-    "exAppName": "情報化企画書エディタ",
+    "exAppName": "Markdown エディタ",
     "endpoint": (
         PROCURETECH_EDITOR_APP_URL
         if PROCURETECH_EDITOR_APP_URL.endswith("/invoke")
@@ -530,12 +530,14 @@ PROCURETECH_EDITOR_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": "",
-    "description": "案件フォルダ内の生成文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。",
+    "description": "プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。",
     "howToUse": (
         "## 使い方\n\n"
-        "- 専用ページ「情報化企画書エディタ」で案件フォルダ（プロジェクト）を選択します。\n"
+        "- 専用ページ「Markdown エディタ」でプロジェクトを選択します。\n"
         "- ファイル管理から Markdown を作成・アップロード・リネーム・削除できます。\n"
-        "- エディタで内容を編集・保存し、「書き出し・統合」から Word 変換 API へ送信します。\n"
+        "- 「ヒアリングシートから生成」でテーマを選び、必要な Excel を取り込んで章別 Markdown を生成できます。\n"
+        "- エディタで内容を編集・保存し、「書き出し・統合」で出力ファイルごとに章を並べて Word へ合成します。\n"
+        "- 見積総括表・一次審査表は生成時に作られる Excel をそのまま同梱します（Word 合成とまとめて 1 つの zip）。\n"
         "- 有効化: `docker compose --profile procuretech-editor up -d` "
         "または `COMPOSE_PROFILES=procuretech-editor`。\n"
     ),
@@ -3831,8 +3833,8 @@ async def procuretech_editor_delete_file(
     )
 
 
-@app.post("/procuretech-editor/projects/{project_id}/export")
-async def procuretech_editor_export(
+@app.post("/procuretech-editor/projects/{project_id}/generate")
+async def procuretech_editor_generate(
     project_id: str, request: Request
 ) -> JSONResponse:
     err, headers = _procuretech_editor_headers(request)
@@ -3841,25 +3843,73 @@ async def procuretech_editor_export(
     body = await request.json()
     return await _proxy_procuretech_editor(
         "POST",
-        _procuretech_editor_app_url(f"/projects/{project_id}/export"),
+        _procuretech_editor_app_url(f"/projects/{project_id}/generate"),
         headers,
         body,
     )
 
 
-@app.get("/procuretech-editor/conversions/{request_id}")
-async def procuretech_editor_conversion_status(
-    request_id: str, request: Request, project_id: str | None = None
+@app.get("/procuretech-editor/projects/{project_id}/generations/{request_id}")
+async def procuretech_editor_generation_status(
+    project_id: str, request_id: str, request: Request
 ) -> JSONResponse:
     err, headers = _procuretech_editor_headers(request)
     if err:
         return err
-    params = {"project_id": project_id} if project_id else None
     return await _proxy_procuretech_editor(
         "GET",
-        _procuretech_editor_app_url(f"/conversions/{request_id}"),
+        _procuretech_editor_app_url(
+            f"/projects/{project_id}/generations/{request_id}"
+        ),
+        headers,
+    )
+
+
+@app.get("/procuretech-editor/projects/{project_id}/composition")
+async def procuretech_editor_get_composition(
+    project_id: str, request: Request, theme: str | None = None
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    params = {"theme": theme} if theme else None
+    return await _proxy_procuretech_editor(
+        "GET",
+        _procuretech_editor_app_url(f"/projects/{project_id}/composition"),
         headers,
         params=params,
+    )
+
+
+@app.put("/procuretech-editor/projects/{project_id}/composition")
+async def procuretech_editor_put_composition(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "PUT",
+        _procuretech_editor_app_url(f"/projects/{project_id}/composition"),
+        headers,
+        body,
+    )
+
+
+@app.post("/procuretech-editor/projects/{project_id}/compose")
+async def procuretech_editor_compose(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(f"/projects/{project_id}/compose"),
+        headers,
+        body,
     )
 
 

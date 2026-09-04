@@ -599,14 +599,16 @@ services:
       - S3_REGION=${S3_REGION:-us-east-1}
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
       - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
-      # 外部 Word 変換 API（未設定なら書き出しは無効表示）
-      - EDITOR_CONVERT_URL=${EDITOR_CONVERT_URL:-}
-      - EDITOR_CONVERT_TIMEOUT=${EDITOR_CONVERT_TIMEOUT:-120}
-      # 変換結果の受け取り（任意: Nextcloud/WebDAV）
-      - NEXTCLOUD_URL=${NEXTCLOUD_URL:-}
-      - NEXTCLOUD_USERNAME=${NEXTCLOUD_USERNAME:-}
-      - NEXTCLOUD_PASSWORD=${NEXTCLOUD_PASSWORD:-}
-      - NEXTCLOUD_DAV_ROOT=${NEXTCLOUD_DAV_ROOT:-remote.php/dav/files/sync}
+      # 外部「文書生成」API（Excel→章別 Markdown。未設定なら「Excel から生成」は無効表示）
+      # ローカル検証は procuretech-editor-mock プロファイルのモックを併用し、
+      #   EDITOR_GENERATE_URL=http://procuretech-generate-mock:8016 を設定する。
+      - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
+      - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
+      - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
+      # テーマ定義(JSON)。テーマ↔ヒアリングシート↔API を管理者が設定。未設定なら
+      #   EDITOR_GENERATE_URL を使う単一テーマ（調達仕様書）が既定で使われる。
+      - EDITOR_GENERATE_THEMES=${EDITOR_GENERATE_THEMES:-}
       # 将来の AI 校正用（OpenAI 互換）
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
@@ -619,6 +621,42 @@ services:
       - "${PROCURETECH_EDITOR_PORT:-8015}:8015"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 任意（開発検証用）: 文書生成 API のモック
+  #   (`docker compose --profile procuretech-editor --profile procuretech-editor-mock up -d`)
+  # 本番の非公開生成サービスと同じ契約を実装したスタブ。LLM/Dify は呼ばず、
+  # Excel の一部セルを反映したサンプル章別 Markdown を zip で返す。
+  # 併用時は EDITOR_GENERATE_URL=http://procuretech-generate-mock:8016 を設定する。
+  procuretech-generate-mock:
+    profiles: ["procuretech-editor-mock"]
+    build: ./procuretech-generate-mock
+    container_name: open-genai-procuretech-generate-mock
+    environment:
+      - GENERATE_MOCK_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - GENERATE_MOCK_PROCESS_SECONDS=${GENERATE_MOCK_PROCESS_SECONDS:-2}
+    ports:
+      - "${PROCURETECH_GENERATE_MOCK_PORT:-8016}:8016"
+    restart: unless-stopped
+
+  # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装の移植）----
+  # 非公開参考実装のドメインコードを移植し、Nextcloud→zip 返却に差し替えたもの。
+  # テーマ「調達仕様書」専用（生成 /generate と Word 合成 /compose を提供）。
+  # 併用時は EDITOR_GENERATE_URL=http://procuretech-spec-app:8016 を設定する。
+  # Dify アプリキーはイメージに焼き込まず、dify_keys.json をバインドマウントで渡す
+  #   （もしくは環境変数 PROCURETECH_DIFY_KEYS に JSON を設定）。
+  procuretech-spec-app:
+    profiles: ["procuretech-spec"]
+    build: ./procuretech-spec-app
+    container_name: open-genai-procuretech-spec-app
+    environment:
+      - GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - PROCURETECH_DIFY_KEYS=${PROCURETECH_DIFY_KEYS:-}
+    volumes:
+      # 秘匿キー（.gitignore 対象）。PROCURETECH_DIFY_KEYS を使う場合は不要。
+      - ./procuretech-spec-app/dify_keys.json:/app/dify_keys.json:ro
+    ports:
+      - "${PROCURETECH_SPEC_PORT:-8017}:8016"
     restart: unless-stopped
 
 volumes:
