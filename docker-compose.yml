@@ -639,25 +639,14 @@ services:
       - "${PROCURETECH_GENERATE_MOCK_PORT:-8016}:8016"
     restart: unless-stopped
 
-  # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装の移植）----
-  # 非公開参考実装のドメインコードを移植し、Nextcloud→zip 返却に差し替えたもの。
-  # テーマ「調達仕様書」専用（生成 /generate と Word 合成 /compose を提供）。
-  # 併用時は EDITOR_GENERATE_URL=http://procuretech-spec-app:8016 を設定する。
-  # Dify アプリキーはイメージに焼き込まず、dify_keys.json をバインドマウントで渡す
-  #   （もしくは環境変数 PROCURETECH_DIFY_KEYS に JSON を設定）。
-  procuretech-spec-app:
-    profiles: ["procuretech-spec"]
-    build: ./procuretech-spec-app
-    container_name: open-genai-procuretech-spec-app
-    environment:
-      - GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
-      - PROCURETECH_DIFY_KEYS=${PROCURETECH_DIFY_KEYS:-}
-    volumes:
-      # 秘匿キー（.gitignore 対象）。PROCURETECH_DIFY_KEYS を使う場合は不要。
-      - ./procuretech-spec-app/dify_keys.json:/app/dify_keys.json:ro
-    ports:
-      - "${PROCURETECH_SPEC_PORT:-8017}:8016"
-    restart: unless-stopped
+  # ---- 「調達仕様書」生成・合成サービス（Dify を用いた本番実装）----
+  # 生成ロジック（テンプレート/プロンプト/Dify 連携）を含むため非公開。サービス定義は
+  # gitignore 対象のオーバーレイ docker-compose.procuretech-spec.yml に分離している。
+  # 公開リポジトリでは上記のモック（procuretech-generate-mock）を契約リファレンスとして使う。
+  # 実サービスを使う場合:
+  #   docker compose -f docker-compose.yml -f docker-compose.procuretech-spec.yml \
+  #     --profile procuretech-editor --profile procuretech-spec up -d
+  #   （.env で EDITOR_GENERATE_URL=http://procuretech-spec-app:8016 を設定）
 
 volumes:
   backend_data:
