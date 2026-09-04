@@ -301,6 +301,8 @@ services:
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # 本人パスワード変更時の現行パスワード検証に使う realm 内クライアント（既定 admin-cli）。
+      - KEYCLOAK_PASSWORD_VERIFY_CLIENT=${KEYCLOAK_PASSWORD_VERIFY_CLIENT:-admin-cli}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
     depends_on:
       - keycloak
