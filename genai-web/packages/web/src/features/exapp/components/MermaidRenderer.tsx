@@ -1,5 +1,6 @@
 import mermaid, { type MermaidConfig } from 'mermaid';
 import { useCallback, useEffect, useState } from 'react';
+import { correctMermaidCode } from '@/features/exapp/utils/mermaid';
 import { newId } from '@/utils/uuid';
 
 const defaultConfig: MermaidConfig = {
@@ -29,53 +30,7 @@ export const MermaidRenderer = (props: Props) => {
     }
 
     try {
-      const correctedCode = code
-        // エスケープされた改行文字を実際の改行に変換
-        .replace(/\\n/g, '\n')
-        .replace(/・/g, '/')
-        .replace(/：/g, ':')
-        .replace(/subgraph\s+(.*)/gm, (_, title) => {
-          const correctedTitle = title
-            .replace(/\[.*?\]/g, '')
-            .replace(/,/g, '')
-            .replace(/[()（）]/g, '');
-          return `subgraph ${correctedTitle}`;
-        })
-        .replace(/class\s+(\w+)\[.*?\]/gm, (_, className) => `class ${className}`)
-        .replace(/\[([^\]]+)\]/g, (match, content) => {
-          // 座標表記 [数字, 数字] の場合は変換しない
-          if (/^\s*\d+\s*,\s*\d+\s*$/.test(content)) {
-            return match;
-          }
-          const replaced = content.replace(/\(/g, '（').replace(/\)/g, '）');
-          return `[${replaced}]`;
-        })
-        // quadrant chart用: x-axis/y-axisには引用符が必要
-        .replace(/(x-axis|y-axis)\s+(.+?)\s+-->\s+(.+?)$/gm, (_, axis, left, right) => {
-          const leftLabel = left.trim().replace(/^["']|["']$/g, '');
-          const rightLabel = right.trim().replace(/^["']|["']$/g, '');
-          return `${axis} "${leftLabel}" --> "${rightLabel}"`;
-        })
-        // quadrant-Xにも引用符が必要
-        .replace(/quadrant-([1-9])\s+(.+?)$/gm, (_, num, label) => {
-          const trimmedLabel = label.trim().replace(/^["']|["']$/g, '');
-          return `quadrant-${num} "${trimmedLabel}"`;
-        })
-        // データポイント名には引用符不要、座標値を0-1に正規化
-        .replace(
-          /^(\s*)([^:\n]+):\s*\[(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\]$/gm,
-          (_, indent, name, x, y) => {
-            const trimmedName = name.trim().replace(/^["']|["']$/g, '');
-            let xVal = parseFloat(x);
-            let yVal = parseFloat(y);
-
-            // 値が1より大きい場合は100で割って0-1の範囲に正規化
-            if (xVal > 1) xVal = xVal / 100;
-            if (yVal > 1) yVal = yVal / 100;
-
-            return `${indent}${trimmedName}: [${xVal}, ${yVal}]`;
-          },
-        );
+      const correctedCode = correctMermaidCode(code);
 
       const { svg } = await mermaid.render(`m-${newId()}`, correctedCode);
 

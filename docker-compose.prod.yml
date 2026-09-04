@@ -100,6 +100,12 @@ services:
       - PATCHFORM_APP_URL=${PATCHFORM_APP_URL:-http://patchform-app:8012/invoke}
       - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-}
       - PATCHFORM_SERVICE_KEY=${PATCHFORM_SERVICE_KEY:-}
+      # 情報化企画書ナビ（profiles: ["procuretech"]）
+      - PROCURETECH_APP_URL=${PROCURETECH_APP_URL:-http://procuretech-navigator-app:8014/invoke}
+      # 更新版 xlsx を SeaweedFS(S3) 経由の署名付き URL で配信する（既定は直接ダウンロード）
+      - PROCURETECH_DOWNLOAD_VIA_S3=${PROCURETECH_DOWNLOAD_VIA_S3:-}
+      # 情報化企画書エディタ（profiles: ["procuretech-editor"]）
+      - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -528,6 +534,72 @@ services:
       - patchform-app
     restart: unless-stopped
 
+  # 任意: 情報化企画書ナビ（`COMPOSE_PROFILES=procuretech` または `--profile procuretech`）
+  # 庁内利用のみ（backend → 本サービス）。ホストポートは公開しない。
+  procuretech-navigator-app:
+    profiles: ["procuretech"]
+    build: ./procuretech-navigator-app
+    container_name: open-genai-procuretech-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - PROCURETECH_DB_PATH=/data/procuretech.db
+      - PROCURETECH_RETENTION_DAYS=${PROCURETECH_RETENTION_DAYS:-30}
+      - PROCURETECH_MAX_UPLOAD_BYTES=${PROCURETECH_MAX_UPLOAD_BYTES:-10485760}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_app_data:/data
+    expose:
+      - "8014"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 任意: 情報化企画書エディタ（`COMPOSE_PROFILES=procuretech-editor` または `--profile procuretech-editor`）
+  # 案件フォルダ内の生成文書（Markdown）を編集・保存し、Word 変換 API へ統合する。
+  # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
+  procuretech-editor-app:
+    profiles: ["procuretech-editor"]
+    build: ./procuretech-editor-app
+    container_name: open-genai-procuretech-editor-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - EDITOR_DB_PATH=/data/procuretech_editor.db
+      - EDITOR_MAX_UPLOAD_BYTES=${EDITOR_MAX_UPLOAD_BYTES:-20971520}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
+      - S3_PUBLIC_ENDPOINT=${S3_PUBLIC_ENDPOINT:-}
+      - S3_BUCKET=${S3_BUCKET:-open-genai}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-opengenai}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-opengenai-secret}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
+      - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
+      # 外部「文書生成」API（Excel→章別 Markdown。未設定なら「Excel から生成」は無効表示）
+      - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
+      - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
+      - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
+      - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
+      # テーマ定義(JSON)。テーマ↔ヒアリングシート↔API を管理者が設定。
+      - EDITOR_GENERATE_THEMES=${EDITOR_GENERATE_THEMES:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_editor_app_data:/data
+    expose:
+      - "8015"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -562,3 +634,5 @@ volumes:
   chosei_app_data:
   doccheck_app_data:
   patchform_app_data:
+  procuretech_app_data:
+  procuretech_editor_app_data:
