@@ -32,9 +32,14 @@
 
 ## [Unreleased]
 
-- 情報化企画書エディタ（procuretech-editor）を追加。案件フォルダ（プロジェクト）内の生成文書（Markdown）をブラウザで編集・保存し、外部 Word 変換 API へ統合できる専用ページ（`/procuretech-editor`）。ファイル本体は SeaweedFS（S3 互換）に保存、メタデータは SQLite で管理。ファイル管理（新規/アップロード/リネーム/複製/削除）、分割プレビュー、スクロール連動、書き出し（zip 送信→ステータス polling→結果 DL）に対応。Compose profile `procuretech-editor` でオプション起動（詳細は `docs/procuretech-editor.md`）
+- 情報化企画書エディタ（procuretech-editor）を追加。案件フォルダ（プロジェクト）内の生成文書（Markdown）をブラウザで編集・保存し、出力ファイルごとに章を並べて Word 文書へ合成できる専用ページ（`/procuretech-editor`）。ファイル本体は SeaweedFS（S3 互換）に保存、メタデータは SQLite で管理。ファイル管理（新規/アップロード/リネーム/複製/削除）、分割プレビュー、スクロール連動に対応。Compose profile `procuretech-editor` でオプション起動（詳細は `docs/procuretech-editor.md`）
   - 画像の埋め込みに対応。ツールバーの画像ボタンからローカル画像を案件フォルダ（`images/`）へアップロードし、相対パスで本文へ埋め込む。保存内容は相対パスのまま保持し、プレビュー時のみ presigned URL に差し替えて表示（書き出し zip にも画像が含まれるため Word 変換側でも解決可能）
   - AI 図生成に対応。ツールバーの図ボタンから、既存「ダイアグラムを生成」と同じ genU 推論（`/predict` + 図タイプ別プロンプト）で Mermaid を生成し、` ```mermaid ` ブロックとして本文へ挿入。プレビューは共通 Markdown で図（SVG）として描画
+  - ヒアリングシートからの章別 Markdown 生成に対応。編集画面の「ヒアリングシートから生成」ボタンから、まず生成テーマ（例: 調達仕様書）を選び、テーマが要求する Excel（例: `systemplan.xlsx` / `global.xlsx`）をアップロードすると、テーマに紐づく差し替え可能な外部「文書生成」API で章別 Markdown を生成し、結果 zip をプロジェクトへ取り込む。テーマ↔ヒアリングシート↔API の紐づけは管理者が `EDITOR_GENERATE_THEMES`(JSON) で設定（未設定なら既定の単一テーマ）。生成ロジック（テンプレート＋LLM/Dify）は非公開の別サービスに閉じ込め、結果は zip で受け取るため Nextcloud に依存しない。ローカル検証用にモック生成サービス（Compose profile `procuretech-editor-mock`）を同梱
+  - 専用ページのアプリ名を「Markdown エディタ」に変更し、UI 用語を「案件（フォルダ）」→「プロジェクト」に統一（route `/procuretech-editor` は維持）
+  - 出力ファイルの合成（Word）に対応。「書き出し・統合」タブで、出力ファイルごとに含める章（Markdown）と順番を指定して `.docx` を合成できる合成エディタを追加。テーマの既定定義（調達仕様書／RFI／見積総括表／一次審査表）を初期表示し、プロジェクト単位で並べ替え・ON/OFF・出力ファイル追加を上書き保存できる。章の参照は生成時に付与する安定 ID（`section_key`、`sections.json` 由来）で行い、ファイル名変更に強い（手動ファイルは `file_id` 参照）。ExApp は定義に従い本文を順に集約し、テーマの合成 API（`{api_url}/compose`、pandoc で Word 化）へ送って `.docx` zip を署名付き URL で返す。エンドポイント `GET/PUT /projects/{id}/composition`・`POST /projects/{id}/compose` を追加
+  - Excel 形式の出力（見積総括表・一次審査表）に対応。生成サービス（`procuretech-spec-app`）が `/generate` の中で `materials/templates/*.xlsx` を加工して `quotation.xlsx`／`primaryexam.xlsx` を作り、`sections.json` に `section_key`（`quotation`／`primaryexam`）を付けて取り込む。見積総括表は翌年度・有効フェーズのみで加工（Dify 不要）、一次審査表は section2/4/5/6 を追加 Dify ワークフロー（`criteria_section2/4/5/6`）へ送って要件抽出し加工する。合成エディタでは Excel 出力は「生成済み単一ファイル」として扱い、Word 合成を経由せず最終 zip に同梱する（`.docx` と `.xlsx` を 1 つの zip にまとめて返す）。Excel の生成に失敗しても本文（Markdown）生成は成功扱いとする
+  - 「調達仕様書」生成・合成サービス `procuretech-spec-app` を追加（非公開参考実装のドメインを移植し、Nextcloud→zip 返却・Dify キー外出し・`/generate`・`/status`・`/result`・`/compose` を実装。Compose profile `procuretech-spec`）
 - 情報化企画書ナビ（procuretech）を追加。情報化企画書（Excel）を読み込み、4分野（背景・業務・現行システム・目標）を AI 対話で整理し、各欄（`B10/B14/B19/B23`）へ書き戻して更新版をダウンロードできる専用ページ（`/procuretech`）。Compose profile `procuretech` でオプション起動（詳細は `docs/procuretech.md`）
 - プロンプトテンプレートの「チャットで開く」で入力欄が空になる不具合を修正
 - HTTP/LAN 環境（非セキュアオリジン）向けに UUID 生成とクリップボードコピーのフォールバックを共通化

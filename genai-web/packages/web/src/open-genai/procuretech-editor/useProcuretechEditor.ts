@@ -2,11 +2,13 @@ import { useCallback, useState } from 'react';
 import useSWR from 'swr';
 import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
 import type {
+  EditorComposeResult,
+  EditorComposition,
+  EditorCompositionResponse,
   EditorConfig,
-  EditorConversion,
-  EditorExportOptions,
   EditorFile,
   EditorFileContent,
+  EditorGeneration,
   EditorProject,
 } from './types';
 
@@ -39,7 +41,7 @@ export const useEditorConfig = () => {
           const d = e.data as EditorConfig | undefined;
           return {
             enabled: false,
-            error: d?.error || errorMessage(e, '情報化企画書エディタに接続できません'),
+            error: d?.error || errorMessage(e, 'Markdown エディタに接続できません'),
           };
         }
         throw e;
@@ -50,7 +52,7 @@ export const useEditorConfig = () => {
   return { config: data, isLoading, unavailable: data?.enabled === false };
 };
 
-/** プロジェクト（案件フォルダ）一覧。 */
+/** プロジェクト一覧。 */
 export const useEditorProjects = () => {
   const { data, error, isLoading, mutate } = useSWR<{ projects: EditorProject[] }>(
     `${BASE}/projects`,
@@ -82,44 +84,45 @@ export const useEditorProject = (projectId: string | null) => {
 };
 
 /** 単一ファイルの内容（テキストは content、バイナリは download_url）。 */
-export const fetchFileContent = (
-  projectId: string,
-  path: string,
-): Promise<EditorFileContent> =>
+export const fetchFileContent = (projectId: string, path: string): Promise<EditorFileContent> =>
   teamApiFetcher<EditorFileContent>(
     `${BASE}/projects/${enc(projectId)}/files/content?path=${enc(path)}`,
   );
 
-/** 変換ステータスを 1 回取得する。 */
-export const fetchConversion = (
-  requestId: string,
-  projectId?: string,
-): Promise<EditorConversion> =>
-  teamApiFetcher<EditorConversion>(
-    `${BASE}/conversions/${enc(requestId)}` +
-      (projectId ? `?project_id=${enc(projectId)}` : ''),
+/** 生成ステータスを 1 回取得する（成功時は ExApp 側が結果を取り込む）。 */
+export const fetchGeneration = (projectId: string, requestId: string): Promise<EditorGeneration> =>
+  teamApiFetcher<EditorGeneration>(
+    `${BASE}/projects/${enc(projectId)}/generations/${enc(requestId)}`,
   );
+
+/** プロジェクトの合成定義（保存済み or テーマ既定）と参照可能ファイルを取得する。 */
+export const useEditorComposition = (projectId: string | null) => {
+  const key = projectId ? `${BASE}/projects/${enc(projectId)}/composition` : null;
+  const { data, error, isLoading, mutate } = useSWR<EditorCompositionResponse>(
+    key,
+    teamApiFetcher,
+    { revalidateOnFocus: false },
+  );
+  return { data, error, isLoading, mutate };
+};
 
 /** プロジェクト/ファイルに対する各種 CRUD 操作。 */
 export const useEditorActions = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = useCallback(
-    async <T>(fn: () => Promise<T>, fallback: string): Promise<T | null> => {
-      setSubmitting(true);
-      setError(null);
-      try {
-        return await fn();
-      } catch (e) {
-        setError(errorMessage(e, fallback));
-        return null;
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [],
-  );
+  const run = useCallback(async <T>(fn: () => Promise<T>, fallback: string): Promise<T | null> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      return await fn();
+    } catch (e) {
+      setError(errorMessage(e, fallback));
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
 
   const createProject = useCallback(
     (name: string) =>
@@ -215,15 +218,47 @@ export const useEditorActions = () => {
     [run],
   );
 
-  const exportProject = useCallback(
-    (projectId: string, options?: EditorExportOptions) =>
+  const startGeneration = useCallback(
+    (
+      projectId: string,
+      opts: {
+        theme: string;
+        inputs: Record<string, string>;
+        doc_type?: string;
+        options?: Record<string, unknown>;
+      },
+    ) =>
       run(async () => {
-        const res = await teamApi.post<EditorConversion>(
-          `${BASE}/projects/${enc(projectId)}/export`,
-          { options: options ?? {} },
+        const res = await teamApi.post<EditorGeneration>(
+          `${BASE}/projects/${enc(projectId)}/generate`,
+          opts,
         );
         return res.data ?? null;
-      }, '書き出しに失敗しました。'),
+      }, 'ヒアリングシートからの生成開始に失敗しました。'),
+    [run],
+  );
+
+  const saveComposition = useCallback(
+    (projectId: string, composition: EditorComposition) =>
+      run(async () => {
+        const res = await teamApi.put<{ composition: EditorComposition }>(
+          `${BASE}/projects/${enc(projectId)}/composition`,
+          { composition },
+        );
+        return res.data?.composition ?? null;
+      }, '合成定義の保存に失敗しました。'),
+    [run],
+  );
+
+  const composeProject = useCallback(
+    (projectId: string, composition?: EditorComposition) =>
+      run(async () => {
+        const res = await teamApi.post<EditorComposeResult>(
+          `${BASE}/projects/${enc(projectId)}/compose`,
+          composition ? { composition } : {},
+        );
+        return res.data ?? null;
+      }, 'Word 合成に失敗しました。'),
     [run],
   );
 
@@ -236,7 +271,9 @@ export const useEditorActions = () => {
     renameFile,
     duplicateFile,
     deleteFile,
-    exportProject,
+    startGeneration,
+    saveComposition,
+    composeProject,
     submitting,
     error,
     setError,

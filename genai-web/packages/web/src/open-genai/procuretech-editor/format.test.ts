@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  baseName,
-  dirOf,
-  extractImageSources,
-  formatBytes,
-  rewriteImageSources,
-} from './format';
+import { baseName, dirOf, extractImageSources, formatBytes, rewriteImageSources } from './format';
 
 describe('procuretech-editor/format', () => {
   describe('formatBytes', () => {

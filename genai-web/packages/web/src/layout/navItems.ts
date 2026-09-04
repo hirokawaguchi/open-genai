@@ -186,10 +186,9 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
 
     if (procuretechEditorAvailable) {
       items.push({
-        label: '情報化企画書エディタ',
+        label: 'Markdown エディタ',
         to: PROCURETECH_EDITOR_PATH,
-        description:
-          '案件フォルダ内の生成文書（Markdown）を編集・校正し、Word 文書へ統合します。',
+        description: 'プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合します。',
       });
     }
 

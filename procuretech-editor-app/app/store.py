@@ -13,6 +13,7 @@ S3 側のオブジェクト移動が不要になる（複製時のみ S3 コピ�
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import threading
@@ -68,15 +69,50 @@ def init_db() -> None:
               s3_key TEXT NOT NULL,
               kind TEXT NOT NULL,
               size INTEGER NOT NULL DEFAULT 0,
+              section_key TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
               UNIQUE (project_id, rel_path),
               FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS compositions (
+              project_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              data TEXT NOT NULL DEFAULT '{}',
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS generations (
+              request_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              theme TEXT NOT NULL DEFAULT '',
+              doc_type TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'processing',
+              imported INTEGER NOT NULL DEFAULT 0,
+              imported_paths TEXT NOT NULL DEFAULT '[]',
+              error TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
             CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id);
+            CREATE INDEX IF NOT EXISTS idx_generations_project ON generations(project_id);
             """
         )
+        # 既存 DB（theme 列が無い旧スキーマ）への軽量マイグレーション。
+        cols = {r[1] for r in db.execute("PRAGMA table_info(generations)").fetchall()}
+        if "theme" not in cols:
+            db.execute(
+                "ALTER TABLE generations ADD COLUMN theme TEXT NOT NULL DEFAULT ''"
+            )
+        # 既存 DB（section_key 列が無い旧スキーマ）への軽量マイグレーション。
+        fcols = {r[1] for r in db.execute("PRAGMA table_info(files)").fetchall()}
+        if "section_key" not in fcols:
+            db.execute(
+                "ALTER TABLE files ADD COLUMN section_key TEXT NOT NULL DEFAULT ''"
+            )
         db.commit()
 
 
@@ -176,6 +212,7 @@ def _file_dict(row: sqlite3.Row) -> dict[str, Any]:
         "s3_key": row["s3_key"],
         "kind": row["kind"],
         "size": row["size"],
+        "section_key": row["section_key"] if "section_key" in row.keys() else "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -229,31 +266,47 @@ def upsert_file(
     kind: str,
     size: int,
     s3_key: str | None = None,
+    section_key: str | None = None,
 ) -> dict[str, Any]:
-    """rel_path 単位で作成/更新する。既存なら kind/size を更新し s3_key は維持する。"""
+    """rel_path 単位で作成/更新する。既存なら kind/size を更新し s3_key は維持する。
+
+    `section_key` は生成結果 `sections.json` に由来する安定 ID（合成定義の参照キー）。
+    指定時のみ更新する（既存の値を空文字で上書きしない）。
+    """
     db = connect()
     now = _now_iso()
     existing = get_file(project_id, user_id, rel_path)
+    sk = (section_key or "").strip()
     with _lock:
         if existing:
-            db.execute(
-                "UPDATE files SET kind = ?, size = ?, updated_at = ? WHERE id = ?",
-                (kind, size, now, existing["id"]),
-            )
+            if sk:
+                db.execute(
+                    "UPDATE files SET kind = ?, size = ?, section_key = ?, updated_at = ?"
+                    " WHERE id = ?",
+                    (kind, size, sk, now, existing["id"]),
+                )
+            else:
+                db.execute(
+                    "UPDATE files SET kind = ?, size = ?, updated_at = ? WHERE id = ?",
+                    (kind, size, now, existing["id"]),
+                )
             db.commit()
         else:
             fid = uuid.uuid4().hex
             key = s3_key or build_s3_key(user_id, project_id, rel_path)
             db.execute(
                 "INSERT INTO files (id, project_id, user_id, rel_path, s3_key, kind, size,"
-                " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (fid, project_id, user_id, rel_path, key, kind, size, now, now),
+                " section_key, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (fid, project_id, user_id, rel_path, key, kind, size, sk, now, now),
             )
             db.commit()
     # touch_project は自前で _lock を取るため、必ずロック解放後に呼ぶ（再入デッドロック防止）。
     touch_project(project_id)
     if existing:
         existing.update({"kind": kind, "size": size, "updated_at": now})
+        if sk:
+            existing["section_key"] = sk
         return existing
     return {
         "id": fid,
@@ -262,6 +315,7 @@ def upsert_file(
         "s3_key": key,
         "kind": kind,
         "size": size,
+        "section_key": sk,
         "created_at": now,
         "updated_at": now,
     }
@@ -301,3 +355,145 @@ def delete_file(project_id: str, user_id: str, rel_path: str) -> str | None:
         db.commit()
     touch_project(project_id)
     return row["s3_key"]
+
+
+# --- generations（Excel → Markdown 生成ジョブの相関/取り込み状態） --------------
+
+
+def _generation_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "request_id": row["request_id"],
+        "project_id": row["project_id"],
+        "theme": row["theme"],
+        "doc_type": row["doc_type"],
+        "status": row["status"],
+        "imported": bool(row["imported"]),
+        "imported_paths": json.loads(row["imported_paths"] or "[]"),
+        "error": row["error"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def create_generation(
+    request_id: str,
+    project_id: str,
+    user_id: str,
+    *,
+    theme: str = "",
+    doc_type: str = "",
+) -> dict[str, Any]:
+    db = connect()
+    now = _now_iso()
+    with _lock:
+        db.execute(
+            "INSERT OR REPLACE INTO generations (request_id, project_id, user_id, theme,"
+            " doc_type, status, imported, imported_paths, error, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'processing', 0, '[]', NULL, ?, ?)",
+            (request_id, project_id, user_id, theme, doc_type, now, now),
+        )
+        db.commit()
+    return {
+        "request_id": request_id,
+        "project_id": project_id,
+        "theme": theme,
+        "doc_type": doc_type,
+        "status": "processing",
+        "imported": False,
+        "imported_paths": [],
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def latest_generation_theme(project_id: str, user_id: str) -> str | None:
+    """プロジェクトで最後に実行した生成ジョブのテーマ id を返す（無ければ None）。"""
+    db = connect()
+    row = db.execute(
+        "SELECT theme FROM generations WHERE project_id = ? AND user_id = ?"
+        " AND theme != '' ORDER BY created_at DESC LIMIT 1",
+        (project_id, user_id),
+    ).fetchone()
+    return row["theme"] if row else None
+
+
+def get_generation(
+    request_id: str, project_id: str, user_id: str
+) -> dict[str, Any] | None:
+    db = connect()
+    row = db.execute(
+        "SELECT * FROM generations WHERE request_id = ? AND project_id = ? AND user_id = ?",
+        (request_id, project_id, user_id),
+    ).fetchone()
+    return _generation_dict(row) if row else None
+
+
+def update_generation(
+    request_id: str,
+    user_id: str,
+    *,
+    status: str | None = None,
+    imported: bool | None = None,
+    imported_paths: list[str] | None = None,
+    error: str | None = None,
+) -> None:
+    db = connect()
+    sets: list[str] = ["updated_at = ?"]
+    params: list[Any] = [_now_iso()]
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if imported is not None:
+        sets.append("imported = ?")
+        params.append(1 if imported else 0)
+    if imported_paths is not None:
+        sets.append("imported_paths = ?")
+        params.append(json.dumps(imported_paths, ensure_ascii=False))
+    if error is not None:
+        sets.append("error = ?")
+        params.append(error)
+    params.extend([request_id, user_id])
+    with _lock:
+        db.execute(
+            f"UPDATE generations SET {', '.join(sets)} WHERE request_id = ? AND user_id = ?",
+            params,
+        )
+        db.commit()
+
+
+# --- compositions（出力ファイルの合成定義：プロジェクト単位の上書き保存） --------
+
+
+def get_composition(project_id: str, user_id: str) -> dict[str, Any] | None:
+    """プロジェクトに保存された合成定義を返す（未保存なら None）。"""
+    db = connect()
+    row = db.execute(
+        "SELECT data FROM compositions WHERE project_id = ? AND user_id = ?",
+        (project_id, user_id),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["data"] or "{}")
+    except json.JSONDecodeError:
+        return None
+
+
+def save_composition(
+    project_id: str, user_id: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """プロジェクトの合成定義を保存（上書き）する。"""
+    db = connect()
+    now = _now_iso()
+    payload = json.dumps(data, ensure_ascii=False)
+    with _lock:
+        db.execute(
+            "INSERT INTO compositions (project_id, user_id, data, updated_at)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(project_id) DO UPDATE SET data = excluded.data,"
+            " updated_at = excluded.updated_at",
+            (project_id, user_id, payload, now),
+        )
+        db.commit()
+    return data

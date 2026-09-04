@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import uuid
 import zipfile
 from typing import Any
 
 from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
 
-from . import convert, excel, intauth, nextcloud, objstore, store
+from . import excel, generate, intauth, objstore, store
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 MAX_UPLOAD_BYTES = int(os.environ.get("EDITOR_MAX_UPLOAD_BYTES", "20971520"))  # 20MB
@@ -158,8 +160,8 @@ def get_config(
         content={
             "enabled": True,
             "storage_configured": objstore.is_configured(),
-            "convert_configured": convert.is_configured(),
-            "nextcloud_configured": nextcloud.is_configured(),
+            "generate_configured": generate.is_configured(),
+            "generate_themes": generate.public_themes(),
             "max_upload_bytes": MAX_UPLOAD_BYTES,
             "markers": excel.MARKERS,
         }
@@ -564,11 +566,128 @@ async def delete_file(
     return JSONResponse(content={"deleted": True})
 
 
-# --- export / conversion ------------------------------------------------------
+# --- generation（Excel → 章別 Markdown 生成） ---------------------------------
+
+# 生成結果 zip から取り込まない内部ファイル（テンプレのメタ情報等）。
+_SKIP_IMPORT_NAMES = {".keep", "hidden_template_data.json", ".gitkeep", "sections.json"}
 
 
-@app.post("/projects/{project_id}/export")
-async def export_project(
+def _strip_common_prefix(names: list[str]) -> str:
+    """zip 内エントリが単一トップレベルフォルダ配下なら、その接頭辞を返す。"""
+    tops = {n.split("/", 1)[0] for n in names if "/" in n}
+    files_at_root = any("/" not in n for n in names)
+    if not files_at_root and len(tops) == 1:
+        return next(iter(tops)) + "/"
+    return ""
+
+
+def _parse_sections_manifest(zf: zipfile.ZipFile, prefix: str) -> dict[str, str]:
+    """生成結果 zip の `sections.json` を読み、ファイル名 → section key の対応を返す。
+
+    合成定義がファイル名の変更に強くなるよう、取り込み時に各ファイルへ安定 ID
+    （section key）を付与するために用いる。
+    """
+    mapping: dict[str, str] = {}
+    for name in zf.namelist():
+        inner = name[len(prefix):] if prefix and name.startswith(prefix) else name
+        if inner.rsplit("/", 1)[-1] != "sections.json":
+            continue
+        try:
+            manifest = json.loads(zf.read(name).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return mapping
+        for sec in manifest.get("sections", []) if isinstance(manifest, dict) else []:
+            if not isinstance(sec, dict):
+                continue
+            fname = str(sec.get("file") or "").strip()
+            key = str(sec.get("section_key") or "").strip()
+            if fname and key:
+                mapping[fname] = key
+                mapping[fname.rsplit("/", 1)[-1]] = key
+        break
+    return mapping
+
+
+def _import_zip_to_project(zip_bytes: bytes, project_id: str, uid: str) -> list[str]:
+    """生成結果 zip を展開し、案件フォルダへ取り込む（取り込んだ相対パス一覧を返す）。"""
+    imported: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        prefix = _strip_common_prefix(names)
+        section_map = _parse_sections_manifest(zf, prefix)
+        for name in names:
+            inner = name[len(prefix):] if prefix and name.startswith(prefix) else name
+            base = inner.rsplit("/", 1)[-1]
+            if not base or base in _SKIP_IMPORT_NAMES or base.startswith("."):
+                continue
+            rel = _clean_rel_path(inner)
+            if rel is None:
+                continue
+            data = zf.read(name)
+            if len(data) > MAX_UPLOAD_BYTES:
+                continue
+            kind = _kind_of(rel)
+            existing = store.get_file(project_id, uid, rel)
+            s3_key = (
+                existing["s3_key"] if existing else store.build_s3_key(uid, project_id, rel)
+            )
+            content_type = (
+                "text/markdown; charset=utf-8" if kind in TEXT_KINDS else None
+            )
+            if not objstore.put_bytes(s3_key, data, content_type=content_type):
+                continue
+            section_key = section_map.get(rel) or section_map.get(base) or ""
+            store.upsert_file(
+                project_id,
+                uid,
+                rel,
+                kind=kind,
+                size=len(data),
+                s3_key=s3_key,
+                section_key=section_key,
+            )
+            imported.append(rel)
+    return imported
+
+
+def _decode_theme_inputs(
+    theme: dict[str, Any], payload: dict[str, Any]
+) -> tuple[dict[str, bytes] | None, JSONResponse | None]:
+    """テーマ定義に従って入力ファイル群を復号・様式検証する。
+
+    入力は `inputs` マップ（key → base64）で受け取る。後方互換として、旧形式の
+    トップレベル `<key>_b64`（例: `systemplan_b64`）も参照する。
+    """
+    raw_inputs = payload.get("inputs") if isinstance(payload.get("inputs"), dict) else {}
+    files: dict[str, bytes] = {}
+    for spec in theme.get("inputs", []):
+        key = spec.get("key")
+        if not key:
+            continue
+        b64 = raw_inputs.get(key) or payload.get(f"{key}_b64") or ""
+        try:
+            data = excel.decode_upload(str(b64), max_bytes=MAX_UPLOAD_BYTES)
+        except excel.ExcelError as e:
+            label = spec.get("label", key)
+            return None, JSONResponse(
+                status_code=400, content={"error": f"「{label}」: {e}"}
+            )
+        marker = spec.get("marker")
+        if marker:
+            try:
+                excel.validate_type(data, str(marker))
+            except excel.ExcelError as e:
+                return None, JSONResponse(status_code=400, content={"error": str(e)})
+        files[key] = data
+    if not files:
+        return None, JSONResponse(
+            status_code=400, content={"error": "入力ファイルが指定されていません。"}
+        )
+    return files, None
+
+
+@app.post("/projects/{project_id}/generate")
+async def generate_from_excel(
     project_id: str,
     payload: dict[str, Any],
     x_api_key: str | None = Header(default=None),
@@ -579,45 +698,58 @@ async def export_project(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
 ) -> JSONResponse:
+    """テーマ（例: 調達仕様書）ごとのヒアリングシートから章別 Markdown 生成を開始する。"""
     err, uid = _auth(
         x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
     )
     if err:
         return err
-    project = store.get_project(project_id, uid)
-    if project is None:
+    if store.get_project(project_id, uid) is None:
         return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
-    if not convert.is_configured():
-        return JSONResponse(status_code=503, content={"error": "Word 変換 API が未設定です。"})
-    files = store.list_files(project_id, uid)
-    md_files = [f for f in files if f["kind"] != "keep"]
-    if not md_files:
-        return JSONResponse(status_code=400, content={"error": "書き出せるファイルがありません。"})
-    project_name = objstore.sanitize_filename(project["name"]) or "project"
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in md_files:
-            data = objstore.get_bytes(f["s3_key"])
-            if data is None:
-                continue
-            zf.writestr(f"{project_name}/{f['rel_path']}", data)
-    options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+    theme = generate.get_theme(str(payload.get("theme") or "").strip() or None)
+    if theme is None:
+        return JSONResponse(status_code=400, content={"error": "不明なテーマです。"})
+    base_url = generate.theme_base_url(theme)
+    if not base_url:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "このテーマの文書生成 API が未設定です（管理者に確認してください）。"},
+        )
+    files, ferr = _decode_theme_inputs(theme, payload)
+    if ferr:
+        return ferr
+    doc_type = str(payload.get("doc_type") or "").strip() or theme.get("doc_type")
+    options = payload.get("options") if isinstance(payload.get("options"), dict) else None
     try:
-        result = await convert.start_conversion(
-            buf.getvalue(),
-            project_name=project_name,
+        result = await generate.start_generation(
+            files,  # type: ignore[arg-type]
+            base_url=base_url,
+            api_key=generate.theme_api_key(theme),
             username=uid,
+            doc_type=doc_type,
             options=options,
         )
-    except convert.ConvertError as e:
+    except generate.GenerateError as e:
         return JSONResponse(status_code=502, content={"error": str(e)})
-    return JSONResponse(content=result)
+    request_id = str(result.get("request_id") or "").strip()
+    if not request_id:
+        return JSONResponse(
+            status_code=502, content={"error": "生成 API から request_id が返りませんでした。"}
+        )
+    store.create_generation(
+        request_id,
+        project_id,
+        uid,
+        theme=str(theme.get("id") or ""),
+        doc_type=str(doc_type or generate.DEFAULT_DOC_TYPE),
+    )
+    return JSONResponse(content={"request_id": request_id, "status": "processing"})
 
 
-@app.get("/conversions/{request_id}")
-async def conversion_status(
+@app.get("/projects/{project_id}/generations/{request_id}")
+async def generation_status(
+    project_id: str,
     request_id: str,
-    project_id: str | None = None,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -626,41 +758,403 @@ async def conversion_status(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
 ) -> JSONResponse:
+    """生成ステータスを確認し、成功していれば結果 zip を案件フォルダへ取り込む。"""
     err, uid = _auth(
         x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
     )
     if err:
         return err
+    gen = store.get_generation(request_id, project_id, uid)
+    if gen is None:
+        return JSONResponse(status_code=404, content={"error": "生成ジョブが見つかりません。"})
+    # 既に取り込み済みなら、その結果をそのまま返す（多重取り込みを防ぐ）。
+    if gen["imported"]:
+        return JSONResponse(
+            content={
+                "status": "success",
+                "imported": True,
+                "files": gen["imported_paths"],
+            }
+        )
+    # ジョブ開始時のテーマから API 接続先を解決する。
+    theme = generate.get_theme(gen.get("theme"))
+    base_url = generate.theme_base_url(theme) if theme else generate.EDITOR_GENERATE_URL
+    api_key = generate.theme_api_key(theme) if theme else generate.EDITOR_GENERATE_API_KEY
     try:
-        status = await convert.get_status(request_id)
-    except convert.ConvertError as e:
+        status = await generate.get_status(request_id, base_url=base_url, api_key=api_key)
+    except generate.GenerateError as e:
         return JSONResponse(status_code=502, content={"error": str(e)})
-    # 成功かつ Nextcloud 出力があり、Nextcloud/ストレージが利用可能なら結果を取り込み、
-    # ダウンロード用の署名付き URL を付与する。
-    if (
-        status.get("status") == "success"
-        and status.get("nextcloud_path")
-        and nextcloud.is_configured()
-        and objstore.is_configured()
-    ):
+    state = str(status.get("status") or "").lower()
+    if state == "error":
+        store.update_generation(
+            request_id, uid, status="error", error=str(status.get("error") or "")
+        )
+        return JSONResponse(
+            content={"status": "error", "error": status.get("error") or "生成に失敗しました。"}
+        )
+    if state != "success":
+        return JSONResponse(
+            content={"status": "processing", "progress": status.get("progress")}
+        )
+    # 成功 → 結果 zip を取り込む。
+    if not objstore.is_configured():
+        return JSONResponse(status_code=503, content={"error": "ストレージが未設定です。"})
+    try:
+        zip_bytes = await generate.fetch_result(request_id, base_url=base_url, api_key=api_key)
+        imported = _import_zip_to_project(zip_bytes, project_id, uid)
+    except generate.GenerateError as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+    except zipfile.BadZipFile:
+        return JSONResponse(status_code=502, content={"error": "生成結果の展開に失敗しました。"})
+    store.update_generation(
+        request_id, uid, status="success", imported=True, imported_paths=imported
+    )
+    return JSONResponse(content={"status": "success", "imported": True, "files": imported})
+
+
+# --- composition（出力ファイルの合成定義 + Word 合成実行） --------------------
+
+
+def _resolve_theme_for_project(
+    project_id: str, uid: str, *, hint: str | None = None, saved: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """プロジェクトの合成に用いるテーマを解決する。
+
+    優先順: 明示指定(hint) → 保存済み定義のテーマ → 直近生成ジョブのテーマ → 先頭テーマ。
+    """
+    theme_id = (
+        (hint or "").strip()
+        or (str(saved.get("theme")) if isinstance(saved, dict) and saved.get("theme") else "")
+        or (store.latest_generation_theme(project_id, uid) or "")
+    )
+    return generate.get_theme(theme_id or None)
+
+
+def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:
+    """テーマ既定から合成定義（出力ファイル毎の順序付き section）を作る。"""
+    outputs = [
+        {
+            "id": o["id"],
+            "name": o["name"],
+            "kind": o.get("kind", "markdown"),
+            "enabled": True,
+            "items": [{"section_key": k} for k in o.get("sections", [])],
+        }
+        for o in generate.theme_outputs(theme)
+    ]
+    return {"theme": theme.get("id"), "outputs": outputs}
+
+
+def _normalize_composition(data: Any, theme: dict[str, Any]) -> dict[str, Any]:
+    """保存/入力された合成定義を安全な形へ整える。"""
+    if not isinstance(data, dict):
+        return _default_composition(theme)
+    raw_outputs = data.get("outputs")
+    if not isinstance(raw_outputs, list):
+        return _default_composition(theme)
+    outputs: list[dict[str, Any]] = []
+    for i, o in enumerate(raw_outputs, start=1):
+        if not isinstance(o, dict):
+            continue
+        items: list[dict[str, Any]] = []
+        for it in o.get("items", []) or []:
+            if not isinstance(it, dict):
+                continue
+            sk = str(it.get("section_key") or "").strip()
+            fid = str(it.get("file_id") or "").strip()
+            if not sk and not fid:
+                continue
+            entry: dict[str, Any] = {}
+            if sk:
+                entry["section_key"] = sk
+            if fid:
+                entry["file_id"] = fid
+            items.append(entry)
+        outputs.append(
+            {
+                "id": str(o.get("id") or f"output{i}"),
+                "name": str(o.get("name") or f"output{i}"),
+                "kind": "excel" if str(o.get("kind") or "") == "excel" else "markdown",
+                "enabled": o.get("enabled", True) is not False,
+                "items": items,
+            }
+        )
+    return {"theme": str(data.get("theme") or theme.get("id") or ""), "outputs": outputs}
+
+
+@app.get("/projects/{project_id}/composition")
+async def get_composition(
+    project_id: str,
+    theme: str | None = None,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """プロジェクトの合成定義（保存済み or テーマ既定）と、参照可能なファイル一覧を返す。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if store.get_project(project_id, uid) is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    saved = store.get_composition(project_id, uid)
+    theme_def = _resolve_theme_for_project(project_id, uid, hint=theme, saved=saved)
+    if theme_def is None:
+        return JSONResponse(status_code=400, content={"error": "テーマが未設定です。"})
+    if saved:
+        composition = _normalize_composition(saved, theme_def)
+        is_saved = True
+    else:
+        composition = _default_composition(theme_def)
+        is_saved = False
+    files = [
+        {
+            "id": f["id"],
+            "rel_path": f["rel_path"],
+            "kind": f["kind"],
+            "section_key": f.get("section_key", ""),
+        }
+        for f in store.list_files(project_id, uid)
+        if f["kind"] != "keep"
+    ]
+    theme_public = {
+        "id": theme_def.get("id"),
+        "label": theme_def.get("label", theme_def.get("id")),
+        "doc_type": theme_def.get("doc_type", generate.DEFAULT_DOC_TYPE),
+        "sections": generate.theme_sections(theme_def),
+        "outputs": generate.theme_outputs(theme_def),
+        "configured": bool(generate.theme_base_url(theme_def)),
+    }
+    return JSONResponse(
+        content={
+            "theme": theme_public,
+            "saved": is_saved,
+            "composition": composition,
+            "files": files,
+        }
+    )
+
+
+@app.put("/projects/{project_id}/composition")
+async def put_composition(
+    project_id: str,
+    payload: dict[str, Any],
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """プロジェクトの合成定義を保存（上書き）する。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if store.get_project(project_id, uid) is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    theme_def = _resolve_theme_for_project(
+        project_id, uid, hint=str(payload.get("theme") or "")
+    )
+    if theme_def is None:
+        return JSONResponse(status_code=400, content={"error": "テーマが未設定です。"})
+    composition = _normalize_composition(payload.get("composition") or payload, theme_def)
+    store.save_composition(project_id, uid, composition)
+    return JSONResponse(content={"saved": True, "composition": composition})
+
+
+def _collect_output_sections(
+    output: dict[str, Any], files_by_key: dict[str, dict[str, Any]],
+    files_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    """合成定義の 1 出力について、順序通りに {filename, content} を集約する。"""
+    sections: list[dict[str, str]] = []
+    for it in output.get("items", []) or []:
+        if not isinstance(it, dict):
+            continue
+        f: dict[str, Any] | None = None
+        sk = str(it.get("section_key") or "").strip()
+        fid = str(it.get("file_id") or "").strip()
+        if sk:
+            f = files_by_key.get(sk)
+        if f is None and fid:
+            f = files_by_id.get(fid)
+        if f is None:
+            continue
+        data = objstore.get_bytes(f["s3_key"])
+        if data is None:
+            continue
         try:
-            tree = nextcloud.download_tree(str(status["nextcloud_path"]))
-            if tree:
-                zbuf = io.BytesIO()
-                with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for rel, data in tree.items():
-                        zf.writestr(rel, data)
-                base = os.path.basename(str(status["nextcloud_path"]).rstrip("/")) or "word"
-                key = "/".join(
-                    [objstore.EDITOR_S3_PREFIX, "_exports", f"{request_id}.zip"]
+            content = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        sections.append({"filename": f["rel_path"].rsplit("/", 1)[-1], "content": content})
+    return sections
+
+
+@app.post("/projects/{project_id}/compose")
+async def compose_project(
+    project_id: str,
+    payload: dict[str, Any],
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """合成定義に従い各出力の本文を順に集約し、生成サービスの /compose で Word 化する。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    project = store.get_project(project_id, uid)
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    if not objstore.is_configured():
+        return JSONResponse(status_code=503, content={"error": "ストレージが未設定です。"})
+    saved = store.get_composition(project_id, uid)
+    # body の composition を優先（未指定なら保存済み → テーマ既定）。
+    body_comp = payload.get("composition")
+    theme_def = _resolve_theme_for_project(
+        project_id, uid, hint=str(payload.get("theme") or ""), saved=body_comp or saved
+    )
+    if theme_def is None:
+        return JSONResponse(status_code=400, content={"error": "テーマが未設定です。"})
+    # base_url は Markdown→Word 合成のときのみ必須（Excel のみの出力なら不要）。
+    base_url = generate.theme_base_url(theme_def)
+    if body_comp is not None:
+        composition = _normalize_composition(body_comp, theme_def)
+    elif saved:
+        composition = _normalize_composition(saved, theme_def)
+    else:
+        composition = _default_composition(theme_def)
+
+    files = store.list_files(project_id, uid)
+    files_by_key: dict[str, dict[str, Any]] = {}
+    for f in files:
+        sk = f.get("section_key")
+        if sk and sk not in files_by_key:
+            files_by_key[sk] = f
+    files_by_id = {f["id"]: f for f in files}
+
+    def _resolve_single(output: dict[str, Any]) -> dict[str, Any] | None:
+        for it in output.get("items", []) or []:
+            if not isinstance(it, dict):
+                continue
+            sk = str(it.get("section_key") or "").strip()
+            fid = str(it.get("file_id") or "").strip()
+            f = files_by_key.get(sk) if sk else None
+            if f is None and fid:
+                f = files_by_id.get(fid)
+            if f is not None:
+                return f
+        return None
+
+    # 出力を Markdown（Word 合成）と Excel（生成物をそのまま同梱）に振り分ける。
+    md_outputs: list[dict[str, Any]] = []
+    excel_files: list[tuple[str, bytes]] = []
+    included_names: list[str] = []
+    used_names: set[str] = set()
+
+    def _unique_arcname(base: str, ext: str) -> str:
+        # zip 内のファイル名は日本語を保持（パス区切り・禁止文字のみ除去）。
+        safe = "".join(c for c in (base or "") if c not in '\\/:*?"<>|' and ord(c) >= 32).strip()
+        safe = safe or "output"
+        name = f"{safe}.{ext}"
+        i = 2
+        while name in used_names:
+            name = f"{safe}({i}).{ext}"
+            i += 1
+        used_names.add(name)
+        return name
+
+    for o in composition.get("outputs", []):
+        if o.get("enabled") is False:
+            continue
+        name = str(o.get("name") or o.get("id") or "output")
+        if str(o.get("kind") or "") == "excel":
+            f = _resolve_single(o)
+            if f is None:
+                continue
+            data = objstore.get_bytes(f["s3_key"])
+            if data is None:
+                continue
+            ext = f["rel_path"].rsplit(".", 1)[-1].lower() if "." in f["rel_path"] else "xlsx"
+            excel_files.append((_unique_arcname(name, ext), data))
+            included_names.append(name)
+        else:
+            sections = _collect_output_sections(o, files_by_key, files_by_id)
+            if not sections:
+                continue
+            md_outputs.append({"name": name, "sections": sections})
+            included_names.append(name)
+
+    if not md_outputs and not excel_files:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "出力できる内容がありません（章の設定や生成状況を確認してください）。"},
+        )
+
+    # Markdown 出力は生成サービスへ送って Word(.docx) 化する。
+    docx_zip: bytes | None = None
+    if md_outputs:
+        if not base_url:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "このテーマの Word 合成 API が未設定です（管理者に確認してください）。"},
+            )
+        try:
+            docx_zip = await generate.compose(
+                md_outputs,
+                base_url=base_url,
+                api_key=generate.theme_api_key(theme_def),
+                reference=str(theme_def.get("doc_type") or ""),
+            )
+        except generate.GenerateError as e:
+            return JSONResponse(status_code=502, content={"error": str(e)})
+
+    # docx（合成結果）と Excel（生成物）を 1 つの zip にまとめる。
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if docx_zip:
+            try:
+                with zipfile.ZipFile(io.BytesIO(docx_zip)) as dz:
+                    for n in dz.namelist():
+                        if n.endswith("/"):
+                            continue
+                        arc = n.rsplit("/", 1)[-1]
+                        if arc in used_names:
+                            continue
+                        used_names.add(arc)
+                        zf.writestr(arc, dz.read(n))
+            except zipfile.BadZipFile:
+                return JSONResponse(
+                    status_code=502, content={"error": "Word 合成結果の展開に失敗しました。"}
                 )
-                if objstore.put_bytes(
-                    key, zbuf.getvalue(), content_type="application/zip"
-                ):
-                    status["download_url"] = objstore.presign_get(
-                        key, filename=f"{base}.zip", expiry=3600
-                    )
-                    status["download_filename"] = f"{base}.zip"
-        except Exception as e:  # noqa: BLE001
-            status["download_error"] = f"変換結果の取り込みに失敗しました: {e}"
-    return JSONResponse(content=status)
+        for arc, data in excel_files:
+            zf.writestr(arc, data)
+
+    project_name = objstore.sanitize_filename(project["name"]) or "project"
+    key = "/".join([objstore.EDITOR_S3_PREFIX, "_exports", f"compose-{uuid.uuid4().hex}.zip"])
+    if not objstore.put_bytes(key, buf.getvalue(), content_type="application/zip"):
+        return JSONResponse(status_code=502, content={"error": "合成結果の保存に失敗しました。"})
+    download_filename = f"{project_name}-output.zip"
+    url = objstore.presign_get(key, filename=download_filename, expiry=3600)
+    return JSONResponse(
+        content={
+            "status": "success",
+            "download_url": url,
+            "download_filename": download_filename,
+            "outputs": included_names,
+        }
+    )

@@ -1,10 +1,12 @@
 import MDEditor from '@uiw/react-md-editor';
-import * as commands from '@uiw/react-md-editor/commands';
 import type { ICommand, TextAreaTextApi } from '@uiw/react-md-editor/commands';
+import * as commands from '@uiw/react-md-editor/commands';
 import '@uiw/react-md-editor/markdown-editor.css';
 import type { PredictRequest } from 'genai-web';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  PiArrowDown,
+  PiArrowUp,
   PiColumns,
   PiCopySimple,
   PiEye,
@@ -16,6 +18,7 @@ import {
   PiImage,
   PiMagicWand,
   PiPencilSimple,
+  PiPlus,
   PiTable,
   PiTrash,
   PiTreeStructure,
@@ -23,13 +26,13 @@ import {
 } from 'react-icons/pi';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
-import { Button } from '@/components/ui/dads/Button';
 import {
   CustomDialog,
   CustomDialogBody,
   CustomDialogHeader,
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
+import { Button } from '@/components/ui/dads/Button';
 import { MERMAID_DIAGRAM_TYPES } from '@/features/generate-diagram/constants';
 import type { MermaidDiagramType } from '@/features/generate-diagram/types';
 import { extractDiagramCode } from '@/features/generate-diagram/utils/extractDiagram';
@@ -45,11 +48,19 @@ import {
   rewriteImageSources,
   triggerDownload,
 } from './format';
-import type { EditorConversion, EditorExportOptions, EditorFile, EditorFileKind } from './types';
+import type {
+  EditorComposition,
+  EditorCompositionItem,
+  EditorCompositionOutput,
+  EditorFile,
+  EditorFileKind,
+  EditorGenerateTheme,
+} from './types';
 import {
-  fetchConversion,
   fetchFileContent,
+  fetchGeneration,
   useEditorActions,
+  useEditorComposition,
   useEditorConfig,
   useEditorProject,
   useEditorProjects,
@@ -160,13 +171,6 @@ type ViewMode = 'split' | 'edit' | 'preview';
 const PROJECTS_TAB = 'projects';
 const EDIT_TAB = 'edit';
 const EXPORT_TAB = 'export';
-
-const EXPORT_ITEMS: { key: keyof EditorExportOptions; label: string; def: boolean }[] = [
-  { key: 'allow_specification', label: '調達仕様書', def: true },
-  { key: 'allow_rfi', label: 'RFI（情報提供依頼）', def: true },
-  { key: 'allow_quotation', label: '見積依頼', def: true },
-  { key: 'allow_primaryexam', label: '一次審査資料', def: false },
-];
 
 const FileManagerModal = ({
   open,
@@ -321,13 +325,462 @@ const FileManagerModal = ({
   );
 };
 
+// 出力ファイルの合成定義エディタ（書き出し・統合タブ）。
+// テーマ既定を初期表示し、プロジェクト単位で並べ替え・ON/OFF・出力追加を上書きできる。
+const CompositionEditor = ({ projectId }: { projectId: string }) => {
+  const { data, isLoading, mutate } = useEditorComposition(projectId);
+  const actions = useEditorActions();
+  const [outputs, setOutputs] = useState<EditorCompositionOutput[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [newOutputName, setNewOutputName] = useState('');
+  const [savedNotice, setSavedNotice] = useState(false);
+  const [compose, setCompose] = useState<
+    | { phase: 'idle' }
+    | { phase: 'running' }
+    | { phase: 'done'; url?: string; filename?: string; names?: string[] }
+    | { phase: 'error'; message: string }
+  >({ phase: 'idle' });
+
+  // サーバから取得した定義でローカル状態を初期化（プロジェクト/取得結果が変わったとき）。
+  const loadedKey = data ? `${projectId}:${data.saved}:${data.composition.outputs.length}` : null;
+  const initRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data || !loadedKey) return;
+    if (initRef.current === loadedKey) return;
+    initRef.current = loadedKey;
+    setOutputs(data.composition.outputs.map((o) => ({ ...o, items: [...o.items] })));
+    setDirty(false);
+  }, [data, loadedKey]);
+
+  const theme = data?.theme;
+  const files = useMemo(() => data?.files ?? [], [data]);
+  const sectionLabel = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const s of theme?.sections ?? []) m[s.key] = s.label;
+    return m;
+  }, [theme]);
+  const fileByKey = useMemo(() => {
+    const m: Record<string, (typeof files)[number]> = {};
+    for (const f of files) if (f.section_key) m[f.section_key] ??= f;
+    return m;
+  }, [files]);
+  const fileById = useMemo(() => {
+    const m: Record<string, (typeof files)[number]> = {};
+    for (const f of files) m[f.id] = f;
+    return m;
+  }, [files]);
+
+  // ある合成項目の表示情報（ラベル・実ファイル有無）を解決する。
+  const resolveItem = useCallback(
+    (item: EditorCompositionItem) => {
+      if (item.section_key) {
+        const f = fileByKey[item.section_key];
+        return {
+          label: sectionLabel[item.section_key] ?? item.section_key,
+          path: f?.rel_path,
+          available: !!f,
+        };
+      }
+      if (item.file_id) {
+        const f = fileById[item.file_id];
+        return { label: f?.rel_path ?? '(不明なファイル)', path: f?.rel_path, available: !!f };
+      }
+      return { label: '(不明)', path: undefined, available: false };
+    },
+    [fileByKey, fileById, sectionLabel],
+  );
+
+  // Excel 出力に紐づく section key（Markdown の「章を追加」候補からは除外する）。
+  const excelSectionKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const o of theme?.outputs ?? []) {
+      if (o.kind === 'excel') for (const k of o.sections) s.add(k);
+    }
+    return s;
+  }, [theme]);
+
+  // 追加候補（章＝生成 section / その他＝手動の md・text ファイル）。
+  const composable = useMemo(
+    () => files.filter((f) => f.kind === 'markdown' || f.kind === 'text'),
+    [files],
+  );
+  const sectionOptions = useMemo(
+    () => (theme?.sections ?? []).filter((s) => !!fileByKey[s.key] && !excelSectionKeys.has(s.key)),
+    [theme, fileByKey, excelSectionKeys],
+  );
+  const fileOptions = useMemo(() => composable.filter((f) => !f.section_key), [composable]);
+
+  const update = useCallback((next: EditorCompositionOutput[]) => {
+    setOutputs(next);
+    setDirty(true);
+  }, []);
+
+  const patchOutput = useCallback(
+    (idx: number, patch: Partial<EditorCompositionOutput>) => {
+      update(outputs.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
+    },
+    [outputs, update],
+  );
+
+  const moveItem = useCallback(
+    (oi: number, ii: number, dir: -1 | 1) => {
+      const items = [...outputs[oi].items];
+      const j = ii + dir;
+      if (j < 0 || j >= items.length) return;
+      [items[ii], items[j]] = [items[j], items[ii]];
+      patchOutput(oi, { items });
+    },
+    [outputs, patchOutput],
+  );
+
+  const removeItem = useCallback(
+    (oi: number, ii: number) => {
+      patchOutput(oi, { items: outputs[oi].items.filter((_, i) => i !== ii) });
+    },
+    [outputs, patchOutput],
+  );
+
+  const addItem = useCallback(
+    (oi: number, value: string) => {
+      if (!value) return;
+      const [kind, key] = value.split(':', 2);
+      const item: EditorCompositionItem = kind === 'sec' ? { section_key: key } : { file_id: key };
+      patchOutput(oi, { items: [...outputs[oi].items, item] });
+    },
+    [outputs, patchOutput],
+  );
+
+  const addOutput = useCallback(() => {
+    const name = newOutputName.trim();
+    if (!name) return;
+    update([...outputs, { id: `output-${Date.now()}`, name, enabled: true, items: [] }]);
+    setNewOutputName('');
+  }, [newOutputName, outputs, update]);
+
+  const removeOutput = useCallback(
+    (oi: number) => update(outputs.filter((_, i) => i !== oi)),
+    [outputs, update],
+  );
+
+  const currentComposition = useCallback(
+    (): EditorComposition => ({ theme: data?.composition.theme ?? theme?.id ?? '', outputs }),
+    [data, theme, outputs],
+  );
+
+  const onSave = useCallback(async () => {
+    const res = await actions.saveComposition(projectId, currentComposition());
+    if (res) {
+      setDirty(false);
+      setSavedNotice(true);
+      window.setTimeout(() => setSavedNotice(false), 2000);
+      await mutate();
+    }
+  }, [actions, projectId, currentComposition, mutate]);
+
+  const onCompose = useCallback(async () => {
+    setCompose({ phase: 'running' });
+    const res = await actions.composeProject(projectId, currentComposition());
+    if (res?.download_url) {
+      setCompose({
+        phase: 'done',
+        url: res.download_url,
+        filename: res.download_filename,
+        names: res.outputs,
+      });
+    } else if (res?.error) {
+      setCompose({ phase: 'error', message: res.error });
+    } else if (actions.error) {
+      setCompose({ phase: 'error', message: actions.error });
+    } else {
+      setCompose({ phase: 'error', message: 'Word 合成に失敗しました。' });
+    }
+  }, [actions, projectId, currentComposition]);
+
+  if (isLoading && !data) {
+    return (
+      <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
+        合成定義を読み込んでいます…
+      </div>
+    );
+  }
+  if (data?.error) {
+    return (
+      <div className='rounded-8 border border-amber-300 bg-amber-50 p-4 text-dns-14N-130 text-solid-gray-800'>
+        {data.error}
+      </div>
+    );
+  }
+
+  const composeConfigured = theme?.configured !== false;
+  const enabledCount = outputs.filter((o) => o.enabled).length;
+
+  return (
+    <section className='flex flex-col gap-4'>
+      <div className='rounded-8 border border-solid-gray-300 p-4'>
+        <h2 className='text-std-18B-160 text-solid-gray-900'>文書の書き出し・合成</h2>
+        <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+          出力ファイルごとに含める章（Markdown）と順番を指定して Word へ合成します。見積総括表・
+          一次審査表は生成時に作られる Excel をそのまま同梱します。
+          {theme ? `（テーマ: ${theme.label}）` : ''}
+        </p>
+        {!composeConfigured && (
+          <p className='mt-2 rounded-8 border border-amber-300 bg-amber-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
+            このテーマの Word 合成 API が未設定です。管理者に設定を依頼してください。
+          </p>
+        )}
+
+        <div className='mt-4 flex flex-col gap-4'>
+          {outputs.map((out, oi) => {
+            // Excel 出力（見積総括表・一次審査表）は「生成された単一ファイル」を出力するだけ。
+            // 章の並べ替え UI は出さず、生成状況のみ表示する。
+            if (out.kind === 'excel') {
+              const info = out.items[0] ? resolveItem(out.items[0]) : null;
+              return (
+                <div key={out.id} className='rounded-8 border border-solid-gray-300'>
+                  <div className='flex items-center gap-2 border-b border-solid-gray-200 bg-solid-gray-50 px-3 py-2'>
+                    <input
+                      type='checkbox'
+                      checked={out.enabled}
+                      onChange={(e) => patchOutput(oi, { enabled: e.target.checked })}
+                      className='size-4'
+                      title='この出力ファイルを対象にする'
+                    />
+                    <input
+                      type='text'
+                      value={out.name}
+                      onChange={(e) => patchOutput(oi, { name: e.target.value })}
+                      className='min-w-0 flex-1 rounded-6 border border-solid-gray-300 px-2 py-1 text-std-16N-170'
+                      placeholder='出力ファイル名'
+                    />
+                    <span className='shrink-0 text-dns-14N-130 text-solid-gray-500'>.xlsx</span>
+                    <button
+                      type='button'
+                      onClick={() => removeOutput(oi)}
+                      className='shrink-0 rounded-6 p-1 text-solid-gray-500 hover:bg-solid-gray-100 hover:text-error-1'
+                      title='この出力ファイルを削除'
+                    >
+                      <PiTrash className='size-4' />
+                    </button>
+                  </div>
+                  <div className='px-3 py-3 text-dns-14N-130'>
+                    {info?.available ? (
+                      <span className='inline-flex items-center gap-1.5 text-solid-gray-700'>
+                        <PiTable className='size-4 text-green-700' />
+                        生成済み: {info.path}
+                      </span>
+                    ) : (
+                      <span className='text-solid-gray-500'>
+                        未生成です。「ヒアリングシートから生成」を実行すると Excel
+                        が作成され、ここに表示されます。
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={out.id} className='rounded-8 border border-solid-gray-300'>
+                <div className='flex items-center gap-2 border-b border-solid-gray-200 bg-solid-gray-50 px-3 py-2'>
+                  <input
+                    type='checkbox'
+                    checked={out.enabled}
+                    onChange={(e) => patchOutput(oi, { enabled: e.target.checked })}
+                    className='size-4'
+                    title='この出力ファイルを合成対象にする'
+                  />
+                  <input
+                    type='text'
+                    value={out.name}
+                    onChange={(e) => patchOutput(oi, { name: e.target.value })}
+                    className='min-w-0 flex-1 rounded-6 border border-solid-gray-300 px-2 py-1 text-std-16N-170'
+                    placeholder='出力ファイル名'
+                  />
+                  <span className='shrink-0 text-dns-14N-130 text-solid-gray-500'>.docx</span>
+                  <button
+                    type='button'
+                    onClick={() => removeOutput(oi)}
+                    className='shrink-0 rounded-6 p-1 text-solid-gray-500 hover:bg-solid-gray-100 hover:text-error-1'
+                    title='この出力ファイルを削除'
+                  >
+                    <PiTrash className='size-4' />
+                  </button>
+                </div>
+                <div className='flex flex-col gap-1 p-3'>
+                  {out.items.length === 0 && (
+                    <p className='px-1 py-2 text-dns-14N-130 text-solid-gray-500'>
+                      章が未設定です。下の「章を追加」から追加してください。
+                    </p>
+                  )}
+                  {out.items.map((item, ii) => {
+                    const info = resolveItem(item);
+                    return (
+                      <div
+                        key={`${out.id}-${ii}-${item.section_key ?? item.file_id}`}
+                        className='flex items-center gap-2 rounded-6 border border-solid-gray-200 px-2 py-1.5'
+                      >
+                        <span className='w-6 shrink-0 text-center text-dns-14N-130 text-solid-gray-400'>
+                          {ii + 1}
+                        </span>
+                        <span className='min-w-0 flex-1 truncate text-std-16N-170 text-solid-gray-800'>
+                          {info.label}
+                          {info.path && info.path !== info.label && (
+                            <span className='ml-2 text-dns-14N-130 text-solid-gray-500'>
+                              {info.path}
+                            </span>
+                          )}
+                          {!info.available && (
+                            <span className='ml-2 text-dns-14N-130 text-error-1'>
+                              （ファイルなし）
+                            </span>
+                          )}
+                        </span>
+                        <button
+                          type='button'
+                          onClick={() => moveItem(oi, ii, -1)}
+                          disabled={ii === 0}
+                          className='shrink-0 rounded-6 p-1 text-solid-gray-500 hover:bg-solid-gray-100 disabled:opacity-30'
+                          title='上へ'
+                        >
+                          <PiArrowUp className='size-4' />
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() => moveItem(oi, ii, 1)}
+                          disabled={ii === out.items.length - 1}
+                          className='shrink-0 rounded-6 p-1 text-solid-gray-500 hover:bg-solid-gray-100 disabled:opacity-30'
+                          title='下へ'
+                        >
+                          <PiArrowDown className='size-4' />
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() => removeItem(oi, ii)}
+                          className='shrink-0 rounded-6 p-1 text-solid-gray-500 hover:bg-solid-gray-100 hover:text-error-1'
+                          title='この章を除外'
+                        >
+                          <PiTrash className='size-4' />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div className='mt-1 flex items-center gap-2'>
+                    <PiPlus className='size-4 shrink-0 text-solid-gray-500' />
+                    <select
+                      value=''
+                      onChange={(e) => {
+                        addItem(oi, e.target.value);
+                        e.target.value = '';
+                      }}
+                      className='rounded-6 border border-solid-gray-300 px-2 py-1 text-dns-14N-130 text-solid-gray-700'
+                    >
+                      <option value=''>章を追加…</option>
+                      {sectionOptions.length > 0 && (
+                        <optgroup label='章（生成）'>
+                          {sectionOptions.map((s) => (
+                            <option key={`sec:${s.key}`} value={`sec:${s.key}`}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {fileOptions.length > 0 && (
+                        <optgroup label='その他ファイル'>
+                          {fileOptions.map((f) => (
+                            <option key={`file:${f.id}`} value={`file:${f.id}`}>
+                              {f.rel_path}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className='mt-3 flex items-center gap-2'>
+          <input
+            type='text'
+            value={newOutputName}
+            onChange={(e) => setNewOutputName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addOutput();
+            }}
+            className='w-64 rounded-6 border border-solid-gray-300 px-2 py-1 text-std-16N-170'
+            placeholder='出力ファイルを追加（名称）'
+          />
+          <Button type='button' variant='outline' size='sm' onClick={addOutput}>
+            <span className='inline-flex items-center gap-1'>
+              <PiFilePlus className='size-4' />
+              出力ファイルを追加
+            </span>
+          </Button>
+        </div>
+
+        <div className='mt-5 flex flex-wrap items-center gap-3 border-t border-solid-gray-200 pt-4'>
+          <Button
+            type='button'
+            variant='outline'
+            size='md'
+            disabled={actions.submitting || !dirty}
+            onClick={onSave}
+          >
+            <span className='inline-flex items-center gap-1'>
+              <PiFloppyDisk className='size-4' />
+              定義を保存
+            </span>
+          </Button>
+          <Button
+            type='button'
+            variant='solid-fill'
+            size='md'
+            disabled={
+              !composeConfigured ||
+              actions.submitting ||
+              compose.phase === 'running' ||
+              enabledCount === 0
+            }
+            onClick={onCompose}
+          >
+            書き出す
+          </Button>
+          {savedNotice && (
+            <span className='text-dns-14N-130 text-blue-700'>定義を保存しました。</span>
+          )}
+          {compose.phase === 'running' && (
+            <span className='text-dns-14N-130 text-solid-gray-600'>合成中…</span>
+          )}
+          {compose.phase === 'error' && (
+            <span className='text-dns-14N-130 text-error-1'>{compose.message}</span>
+          )}
+        </div>
+
+        {compose.phase === 'done' && (
+          <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
+            合成が完了しました{compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
+            {compose.url && (
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='ml-3'
+                onClick={() => triggerDownload(compose.url as string, compose.filename)}
+              >
+                ダウンロード
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
 export const ProcuretechEditorPage = () => {
   const { config, unavailable } = useEditorConfig();
-  const {
-    projects,
-    loadError: projectsError,
-    mutate: mutateProjects,
-  } = useEditorProjects();
+  const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const {
     project,
@@ -363,16 +816,19 @@ export const ProcuretechEditorPage = () => {
   const [diagramBusy, setDiagramBusy] = useState(false);
   const [diagramError, setDiagramError] = useState<string | null>(null);
 
-  // 書き出し（変換）の進行状態。
-  const [exportOptions, setExportOptions] = useState<EditorExportOptions>(
-    Object.fromEntries(EXPORT_ITEMS.map((i) => [i.key, i.def])) as EditorExportOptions,
-  );
-  const [conversion, setConversion] = useState<
+  // ヒアリングシート → 章別 Markdown 生成モーダルの状態（テーマ選択→入力の2ステップ）。
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateStep, setGenerateStep] = useState<'theme' | 'inputs'>('theme');
+  const [selectedTheme, setSelectedTheme] = useState<EditorGenerateTheme | null>(null);
+  const [inputFiles, setInputFiles] = useState<Record<string, File | null>>({});
+  const [generation, setGeneration] = useState<
     | { phase: 'idle' }
-    | { phase: 'running'; requestId: string; status?: string }
-    | { phase: 'done'; url?: string; filename?: string }
+    | { phase: 'running'; requestId: string; progress?: number }
+    | { phase: 'done'; files: string[] }
     | { phase: 'error'; message: string }
   >({ phase: 'idle' });
+  const generateThemes = config?.generate_themes ?? [];
+  const allInputsSelected = !!selectedTheme && selectedTheme.inputs.every((i) => inputFiles[i.key]);
 
   const tree = useMemo(() => buildTree(files), [files]);
   const selected = useMemo(
@@ -424,38 +880,34 @@ export const ProcuretechEditorPage = () => {
     };
   }, [viewMode, isMarkdown]);
 
-  // 変換ステータスのポーリング。
+  // 生成ステータスのポーリング（成功時に ExApp 側が結果 zip を取り込む）。
   useEffect(() => {
-    if (conversion.phase !== 'running' || !projectId) return;
+    if (generation.phase !== 'running' || !projectId) return;
+    const requestId = generation.requestId;
     let stop = false;
     const timer = window.setInterval(async () => {
       if (stop) return;
       try {
-        const res: EditorConversion = await fetchConversion(conversion.requestId, projectId);
+        const res = await fetchGeneration(projectId, requestId);
         const status = String(res.status ?? '').toLowerCase();
-        if (status === 'success' || res.download_url) {
-          setConversion({
-            phase: 'done',
-            url: res.download_url,
-            filename: res.download_filename,
-          });
-        } else if (status === 'error' || status === 'failed' || res.error) {
-          setConversion({
-            phase: 'error',
-            message: res.error || res.download_error || '変換に失敗しました。',
-          });
+        if (status === 'success') {
+          setGeneration({ phase: 'done', files: res.files ?? [] });
+          await mutateProject();
+          mutateProjects();
+        } else if (status === 'error') {
+          setGeneration({ phase: 'error', message: res.error || '生成に失敗しました。' });
         } else {
-          setConversion({ phase: 'running', requestId: conversion.requestId, status });
+          setGeneration({ phase: 'running', requestId, progress: res.progress });
         }
       } catch (_e) {
-        setConversion({ phase: 'error', message: '変換状況の取得に失敗しました。' });
+        setGeneration({ phase: 'error', message: '生成状況の取得に失敗しました。' });
       }
     }, 2500);
     return () => {
       stop = true;
       window.clearInterval(timer);
     };
-  }, [conversion, projectId]);
+  }, [generation, projectId, mutateProject, mutateProjects]);
 
   // プロジェクト選択タブへ戻った際は一覧を再検証する。
   // （ファイル追加/複製/削除は単一プロジェクトしか mutate しないため、
@@ -472,7 +924,6 @@ export const ProcuretechEditorPage = () => {
     setBinaryUrl(null);
     setActiveTab(EDIT_TAB);
     setSavedNotice(false);
-    setConversion({ phase: 'idle' });
     setPageError(null);
   };
 
@@ -524,7 +975,11 @@ export const ProcuretechEditorPage = () => {
   };
 
   const onDeleteProject = async (id: string, name: string) => {
-    if (!window.confirm(`プロジェクト「${name}」を削除しますか？（フォルダ内のファイルも削除されます）`)) {
+    if (
+      !window.confirm(
+        `プロジェクト「${name}」を削除しますか？（フォルダ内のファイルも削除されます）`,
+      )
+    ) {
       return;
     }
     const ok = await actions.deleteProject(id);
@@ -549,7 +1004,11 @@ export const ProcuretechEditorPage = () => {
       window.alert('同名のファイルが既に存在します。');
       return;
     }
-    const res = await actions.saveFile(projectId, path, `# ${baseName(path).replace(/\.md$/, '')}\n\n`);
+    const res = await actions.saveFile(
+      projectId,
+      path,
+      `# ${baseName(path).replace(/\.md$/, '')}\n\n`,
+    );
     if (res) {
       await mutateProject();
       mutateProjects();
@@ -606,20 +1065,44 @@ export const ProcuretechEditorPage = () => {
     }
   };
 
-  const onExport = async () => {
-    if (!projectId) return;
-    setConversion({ phase: 'idle' });
-    const res = await actions.exportProject(projectId, exportOptions);
+  // 生成モーダルを開く（テーマ選択ステップから）。
+  const onOpenGenerate = () => {
+    setGeneration({ phase: 'idle' });
+    setSelectedTheme(null);
+    setInputFiles({});
+    setGenerateStep('theme');
+    setGenerateOpen(true);
+  };
+
+  // テーマを選び、入力（ヒアリングシート）ステップへ進む。
+  const onPickTheme = (theme: EditorGenerateTheme) => {
+    setSelectedTheme(theme);
+    setInputFiles({});
+    setGeneration({ phase: 'idle' });
+    setGenerateStep('inputs');
+  };
+
+  // 選択テーマのヒアリングシート（複数）から章別 Markdown 生成を開始する。
+  const onStartGenerate = async () => {
+    if (!projectId || !selectedTheme || !allInputsSelected) return;
+    const inputs: Record<string, string> = {};
+    for (const spec of selectedTheme.inputs) {
+      const file = inputFiles[spec.key];
+      if (!file) return;
+      inputs[spec.key] = await fileToBase64(file);
+    }
+    setGeneration({ phase: 'idle' });
+    const res = await actions.startGeneration(projectId, {
+      theme: selectedTheme.id,
+      inputs,
+    });
     if (!res) return;
-    const status = String(res.status ?? '').toLowerCase();
-    if (res.download_url || status === 'success') {
-      setConversion({ phase: 'done', url: res.download_url, filename: res.download_filename });
-    } else if (res.request_id) {
-      setConversion({ phase: 'running', requestId: res.request_id, status });
+    if (res.request_id) {
+      setGeneration({ phase: 'running', requestId: res.request_id });
     } else if (res.error) {
-      setConversion({ phase: 'error', message: res.error });
+      setGeneration({ phase: 'error', message: res.error });
     } else {
-      setConversion({ phase: 'error', message: '変換を開始できませんでした。' });
+      setGeneration({ phase: 'error', message: '生成を開始できませんでした。' });
     }
   };
 
@@ -645,7 +1128,7 @@ export const ProcuretechEditorPage = () => {
     setDiagramOpen(true);
   }, []);
 
-  // 画像を案件フォルダ（images/）へアップロードし、相対パスで本文へ埋め込む。
+  // 画像をプロジェクトフォルダ（images/）へアップロードし、相対パスで本文へ埋め込む。
   const onImagePicked = async (fileList: FileList | null) => {
     const file = fileList?.[0];
     if (!file || !projectId) return;
@@ -827,13 +1310,13 @@ export const ProcuretechEditorPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='情報化企画書エディタ' />
+      <PageTitle title='Markdown エディタ' />
 
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'>
         <div className='flex flex-col gap-1'>
-          <h1 className='text-std-22B-150 text-solid-gray-900'>情報化企画書エディタ</h1>
+          <h1 className='text-std-22B-150 text-solid-gray-900'>Markdown エディタ</h1>
           <p className='text-dns-16N-170 text-solid-gray-700'>
-            案件フォルダ内の生成文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。
+            プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。
           </p>
         </div>
 
@@ -842,7 +1325,7 @@ export const ProcuretechEditorPage = () => {
             className='rounded-8 border border-amber-300 bg-amber-50 px-4 py-2 text-dns-14N-130 text-solid-gray-800'
             role='status'
           >
-            情報化企画書エディタは現在利用できません（サービス未起動）。
+            Markdown エディタは現在利用できません（サービス未起動）。
             {config?.error ? ` ${config.error}` : ''}
           </div>
         )}
@@ -872,7 +1355,7 @@ export const ProcuretechEditorPage = () => {
         {activeTab === PROJECTS_TAB && (
           <section className='flex flex-col gap-3'>
             <div className='flex flex-wrap items-end justify-between gap-2'>
-              <h2 className='text-std-18B-160 text-solid-gray-900'>案件フォルダ一覧</h2>
+              <h2 className='text-std-18B-160 text-solid-gray-900'>プロジェクト一覧</h2>
               <div className='flex items-end gap-2'>
                 <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
                   新規プロジェクト名
@@ -968,7 +1451,7 @@ export const ProcuretechEditorPage = () => {
 
         {activeTab === EDIT_TAB && !project && (
           <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
-            「プロジェクト選択」タブから案件フォルダを開いてください。
+            「プロジェクト選択」タブからプロジェクトを開いてください。
           </div>
         )}
 
@@ -986,6 +1469,15 @@ export const ProcuretechEditorPage = () => {
                   ファイル管理
                 </span>
               </Button>
+
+              {config?.generate_configured !== false && (
+                <Button type='button' variant='outline' size='sm' onClick={onOpenGenerate}>
+                  <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                    <PiTable className='size-4' />
+                    ヒアリングシートから生成
+                  </span>
+                </Button>
+              )}
 
               <span className='flex flex-wrap items-center gap-1.5 text-std-14N-160'>
                 <PiFolders className='size-4 shrink-0 text-solid-gray-500' />
@@ -1106,83 +1598,11 @@ export const ProcuretechEditorPage = () => {
 
         {activeTab === EXPORT_TAB && !project && (
           <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
-            「プロジェクト選択」タブから案件フォルダを開いてください。
+            「プロジェクト選択」タブからプロジェクトを開いてください。
           </div>
         )}
 
-        {activeTab === EXPORT_TAB && project && (
-          <section className='flex flex-col gap-4'>
-            <div className='rounded-8 border border-solid-gray-300 p-4'>
-              <h2 className='text-std-18B-160 text-solid-gray-900'>Word 文書へ統合</h2>
-              <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                案件フォルダ内の Markdown を Word 文書へ統合します（外部 Word 変換 API を利用）。
-              </p>
-              {config?.convert_configured === false && (
-                <p className='mt-2 rounded-8 border border-amber-300 bg-amber-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
-                  Word 変換 API が未設定です（EDITOR_CONVERT_URL）。管理者に設定を依頼してください。
-                </p>
-              )}
-              <div className='mt-3 flex flex-col gap-2'>
-                {EXPORT_ITEMS.map((item) => (
-                  <label key={item.key} className='flex items-center gap-2 text-std-16N-170'>
-                    <input
-                      type='checkbox'
-                      checked={Boolean(exportOptions[item.key])}
-                      onChange={(e) =>
-                        setExportOptions((prev) => ({ ...prev, [item.key]: e.target.checked }))
-                      }
-                      className='size-4'
-                    />
-                    {item.label}
-                  </label>
-                ))}
-              </div>
-              <div className='mt-4 flex items-center gap-3'>
-                <Button
-                  type='button'
-                  variant='solid-fill'
-                  size='md'
-                  disabled={
-                    config?.convert_configured === false ||
-                    actions.submitting ||
-                    conversion.phase === 'running'
-                  }
-                  onClick={onExport}
-                >
-                  統合して変換
-                </Button>
-                {conversion.phase === 'running' && (
-                  <span className='text-dns-14N-130 text-solid-gray-600'>
-                    変換中…{conversion.status ? `（${conversion.status}）` : ''}
-                  </span>
-                )}
-                {conversion.phase === 'error' && (
-                  <span className='text-dns-14N-130 text-error-1'>{conversion.message}</span>
-                )}
-              </div>
-              {conversion.phase === 'done' && (
-                <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
-                  変換が完了しました。
-                  {conversion.url ? (
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      className='ml-3'
-                      onClick={() => triggerDownload(conversion.url as string, conversion.filename)}
-                    >
-                      ダウンロード
-                    </Button>
-                  ) : (
-                    <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>
-                      変換結果は連携先（Nextcloud 等）に出力されました。
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
+        {activeTab === EXPORT_TAB && project && <CompositionEditor projectId={project.id} />}
       </div>
 
       <FileManagerModal
@@ -1212,7 +1632,10 @@ export const ProcuretechEditorPage = () => {
       />
 
       {/* AI 図（Mermaid）生成モーダル。 */}
-      <CustomDialog isOpen={diagramOpen} onClose={() => (diagramBusy ? undefined : setDiagramOpen(false))}>
+      <CustomDialog
+        isOpen={diagramOpen}
+        onClose={() => (diagramBusy ? undefined : setDiagramOpen(false))}
+      >
         <CustomDialogPanel className='max-w-xl'>
           <CustomDialogHeader hasClose onClose={() => setDiagramOpen(false)}>
             <span className='inline-flex items-center gap-2'>
@@ -1279,6 +1702,207 @@ export const ProcuretechEditorPage = () => {
                   </span>
                 </Button>
               </div>
+            </div>
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
+
+      {/* ヒアリングシート → 章別 Markdown 生成モーダル（テーマ選択 → 入力）。 */}
+      <CustomDialog
+        isOpen={generateOpen}
+        onClose={() => (generation.phase === 'running' ? undefined : setGenerateOpen(false))}
+      >
+        <CustomDialogPanel className='max-w-xl'>
+          <CustomDialogHeader hasClose onClose={() => setGenerateOpen(false)}>
+            <span className='inline-flex items-center gap-2'>
+              <PiTable className='size-6 text-solid-gray-700' />
+              ヒアリングシートから生成
+            </span>
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            <div className='flex flex-col gap-3'>
+              {config?.generate_configured === false && (
+                <p className='rounded-8 border border-amber-300 bg-amber-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
+                  文書生成 API が未設定です。管理者に設定を依頼してください。
+                </p>
+              )}
+
+              {generateStep === 'theme' && (
+                <>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    生成する文書のテーマを選択してください。テーマごとに、必要なヒアリングシートと呼び出す生成
+                    API が異なります。
+                  </p>
+                  {generateThemes.length === 0 ? (
+                    <p className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-3 py-3 text-dns-14N-130 text-solid-gray-600'>
+                      利用可能なテーマがありません。管理者にテーマ設定（EDITOR_GENERATE_THEMES）を依頼してください。
+                    </p>
+                  ) : (
+                    <ul className='flex flex-col gap-2'>
+                      {generateThemes.map((t) => (
+                        <li key={t.id}>
+                          <button
+                            type='button'
+                            disabled={t.configured === false}
+                            onClick={() => onPickTheme(t)}
+                            className='flex w-full flex-col items-start gap-0.5 rounded-8 border border-solid-gray-300 bg-white px-3 py-2 text-left hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50'
+                          >
+                            <span className='inline-flex items-center gap-2 text-std-16B-150 text-solid-gray-900'>
+                              <PiFileText className='size-4 text-solid-gray-600' />
+                              {t.label}
+                              {t.configured === false && (
+                                <span className='rounded-full bg-amber-100 px-2 py-0.5 text-dns-14N-130 text-amber-800'>
+                                  API 未設定
+                                </span>
+                              )}
+                            </span>
+                            {t.description && (
+                              <span className='text-dns-14N-130 text-solid-gray-600'>
+                                {t.description}
+                              </span>
+                            )}
+                            <span className='text-dns-14N-130 text-solid-gray-500'>
+                              必要なシート: {t.inputs.map((i) => i.label).join(' / ') || '—'}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className='mt-1 flex items-center justify-end'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      onClick={() => setGenerateOpen(false)}
+                    >
+                      キャンセル
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {generateStep === 'inputs' && selectedTheme && (
+                <>
+                  <div className='flex flex-wrap items-center gap-2 text-dns-14N-130'>
+                    <span className='rounded-full bg-blue-100 px-2 py-0.5 text-blue-900'>
+                      {selectedTheme.label}
+                    </span>
+                    {selectedTheme.description && (
+                      <span className='text-solid-gray-600'>{selectedTheme.description}</span>
+                    )}
+                  </div>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    必要なヒアリングシートをアップロードすると、章別の Markdown
+                    を生成し、このプロジェクトへ取り込みます。
+                  </p>
+                  {selectedTheme.inputs.map((spec) => {
+                    const picked = inputFiles[spec.key];
+                    const busy = generation.phase === 'running';
+                    return (
+                      <div key={spec.key} className='flex flex-col gap-1'>
+                        <span className='text-dns-14N-130 text-solid-gray-700'>{spec.label}</span>
+                        <div className='flex items-center gap-2'>
+                          <label
+                            className={
+                              busy
+                                ? 'inline-flex cursor-not-allowed items-center gap-1 rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-3 py-1.5 text-dns-14N-130 text-solid-gray-400'
+                                : 'inline-flex cursor-pointer items-center gap-1 rounded-8 border border-solid-gray-300 bg-white px-3 py-1.5 text-dns-14N-130 text-solid-gray-800 hover:bg-solid-gray-50'
+                            }
+                          >
+                            <PiUploadSimple className='size-4' />
+                            ファイルを選択
+                            <input
+                              type='file'
+                              accept={spec.accept || '.xlsx'}
+                              className='sr-only'
+                              disabled={busy}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] ?? null;
+                                setInputFiles((prev) => ({ ...prev, [spec.key]: f }));
+                                setGeneration({ phase: 'idle' });
+                              }}
+                            />
+                          </label>
+                          <span className='min-w-0 truncate text-dns-14N-130 text-solid-gray-500'>
+                            {picked ? picked.name : '未選択'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {generation.phase === 'running' && (
+                    <p className='rounded-8 border border-blue-300 bg-blue-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
+                      生成中です。しばらくお待ちください…
+                      {typeof generation.progress === 'number' ? `（${generation.progress}%）` : ''}
+                    </p>
+                  )}
+                  {generation.phase === 'error' && (
+                    <p className='rounded-8 border border-error-2 bg-error-3 px-3 py-2 text-dns-14N-130 text-error-1'>
+                      {generation.message}
+                    </p>
+                  )}
+                  {generation.phase === 'done' && (
+                    <div className='rounded-8 border border-blue-300 bg-blue-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
+                      {generation.files.length}件のファイルを取り込みました。
+                      {generation.files.length > 0 && (
+                        <ul className='mt-1 list-disc pl-5'>
+                          {generation.files.map((p) => (
+                            <li key={p}>{p}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className='mt-1 text-solid-gray-600'>
+                        「ファイル管理」から開いて編集できます。
+                      </p>
+                    </div>
+                  )}
+                  <div className='mt-1 flex items-center justify-between gap-2'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      disabled={generation.phase === 'running'}
+                      onClick={() => setGenerateStep('theme')}
+                    >
+                      戻る
+                    </Button>
+                    <div className='flex items-center gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='md'
+                        disabled={generation.phase === 'running'}
+                        onClick={() => setGenerateOpen(false)}
+                      >
+                        {generation.phase === 'done' ? '閉じる' : 'キャンセル'}
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='solid-fill'
+                        size='md'
+                        disabled={
+                          selectedTheme.configured === false ||
+                          !allInputsSelected ||
+                          actions.submitting ||
+                          generation.phase === 'running' ||
+                          generation.phase === 'done'
+                        }
+                        onClick={onStartGenerate}
+                      >
+                        <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                          <PiMagicWand className='size-4' />
+                          {generation.phase === 'running'
+                            ? '生成中…'
+                            : generation.phase === 'done'
+                              ? '取り込み済み'
+                              : '生成して取り込み'}
+                        </span>
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </CustomDialogBody>
         </CustomDialogPanel>
