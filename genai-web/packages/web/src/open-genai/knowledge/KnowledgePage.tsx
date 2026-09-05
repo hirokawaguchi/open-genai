@@ -72,7 +72,9 @@ export const KnowledgePage = () => {
           </Select>
           {current && !canManage && (
             <p className='text-dns-14N-130 text-solid-gray-600'>
-              このスコープは閲覧のみ可能です（共有ナレッジの管理はシステム管理者に限られます）。
+              {current.kind === 'common'
+                ? 'このスコープは閲覧のみ可能です（共有ナレッジの管理はシステム管理者に限られます）。'
+                : 'このスコープは閲覧のみです。配下チームの資料は親所属から見られますが、登録・削除は明示メンバーだけが行えます。'}
             </p>
           )}
         </div>
