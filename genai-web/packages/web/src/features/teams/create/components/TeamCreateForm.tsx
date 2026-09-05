@@ -1,14 +1,18 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { ListTeamsResponse } from 'genai-web';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router';
+import useSWR from 'swr';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
 import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
+import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LoadingButton } from '@/components/ui/LoadingButton';
-import { isApiError } from '@/lib/fetcher';
+import { isApiError, teamApiFetcher } from '@/lib/fetcher';
 import { focus } from '@/utils/focus';
 import { useCreateTeam } from '../hooks/useCreateTeam';
 import { TeamCreateSchema, teamCreateSchema } from '../schema';
@@ -19,6 +23,12 @@ export const TeamCreateForm = () => {
   const { createTeam, mutateTeams } = useCreateTeam();
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const { data: teamsData } = useSWR<ListTeamsResponse>('teams', teamApiFetcher, {
+    revalidateOnFocus: false,
+  });
+  const parentCandidates = (teamsData?.teams ?? []).filter(
+    (t) => t.teamId !== COMMON_EXAPPS_TEAM_ID,
+  );
 
   const {
     register,
@@ -27,6 +37,7 @@ export const TeamCreateForm = () => {
   } = useForm<TeamCreateSchema>({
     mode: 'onSubmit',
     resolver: zodResolver(teamCreateSchema),
+    defaultValues: { parentTeamId: '' },
   });
 
   const onSubmit = handleSubmit(async (data) => {
@@ -36,6 +47,7 @@ export const TeamCreateForm = () => {
       const newTeam = await createTeam({
         teamName: data.name,
         teamAdminEmail: data.email,
+        ...(data.parentTeamId ? { parentTeamId: data.parentTeamId } : {}),
       });
       await mutateTeams();
       navigate(`/teams/${newTeam.teamId}/apps`);
@@ -90,6 +102,28 @@ export const TeamCreateForm = () => {
           {...register('email')}
         />
         {errors.email && <ErrorText id={`team-email-error`}>＊{errors.email.message}</ErrorText>}
+      </div>
+
+      <div className='flex flex-col gap-1.5'>
+        <Label htmlFor={`team-parent-input`} size='lg'>
+          親チーム
+        </Label>
+        <SupportText id={`team-parent-input-support`}>
+          組織階層がある場合だけ指定します。親所属の人は、このチームのアプリ・ナレッジを閲覧できます。
+        </SupportText>
+        <Select
+          id={`team-parent-input`}
+          blockSize='md'
+          aria-describedby='team-parent-input-support'
+          {...register('parentTeamId')}
+        >
+          <option value=''>なし（最上位）</option>
+          {parentCandidates.map((t) => (
+            <option key={t.teamId} value={t.teamId}>
+              {t.teamName}
+            </option>
+          ))}
+        </Select>
       </div>
 
       {error && (

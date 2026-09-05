@@ -52,6 +52,11 @@ export const TeamList = (props: Props) => {
               >
                 {team.teamName}
               </Link>
+              {team.parentTeamId && (
+                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                  親: {teams.find((t) => t.teamId === team.parentTeamId)?.teamName ?? '上位チーム'}
+                </p>
+              )}
             </div>
 
             <div className='relative flex flex-none px-2'>

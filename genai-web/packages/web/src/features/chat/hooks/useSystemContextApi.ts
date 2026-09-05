@@ -7,7 +7,7 @@ import useSWR from 'swr';
 import { genUApi, genUApiFetcher } from '@/lib/fetcher';
 import { decomposeId } from '@/utils/decomposeId';
 
-export type MyTeam = { teamId: string; teamName: string };
+export type MyTeam = { teamId: string; teamName: string; isPrimary?: boolean };
 
 export type SystemContextShareOptions = {
   isPublic?: boolean;

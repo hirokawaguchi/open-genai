@@ -32,6 +32,7 @@ export const TeamMemberEditForm = (props: Props) => {
     values: {
       email: member.username,
       isAdmin: member.isAdmin,
+      isPrimary: member.isPrimary ?? false,
     },
   });
 
@@ -41,6 +42,7 @@ export const TeamMemberEditForm = (props: Props) => {
       setIsLoading(true);
       await updateTeamMember(member.teamId, member.userId, {
         isAdmin: data.isAdmin,
+        isPrimary: data.isPrimary,
       });
       await mutateTeamMembers();
       navigate(`/teams/${member.teamId}/members`);
@@ -79,6 +81,7 @@ export const TeamMemberEditForm = (props: Props) => {
       </div>
 
       <Checkbox {...register('isAdmin')}>チーム管理者に設定する</Checkbox>
+      <Checkbox {...register('isPrimary')}>このチームを主所属にする</Checkbox>
 
       {error && (
         <section className='my-4'>
