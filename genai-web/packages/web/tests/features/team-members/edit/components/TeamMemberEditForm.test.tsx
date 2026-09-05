@@ -151,6 +151,7 @@ describe('TeamMemberEditForm', () => {
       await waitFor(() => {
         expect(mockUpdateTeamMember).toHaveBeenCalledWith('team-1', 'user-1', {
           isAdmin: true,
+          isPrimary: false,
         });
       });
     });
@@ -169,6 +170,7 @@ describe('TeamMemberEditForm', () => {
       await waitFor(() => {
         expect(mockUpdateTeamMember).toHaveBeenCalledWith('team-1', 'user-2', {
           isAdmin: false,
+          isPrimary: false,
         });
       });
     });
@@ -239,6 +241,7 @@ describe('TeamMemberEditForm', () => {
       await waitFor(() => {
         expect(mockUpdateTeamMember).toHaveBeenCalledWith('team-1', 'user-1', {
           isAdmin: false,
+          isPrimary: false,
         });
       });
     });

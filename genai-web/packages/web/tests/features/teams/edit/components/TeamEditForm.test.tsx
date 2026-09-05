@@ -28,6 +28,8 @@ describe('TeamEditForm', () => {
 
     vi.mocked(useTeamName).mockReturnValue({
       teamName: '既存チーム名',
+      parentTeamId: '',
+      teamId: 'team-123',
     });
 
     vi.mocked(focusModule.focus).mockImplementation(mockFocus);
@@ -94,6 +96,7 @@ describe('TeamEditForm', () => {
       await waitFor(() => {
         expect(mockUpdateTeam).toHaveBeenCalledWith('team-123', {
           teamName: '新しいチーム名',
+          parentTeamId: null,
         });
       });
     });
@@ -152,6 +155,7 @@ describe('TeamEditForm', () => {
       await waitFor(() => {
         expect(mockUpdateTeam).toHaveBeenCalledWith('team-123', {
           teamName: '既存チーム名',
+          parentTeamId: null,
         });
       });
     });

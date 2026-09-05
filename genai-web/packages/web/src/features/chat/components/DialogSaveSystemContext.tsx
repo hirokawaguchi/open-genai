@@ -139,7 +139,7 @@ export const DialogSaveSystemContext = (props: Props) => {
               {myTeams.length > 0 && (
                 <fieldset className='flex flex-col gap-1'>
                   <legend className='text-dns-14N-130 text-solid-gray-600'>
-                    チームで共有（所属チームから選択）
+                    チームで共有（明示所属から選択。配下の閲覧専用チームは出ません）
                   </legend>
                   {myTeams.map((team) => (
                     <label key={team.teamId} className='flex items-center gap-2'>
@@ -148,7 +148,10 @@ export const DialogSaveSystemContext = (props: Props) => {
                         checked={selectedTeamIds.includes(team.teamId)}
                         onChange={() => toggleTeam(team.teamId)}
                       />
-                      <span>{team.teamName}</span>
+                      <span>
+                        {team.teamName}
+                        {team.isPrimary ? '（主所属）' : ''}
+                      </span>
                     </label>
                   ))}
                 </fieldset>
