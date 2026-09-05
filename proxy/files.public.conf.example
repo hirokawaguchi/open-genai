@@ -1,0 +1,56 @@
+# 成果物（SeaweedFS）の外部公開用 nginx 設定例。
+# Open GENAI 本体（UI / API / Keycloak）とは別ホスト・別グローバル IP で運用する。
+#
+# 重要:
+#   - /open-genai/（S3_BUCKET）だけを SeaweedFS へ渡すこと
+#   - UI・/api・/kc をこのホストから到達可能にしないこと
+#   - SeaweedFS の 8333 はホストに出さない（このプロキシの裏側だけ）
+#
+# 書き込みもこのホストの 443 で受ける場合、limit_except で
+# UI サーバの IP 以外の PUT/DELETE を拒否できる。
+#
+# S3_PUBLIC_ENDPOINT / S3_ENDPOINT_URL にはこのプロキシの公開 URL
+# （例: https://files.example.lg.jp）を設定する。
+
+upstream seaweedfs_s3 {
+    server open-genai-seaweedfs:8333;
+}
+
+server {
+    listen 443 ssl;
+    server_name files.example.lg.jp;
+
+    # ssl_certificate     /path/to/fullchain.pem;
+    # ssl_certificate_key /path/to/privkey.pem;
+
+    location /open-genai/ {
+        limit_except GET HEAD {
+            allow 192.0.2.10;  # UI サーバ（backend）の IP
+            deny all;
+        }
+        proxy_pass http://seaweedfs_s3;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        client_max_body_size 64m;
+    }
+
+    location = /open-genai {
+        limit_except GET HEAD {
+            allow 192.0.2.10;
+            deny all;
+        }
+        proxy_pass http://seaweedfs_s3;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location / {
+        return 404;
+    }
+}

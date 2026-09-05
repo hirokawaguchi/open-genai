@@ -3,8 +3,10 @@
 # 使い方（本番 TLS）:
 #   cp .env.prod.example .env.prod
 #   # .env.prod の PUBLIC_URL 等を編集
+#   # ホストシェルの PUBLIC_URL 等が .env.prod を上書きしないよう
+#   # scripts/compose-prod.sh 経由を推奨。
 #   # 組織 CA 発行の証明書を proxy/certs/{fullchain.pem,privkey.pem} に配置
-#   docker compose -f docker-compose.prod.yml --env-file .env.prod up --build
+#   ./scripts/compose-prod.sh up --build
 #
 # 使い方（閉域検証: HTTP のみ・自己署名不要・ポート 80）:
 #   cp .env.prod.example .env.prod
@@ -32,8 +34,8 @@ services:
     image: nginx:1.27-alpine
     container_name: open-genai-proxy
     ports:
-      - "${PROXY_HTTP_PORT:-80}:80"
-      - "${PROXY_HTTPS_PORT:-443}:443"
+      - "${PROXY_BIND_IP:-0.0.0.0}:${PROXY_HTTP_PORT:-80}:80"
+      - "${PROXY_BIND_IP:-0.0.0.0}:${PROXY_HTTPS_PORT:-443}:443"
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
@@ -145,11 +147,14 @@ services:
       # 起動時の既定パスワード警告用（Keycloak 本体の認証とは別。backend が検知して案内する）
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
       - FILES_URL_SECRET=${FILES_URL_SECRET:-}
-      - SAML_SP_ENTITY_ID=${PUBLIC_URL}/api/auth/saml/metadata
+      - SAML_SP_ENTITY_ID=${SAML_SP_ENTITY_ID:-${PUBLIC_URL}/api/auth/saml/metadata}
       - SAML_SP_ACS_URL=${PUBLIC_URL}/api/auth/saml/acs
       - SAML_SP_SLS_URL=${PUBLIC_URL}/api/auth/saml/sls
       # backend からは内部ネットワークで Keycloak(relative /kc) を参照
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+      - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
+      - OPERATOR_USERS=${OPERATOR_USERS:-}
     volumes:
       - backend_data:/data
     extra_hosts:
@@ -218,7 +223,8 @@ services:
         # 画像生成の初期 step/cfg（既定 50/7。FastSD/LCM を使うビルドでは 4/1 を指定）
         VITE_APP_IMAGE_DEFAULT_STEP: ${VITE_APP_IMAGE_DEFAULT_STEP:-50}
         VITE_APP_IMAGE_DEFAULT_CFG: ${VITE_APP_IMAGE_DEFAULT_CFG:-7}
-        VITE_APP_MODEL_IDS: ${VITE_APP_MODEL_IDS:-}
+        # 単引用符必須。二重なしだと YAML が JSON 配列と解釈し引用符が落ちる
+        VITE_APP_MODEL_IDS: '${VITE_APP_MODEL_IDS:-}'
     container_name: open-genai-web
     expose:
       - "80"

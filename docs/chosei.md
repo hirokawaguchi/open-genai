@@ -27,7 +27,13 @@ docker compose --profile chosei up -d --build
 
 ## 外部公開（デュアルイングレス）
 
-Open GENAI 本体の nginx からゲスト API を晒さないでください。別ホストで [`proxy/chosei.public.conf.example`](../proxy/chosei.public.conf.example) を参考に **`/public` のみ** upstream します。
+Open GENAI 本体の nginx からゲスト API をインターネットに晒さないでください。別ホストで [`proxy/chosei.public.conf.example`](../proxy/chosei.public.conf.example) を参考に **`/public` のみ** upstream します。
+
+UI サーバの 443 がメンテ IP 等で閉じている場合、ゲスト FQDN は 443 を開けた別ホスト（成果物ホストと同居可）に置き、そのプロキシだけが UI サーバの `/public` へ戻します。本番 compose の nginx は `/public` を `chosei-app` へ渡します。chosei-app の 8010 はホストに出さないでください。
+
+系統を増やすときはゲスト FQDN を分け（例: `chosei-<系統>.example.lg.jp`）、chosei-app と DB も系統ごとに分けます。1 つの DB にまとめると一覧が混ざります。
+
+`CHOSEI_PUBLIC_ENDPOINT` にはゲストが開く URL（別ホスト）を固定します。未設定だと `PUBLIC_URL`（庁内 FQDN）になり、インターネットから届きません。
 
 開発時は `chosei-app` のホストポート（既定 `8010`）でゲスト UI を直接確認できます。
 

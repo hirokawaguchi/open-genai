@@ -28,12 +28,10 @@ ENV VITE_APP_API_ENDPOINT=${VITE_APP_API_ENDPOINT} \
     VITE_APP_NAV_LAYOUT=${VITE_APP_NAV_LAYOUT} \
     VITE_APP_IMAGE_DEFAULT_STEP=${VITE_APP_IMAGE_DEFAULT_STEP} \
     VITE_APP_IMAGE_DEFAULT_CFG=${VITE_APP_IMAGE_DEFAULT_CFG}
-# compose から渡されたモデル一覧があれば .env を上書き（空なら packages/web/.env のまま）
+# compose から渡されたモデル一覧があれば .env を上書き（空なら packages/web/.env のまま）。
+# YAML が JSON 配列と解釈して引用符を落としても、ここで正規 JSON に戻す。
 RUN if [ -n "$VITE_APP_MODEL_IDS" ]; then \
-      grep -v '^VITE_APP_MODEL_IDS=' packages/web/.env > packages/web/.env.tmp && \
-      mv packages/web/.env.tmp packages/web/.env && \
-      printf '%s\n' "VITE_APP_MODEL_IDS=${VITE_APP_MODEL_IDS}" >> packages/web/.env; \
-    fi
+      node -e 'const fs=require("fs"); const p="packages/web/.env";         const raw=process.env.VITE_APP_MODEL_IDS||""; let val;         try { const j=JSON.parse(raw); val=JSON.stringify(Array.isArray(j)?j:[String(j)]); }         catch { val=JSON.stringify(raw.replace(/^[\[\s]+|[\]\s]+$/g,"").split(",").map(s=>s.trim()).filter(Boolean)); }         const lines=fs.readFileSync(p,"utf8").split("\n").filter(l=>!l.startsWith("VITE_APP_MODEL_IDS="));         if (lines.length && lines[lines.length-1]==="") lines.pop();         lines.push("VITE_APP_MODEL_IDS="+val);         fs.writeFileSync(p, lines.join("\n")+"\n");';     fi
 
 RUN npm run web:build
 

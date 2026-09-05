@@ -11,3 +11,4 @@ python-pptx==1.0.2
 xlrd==2.0.2
 olefile==0.47
 boto3==1.35.99
+bcrypt==4.2.1
