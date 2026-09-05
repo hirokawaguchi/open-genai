@@ -49,6 +49,11 @@ export const TeamMemberList = (props: Props) => {
               >
                 {member.username}
               </span>
+              {member.isPrimary && (
+                <span className='rounded-4 bg-blue-50 px-2 py-1 text-oln-16N-100'>
+                  主所属
+                </span>
+              )}
               {member.isAdmin && (
                 <span className='rounded-4 bg-solid-gray-50 px-2 py-1 text-oln-16N-100'>
                   チーム管理者

@@ -750,20 +750,29 @@ def _all_teams_header() -> str:
     return base64.b64encode(payload.encode("utf-8")).decode("ascii")
 
 
-def _member_teams(user_id: str) -> list[dict[str, str]]:
+def _member_teams(user_id: str) -> list[dict[str, Any]]:
     try:
         return teams_store.list_teams_for_member(user_id)
     except Exception:  # noqa: BLE001
         return []
 
 
-def _user_team_ids_str(user_id: str) -> str:
-    """所属チームID(カンマ区切り)。共有資産(プロンプト等)の可視判定に使う。
+def _effective_team_ids(user_id: str) -> list[str]:
+    """読取用チームID。明示所属 + 主所属の子孫。"""
+    try:
+        return teams_store.list_effective_team_ids_for_user(user_id)
+    except Exception:  # noqa: BLE001
+        return []
 
-    backend が信頼の根として team_users を解決し、`x-user-tags`(署名スロット)として
-    exApp へ署名付与する。x-user-* の偽装による他チーム資産の閲覧を防ぐ。
+
+def _user_team_ids_str(user_id: str) -> str:
+    """読取用チームID(カンマ区切り)。共有資産(プロンプト等)の可視判定に使う。
+
+    明示所属に加え、主所属の配下課を加算する。書込・共有先の検証は
+    `_member_teams`（明示所属）側。backend が信頼の根として解決し、
+    `x-user-tags`(署名スロット)として exApp へ署名付与する。
     """
-    return ",".join(t["teamId"] for t in _member_teams(user_id))
+    return ",".join(_effective_team_ids(user_id))
 
 
 def _user_teams_header(user_id: str) -> str:
@@ -1625,9 +1634,8 @@ async def predict_title(request: Request) -> str:
 async def list_system_contexts(request: Request) -> list[Any]:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
-    # 本人 ＋ 全体公開 ＋ 所属チーム共有（チームは backend が信頼の根として解決）
-    team_ids = [t["teamId"] for t in _member_teams(user_id)]
-    return storage.list_system_contexts(user_id, team_ids)
+    # 本人 ＋ 全体公開 ＋ 所属/配下チーム共有（読取は effective tags）
+    return storage.list_system_contexts(user_id, _effective_team_ids(user_id))
 
 
 @app.post("/systemcontexts")
@@ -1959,8 +1967,11 @@ def _knowledge_authz(
         if (write or admin_only) and not is_admin:
             return _forbidden("共有ナレッジの管理には管理者権限が必要です")
         return None
-    # チームスコープ: メンバー(or 管理者)。refresh/clear 等は管理者のみ
-    if not is_admin and not teams_store.is_team_member(scope, user_id):
+    # チームスコープ: 読取は配下継承、書込は明示メンバー（or システム管理者）
+    if write or admin_only:
+        if not is_admin and not teams_store.is_team_member(scope, user_id):
+            return _forbidden("このチームのナレッジを操作する権限がありません")
+    elif not is_admin and not teams_store.can_read_team(scope, user_id):
         return _forbidden("このチームのナレッジを操作する権限がありません")
     if admin_only and not is_admin:
         return _forbidden("この操作には管理者権限が必要です")
@@ -2025,15 +2036,32 @@ async def knowledge_scopes(request: Request) -> JSONResponse:
             "canManage": is_admin,
         }
     ]
+    seen: set[str] = set()
     for t in _member_teams(user_id):
         if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
             continue
+        seen.add(t["teamId"])
         scopes.append(
             {
                 "scope": t["teamId"],
                 "name": t.get("teamName") or t["teamId"],
                 "kind": "team",
                 "canManage": True,
+            }
+        )
+    try:
+        inherited = teams_store.list_inherited_teams_for_user(user_id)
+    except Exception:  # noqa: BLE001
+        inherited = []
+    for t in inherited:
+        if t["teamId"] in seen or t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        scopes.append(
+            {
+                "scope": t["teamId"],
+                "name": f"{t.get('teamName') or t['teamId']}（配下・閲覧）",
+                "kind": "team",
+                "canManage": False,
             }
         )
     return JSONResponse(content={"scopes": scopes, "isSystemAdmin": is_admin})
@@ -2505,11 +2533,11 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
         return _forbidden("このアプリの実行には管理者権限が必要です")
 
-    # 認可: 共通チーム or システム管理者 or 所属メンバー
+    # 認可: 共通チーム or システム管理者 or 所属/配下の閲覧権限
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを実行する権限がありません")
 
@@ -2713,7 +2741,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを実行する権限がありません")
 
@@ -2935,7 +2963,7 @@ async def get_exapp_schema(request: Request) -> JSONResponse:
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを参照する権限がありません")
 
@@ -2998,7 +3026,7 @@ async def resolve_exapp_schema(request: Request) -> JSONResponse:
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを参照する権限がありません")
 
@@ -5689,7 +5717,7 @@ async def get_exapp_history(
     if (
         teamId != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(teamId, user_id)
+        and not teams_store.can_read_team(teamId, user_id)
     ):
         return {"history": None}
     hist = teams_store.get_exapp_history(teamId, exAppId, createdDate, user_id)
@@ -5795,11 +5823,15 @@ async def create_team(request: Request) -> JSONResponse:
     body = await request.json()
     team_name = body.get("teamName", "")
     admin_email = body.get("teamAdminEmail", "")
+    parent_team_id = (body.get("parentTeamId") or "").strip() or None
     if not team_name or not admin_email:
         return JSONResponse(
             status_code=400, content={"error": "teamName と teamAdminEmail は必須です"}
         )
-    team = teams_store.create_team(team_name, admin_email)
+    parent_err = teams_store.validate_parent_team_id(None, parent_team_id)
+    if parent_err:
+        return JSONResponse(status_code=400, content={"error": parent_err})
+    team = teams_store.create_team(team_name, admin_email, parent_team_id)
     # 新規チームには「ナレッジ検索」のみ自動登録。
     # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
     teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
@@ -5845,7 +5877,14 @@ async def update_team(team_id: str, request: Request) -> JSONResponse:
     ):
         return _forbidden()
     body = await request.json()
-    team = teams_store.update_team(team_id, body.get("teamName", ""))
+    parent_team_id = body.get("parentTeamId") if "parentTeamId" in body else ...
+    if parent_team_id is not ...:
+        parent_err = teams_store.validate_parent_team_id(
+            team_id, (parent_team_id or "").strip() or None
+        )
+        if parent_err:
+            return JSONResponse(status_code=400, content={"error": parent_err})
+    team = teams_store.update_team(team_id, body.get("teamName", ""), parent_team_id)
     if not team:
         return JSONResponse(status_code=404, content={"error": "チームが見つかりません"})
     return JSONResponse(content=team)
@@ -5925,7 +5964,12 @@ async def create_team_user(team_id: str, request: Request) -> JSONResponse:
                 )
             },
         )
-    user = teams_store.create_team_user(team_id, email, bool(body.get("isAdmin")))
+    is_primary = body.get("isPrimary")
+    if is_primary is not None:
+        is_primary = bool(is_primary)
+    user = teams_store.create_team_user(
+        team_id, email, bool(body.get("isAdmin")), is_primary
+    )
     if user is None:
         return JSONResponse(status_code=409, content={"error": "既にメンバーです。"})
     return JSONResponse(content=user)
@@ -5938,6 +5982,9 @@ async def update_team_user(team_id: str, user_id: str, request: Request) -> JSON
         return _forbidden()
     body = await request.json()
     is_admin = bool(body.get("isAdmin"))
+    is_primary = body.get("isPrimary")
+    if is_primary is not None:
+        is_primary = bool(is_primary)
     # 最後の管理者を一般化しようとした場合はエラー
     if not is_admin and teams_store.is_team_admin(team_id, user_id):
         if teams_store.count_team_admins(team_id) <= 1:
@@ -5945,7 +5992,7 @@ async def update_team_user(team_id: str, user_id: str, request: Request) -> JSON
                 status_code=400,
                 content={"error": "チーム管理者が0人になるため変更できません"},
             )
-    user = teams_store.update_team_user(team_id, user_id, is_admin)
+    user = teams_store.update_team_user(team_id, user_id, is_admin, is_primary)
     if not user:
         return JSONResponse(status_code=404, content={"error": "メンバーが見つかりません"})
     return JSONResponse(content=user)
@@ -5991,11 +6038,11 @@ async def find_exapp(team_id: str, ex_app_id: str, request: Request) -> JSONResp
     # 管理者限定アプリ（監査ログ参照等）は非管理者に定義(apiKey含む)を返さない
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
-    # 実行ページからの詳細取得: 共通 / システム管理者 / 所属メンバー が閲覧可
+    # 実行ページからの詳細取得: 共通 / システム管理者 / 所属・配下閲覧 が閲覧可
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden()
     return JSONResponse(content=app_def)
@@ -6082,7 +6129,7 @@ async def delete_exapp_history(
     if (
         team_id != COMMON_TEAM_ID
         and not _is_system_admin(claims)
-        and not teams_store.is_team_member(team_id, user_id)
+        and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden()
     owner_id = None if _is_system_admin(claims) else user_id

@@ -29,6 +29,7 @@ export const TeamMemberCreateForm = () => {
   } = useForm<TeamMemberCreateSchema>({
     mode: 'onSubmit',
     resolver: zodResolver(teamMemberCreateSchema),
+    defaultValues: { isAdmin: false, isPrimary: false },
   });
 
   const onSubmit = handleSubmit(async (data) => {
@@ -38,6 +39,7 @@ export const TeamMemberCreateForm = () => {
       await createTeamMember(teamId ?? '', {
         email: data.email,
         isAdmin: data.isAdmin,
+        isPrimary: data.isPrimary,
       });
       await mutateTeamMembers();
       navigate(`/teams/${teamId ?? ''}/members`);
@@ -81,6 +83,10 @@ export const TeamMemberCreateForm = () => {
       </div>
 
       <Checkbox {...register('isAdmin')}>チーム管理者に設定する</Checkbox>
+      <Checkbox {...register('isPrimary')}>このチームを主所属にする</Checkbox>
+      <SupportText>
+        主所属は1つだけです。親チームに所属している人は、配下チームを自動で閲覧できます。
+      </SupportText>
 
       {error && (
         <section className='my-4'>

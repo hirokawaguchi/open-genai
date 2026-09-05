@@ -7,12 +7,14 @@ export type GroupName = 'SystemAdminGroup' | 'TeamAdminGroup' | 'UserGroup';
 export type Team = {
   teamId: string;
   teamName: string;
+  parentTeamId?: string | null;
   createdDate: string;
   updatedDate: string;
 };
 
 export type UpdateTeamRequest = {
   teamName: string;
+  parentTeamId?: string | null;
 };
 
 export type CreateTeamRequest = UpdateTeamRequest & {
@@ -35,6 +37,7 @@ export type TeamUser = {
   userId: string; // userId that sub is in UserAttributes of UserType
   username: string;
   isAdmin: boolean;
+  isPrimary?: boolean;
   createdDate: string;
   updatedDate: string;
 };
@@ -47,8 +50,10 @@ export type ListTeamUsersResponse = {
 export type CreateTeamUserRequest = {
   email: string;
   isAdmin: boolean;
+  isPrimary?: boolean;
 };
 
 export type UpdateTeamUserRequest = {
   isAdmin: boolean;
+  isPrimary?: boolean;
 };
