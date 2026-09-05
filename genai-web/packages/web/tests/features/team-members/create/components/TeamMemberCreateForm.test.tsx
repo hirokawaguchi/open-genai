@@ -121,6 +121,7 @@ describe('TeamMemberCreateForm', () => {
         expect(mockCreateTeamMember).toHaveBeenCalledWith('team-123', {
           email: 'test@example.com',
           isAdmin: false,
+          isPrimary: false,
         });
       });
     });
@@ -151,6 +152,7 @@ describe('TeamMemberCreateForm', () => {
         expect(mockCreateTeamMember).toHaveBeenCalledWith('team-1', {
           email: 'admin@example.com',
           isAdmin: true,
+          isPrimary: false,
         });
       });
     });

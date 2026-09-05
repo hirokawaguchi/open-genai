@@ -5,5 +5,7 @@ export const useTeamName = () => {
 
   return {
     teamName: team?.teamName ?? '',
+    parentTeamId: team?.parentTeamId ?? '',
+    teamId: team?.teamId ?? '',
   };
 };

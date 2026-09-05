@@ -15,6 +15,7 @@ import os
 import sqlite3
 import threading
 import time
+import unicodedata
 import uuid
 from typing import Any
 
@@ -50,6 +51,14 @@ def normalize_email(email: str | None) -> str:
     return (email or "").strip().lower()
 
 
+def normalize_org_name(name: str | None) -> str:
+    """所属・チーム名の表記ゆれを潰す（全角英数→半角、前後空白除去）。
+
+    初期リストの「ＤＸ推進課」と画面入力の「DX推進課」を同一視する。
+    """
+    return unicodedata.normalize("NFKC", (name or "")).strip()
+
+
 def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -67,6 +76,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
             CREATE TABLE IF NOT EXISTS teams (
                 teamId TEXT PRIMARY KEY,
                 teamName TEXT NOT NULL,
+                parentTeamId TEXT,
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
@@ -76,6 +86,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 userId TEXT NOT NULL,
                 username TEXT NOT NULL,
                 isAdmin INTEGER NOT NULL DEFAULT 0,
+                isPrimary INTEGER NOT NULL DEFAULT 0,
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL,
                 PRIMARY KEY (teamId, userId)
@@ -125,6 +136,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
             );
             """
         )
+        _migrate_org_columns(conn)
         # 共通チーム / 管理者ツール チーム（いずれもシステム管理下の固定チーム）
         for fixed_id, fixed_name in (
             (COMMON_TEAM_ID, "共通アプリ"),
@@ -144,6 +156,29 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
     # 共通チームに既定アプリ(RAG 等)をシード
     for app in seed_exapps or []:
         upsert_seed_exapp(app)
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _migrate_org_columns(conn: sqlite3.Connection) -> None:
+    """既存 DB に parentTeamId / isPrimary を加算する。"""
+    if "parentTeamId" not in _table_columns(conn, "teams"):
+        conn.execute("ALTER TABLE teams ADD COLUMN parentTeamId TEXT")
+    if "isPrimary" not in _table_columns(conn, "team_users"):
+        conn.execute(
+            "ALTER TABLE team_users ADD COLUMN isPrimary INTEGER NOT NULL DEFAULT 0"
+        )
+        # 既存メンバーは、利用者ごとに最も古い所属を主所属にする
+        conn.execute(
+            """
+            UPDATE team_users SET isPrimary = 1
+            WHERE rowid IN (
+                SELECT MIN(rowid) FROM team_users GROUP BY userId
+            )
+            """
+        )
 
 
 def upsert_seed_exapp(app: dict[str, Any]) -> None:
@@ -289,12 +324,50 @@ def refresh_placeholder_by_endpoint(
 # Team
 # ---------------------------------------------------------------------------
 def _row_to_team(r: sqlite3.Row) -> dict[str, Any]:
+    keys = set(r.keys())
+    parent = r["parentTeamId"] if "parentTeamId" in keys else None
     return {
         "teamId": r["teamId"],
         "teamName": r["teamName"],
+        "parentTeamId": parent or None,
         "createdDate": r["createdDate"],
         "updatedDate": r["updatedDate"],
     }
+
+
+def _would_cycle(conn: sqlite3.Connection, team_id: str, parent_id: str) -> bool:
+    """parent_id を祖先方向へ辿り、team_id に戻れば循環。"""
+    seen: set[str] = set()
+    current: str | None = parent_id
+    while current:
+        if current == team_id or current in seen:
+            return True
+        seen.add(current)
+        row = conn.execute(
+            "SELECT parentTeamId FROM teams WHERE teamId = ?", (current,)
+        ).fetchone()
+        current = (row["parentTeamId"] if row else None) or None
+    return False
+
+
+def validate_parent_team_id(team_id: str | None, parent_team_id: str | None) -> str | None:
+    """親子設定の妥当性。問題があればメッセージ、なければ None。"""
+    parent_team_id = (parent_team_id or "").strip() or None
+    if not parent_team_id:
+        return None
+    if parent_team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+        return "固定チームを親にはできません"
+    if team_id and parent_team_id == team_id:
+        return "自分自身を親にはできません"
+    with _lock, _connect() as conn:
+        parent = conn.execute(
+            "SELECT teamId FROM teams WHERE teamId = ?", (parent_team_id,)
+        ).fetchone()
+        if not parent:
+            return "親チームが見つかりません"
+        if team_id and _would_cycle(conn, team_id, parent_team_id):
+            return "親チームの指定が循環しています"
+    return None
 
 
 def list_teams() -> list[dict[str, Any]]:
@@ -326,20 +399,29 @@ def get_team(team_id: str) -> dict[str, Any] | None:
     return _row_to_team(r) if r else None
 
 
-def create_team(team_name: str, admin_email: str) -> dict[str, Any]:
+def create_team(
+    team_name: str, admin_email: str, parent_team_id: str | None = None
+) -> dict[str, Any]:
     team_id = str(uuid.uuid4())
     admin_email = normalize_email(admin_email)
+    team_name = normalize_org_name(team_name)
+    parent_team_id = (parent_team_id or "").strip() or None
     now = _now()
     with _lock, _connect() as conn:
+        has_primary = conn.execute(
+            "SELECT 1 FROM team_users WHERE userId = ? AND isPrimary = 1 LIMIT 1",
+            (admin_email,),
+        ).fetchone()
         conn.execute(
-            "INSERT INTO teams (teamId, teamName, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?)",
-            (team_id, team_name, now, now),
+            "INSERT INTO teams (teamId, teamName, parentTeamId, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (team_id, team_name, parent_team_id, now, now),
         )
         conn.execute(
-            "INSERT INTO team_users (teamId, userId, username, isAdmin, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, 1, ?, ?)",
-            (team_id, admin_email, admin_email, now, now),
+            "INSERT INTO team_users"
+            " (teamId, userId, username, isAdmin, isPrimary, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, 1, ?, ?, ?)",
+            (team_id, admin_email, admin_email, 0 if has_primary else 1, now, now),
         )
         team = conn.execute(
             "SELECT * FROM teams WHERE teamId = ?", (team_id,)
@@ -353,12 +435,23 @@ def create_team(team_name: str, admin_email: str) -> dict[str, Any]:
     return result
 
 
-def update_team(team_id: str, team_name: str) -> dict[str, Any] | None:
+def update_team(
+    team_id: str, team_name: str, parent_team_id: str | None | object = ...
+) -> dict[str, Any] | None:
+    team_name = normalize_org_name(team_name)
     with _lock, _connect() as conn:
-        conn.execute(
-            "UPDATE teams SET teamName = ?, updatedDate = ? WHERE teamId = ?",
-            (team_name, _now(), team_id),
-        )
+        if parent_team_id is ...:
+            conn.execute(
+                "UPDATE teams SET teamName = ?, updatedDate = ? WHERE teamId = ?",
+                (team_name, _now(), team_id),
+            )
+        else:
+            parent = (parent_team_id or "").strip() or None
+            conn.execute(
+                "UPDATE teams SET teamName = ?, parentTeamId = ?, updatedDate = ?"
+                " WHERE teamId = ?",
+                (team_name, parent, _now(), team_id),
+            )
         r = conn.execute(
             "SELECT * FROM teams WHERE teamId = ?", (team_id,)
         ).fetchone()
@@ -367,6 +460,14 @@ def update_team(team_id: str, team_name: str) -> dict[str, Any] | None:
 
 def delete_team(team_id: str) -> None:
     with _lock, _connect() as conn:
+        parent_row = conn.execute(
+            "SELECT parentTeamId FROM teams WHERE teamId = ?", (team_id,)
+        ).fetchone()
+        new_parent = (parent_row["parentTeamId"] if parent_row else None) or None
+        conn.execute(
+            "UPDATE teams SET parentTeamId = ? WHERE parentTeamId = ?",
+            (new_parent, team_id),
+        )
         conn.execute("DELETE FROM user_app_pins WHERE teamId = ?", (team_id,))
         conn.execute("DELETE FROM exapps WHERE teamId = ?", (team_id,))
         conn.execute("DELETE FROM team_users WHERE teamId = ?", (team_id,))
@@ -377,14 +478,33 @@ def delete_team(team_id: str) -> None:
 # Team users (members)
 # ---------------------------------------------------------------------------
 def _row_to_team_user(r: sqlite3.Row) -> dict[str, Any]:
+    keys = set(r.keys())
     return {
         "teamId": r["teamId"],
         "userId": r["userId"],
         "username": r["username"],
         "isAdmin": bool(r["isAdmin"]),
+        "isPrimary": bool(r["isPrimary"]) if "isPrimary" in keys else False,
         "createdDate": r["createdDate"],
         "updatedDate": r["updatedDate"],
     }
+
+
+def _unset_primary(conn: sqlite3.Connection, user_id: str) -> None:
+    conn.execute(
+        "UPDATE team_users SET isPrimary = 0, updatedDate = ? WHERE userId = ?",
+        (_now(), user_id),
+    )
+
+
+def _user_has_primary(conn: sqlite3.Connection, user_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM team_users WHERE userId = ? AND isPrimary = 1 LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def list_team_users(team_id: str) -> list[dict[str, Any]]:
@@ -406,12 +526,15 @@ def get_team_user(team_id: str, user_id: str) -> dict[str, Any] | None:
     return _row_to_team_user(r) if r else None
 
 
-def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any] | None:
+def create_team_user(
+    team_id: str, email: str, is_admin: bool, is_primary: bool | None = None
+) -> dict[str, Any] | None:
     """新規メンバーを追加する。
 
     既存メンバーがいる場合は **何も変更せず None を返す**（INSERT OR REPLACE による
     参加日時リセットや権限の意図しない上書きを防ぐ）。権限変更は明示的な更新
     (`update_team_user`) で行うこと。
+    is_primary 未指定なら、主所属が無い利用者だけ主所属にする。
     """
     email = normalize_email(email)
     now = _now()
@@ -422,11 +545,15 @@ def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any]
         ).fetchone()
         if existing:
             return None
+        if is_primary is None:
+            is_primary = not _user_has_primary(conn, email)
+        if is_primary:
+            _unset_primary(conn, email)
         conn.execute(
             "INSERT INTO team_users"
-            " (teamId, userId, username, isAdmin, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (team_id, email, email, 1 if is_admin else 0, now, now),
+            " (teamId, userId, username, isAdmin, isPrimary, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (team_id, email, email, 1 if is_admin else 0, 1 if is_primary else 0, now, now),
         )
         r = conn.execute(
             "SELECT * FROM team_users WHERE teamId = ? AND userId = ?",
@@ -435,13 +562,25 @@ def create_team_user(team_id: str, email: str, is_admin: bool) -> dict[str, Any]
     return _row_to_team_user(r)
 
 
-def update_team_user(team_id: str, user_id: str, is_admin: bool) -> dict[str, Any] | None:
+def update_team_user(
+    team_id: str,
+    user_id: str,
+    is_admin: bool,
+    is_primary: bool | None = None,
+) -> dict[str, Any] | None:
     user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
+        if is_primary:
+            _unset_primary(conn, user_id)
+        sets = "isAdmin = ?, updatedDate = ?"
+        params: list[Any] = [1 if is_admin else 0, _now()]
+        if is_primary is not None:
+            sets += ", isPrimary = ?"
+            params.append(1 if is_primary else 0)
+        params.extend([team_id, user_id])
         conn.execute(
-            "UPDATE team_users SET isAdmin = ?, updatedDate = ?"
-            " WHERE teamId = ? AND userId = ?",
-            (1 if is_admin else 0, _now(), team_id, user_id),
+            f"UPDATE team_users SET {sets} WHERE teamId = ? AND userId = ?",
+            params,
         )
         r = conn.execute(
             "SELECT * FROM team_users WHERE teamId = ? AND userId = ?",
@@ -453,10 +592,26 @@ def update_team_user(team_id: str, user_id: str, is_admin: bool) -> dict[str, An
 def delete_team_user(team_id: str, user_id: str) -> None:
     user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT isPrimary FROM team_users WHERE teamId = ? AND userId = ?",
+            (team_id, user_id),
+        ).fetchone()
         conn.execute(
             "DELETE FROM team_users WHERE teamId = ? AND userId = ?",
             (team_id, user_id),
         )
+        if row and row["isPrimary"]:
+            nxt = conn.execute(
+                "SELECT teamId FROM team_users WHERE userId = ?"
+                " ORDER BY createdDate ASC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if nxt:
+                conn.execute(
+                    "UPDATE team_users SET isPrimary = 1, updatedDate = ?"
+                    " WHERE teamId = ? AND userId = ?",
+                    (_now(), nxt["teamId"], user_id),
+                )
 
 
 def count_team_admins(team_id: str) -> int:
@@ -496,25 +651,104 @@ def list_team_ids_for_user(user_id: str) -> list[str]:
     return [r["teamId"] for r in rows]
 
 
+def get_primary_team_id(user_id: str) -> str | None:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT teamId FROM team_users WHERE userId = ? AND isPrimary = 1 LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return r["teamId"] if r else None
+
+
+def list_descendant_team_ids(team_id: str) -> list[str]:
+    """team_id の子孫（自身は含まない）。深さ優先で循環を防ぐ。"""
+    if not team_id:
+        return []
+    with _lock, _connect() as conn:
+        rows = conn.execute("SELECT teamId, parentTeamId FROM teams").fetchall()
+    children: dict[str, list[str]] = {}
+    for r in rows:
+        parent = r["parentTeamId"]
+        if parent:
+            children.setdefault(parent, []).append(r["teamId"])
+    out: list[str] = []
+    stack = list(children.get(team_id, []))
+    seen = {team_id}
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        out.append(current)
+        stack.extend(children.get(current, []))
+    return out
+
+
+def list_effective_team_ids_for_user(user_id: str) -> list[str]:
+    """読取用タグ = 明示所属 + 主所属の子孫。追加タグ（兼務）は展開しない。"""
+    member_ids = list_team_ids_for_user(user_id)
+    primary = get_primary_team_id(user_id)
+    result = set(member_ids)
+    if primary:
+        result.update(list_descendant_team_ids(primary))
+    return [tid for tid in result if tid]
+
+
+def can_read_team(team_id: str, user_id: str) -> bool:
+    return team_id in list_effective_team_ids_for_user(user_id)
+
+
+def list_inherited_teams_for_user(user_id: str) -> list[dict[str, str]]:
+    """主所属の子孫のうち、明示所属していないチーム（閲覧専用）。"""
+    member_ids = set(list_team_ids_for_user(user_id))
+    primary = get_primary_team_id(user_id)
+    if not primary:
+        return []
+    inherited_ids = [
+        tid for tid in list_descendant_team_ids(primary) if tid not in member_ids
+    ]
+    if not inherited_ids:
+        return []
+    placeholders = ",".join("?" for _ in inherited_ids)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            f"SELECT teamId, teamName FROM teams WHERE teamId IN ({placeholders})"
+            " ORDER BY createdDate ASC",
+            inherited_ids,
+        ).fetchall()
+    return [
+        {"teamId": r["teamId"], "teamName": r["teamName"]}
+        for r in rows
+        if r["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+    ]
+
+
 # 全体公開を表す予約スコープ（全利用者が暗黙保持）。チームIDとは衝突しない固定値。
 PUBLIC_SCOPE = "public"
 
 
-def list_teams_for_member(user_id: str) -> list[dict[str, str]]:
+def list_teams_for_member(user_id: str) -> list[dict[str, Any]]:
     """利用者が所属するチーム（id+name）。共有先の選択肢に使う。
 
     共通/管理者ツールの固定チームは共有先にしないため除外する。
+    配下の閲覧専用チームは含めない（明示所属だけ）。
     """
     user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
-            "SELECT t.teamId AS teamId, t.teamName AS teamName"
+            "SELECT t.teamId AS teamId, t.teamName AS teamName,"
+            " u.isPrimary AS isPrimary"
             " FROM teams t JOIN team_users u ON t.teamId = u.teamId"
             " WHERE u.userId = ? ORDER BY t.createdDate ASC",
             (user_id,),
         ).fetchall()
     return [
-        {"teamId": r["teamId"], "teamName": r["teamName"]}
+        {
+            "teamId": r["teamId"],
+            "teamName": r["teamName"],
+            "isPrimary": bool(r["isPrimary"]),
+        }
         for r in rows
         if r["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
     ]
@@ -647,14 +881,14 @@ def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, A
     """AI アプリ一覧（公開済み）を可視範囲で返す（teamName 付き）。
 
     - システム管理者: 全チームの公開アプリ
-    - それ以外: 所属チーム + 共通チームの公開アプリ（管理者ツールチームは除外）
+    - それ以外: 明示所属 + 主所属の配下 + 共通チームの公開アプリ（管理者ツールは除外）
     """
     teams = {t["teamId"]: t["teamName"] for t in list_teams()}
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM exapps WHERE status = 'published'"
         ).fetchall()
-    visible_team_ids = set(list_team_ids_for_user(user_id))
+    visible_team_ids = set(list_effective_team_ids_for_user(user_id))
     visible_team_ids.add(COMMON_TEAM_ID)
     result = []
     for r in rows:
