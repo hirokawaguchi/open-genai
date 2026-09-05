@@ -69,3 +69,6 @@ deletion-report-*.txt
 !/docs/patchform.md
 !/docs/spark.md
 !/docs/procuretech-generate-contract.md
+
+# 運用者ログインの初期平文（サーバ内のみ）
+/.ops-credentials

@@ -1,24 +1,41 @@
 import { CRI_PREFIX_PATTERN, modelMetadata } from '@genai-web/common';
 import type { Model } from 'genai-web';
 
-const bedrockModelIds: string[] = (JSON.parse(import.meta.env.VITE_APP_MODEL_IDS) as string[])
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
+/** Vite 埋め込み値。正規 JSON 配列のほか、compose/YAML が引用符を落とした [gpt-4.1,claude-...] も受け付ける。 */
+export function parseEnvStringList(raw: string | undefined): string[] {
+  const text = String(raw ?? '').trim();
+  if (!text) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+    if (typeof parsed === 'string' && parsed.trim()) {
+      return [parsed.trim()];
+    }
+  } catch {
+    // 引用符なし配列 / カンマ区切り
+  }
+  return text
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .split(',')
+    .map((item) => item.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+}
+
+const bedrockModelIds: string[] = parseEnvStringList(import.meta.env.VITE_APP_MODEL_IDS);
 
 const duplicateBaseModelIds = new Set(
   bedrockModelIds
     .map((modelId) => modelId.replace(CRI_PREFIX_PATTERN, ''))
     .filter((item, index, arr) => arr.indexOf(item) !== index),
 );
-const endpointNames: string[] = JSON.parse(import.meta.env.VITE_APP_ENDPOINT_NAMES)
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
+const endpointNames: string[] = parseEnvStringList(import.meta.env.VITE_APP_ENDPOINT_NAMES);
 
-const imageGenModelIds: string[] = (
-  JSON.parse(import.meta.env.VITE_APP_IMAGE_MODEL_IDS) as string[]
-)
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
+const imageGenModelIds: string[] = parseEnvStringList(import.meta.env.VITE_APP_IMAGE_MODEL_IDS);
 
 const textModels = [
   ...bedrockModelIds.map((name) => ({ modelId: name, type: 'bedrock' }) as Model),

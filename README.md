@@ -289,7 +289,7 @@ docker compose up --build
   - `KEYCLOAK_ADMIN_PASSWORD`（**初回起動前**に設定。詳細は[認証節の「運用開始時」](#運用開始時本番閉域-パスワード変更)）
   - `S3_*`（`S3_PUBLIC_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` 等。詳細は[成果物ファイル節](#成果物ファイルseaweedfs-再ホスト)）
 - TLS 証明書を `proxy/certs/{fullchain.pem,privkey.pem}` に配置（`docker-compose.prod.yml` が `/etc/nginx/certs` にマウント。詳細は [`proxy/certs/README.md`](proxy/certs/README.md)）。
-- Keycloak の SAML クライアント（SP）登録を `PUBLIC_URL` に合わせる（初回 import 前に `keycloak/import/realm-open-genai.json` を編集、または admin コンソールで更新。詳細は[SAML 節](#源内側の設定変更時に必要な作業)）。
+- Keycloak の SAML クライアント（SP）登録を `PUBLIC_URL` に合わせる（初回 import 前に `keycloak/import/realm-open-genai.json` を編集、または admin コンソールで更新。詳細は[SAML 節](#源内側の設定変更時に必要な作業)）。庁内 FQDN と運用者 FQDN を分ける場合は ACS/SLS を `PUBLIC_URL` 側、`SAML_SP_ENTITY_ID` だけ既存 clientId に固定できる。運用者ホストだけ Keycloak を使わない ID/PW は `OPERATOR_LOGIN_HOSTS` / `OPERATOR_USERS`（`.env.prod.example`）。
 
 ### 初回デプロイ（本番 TLS）
 
@@ -299,10 +299,12 @@ cp .env.prod.example .env.prod        # PUBLIC_URL・各シークレット等を
 #    proxy/certs/fullchain.pem, privkey.pem を配置
 
 # 2. ビルドして起動（web は静的ビルドされる）
-docker compose -f docker-compose.prod.yml --env-file .env.prod up --build -d
+#    ホストシェルの PUBLIC_URL 等が .env.prod を上書きしないよう
+#    scripts/compose-prod.sh を推奨。
+./scripts/compose-prod.sh up --build -d
 
 # 3. 状態確認
-docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+./scripts/compose-prod.sh ps
 ```
 
 - 公開 URL（`PUBLIC_URL`）でログイン画面（Keycloak）に遷移すること
@@ -1104,7 +1106,7 @@ cat link.txt
 | 内部（backend → SeaweedFS） | `S3_ENDPOINT_URL=http://seaweedfs:8333`（変更不要） |
 | 公開（署名付き URL のホスト） | `S3_PUBLIC_ENDPOINT=https://files.example.lg.jp` |
 
-**推奨:** 源内本体（`proxy/nginx.conf` の `/`・`/api/`）とは別ホスト、または別サーバブロックで SeaweedFS に転送する。
+**推奨:** 源内本体（`proxy/nginx.conf` の `/`・`/api/`）とは別ホスト、または別サーバブロックで SeaweedFS に転送する。UI の 443 が IP 制限されている場合は、443 を開けた別サーバに置き [`proxy/files.public.conf.example`](proxy/files.public.conf.example) を使う。8333 はホストに出さない。backend の書き込みも同じ公開 HTTPS（`S3_ENDPOINT_URL`）にできる。
 
 nginx 設定例（専用サブドメイン `files.example.lg.jp` → SeaweedFS）:
 

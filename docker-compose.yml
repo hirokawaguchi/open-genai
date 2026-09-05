@@ -119,9 +119,12 @@ services:
       # proxy 経由の公開 URL（末尾スラッシュ無し。PROXY_HTTP_PORT 変更時は合わせる）
       - PUBLIC_BASE_URL=${PUBLIC_URL:-http://localhost}/api
       - FRONTEND_URL=${PUBLIC_URL:-http://localhost}
-      - SAML_SP_ENTITY_ID=${PUBLIC_URL:-http://localhost}/api/auth/saml/metadata
+      - SAML_SP_ENTITY_ID=${SAML_SP_ENTITY_ID:-${PUBLIC_URL:-http://localhost}/api/auth/saml/metadata}
       - SAML_SP_ACS_URL=${PUBLIC_URL:-http://localhost}/api/auth/saml/acs
       - SAML_SP_SLS_URL=${PUBLIC_URL:-http://localhost}/api/auth/saml/sls
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+      - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
+      - OPERATOR_USERS=${OPERATOR_USERS:-}
       # backend(コンテナ内)から IdP メタデータを取得する URL（Keycloak relative /kc）
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
     volumes:

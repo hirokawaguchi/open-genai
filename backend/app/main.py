@@ -29,6 +29,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
+    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     Response,
@@ -46,6 +47,7 @@ from . import (
     llm,
     ngwords,
     objstore,
+    ops_login,
     policy,
     security_warn,
     storage,
@@ -1259,6 +1261,8 @@ def _saml_script_name(request: Request) -> str:
 
 @app.get("/auth/login")
 async def auth_login(request: Request) -> Response:
+    if ops_login.enabled(request):
+        return HTMLResponse(content=ops_login.login_form(request))
     relay = request.query_params.get("redirect") or FRONTEND_URL
     try:
         req = await _prepare_saml_request(request)
@@ -1368,12 +1372,18 @@ async def auth_logout(
     """SAML シングルログアウト(SLO) を開始し、Keycloak のセッションも終了させる。
 
     token(JWT) から nameid / session_index を取り出して LogoutRequest を組み立てる。
-    失敗時はローカルのみのログアウト（/signed-out）にフォールバックする。
+    運用者ログイン（sidx なし）と失敗時はローカルのみのログアウト。
+    戻り先はリクエストの Host（運用者ホストを FRONTEND_URL へ飛ばさない）。
     """
-    return_to = f"{FRONTEND_URL}/signed-out"
+    claims: dict | None = None
     if token:
         try:
             claims = auth.verify_token(token)
+        except Exception:  # noqa: BLE001
+            claims = None
+    return_to = ops_login.signed_out_url(request, claims)
+    if token and claims and claims.get("sidx"):
+        try:
             req = await _prepare_saml_request(request)
             saml_auth = auth.build_saml_auth(req)
             slo_url = saml_auth.logout(
@@ -1386,6 +1396,20 @@ async def auth_logout(
         except Exception as e:  # noqa: BLE001
             print(f"[auth] SLO 開始に失敗、ローカルログアウトにフォールバック: {e}")
     return RedirectResponse(return_to, status_code=303)
+
+
+@app.post("/auth/ops")
+async def auth_ops(request: Request) -> Response:
+    """運用者ホスト専用の ID/PW ログイン。それ以外の Host では 404。"""
+    if not ops_login.enabled(request):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    error, location, _user = await ops_login.handle_post(
+        request, mint_token=auth.mint_token, audit=audit
+    )
+    if error or not location:
+        body = ops_login.login_form(request, error=error or "ログインに失敗しました。")
+        return HTMLResponse(status_code=401, content=body)
+    return RedirectResponse(location, status_code=303)
 
 
 @app.get("/auth/saml/sls")

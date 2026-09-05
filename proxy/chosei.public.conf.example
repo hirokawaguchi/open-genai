@@ -7,7 +7,11 @@
 # 起動例（chosei-app が Docker ネットワーク上にある場合）:
 #   upstream を open-genai-chosei-app:8010 に向け、この conf を別プロキシで読む。
 #
-# CHOSEI_PUBLIC_ENDPOINT にはこのプロキシの公開 URL（例: https://chosei.example.lg.jp）を設定する。
+# CHOSEI_PUBLIC_ENDPOINT にはこのプロキシの公開 URL（例: https://chosei-site.example.lg.jp）を設定する。
+#
+# chosei-app が UI サーバ側にあり、このホストから Docker 内部へ届かない場合は
+# proxy_pass を UI サーバの https://<ui-ip>/public/ にする（UI の 443 は
+# このホストの IP だけ許可）。UI サーバの nginx は /public を chosei-app へ渡す。
 
 upstream chosei_app {
     server open-genai-chosei-app:8010;
