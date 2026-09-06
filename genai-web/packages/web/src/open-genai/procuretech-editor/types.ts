@@ -73,12 +73,17 @@ export type EditorThemeSection = {
   label: string;
 };
 
+/** Markdown 合成の出力形式（kind=excel は対象外）。省略時は docx。 */
+export type EditorComposeFormat = 'docx' | 'html' | 'pptx' | 'txt' | 'md';
+
 /** テーマ既定の合成定義（出力ファイル毎の順序付き section key リスト）。 */
 export type EditorThemeOutput = {
   id: string;
   name: string;
-  /** markdown: 章を並べて Word 合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
+  /** markdown: 章を並べて文書合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
   kind?: 'markdown' | 'excel';
+  /** markdown 出力の形式（docx / html / pptx / txt / md） */
+  format?: EditorComposeFormat;
   /** excel の生成方法（例: quotation=見積総括表 / primaryexam=一次審査表） */
   builder?: string;
   sections: string[];
@@ -109,8 +114,10 @@ export type EditorCompositionItem = {
 export type EditorCompositionOutput = {
   id: string;
   name: string;
-  /** markdown: 章を並べて Word 合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
+  /** markdown: 章を並べて文書合成 / excel: 書き出し時に章＋パラメータから Excel を生成 */
   kind?: 'markdown' | 'excel';
+  /** markdown 出力の形式（docx / html / pptx / txt / md） */
+  format?: EditorComposeFormat;
   /** excel の生成方法（例: quotation / primaryexam） */
   builder?: string;
   enabled: boolean;

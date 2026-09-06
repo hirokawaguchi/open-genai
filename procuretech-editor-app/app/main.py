@@ -1020,7 +1020,7 @@ async def theme_waiting_picture(
     return Response(content=png, media_type="image/png")
 
 
-# --- composition（出力ファイルの合成定義 + Word 合成実行） --------------------
+# --- composition（出力ファイルの合成定義 + 文書合成実行） --------------------
 
 
 def _resolve_theme_for_project(
@@ -1030,7 +1030,7 @@ def _resolve_theme_for_project(
 
     優先順: 明示指定(hint) → 保存済み定義のテーマ → 直近生成ジョブのテーマ。
     いずれも無い（ヒアリングシート未生成の素の）プロジェクトは、テーマ固有の生成 API に
-    依存しない「素のテーマ」を返す（汎用の合成サービスで Word 化する）。
+    依存しない「素のテーマ」を返す（汎用の合成サービスで合成する）。
     """
     theme_id = (
         (hint or "").strip()
@@ -1046,13 +1046,16 @@ def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:
     """テーマ既定から合成定義（出力ファイル毎の順序付き section）を作る。"""
     outputs = []
     for o in generate.theme_outputs(theme):
+        kind = o.get("kind", "markdown")
         entry: dict[str, Any] = {
             "id": o["id"],
             "name": o["name"],
-            "kind": o.get("kind", "markdown"),
+            "kind": kind,
             "enabled": True,
             "items": [{"section_key": k} for k in o.get("sections", [])],
         }
+        if kind != "excel":
+            entry["format"] = generate.normalize_compose_format(o.get("format"))
         if o.get("builder"):
             entry["builder"] = o["builder"]
         outputs.append(entry)
@@ -1084,13 +1087,16 @@ def _normalize_composition(data: Any, theme: dict[str, Any]) -> dict[str, Any]:
             if fid:
                 entry["file_id"] = fid
             items.append(entry)
+        kind = "excel" if str(o.get("kind") or "") == "excel" else "markdown"
         entry = {
             "id": str(o.get("id") or f"output{i}"),
             "name": str(o.get("name") or f"output{i}"),
-            "kind": "excel" if str(o.get("kind") or "") == "excel" else "markdown",
+            "kind": kind,
             "enabled": o.get("enabled", True) is not False,
             "items": items,
         }
+        if kind != "excel":
+            entry["format"] = generate.normalize_compose_format(o.get("format"))
         if o.get("builder"):
             entry["builder"] = str(o.get("builder"))
         outputs.append(entry)
@@ -1323,7 +1329,8 @@ async def _run_compose_job(
             if o.get("builder")
         }
 
-        md_outputs: list[dict[str, Any]] = []
+        theme_md: list[dict[str, Any]] = []
+        generic_md: list[dict[str, Any]] = []
         excel_outputs: list[tuple[str, str]] = []
         excel_files: list[tuple[str, bytes]] = []
         included_names: list[str] = []
@@ -1356,14 +1363,22 @@ async def _run_compose_job(
                     continue
                 excel_outputs.append((name, builder))
             else:
-                sections = _collect_output_sections(o, files_by_key, files_by_id, overrides)
+                fmt = generate.normalize_compose_format(o.get("format"))
+                use_overrides = overrides if fmt in generate.VISUAL_COMPOSE_FORMATS else None
+                sections = _collect_output_sections(o, files_by_key, files_by_id, use_overrides)
                 if not sections:
                     continue
-                md_outputs.append({"name": name, "sections": sections})
+                payload = {"name": name, "format": fmt, "sections": sections}
+                if fmt in generate.GENERIC_COMPOSE_FORMATS:
+                    generic_md.append(payload)
+                else:
+                    theme_md.append(payload)
                 included_names.append(name)
 
         assets: dict[str, bytes] = {}
-        for o in md_outputs:
+        for o in theme_md + generic_md:
+            if o.get("format") not in generate.VISUAL_COMPOSE_FORMATS:
+                continue
             for sec in o["sections"]:
                 for rel in _extract_image_refs(sec.get("content", "")):
                     if rel in assets:
@@ -1375,7 +1390,7 @@ async def _run_compose_job(
                     if data is not None:
                         assets[rel] = data
 
-        if not md_outputs and not excel_outputs:
+        if not theme_md and not generic_md and not excel_outputs:
             store.update_compose_job(
                 request_id,
                 uid,
@@ -1384,7 +1399,34 @@ async def _run_compose_job(
                 current_step="エラー",
             )
             return
-        if (md_outputs or excel_outputs) and not base_url:
+        if generate.EDITOR_COMPOSE_URL:
+            generic_url = generate.EDITOR_COMPOSE_URL
+            generic_key = generate.EDITOR_COMPOSE_API_KEY
+        elif theme_def.get("id") == generate.PLAIN_THEME_ID:
+            generic_url = base_url
+            generic_key = generate.theme_api_key(theme_def)
+        else:
+            generic_url = ""
+            generic_key = ""
+        if theme_md and not base_url:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="このテーマの生成 API が未設定です（管理者に確認してください）。",
+                current_step="エラー",
+            )
+            return
+        if generic_md and not generic_url:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="汎用の合成サービスが未設定です（管理者に確認してください）。",
+                current_step="エラー",
+            )
+            return
+        if excel_outputs and not base_url:
             store.update_compose_job(
                 request_id,
                 uid,
@@ -1395,28 +1437,40 @@ async def _run_compose_job(
             return
         api_key = generate.theme_api_key(theme_def)
 
-        work_n = (1 if md_outputs else 0) + len(excel_outputs) + 1
+        work_n = (1 if theme_md else 0) + (1 if generic_md else 0) + len(excel_outputs) + 1
         done = 0
 
         def work_progress() -> int:
             return 10 + int(80 * done / max(1, work_n))
 
-        docx_zip: bytes | None = None
-        if md_outputs:
-            names = " / ".join(o["name"] for o in md_outputs)
-            step(work_progress(), f"Word を合成しています（{names}）")
+        compose_zips: list[bytes] = []
+
+        async def _run_compose(batch: list[dict[str, Any]], *, url: str, key: str) -> bool:
+            names = " / ".join(o["name"] for o in batch)
+            step(work_progress(), f"文書を合成しています（{names}）")
             try:
-                docx_zip = await generate.compose(
-                    md_outputs,
-                    base_url=base_url,
-                    api_key=api_key,
-                    reference=str(theme_def.get("doc_type") or ""),
-                    assets=assets or None,
+                compose_zips.append(
+                    await generate.compose(
+                        batch,
+                        base_url=url,
+                        api_key=key,
+                        reference=str(theme_def.get("doc_type") or ""),
+                        assets=assets or None,
+                    )
                 )
             except generate.GenerateError as e:
                 store.update_compose_job(
                     request_id, uid, status="error", error=str(e), current_step="エラー",
                 )
+                return False
+            return True
+
+        if theme_md:
+            if not await _run_compose(theme_md, url=base_url, key=api_key):
+                return
+            done += 1
+        if generic_md:
+            if not await _run_compose(generic_md, url=generic_url, key=generic_key):
                 return
             done += 1
 
@@ -1452,7 +1506,7 @@ async def _run_compose_job(
                     done += 1
                     continue
                 except generate.GenerateError as e:
-                    # Word など他成果物は残し、この Excel だけ外す（Dify 504 等）。
+                    # 他成果物は残し、この Excel だけ外す（Dify 504 等）。
                     skipped.append({"name": name, "reason": str(e)})
                     done += 1
                     continue
@@ -1460,7 +1514,7 @@ async def _run_compose_job(
                 included_names.append(name)
                 done += 1
 
-        if not md_outputs and not excel_files:
+        if not compose_zips and not excel_files:
             detail = (
                 "; ".join(f"{s['name']}: {s['reason']}" for s in skipped) or "対象がありません。"
             )
@@ -1476,9 +1530,9 @@ async def _run_compose_job(
         step(work_progress(), "書き出しファイルを保存しています")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            if docx_zip:
+            for composed in compose_zips:
                 try:
-                    with zipfile.ZipFile(io.BytesIO(docx_zip)) as dz:
+                    with zipfile.ZipFile(io.BytesIO(composed)) as dz:
                         for n in dz.namelist():
                             if n.endswith("/"):
                                 continue
@@ -1492,7 +1546,7 @@ async def _run_compose_job(
                         request_id,
                         uid,
                         status="error",
-                        error="Word 合成結果の展開に失敗しました。",
+                        error="合成結果の展開に失敗しました。",
                         current_step="エラー",
                     )
                     return

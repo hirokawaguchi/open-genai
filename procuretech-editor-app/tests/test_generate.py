@@ -10,6 +10,13 @@ from app import generate
 BASE = "http://generate.test"
 
 
+def test_normalize_compose_format():
+    assert generate.normalize_compose_format(None) == "docx"
+    assert generate.normalize_compose_format("HTML") == "html"
+    assert generate.normalize_compose_format(".pptx") == "pptx"
+    assert generate.normalize_compose_format("pdf") == "docx"
+
+
 def test_default_theme_present():
     ids = [t["id"] for t in generate.THEMES]
     assert "procurement_spec" in ids
