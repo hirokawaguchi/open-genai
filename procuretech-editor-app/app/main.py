@@ -14,10 +14,11 @@ import io
 import json
 import os
 import re
+import uuid
 import zipfile
 from typing import Any
 
-from fastapi import FastAPI, Header
+from fastapi import BackgroundTasks, FastAPI, Header
 from fastapi.responses import JSONResponse, Response
 
 from . import excel, generate, intauth, objstore, store, waiting
@@ -1237,10 +1238,309 @@ def _collect_output_sections(
     return sections
 
 
+def _compose_job_payload(job: dict[str, Any]) -> dict[str, Any]:
+    """合成ジョブの公開応答。成功時は result を展開する。"""
+    body: dict[str, Any] = {
+        "request_id": job.get("request_id"),
+        "status": job.get("status"),
+        "progress": job.get("progress", 0),
+        "current_step": job.get("current_step") or "",
+    }
+    if job.get("error"):
+        body["error"] = job["error"]
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    body.update(result)
+    return body
+
+
+async def _run_compose_job(
+    request_id: str, project_id: str, uid: str, payload: dict[str, Any]
+) -> None:
+    """合成をバックグラウンドで進め、進捗と作業中ステップを更新する。"""
+    def step(progress: int, label: str) -> None:
+        store.update_compose_job(request_id, uid, progress=progress, current_step=label)
+
+    try:
+        project = store.get_project(project_id, uid)
+        if project is None:
+            store.update_compose_job(
+                request_id, uid, status="error", error="プロジェクトが見つかりません。",
+                current_step="エラー",
+            )
+            return
+        if not objstore.is_configured():
+            store.update_compose_job(
+                request_id, uid, status="error", error="ストレージが未設定です。",
+                current_step="エラー",
+            )
+            return
+        step(5, "本文と画像を集めています")
+        saved = store.get_composition(project_id, uid)
+        body_comp = payload.get("composition")
+        theme_def = _resolve_theme_for_project(
+            project_id, uid, hint=str(payload.get("theme") or ""), saved=body_comp or saved
+        )
+        if theme_def is None:
+            store.update_compose_job(
+                request_id, uid, status="error", error="テーマが未設定です。",
+                current_step="エラー",
+            )
+            return
+        base_url = generate.theme_base_url(theme_def)
+        if body_comp is not None:
+            composition = _normalize_composition(body_comp, theme_def)
+        elif saved:
+            composition = _normalize_composition(saved, theme_def)
+        else:
+            composition = _default_composition(theme_def)
+
+        files = store.list_files(project_id, uid)
+        files_by_key: dict[str, dict[str, Any]] = {}
+        for f in files:
+            sk = f.get("section_key")
+            if sk and sk not in files_by_key:
+                files_by_key[sk] = f
+        files_by_id = {f["id"]: f for f in files}
+        files_by_rel = {f["rel_path"]: f for f in files}
+        overrides = payload.get("overrides")
+        overrides = overrides if isinstance(overrides, dict) else {}
+
+        section_contents: dict[str, str] = {}
+        for sk, f in files_by_key.items():
+            if f.get("kind") != "markdown":
+                continue
+            data = objstore.get_bytes(f["s3_key"])
+            if data is None:
+                continue
+            try:
+                section_contents[sk] = data.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+
+        theme_builder_by_id = {
+            o["id"]: o.get("builder")
+            for o in generate.theme_outputs(theme_def)
+            if o.get("builder")
+        }
+
+        md_outputs: list[dict[str, Any]] = []
+        excel_outputs: list[tuple[str, str]] = []
+        excel_files: list[tuple[str, bytes]] = []
+        included_names: list[str] = []
+        skipped: list[dict[str, str]] = []
+        used_names: set[str] = set()
+
+        def _unique_arcname(base: str, ext: str) -> str:
+            safe = "".join(
+                c for c in (base or "") if c not in '\\/:*?"<>|' and ord(c) >= 32
+            ).strip()
+            safe = safe or "output"
+            name = f"{safe}.{ext}"
+            i = 2
+            while name in used_names:
+                name = f"{safe}({i}).{ext}"
+                i += 1
+            used_names.add(name)
+            return name
+
+        for o in composition.get("outputs", []):
+            if o.get("enabled") is False:
+                continue
+            name = str(o.get("name") or o.get("id") or "output")
+            if str(o.get("kind") or "") == "excel":
+                builder = str(
+                    o.get("builder") or theme_builder_by_id.get(o.get("id")) or ""
+                ).strip()
+                if not builder:
+                    skipped.append({"name": name, "reason": "生成方法（builder）が未設定です。"})
+                    continue
+                excel_outputs.append((name, builder))
+            else:
+                sections = _collect_output_sections(o, files_by_key, files_by_id, overrides)
+                if not sections:
+                    continue
+                md_outputs.append({"name": name, "sections": sections})
+                included_names.append(name)
+
+        assets: dict[str, bytes] = {}
+        for o in md_outputs:
+            for sec in o["sections"]:
+                for rel in _extract_image_refs(sec.get("content", "")):
+                    if rel in assets:
+                        continue
+                    f = files_by_rel.get(rel)
+                    if f is None:
+                        continue
+                    data = objstore.get_bytes(f["s3_key"])
+                    if data is not None:
+                        assets[rel] = data
+
+        if not md_outputs and not excel_outputs:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="出力できる内容がありません（章の設定や生成状況を確認してください）。",
+                current_step="エラー",
+            )
+            return
+        if (md_outputs or excel_outputs) and not base_url:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="このテーマの生成 API が未設定です（管理者に確認してください）。",
+                current_step="エラー",
+            )
+            return
+        api_key = generate.theme_api_key(theme_def)
+
+        work_n = (1 if md_outputs else 0) + len(excel_outputs) + 1
+        done = 0
+
+        def work_progress() -> int:
+            return 10 + int(80 * done / max(1, work_n))
+
+        docx_zip: bytes | None = None
+        if md_outputs:
+            names = " / ".join(o["name"] for o in md_outputs)
+            step(work_progress(), f"Word を合成しています（{names}）")
+            try:
+                docx_zip = await generate.compose(
+                    md_outputs,
+                    base_url=base_url,
+                    api_key=api_key,
+                    reference=str(theme_def.get("doc_type") or ""),
+                    assets=assets or None,
+                )
+            except generate.GenerateError as e:
+                store.update_compose_job(
+                    request_id, uid, status="error", error=str(e), current_step="エラー",
+                )
+                return
+            done += 1
+
+        if excel_outputs:
+            params = store.get_gen_params(project_id, uid)
+            params = dict(params) if isinstance(params, dict) else {}
+            params.setdefault("username", uid)
+            for name, builder in excel_outputs:
+                base_pct = work_progress()
+                span = max(1, int(80 / max(1, work_n)))
+                opening = (
+                    f"{name} を章ごとに分割して作成しています"
+                    if builder == "primaryexam"
+                    else f"{name} を作成しています"
+                )
+                step(base_pct, opening)
+
+                def excel_progress(pct: int, label: str, *, _name=name, _base=base_pct, _span=span) -> None:
+                    mapped = min(99, _base + int(_span * max(0, min(100, pct)) / 100))
+                    step(mapped, f"{_name}: {label}" if label else opening)
+
+                try:
+                    data = await generate.build_excel(
+                        builder,
+                        base_url=base_url,
+                        api_key=api_key,
+                        params=params,
+                        sections=section_contents,
+                        on_progress=excel_progress,
+                    )
+                except generate.ExcelSkip as e:
+                    skipped.append({"name": name, "reason": str(e)})
+                    done += 1
+                    continue
+                except generate.GenerateError as e:
+                    # Word など他成果物は残し、この Excel だけ外す（Dify 504 等）。
+                    skipped.append({"name": name, "reason": str(e)})
+                    done += 1
+                    continue
+                excel_files.append((_unique_arcname(name, "xlsx"), data))
+                included_names.append(name)
+                done += 1
+
+        if not md_outputs and not excel_files:
+            detail = (
+                "; ".join(f"{s['name']}: {s['reason']}" for s in skipped) or "対象がありません。"
+            )
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error=f"出力できる内容がありません（{detail}）。",
+                current_step="エラー",
+            )
+            return
+
+        step(work_progress(), "書き出しファイルを保存しています")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            if docx_zip:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(docx_zip)) as dz:
+                        for n in dz.namelist():
+                            if n.endswith("/"):
+                                continue
+                            arc = n.rsplit("/", 1)[-1]
+                            if arc in used_names:
+                                continue
+                            used_names.add(arc)
+                            zf.writestr(arc, dz.read(n))
+                except zipfile.BadZipFile:
+                    store.update_compose_job(
+                        request_id,
+                        uid,
+                        status="error",
+                        error="Word 合成結果の展開に失敗しました。",
+                        current_step="エラー",
+                    )
+                    return
+            for arc, data in excel_files:
+                zf.writestr(arc, data)
+
+        project_name = objstore.sanitize_filename(project["name"]) or "project"
+        download_filename = f"{project_name}-output.zip"
+        key = objstore.build_export_key(uid, download_filename)
+        if not objstore.put_bytes(key, buf.getvalue(), content_type="application/zip"):
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="合成結果の保存に失敗しました。",
+                current_step="エラー",
+            )
+            return
+        url = objstore.presign_get(key, filename=download_filename, expiry=3600)
+        store.update_compose_job(
+            request_id,
+            uid,
+            status="success",
+            progress=100,
+            current_step="完了",
+            result={
+                "download_url": url,
+                "download_filename": download_filename,
+                "object_key": key,
+                "outputs": included_names,
+                "skipped": skipped,
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        store.update_compose_job(
+            request_id,
+            uid,
+            status="error",
+            error=f"合成に失敗しました: {e}",
+            current_step="エラー",
+        )
+
+
 @app.post("/projects/{project_id}/compose")
 async def compose_project(
     project_id: str,
     payload: dict[str, Any],
+    background_tasks: BackgroundTasks,
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
     x_user_groups: str | None = Header(default=None),
@@ -1249,207 +1549,41 @@ async def compose_project(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
 ) -> JSONResponse:
-    """合成定義に従い各出力の本文を順に集約し、生成サービスの /compose で Word 化する。"""
+    """合成を非同期ジョブとして開始する。進捗は GET .../composes/{request_id}。"""
     err, uid = _auth(
         x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
     )
     if err:
         return err
-    project = store.get_project(project_id, uid)
-    if project is None:
+    if store.get_project(project_id, uid) is None:
         return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
     if not objstore.is_configured():
         return JSONResponse(status_code=503, content={"error": "ストレージが未設定です。"})
-    saved = store.get_composition(project_id, uid)
-    # body の composition を優先（未指定なら保存済み → テーマ既定）。
-    body_comp = payload.get("composition")
-    theme_def = _resolve_theme_for_project(
-        project_id, uid, hint=str(payload.get("theme") or ""), saved=body_comp or saved
+    request_id = uuid.uuid4().hex
+    job = store.create_compose_job(request_id, project_id, uid)
+    background_tasks.add_task(_run_compose_job, request_id, project_id, uid, payload)
+    return JSONResponse(content=_compose_job_payload(job))
+
+
+@app.get("/projects/{project_id}/composes/{request_id}")
+async def compose_status(
+    project_id: str,
+    request_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """合成ジョブの進捗・作業中ステップ・完了時のダウンロード情報。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
     )
-    if theme_def is None:
-        return JSONResponse(status_code=400, content={"error": "テーマが未設定です。"})
-    # base_url は Markdown→Word 合成のときのみ必須（Excel のみの出力なら不要）。
-    base_url = generate.theme_base_url(theme_def)
-    if body_comp is not None:
-        composition = _normalize_composition(body_comp, theme_def)
-    elif saved:
-        composition = _normalize_composition(saved, theme_def)
-    else:
-        composition = _default_composition(theme_def)
-
-    files = store.list_files(project_id, uid)
-    files_by_key: dict[str, dict[str, Any]] = {}
-    for f in files:
-        sk = f.get("section_key")
-        if sk and sk not in files_by_key:
-            files_by_key[sk] = f
-    files_by_id = {f["id"]: f for f in files}
-    files_by_rel = {f["rel_path"]: f for f in files}
-    # 本文が指定するファイル内容の差し替え（クライアントが Mermaid→画像化した結果など）。
-    overrides = payload.get("overrides")
-    overrides = overrides if isinstance(overrides, dict) else {}
-
-    # 書き出し時の Excel 生成に使う「現時点の（編集済み）章本文」を集める（section key→本文）。
-    section_contents: dict[str, str] = {}
-    for sk, f in files_by_key.items():
-        if f.get("kind") != "markdown":
-            continue
-        data = objstore.get_bytes(f["s3_key"])
-        if data is None:
-            continue
-        try:
-            section_contents[sk] = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-
-    # テーマ既定から出力 id → builder を引けるようにする（builder はテーマ属性）。
-    theme_builder_by_id = {
-        o["id"]: o.get("builder") for o in generate.theme_outputs(theme_def) if o.get("builder")
-    }
-
-    # 出力を Markdown（Word 合成）と Excel（書き出し時に生成）に振り分ける。
-    md_outputs: list[dict[str, Any]] = []
-    excel_outputs: list[tuple[str, str]] = []  # (name, builder)
-    excel_files: list[tuple[str, bytes]] = []
-    included_names: list[str] = []
-    skipped: list[dict[str, str]] = []
-    used_names: set[str] = set()
-
-    def _unique_arcname(base: str, ext: str) -> str:
-        # zip 内のファイル名は日本語を保持（パス区切り・禁止文字のみ除去）。
-        safe = "".join(c for c in (base or "") if c not in '\\/:*?"<>|' and ord(c) >= 32).strip()
-        safe = safe or "output"
-        name = f"{safe}.{ext}"
-        i = 2
-        while name in used_names:
-            name = f"{safe}({i}).{ext}"
-            i += 1
-        used_names.add(name)
-        return name
-
-    for o in composition.get("outputs", []):
-        if o.get("enabled") is False:
-            continue
-        name = str(o.get("name") or o.get("id") or "output")
-        if str(o.get("kind") or "") == "excel":
-            builder = str(o.get("builder") or theme_builder_by_id.get(o.get("id")) or "").strip()
-            if not builder:
-                skipped.append({"name": name, "reason": "生成方法（builder）が未設定です。"})
-                continue
-            excel_outputs.append((name, builder))
-        else:
-            sections = _collect_output_sections(o, files_by_key, files_by_id, overrides)
-            if not sections:
-                continue
-            md_outputs.append({"name": name, "sections": sections})
-            included_names.append(name)
-
-    # Markdown 本文が参照する画像を集約し、生成サービスへ同送する（Word へ埋め込むため）。
-    assets: dict[str, bytes] = {}
-    for o in md_outputs:
-        for sec in o["sections"]:
-            for rel in _extract_image_refs(sec.get("content", "")):
-                if rel in assets:
-                    continue
-                f = files_by_rel.get(rel)
-                if f is None:
-                    continue
-                data = objstore.get_bytes(f["s3_key"])
-                if data is not None:
-                    assets[rel] = data
-
-    if not md_outputs and not excel_outputs:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "出力できる内容がありません（章の設定や生成状況を確認してください）。"},
-        )
-
-    # Markdown・Excel いずれの出力も生成サービス（spec-app）を使うため base_url が必須。
-    if (md_outputs or excel_outputs) and not base_url:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "このテーマの生成 API が未設定です（管理者に確認してください）。"},
-        )
-    api_key = generate.theme_api_key(theme_def)
-
-    # Markdown 出力は生成サービスへ送って Word(.docx) 化する。
-    docx_zip: bytes | None = None
-    if md_outputs:
-        try:
-            docx_zip = await generate.compose(
-                md_outputs,
-                base_url=base_url,
-                api_key=api_key,
-                reference=str(theme_def.get("doc_type") or ""),
-                assets=assets or None,
-            )
-        except generate.GenerateError as e:
-            return JSONResponse(status_code=502, content={"error": str(e)})
-
-    # Excel 出力は、その時点の章本文＋保存パラメータから書き出し時に生成する。
-    if excel_outputs:
-        params = store.get_gen_params(project_id, uid)
-        params = dict(params) if isinstance(params, dict) else {}
-        params.setdefault("username", uid)
-        for name, builder in excel_outputs:
-            try:
-                data = await generate.build_excel(
-                    builder,
-                    base_url=base_url,
-                    api_key=api_key,
-                    params=params,
-                    sections=section_contents,
-                )
-            except generate.ExcelSkip as e:
-                skipped.append({"name": name, "reason": str(e)})
-                continue
-            except generate.GenerateError as e:
-                return JSONResponse(status_code=502, content={"error": f"{name}: {e}"})
-            excel_files.append((_unique_arcname(name, "xlsx"), data))
-            included_names.append(name)
-
-    if not md_outputs and not excel_files:
-        # 例: 一次審査表のみ指定したが対象章が無かった等。
-        detail = "; ".join(f"{s['name']}: {s['reason']}" for s in skipped) or "対象がありません。"
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"出力できる内容がありません（{detail}）。"},
-        )
-
-    # docx（合成結果）と Excel（生成物）を 1 つの zip にまとめる。
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        if docx_zip:
-            try:
-                with zipfile.ZipFile(io.BytesIO(docx_zip)) as dz:
-                    for n in dz.namelist():
-                        if n.endswith("/"):
-                            continue
-                        arc = n.rsplit("/", 1)[-1]
-                        if arc in used_names:
-                            continue
-                        used_names.add(arc)
-                        zf.writestr(arc, dz.read(n))
-            except zipfile.BadZipFile:
-                return JSONResponse(
-                    status_code=502, content={"error": "Word 合成結果の展開に失敗しました。"}
-                )
-        for arc, data in excel_files:
-            zf.writestr(arc, data)
-
-    project_name = objstore.sanitize_filename(project["name"]) or "project"
-    download_filename = f"{project_name}-output.zip"
-    key = objstore.build_export_key(uid, download_filename)
-    if not objstore.put_bytes(key, buf.getvalue(), content_type="application/zip"):
-        return JSONResponse(status_code=502, content={"error": "合成結果の保存に失敗しました。"})
-    url = objstore.presign_get(key, filename=download_filename, expiry=3600)
-    return JSONResponse(
-        content={
-            "status": "success",
-            "download_url": url,
-            "download_filename": download_filename,
-            "object_key": key,
-            "outputs": included_names,
-            "skipped": skipped,
-        }
-    )
+    if err:
+        return err
+    job = store.get_compose_job(request_id, project_id, uid)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "合成ジョブが見つかりません。"})
+    return JSONResponse(content=_compose_job_payload(job))

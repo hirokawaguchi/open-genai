@@ -55,6 +55,7 @@ import {
   triggerDownload,
 } from './format';
 import type {
+  EditorComposeResult,
   EditorComposition,
   EditorCompositionItem,
   EditorCompositionOutput,
@@ -63,6 +64,7 @@ import type {
   EditorGenerateTheme,
 } from './types';
 import {
+  fetchCompose,
   fetchFileContent,
   fetchGeneration,
   fetchGenerationWaitingBlob,
@@ -376,6 +378,58 @@ const FileManagerModal = ({
   );
 };
 
+type ComposeUiState =
+  | { phase: 'idle' }
+  | {
+      phase: 'running';
+      requestId?: string;
+      progress?: number;
+      currentStep?: string;
+    }
+  | {
+      phase: 'done';
+      url?: string;
+      objectKey?: string;
+      delivery?: 'open' | 'carrier';
+      filename?: string;
+      names?: string[];
+      skipped?: { name: string; reason: string }[];
+    }
+  | { phase: 'error'; message: string };
+
+const composeStatus = (res: EditorComposeResult): string =>
+  String(res.status ?? '').toLowerCase();
+
+/** 合成 API の応答を待ち画面 / 完了 / エラーへ写す。 */
+const composeUiFromResult = (
+  res: EditorComposeResult,
+  requestId?: string,
+): ComposeUiState => {
+  if (composeStatus(res) === 'error' || res.error) {
+    return { phase: 'error', message: res.error || '書き出しに失敗しました。' };
+  }
+  if (composeStatus(res) === 'success' || res.download_url || res.object_key) {
+    return {
+      phase: 'done',
+      url: res.download_url || undefined,
+      objectKey: res.object_key,
+      delivery: res.delivery,
+      filename: res.download_filename,
+      names: res.outputs,
+      skipped: res.skipped,
+    };
+  }
+  if (res.request_id || requestId) {
+    return {
+      phase: 'running',
+      requestId: res.request_id || requestId,
+      progress: res.progress,
+      currentStep: res.current_step,
+    };
+  }
+  return { phase: 'error', message: '書き出しを開始できませんでした。もう一度お試しください。' };
+};
+
 // 出力ファイルの合成定義エディタ（書き出し・統合タブ）。
 // テーマ既定を初期表示し、プロジェクト単位で並べ替え・ON/OFF・出力追加を上書きできる。
 const CompositionEditor = ({ projectId }: { projectId: string }) => {
@@ -388,20 +442,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const [newOutputName, setNewOutputName] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [carrierLoading, setCarrierLoading] = useState(false);
-  const [compose, setCompose] = useState<
-    | { phase: 'idle' }
-    | { phase: 'running' }
-    | {
-        phase: 'done';
-        url?: string;
-        objectKey?: string;
-        delivery?: 'open' | 'carrier';
-        filename?: string;
-        names?: string[];
-        skipped?: { name: string; reason: string }[];
-      }
-    | { phase: 'error'; message: string }
-  >({ phase: 'idle' });
+  const [compose, setCompose] = useState<ComposeUiState>({ phase: 'idle' });
   const [composeWaitingSrc, setComposeWaitingSrc] = useState<string | null>(null);
   const composeWaitingRef = useRef<string | null>(null);
 
@@ -417,6 +458,29 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     },
     [],
   );
+
+  const composeRequestId = compose.phase === 'running' ? compose.requestId : null;
+  useEffect(() => {
+    if (!composeRequestId) return;
+    let stop = false;
+    const apply = (res: Awaited<ReturnType<typeof fetchCompose>>) => {
+      setCompose(composeUiFromResult(res, composeRequestId));
+    };
+    const poll = async () => {
+      if (stop) return;
+      try {
+        apply(await fetchCompose(projectId, composeRequestId));
+      } catch {
+        setCompose({ phase: 'error', message: '合成状況の取得に失敗しました。' });
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 1500);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [composeRequestId, projectId]);
 
   // サーバから取得した定義でローカル状態を初期化（プロジェクト/取得結果が変わったとき）。
   const loadedKey = data ? `${projectId}:${data.saved}:${data.composition.outputs.length}` : null;
@@ -611,7 +675,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   }, [outputs, fileByKey, fileById, projectId, actions]);
 
   const onCompose = useCallback(async () => {
-    setCompose({ phase: 'running' });
+    setCompose({ phase: 'running', progress: 0, currentStep: '図を画像化しています' });
     setComposeWaitingUrl(null);
     void fetchProjectWaitingBlob(projectId)
       .then((blob) => {
@@ -629,24 +693,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       await mutate(); // 追加した画像ファイルを一覧へ反映
     }
     const res = await actions.composeProject(projectId, currentComposition(), overrides);
-    if (res?.download_url || res?.object_key) {
-      setCompose({
-        phase: 'done',
-        url: res.download_url || undefined,
-        objectKey: res.object_key,
-        delivery: res.delivery,
-        filename: res.download_filename,
-        names: res.outputs,
-        skipped: res.skipped,
-      });
-    } else if (res?.error) {
-      setCompose({ phase: 'error', message: res.error });
-    } else if (actions.error) {
-      setCompose({ phase: 'error', message: actions.error });
-    } else {
-      setCompose({ phase: 'error', message: 'Word 合成に失敗しました。' });
-    }
-  }, [actions, projectId, currentComposition, materializeMermaid, setComposeWaitingUrl]);
+    setCompose(
+      composeUiFromResult(
+        res ?? { error: '書き出しを開始できませんでした。もう一度お試しください。' },
+      ),
+    );
+  }, [actions, projectId, currentComposition, materializeMermaid, mutate, setComposeWaitingUrl]);
 
   if (isLoading && !data) {
     return (
@@ -907,7 +959,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
         </div>
         {compose.phase === 'running' && (
           <div className='mt-3'>
-            <WaitingPicturePanel src={composeWaitingSrc} label='合成中です。しばらくお待ちください…' />
+            <WaitingPicturePanel
+              src={composeWaitingSrc}
+              label='合成中です。しばらくお待ちください…'
+              progress={compose.progress}
+              step={compose.currentStep}
+            />
           </div>
         )}
 

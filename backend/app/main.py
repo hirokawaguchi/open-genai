@@ -4090,6 +4090,19 @@ async def procuretech_editor_put_composition(
     )
 
 
+def _apply_editor_delivery(payload: dict[str, Any]) -> dict[str, Any]:
+    """成功した書き出し結果に ARTIFACT_DELIVERY_MODE を載せる。"""
+    if str(payload.get("status") or "") != "success":
+        return payload
+    key = str(payload.get("object_key") or "").strip()
+    if ARTIFACT_DELIVERY_MODE == "carrier" and key and objstore.is_managed_key(key):
+        payload["download_url"] = ""
+        payload["delivery"] = "carrier"
+    else:
+        payload["delivery"] = "open"
+    return payload
+
+
 @app.post("/procuretech-editor/projects/{project_id}/compose")
 async def procuretech_editor_compose(
     project_id: str, request: Request
@@ -4112,13 +4125,30 @@ async def procuretech_editor_compose(
         return proxied
     if not isinstance(payload, dict):
         return proxied
-    key = str(payload.get("object_key") or "").strip()
-    if ARTIFACT_DELIVERY_MODE == "carrier" and key and objstore.is_managed_key(key):
-        payload["download_url"] = ""
-        payload["delivery"] = "carrier"
-    else:
-        payload["delivery"] = "open"
-    return JSONResponse(status_code=200, content=payload)
+    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+
+
+@app.get("/procuretech-editor/projects/{project_id}/composes/{request_id}")
+async def procuretech_editor_compose_status(
+    project_id: str, request_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    proxied = await _proxy_procuretech_editor(
+        "GET",
+        _procuretech_editor_app_url(f"/projects/{project_id}/composes/{request_id}"),
+        headers,
+    )
+    if proxied.status_code != 200:
+        return proxied
+    try:
+        payload = json.loads(proxied.body)
+    except ValueError:
+        return proxied
+    if not isinstance(payload, dict):
+        return proxied
+    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
 
 
 # ---------------------------------------------------------------------------

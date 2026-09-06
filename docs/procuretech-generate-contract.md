@@ -132,6 +132,13 @@ Excel 出力（見積費用総括表・プロポーザル一次審査表など�
     呼び出し元は当該出力を最終 zip から外し、利用者に理由を提示する。
   - `400`/`5xx`: 不正・失敗。
 
+長時間かかる一次審査表は、任意で非同期ジョブにもできる。
+
+- `POST {base_url}/excel/jobs` → `202` `{request_id, status, progress, current_step}`
+- `GET {base_url}/excel/jobs/{request_id}` → 進捗（`current_step` に章・見出し）
+- `GET {base_url}/excel/jobs/{request_id}/result` → 完了時 xlsx
+- 未実装なら `POST /excel` の同期応答にフォールバックする。
+
 ### GET /template/{input_key}
 
 - テーマ定義の入力 `key`（例: `systemplan`, `global`, `hearing`）に対応する**ヒアリングシート様式**
@@ -171,8 +178,8 @@ Excel 出力（見積費用総括表・プロポーザル一次審査表など�
 - 合成定義では出力種別 `kind=excel` と生成方法 `builder`（例 `quotation` / `primaryexam`）を持つ。
   ソース章は生成側が決めるため、Excel 出力は `items`（章の並び）を持たない。
 - 書き出し時、Open GENAI 側は有効な Excel 出力ごとに `/excel` を呼び、返った xlsx を
-  最終 zip（`.docx` と同じ zip）に同梱する。`422`（対象章なし等）ならその出力を外し、
-  利用者へ理由を提示する。
+  最終 zip（`.docx` と同じ zip）に同梱する。`422`（対象章なし等）や通信失敗（Dify 504 等）
+  ならその出力だけ外し、Word など他成果物は zip に残して利用者へ理由を提示する。
 - 見積費用総括表は Markdown に依存せず `params`（`nextyear`/`phaselist`）から作る。
   一次審査表は `sections` の該当章（section2/4/5/6 相当）を LLM/Dify で要件抽出して作る。
 

@@ -103,9 +103,23 @@ def init_db() -> None:
               updated_at TEXT NOT NULL,
               FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS compose_jobs (
+              request_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'processing',
+              progress INTEGER NOT NULL DEFAULT 0,
+              current_step TEXT NOT NULL DEFAULT '',
+              error TEXT,
+              result TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
             CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id);
             CREATE INDEX IF NOT EXISTS idx_generations_project ON generations(project_id);
+            CREATE INDEX IF NOT EXISTS idx_compose_jobs_project ON compose_jobs(project_id);
             """
         )
         # 既存 DB（theme 列が無い旧スキーマ）への軽量マイグレーション。
@@ -519,6 +533,98 @@ def get_gen_params(project_id: str, user_id: str) -> dict[str, Any]:
         return json.loads(row["data"] or "{}")
     except json.JSONDecodeError:
         return {}
+
+
+def _compose_job_dict(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        result = json.loads(row["result"] or "{}")
+    except json.JSONDecodeError:
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    return {
+        "request_id": row["request_id"],
+        "project_id": row["project_id"],
+        "status": row["status"],
+        "progress": int(row["progress"] or 0),
+        "current_step": row["current_step"] or "",
+        "error": row["error"],
+        "result": result,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def create_compose_job(request_id: str, project_id: str, user_id: str) -> dict[str, Any]:
+    db = connect()
+    now = _now_iso()
+    with _lock:
+        db.execute(
+            "INSERT INTO compose_jobs (request_id, project_id, user_id, status, progress,"
+            " current_step, error, result, created_at, updated_at)"
+            " VALUES (?, ?, ?, 'processing', 0, '準備中', NULL, '{}', ?, ?)",
+            (request_id, project_id, user_id, now, now),
+        )
+        db.commit()
+    return {
+        "request_id": request_id,
+        "project_id": project_id,
+        "status": "processing",
+        "progress": 0,
+        "current_step": "準備中",
+        "error": None,
+        "result": {},
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def get_compose_job(
+    request_id: str, project_id: str, user_id: str
+) -> dict[str, Any] | None:
+    db = connect()
+    row = db.execute(
+        "SELECT * FROM compose_jobs WHERE request_id = ? AND project_id = ? AND user_id = ?",
+        (request_id, project_id, user_id),
+    ).fetchone()
+    return _compose_job_dict(row) if row else None
+
+
+def update_compose_job(
+    request_id: str,
+    user_id: str,
+    *,
+    status: str | None = None,
+    progress: int | None = None,
+    current_step: str | None = None,
+    error: str | None = None,
+    result: dict[str, Any] | None = None,
+) -> None:
+    db = connect()
+    sets: list[str] = ["updated_at = ?"]
+    params: list[Any] = [_now_iso()]
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if progress is not None:
+        sets.append("progress = ?")
+        params.append(max(0, min(100, int(progress))))
+    if current_step is not None:
+        sets.append("current_step = ?")
+        params.append(current_step)
+    if error is not None:
+        sets.append("error = ?")
+        params.append(error)
+    if result is not None:
+        sets.append("result = ?")
+        params.append(json.dumps(result, ensure_ascii=False))
+    params.extend([request_id, user_id])
+    with _lock:
+        db.execute(
+            f"UPDATE compose_jobs SET {', '.join(sets)} WHERE request_id = ? AND user_id = ?",
+            params,
+        )
+        db.commit()
 
 
 def save_gen_params(

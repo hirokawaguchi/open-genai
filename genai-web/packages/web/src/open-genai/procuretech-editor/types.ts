@@ -144,9 +144,12 @@ export type EditorCompositionResponse = {
   error?: string;
 };
 
-/** POST /compose の応答。 */
+/** POST /compose および GET /composes/{id} の応答。 */
 export type EditorComposeResult = {
-  status?: string;
+  request_id?: string;
+  status?: 'processing' | 'success' | 'error' | string;
+  progress?: number;
+  current_step?: string;
   download_url?: string;
   download_filename?: string;
   object_key?: string;
