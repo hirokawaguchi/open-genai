@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { baseName, dirOf, extractImageSources, formatBytes, rewriteImageSources } from './format';
+import {
+  baseName,
+  composeFormatOf,
+  dirOf,
+  extractImageSources,
+  formatBytes,
+  isVisualComposeFormat,
+  rewriteImageSources,
+} from './format';
 
 describe('procuretech-editor/format', () => {
   describe('formatBytes', () => {
@@ -62,6 +70,24 @@ describe('procuretech-editor/format', () => {
     it('外部 URL は書き換えない', () => {
       const md = '![h](https://x/y.png)';
       expect(rewriteImageSources(md, { 'https://x/y.png': 'nope' })).toBe(md);
+    });
+  });
+
+  describe('composeFormatOf', () => {
+    it('未指定は docx', () => {
+      expect(composeFormatOf({})).toBe('docx');
+    });
+    it('指定があればそれを返す', () => {
+      expect(composeFormatOf({ format: 'html' })).toBe('html');
+    });
+  });
+
+  describe('isVisualComposeFormat', () => {
+    it('docx / html / pptx は視覚形式', () => {
+      expect(isVisualComposeFormat('docx')).toBe(true);
+      expect(isVisualComposeFormat('html')).toBe(true);
+      expect(isVisualComposeFormat('md')).toBe(false);
+      expect(isVisualComposeFormat('txt')).toBe(false);
     });
   });
 });

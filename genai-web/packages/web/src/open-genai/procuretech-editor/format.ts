@@ -1,5 +1,27 @@
 // 情報化企画書エディタ用の小さな整形ユーティリティ（テスト対象）。
 
+import type { EditorComposeFormat, EditorCompositionOutput } from './types';
+
+export const EDITOR_COMPOSE_FORMATS: readonly EditorComposeFormat[] = [
+  'docx',
+  'html',
+  'pptx',
+  'txt',
+  'md',
+];
+
+export const EDITOR_VISUAL_FORMATS: readonly EditorComposeFormat[] = ['docx', 'html', 'pptx'];
+
+export const composeFormatOf = (
+  out: Pick<EditorCompositionOutput, 'format'>,
+): EditorComposeFormat =>
+  out.format && (EDITOR_COMPOSE_FORMATS as readonly string[]).includes(out.format)
+    ? out.format
+    : 'docx';
+
+export const isVisualComposeFormat = (fmt: EditorComposeFormat): boolean =>
+  (EDITOR_VISUAL_FORMATS as readonly string[]).includes(fmt);
+
 /** バイト数を人間可読な文字列に整形する（例: 1536 → "1.5 KB"）。 */
 export const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
