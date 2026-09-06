@@ -48,13 +48,17 @@ import { findModelByModelId, resolveSelectedModelId } from '@/models';
 import { getPrompter } from '@/prompts';
 import {
   baseName,
+  composeFormatOf,
+  EDITOR_COMPOSE_FORMATS,
   extractImageSources,
   fileToBase64,
   formatBytes,
+  isVisualComposeFormat,
   rewriteImageSources,
   triggerDownload,
 } from './format';
 import type {
+  EditorComposeFormat,
   EditorComposeResult,
   EditorComposition,
   EditorCompositionItem,
@@ -440,6 +444,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const [outputs, setOutputs] = useState<EditorCompositionOutput[]>([]);
   const [dirty, setDirty] = useState(false);
   const [newOutputName, setNewOutputName] = useState('');
+  const [newOutputFormat, setNewOutputFormat] = useState<EditorComposeFormat>('docx');
   const [savedNotice, setSavedNotice] = useState(false);
   const [carrierLoading, setCarrierLoading] = useState(false);
   const [compose, setCompose] = useState<ComposeUiState>({ phase: 'idle' });
@@ -594,9 +599,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const addOutput = useCallback(() => {
     const name = newOutputName.trim();
     if (!name) return;
-    update([...outputs, { id: `output-${Date.now()}`, name, enabled: true, items: [] }]);
+    update([
+      ...outputs,
+      { id: `output-${Date.now()}`, name, format: newOutputFormat, enabled: true, items: [] },
+    ]);
     setNewOutputName('');
-  }, [newOutputName, outputs, update]);
+  }, [newOutputFormat, newOutputName, outputs, update]);
 
   const removeOutput = useCallback(
     (oi: number) => update(outputs.filter((_, i) => i !== oi)),
@@ -627,6 +635,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     const targets = new Map<string, string>(); // file id -> rel_path
     for (const o of outputs) {
       if (o.enabled === false || o.kind === 'excel') continue;
+      if (!isVisualComposeFormat(composeFormatOf(o))) continue;
       for (const it of o.items) {
         const f = it.section_key
           ? fileByKey[it.section_key]
@@ -723,12 +732,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       <div className='rounded-8 border border-solid-gray-300 p-4'>
         <h2 className='text-std-18B-160 text-solid-gray-900'>文書の書き出し・合成</h2>
         <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-          出力ファイル（Word形式）に含めたいMarkdownファイルを順番に追加します。
+          出力ファイルに含めたい Markdown ファイルを順番に追加し、形式を選びます。
           {theme?.label ? `（テーマ: ${theme.label}）` : ''}
         </p>
         {!composeConfigured && (
           <p className='mt-2 rounded-8 border border-amber-300 bg-amber-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
-            このテーマの Word 合成 API が未設定です。管理者に設定を依頼してください。
+            このテーマの合成 API が未設定です。管理者に設定を依頼してください。
           </p>
         )}
 
@@ -799,7 +808,20 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                     className='min-w-0 flex-1 rounded-6 border border-solid-gray-300 px-2 py-1 text-std-16N-170'
                     placeholder='出力ファイル名'
                   />
-                  <span className='shrink-0 text-dns-14N-130 text-solid-gray-500'>.docx</span>
+                  <select
+                    value={composeFormatOf(out)}
+                    onChange={(e) =>
+                      patchOutput(oi, { format: e.target.value as EditorComposeFormat })
+                    }
+                    className='shrink-0 rounded-6 border border-solid-gray-300 bg-white px-2 py-1 text-dns-14N-130 text-solid-gray-800'
+                    title='出力形式'
+                  >
+                    {EDITOR_COMPOSE_FORMATS.map((fmt) => (
+                      <option key={fmt} value={fmt}>
+                        .{fmt}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type='button'
                     onClick={() => removeOutput(oi)}
@@ -915,6 +937,18 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
             className='w-64 rounded-6 border border-solid-gray-300 px-2 py-1 text-std-16N-170'
             placeholder='出力ファイルを追加（名称）'
           />
+          <select
+            value={newOutputFormat}
+            onChange={(e) => setNewOutputFormat(e.target.value as EditorComposeFormat)}
+            className='shrink-0 rounded-6 border border-solid-gray-300 bg-white px-2 py-1 text-dns-14N-130 text-solid-gray-800'
+            title='出力形式'
+          >
+            {EDITOR_COMPOSE_FORMATS.map((fmt) => (
+              <option key={fmt} value={fmt}>
+                .{fmt}
+              </option>
+            ))}
+          </select>
           <Button type='button' variant='outline' size='sm' onClick={addOutput}>
             <span className='inline-flex items-center gap-1'>
               <PiFilePlus className='size-4' />
@@ -1033,7 +1067,7 @@ export const ProcuretechEditorPage = () => {
   const appTitle = (registryApp?.exAppName || '').trim() || 'Markdown エディタ';
   const appDescription =
     (registryApp?.description || '').trim() ||
-    'プロジェクト内の文書（Markdown）を編集・校正し、Word 文書へ統合する準備を行います。';
+    'プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。';
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const {

@@ -53,10 +53,23 @@ TIMEOUT = float(os.environ.get("EDITOR_GENERATE_TIMEOUT", "180"))
 EXCEL_TIMEOUT = float(os.environ.get("EDITOR_EXCEL_TIMEOUT", "900"))
 DEFAULT_DOC_TYPE = os.environ.get("EDITOR_GENERATE_DOC_TYPE", "specification")
 
-# 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API（例: 調達仕様書＝spec-app）に
-# 依存させないため、汎用の合成サービス（既定: procuretech-generate-app）へ振り分ける。
+# 素の文書（テーマ無し）および html / pptx / txt / md の合成先。テーマ固有の生成 API
+# （例: 調達仕様書＝spec-app）に依存させないため、汎用の合成サービス
+# （既定: procuretech-generate-app）へ振り分ける。
 EDITOR_COMPOSE_URL = os.environ.get("EDITOR_COMPOSE_URL", "").rstrip("/")
 EDITOR_COMPOSE_API_KEY = os.environ.get("EDITOR_COMPOSE_API_KEY", EDITOR_GENERATE_API_KEY)
+
+# Markdown 合成の出力形式（kind=excel は対象外）。省略時は docx。
+COMPOSE_FORMATS = ("docx", "html", "pptx", "txt", "md")
+VISUAL_COMPOSE_FORMATS = frozenset({"docx", "html", "pptx"})
+GENERIC_COMPOSE_FORMATS = frozenset({"html", "pptx", "txt", "md"})
+
+
+def normalize_compose_format(raw: Any) -> str:
+    """未知・空の形式は docx に落とす。"""
+    fmt = str(raw or "docx").strip().lower().lstrip(".")
+    return fmt if fmt in COMPOSE_FORMATS else "docx"
+
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -107,8 +120,8 @@ def _default_theme() -> dict[str, Any]:
             {"key": "other", "label": "その他"},
             {"key": "rfi", "label": "情報提供依頼（RFI）"},
         ],
-        # 合成（Word/Excel 出力）の既定定義。
-        # - kind=markdown: section key を順序付きで並べ、Word(.docx) に合成する。
+        # 合成（文書/Excel 出力）の既定定義。
+        # - kind=markdown: section key を順序付きで並べ、format（既定 docx）に合成する。
         # - kind=excel: 書き出し時に、その時点の Markdown＋保存パラメータから Excel を生成する
         #   （builder が生成方法を示す。quotation=見積総括表、primaryexam=一次審査表）。
         #   ソース章は生成サービス側が決定するため items（section key）は持たない。
@@ -170,8 +183,8 @@ def plain_theme() -> dict[str, Any]:
     """テーマ無し（ヒアリングシート未生成）のプロジェクト向けの素のテーマ。
 
     調達仕様書などテーマ固有の生成 API には送らず、汎用の合成サービス
-    （`EDITOR_COMPOSE_URL`、既定は procuretech-generate-app）で Word 化する。既定の出力は
-    空の Word 1 つのみで、章は利用者が手動の Markdown を追加して構成する。
+    （`EDITOR_COMPOSE_URL`、既定は procuretech-generate-app）で合成する。既定の出力は
+    空の文書 1 つ（format=docx）のみで、章は利用者が手動の Markdown を追加して構成する。
     """
     return {
         "id": PLAIN_THEME_ID,
@@ -222,12 +235,15 @@ def theme_outputs(theme: dict[str, Any]) -> list[dict[str, Any]]:
     for o in theme.get("outputs", []) or []:
         if not isinstance(o, dict) or not o.get("id"):
             continue
+        kind = o.get("kind", "markdown")
         entry: dict[str, Any] = {
             "id": o.get("id"),
             "name": o.get("name", o.get("id")),
-            "kind": o.get("kind", "markdown"),
+            "kind": kind,
             "sections": [str(k) for k in (o.get("sections") or [])],
         }
+        if kind != "excel":
+            entry["format"] = normalize_compose_format(o.get("format"))
         if o.get("builder"):
             entry["builder"] = str(o.get("builder"))
         out.append(entry)
@@ -395,11 +411,10 @@ async def compose(
     reference: str | None = None,
     assets: dict[str, bytes] | None = None,
 ) -> bytes:
-    """順序付き Markdown（出力ファイル毎）を生成サービスへ送り Word(.docx) zip を得る。
+    """順序付き Markdown（出力ファイル毎）を生成サービスへ送り合成 zip を得る。
 
-    outputs = [{"name": str, "sections": [{"filename": str, "content": str}, ...]}, ...]
-    assets  = {相対パス: バイト列}（本文が参照する画像。生成サービス側で同じ相対パスに
-              配置してから pandoc に渡すことで Word へ埋め込まれる）。
+    outputs = [{"name": str, "format"?: str, "sections": [{"filename": str, "content": str}, ...]}, ...]
+    assets  = {相対パス: バイト列}（本文が参照する画像。視覚形式では同じ相対パスで埋め込む）。
     """
     if not base_url:
         raise GenerateError("文書生成 API が未設定です（このテーマの合成先が未設定）。")
@@ -421,9 +436,9 @@ async def compose(
             raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
     if res.status_code != 200:
         try:
-            msg = res.json().get("error") or "Word 合成に失敗しました。"
+            msg = res.json().get("error") or "文書の合成に失敗しました。"
         except Exception:  # noqa: BLE001
-            msg = "Word 合成に失敗しました。"
+            msg = "文書の合成に失敗しました。"
         raise GenerateError(msg)
     return res.content
 

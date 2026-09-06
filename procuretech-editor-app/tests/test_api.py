@@ -550,6 +550,7 @@ def test_composition_plain_default_for_empty_project(client):
     outputs = body["composition"]["outputs"]
     assert len(outputs) == 1
     assert outputs[0]["kind"] == "markdown"
+    assert outputs[0]["format"] == "docx"
     assert outputs[0]["items"] == []
     # 調達仕様書テーマの章立て（背景〜その他）が並んでいないこと
     assert outputs[0]["id"] != "specification"
@@ -580,6 +581,7 @@ def test_composition_save_and_get(client, monkeypatch):
     assert got["composition"]["outputs"][0]["name"] == "まとめ"
     keys = [it["section_key"] for it in got["composition"]["outputs"][0]["items"]]
     assert keys == ["businessPurpose", "background"]
+    assert got["composition"]["outputs"][0]["format"] == "docx"
 
 
 def test_compose_assembles_and_returns_url(client, monkeypatch):
@@ -909,3 +911,142 @@ def test_compose_skips_excel_when_generate_fails(client, monkeypatch, _mem_objst
     assert body["status"] == "success"
     assert "調達仕様書" in (body.get("outputs") or [])
     assert any(s["name"] == "一次審査表" for s in body.get("skipped", []))
+
+
+def test_composition_saves_format(client, monkeypatch):
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+    composition = {
+        "theme": "procurement_spec",
+        "outputs": [
+            {
+                "id": "web",
+                "name": "閲覧用",
+                "format": "html",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            }
+        ],
+    }
+    put = client.put(
+        f"/projects/{p['id']}/composition",
+        json={"composition": composition},
+        headers=USER_A,
+    )
+    assert put.status_code == 200, put.text
+    got = client.get(f"/projects/{p['id']}/composition", headers=USER_A).json()
+    assert got["composition"]["outputs"][0]["format"] == "html"
+
+
+def test_compose_routes_html_to_generic_url(client, monkeypatch, _mem_objstore):
+    """docx はテーマの /compose、html は EDITOR_COMPOSE_URL へ分ける。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+    monkeypatch.setattr(generate, "EDITOR_COMPOSE_URL", "http://generic.test")
+    monkeypatch.setattr(generate, "EDITOR_COMPOSE_API_KEY", "generic-key")
+
+    captured: list[dict] = []
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+        captured.append({"base_url": base_url, "outputs": outputs})
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                fmt = o.get("format") or "docx"
+                zf.writestr(f"{o['name']}.{fmt}", b"DATA")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
+        raise generate.ExcelSkip("テスト: スキップ")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    composition = {
+        "theme": "procurement_spec",
+        "outputs": [
+            {
+                "id": "specification",
+                "name": "調達仕様書",
+                "kind": "markdown",
+                "format": "docx",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            },
+            {
+                "id": "web",
+                "name": "閲覧用",
+                "kind": "markdown",
+                "format": "html",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            },
+        ],
+    }
+    body = _compose_until_done(client, p["id"], {"composition": composition})
+    assert body["status"] == "success"
+    assert len(captured) == 2
+    by_url = {c["base_url"]: c for c in captured}
+    assert "http://generic.test" in by_url
+    assert generate.EDITOR_GENERATE_URL in by_url or any(
+        c["base_url"] != "http://generic.test" for c in captured
+    )
+    html_batch = next(c for c in captured if c["base_url"] == "http://generic.test")
+    assert html_batch["outputs"][0]["format"] == "html"
+    docx_batch = next(c for c in captured if c["base_url"] != "http://generic.test")
+    assert docx_batch["outputs"][0]["format"] == "docx"
+    key = body["object_key"]
+    with zipfile.ZipFile(io.BytesIO(_mem_objstore[key])) as zf:
+        names = set(zf.namelist())
+        assert "調達仕様書.docx" in names
+        assert "閲覧用.html" in names
+
+
+def test_compose_md_skips_mermaid_overrides(client, monkeypatch):
+    """md 出力には Mermaid 用 overrides を適用しない。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+    monkeypatch.setattr(generate, "EDITOR_COMPOSE_URL", "http://generic.test")
+
+    files = client.get(f"/projects/{p['id']}/files", headers=USER_A).json()["files"]
+    bg_id = next(f["id"] for f in files if f["rel_path"] == "section1.md")
+
+    captured = {}
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+        captured["outputs"] = outputs
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                zf.writestr(f"{o['name']}.md", b"MD")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    override = "# 背景\n\n![diagram](images/pic.png)\n"
+    composition = {
+        "theme": "procurement_spec",
+        "outputs": [
+            {
+                "id": "src",
+                "name": "ソース",
+                "kind": "markdown",
+                "format": "md",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            }
+        ],
+    }
+    body = _compose_until_done(
+        client, p["id"], {"composition": composition, "overrides": {bg_id: override}}
+    )
+    assert body["status"] == "success"
+    assert captured["outputs"][0]["sections"][0]["content"].startswith("# 背景")
+    assert "![diagram]" not in captured["outputs"][0]["sections"][0]["content"]
