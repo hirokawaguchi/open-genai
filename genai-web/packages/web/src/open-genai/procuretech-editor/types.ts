@@ -149,6 +149,9 @@ export type EditorComposeResult = {
   status?: string;
   download_url?: string;
   download_filename?: string;
+  object_key?: string;
+  /** open=署名 URL を直接提示 / carrier=リンクファイル持ち出し（LGWAN） */
+  delivery?: 'open' | 'carrier';
   outputs?: string[];
   /** 生成をスキップした出力（例: 一次審査表の対象章が無い等）。 */
   skipped?: { name: string; reason: string }[];
@@ -160,6 +163,7 @@ export type EditorGeneration = {
   request_id?: string;
   status?: 'processing' | 'success' | 'error';
   progress?: number;
+  waiting_ready?: boolean;
   imported?: boolean;
   /** 取り込んだ相対パス一覧（成功時） */
   files?: string[];

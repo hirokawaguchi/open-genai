@@ -35,6 +35,8 @@ S3_PRESIGN_EXPIRY = int(os.environ.get("S3_PRESIGN_EXPIRY", str(24 * 3600)))
 # SeaweedFS / MinIO は path-style が無難
 S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path")
 S3_KEY_PREFIX = os.environ.get("S3_KEY_PREFIX", "exapp")
+# Markdown エディタの書き出し zip も同一バケット。carrier の所有者判定対象にする。
+EDITOR_S3_PREFIX = os.environ.get("EDITOR_S3_PREFIX", "procuretech-editor").strip("/")
 # 成果物の保持日数（0 で自動削除を無効化）。超過分は日次パージで削除する。
 S3_ARTIFACT_RETENTION_DAYS = int(os.environ.get("S3_ARTIFACT_RETENTION_DAYS", "30"))
 S3_ARTIFACT_PURGE_INTERVAL = int(
@@ -139,9 +141,15 @@ def put_and_presign(
         return None, None
 
 
+def _managed_prefixes() -> tuple[str, ...]:
+    return (
+        S3_KEY_PREFIX.rstrip("/") + "/",
+        EDITOR_S3_PREFIX.rstrip("/") + "/",
+    )
+
+
 def _is_managed_key(key: str) -> bool:
-    prefix = S3_KEY_PREFIX.rstrip("/") + "/"
-    return bool(key) and key.startswith(prefix) and ".." not in key
+    return bool(key) and ".." not in key and any(key.startswith(p) for p in _managed_prefixes())
 
 
 def is_managed_key(key: str) -> bool:
@@ -191,7 +199,7 @@ def key_from_url(url: str) -> str | None:
     bucket_prefix = f"{S3_BUCKET}/"
     if path.startswith(bucket_prefix):
         key = path[len(bucket_prefix) :]
-    elif path.startswith(S3_KEY_PREFIX + "/"):
+    elif any(path.startswith(p) for p in _managed_prefixes()):
         key = path
     else:
         return None

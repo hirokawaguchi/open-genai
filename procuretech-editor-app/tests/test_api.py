@@ -156,6 +156,7 @@ def test_generate_flow_imports_zip(client, monkeypatch):
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("section1_概要.md", "# 概要\n本文")
             zf.writestr("README.md", "# README")
+            zf.writestr("gen-1_waiting.png", b"\x89PNG\r\n\x1a\nWAIT")
             zf.writestr(".keep", "")  # 取り込み対象外
         return buf.getvalue()
 
@@ -186,7 +187,7 @@ def test_generate_flow_imports_zip(client, monkeypatch):
     body = st.json()
     assert body["status"] == "success"
     assert body["imported"] is True
-    assert set(body["files"]) == {"section1_概要.md", "README.md"}
+    assert set(body["files"]) == {"section1_概要.md", "README.md", "images/gen-1_waiting.png"}
 
     # 取り込んだ Markdown を読める
     got = client.get(
@@ -210,6 +211,108 @@ def test_generation_status_not_found(client):
     p = _create_project(client)
     res = client.get(f"/projects/{p['id']}/generations/nope", headers=USER_A)
     assert res.status_code == 404
+
+
+def test_generation_status_passes_waiting_ready(client, monkeypatch):
+    from app import generate, store
+
+    async def fake_start(files, *, base_url, api_key="", username, doc_type=None, options=None):
+        return {"request_id": "gen-wait"}
+
+    async def fake_status(request_id, *, base_url, api_key=""):
+        return {"status": "processing", "progress": 12, "waiting_ready": True}
+
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://generate.test")
+    monkeypatch.setattr(generate, "start_generation", fake_start)
+    monkeypatch.setattr(generate, "get_status", fake_status)
+
+    p = _create_project(client)
+    start = client.post(
+        f"/projects/{p['id']}/generate",
+        json={
+            "theme": "procurement_spec",
+            "inputs": {
+                "systemplan": _xlsx_with_marker("systemplan"),
+                "global": _xlsx_with_marker("global"),
+            },
+        },
+        headers=USER_A,
+    )
+    assert start.status_code == 200
+    rid = start.json()["request_id"]
+    st = client.get(f"/projects/{p['id']}/generations/{rid}", headers=USER_A)
+    assert st.status_code == 200
+    body = st.json()
+    assert body["status"] == "processing"
+    assert body["waiting_ready"] is True
+    assert body["progress"] == 12
+    assert store.get_generation(rid, p["id"], "user-a") is not None
+
+
+def test_waiting_image_proxy_and_fallback(client, monkeypatch):
+    from app import generate, waiting
+
+    fallback = waiting.make_fallback_waiting_png()
+
+    async def fake_start(files, *, base_url, api_key="", username, doc_type=None, options=None):
+        return {"request_id": "gen-img"}
+
+    async def fake_status(request_id, *, base_url, api_key=""):
+        return {"status": "processing", "progress": 5, "waiting_ready": True}
+
+    async def fake_wait(request_id, *, base_url, api_key=""):
+        return b"\x89PNG\r\n\x1a\nJOB"
+
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://generate.test")
+    monkeypatch.setattr(generate, "start_generation", fake_start)
+    monkeypatch.setattr(generate, "get_status", fake_status)
+    monkeypatch.setattr(generate, "fetch_waiting_image", fake_wait)
+
+    p = _create_project(client)
+    client.post(
+        f"/projects/{p['id']}/generate",
+        json={
+            "theme": "procurement_spec",
+            "inputs": {
+                "systemplan": _xlsx_with_marker("systemplan"),
+                "global": _xlsx_with_marker("global"),
+            },
+        },
+        headers=USER_A,
+    )
+    got = client.get(f"/projects/{p['id']}/generations/gen-img/waiting", headers=USER_A)
+    assert got.status_code == 200
+    assert got.headers["content-type"].startswith("image/png")
+    assert got.content.endswith(b"JOB")
+    saved = client.get(
+        f"/projects/{p['id']}/files/content",
+        params={"path": "images/gen-img_waiting.png"},
+        headers=USER_A,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["download_url"].startswith("https://dl/")
+
+    async def boom(*, base_url, api_key="", username=""):
+        raise generate.GenerateError("down")
+
+    monkeypatch.setattr(generate, "create_waiting_picture", boom)
+    fb = client.get("/themes/procurement_spec/waiting-picture", headers=USER_A)
+    assert fb.status_code == 200
+    assert fb.content == fallback
+
+    missing = client.get(f"/projects/{p['id']}/generations/nope/waiting", headers=USER_A)
+    assert missing.status_code == 404
+
+    reused = client.get(f"/projects/{p['id']}/waiting-picture", headers=USER_A)
+    assert reused.status_code == 200
+    assert reused.content.endswith(b"JOB")
+
+    empty = _create_project(client, name="空案件")
+    fb_proj = client.get(f"/projects/{empty['id']}/waiting-picture", headers=USER_A)
+    assert fb_proj.status_code == 200
+    assert fb_proj.content == fallback
+    empty_files = client.get(f"/projects/{empty['id']}/files", headers=USER_A).json()["files"]
+    assert not any(f["rel_path"].endswith("_waiting.png") for f in empty_files)
 
 
 def test_requires_auth(client):
@@ -496,6 +599,9 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
     body = res.json()
     assert body["status"] == "success"
     assert body["download_url"].startswith("https://dl/")
+    assert body["object_key"].startswith(f"{objstore.EDITOR_S3_PREFIX}/")
+    assert "/_exports/" in body["object_key"]
+    assert body["object_key"].endswith(body["download_filename"])
 
     # specification 出力は section 順に本文を集約している
     spec = next(o for o in captured["outputs"] if o["name"] == "調達仕様書")
@@ -681,8 +787,7 @@ def test_compose_builds_excel_at_export(client, monkeypatch, _mem_objstore):
         f"/projects/{p['id']}/compose", json={"composition": composition}, headers=USER_A
     )
     assert res.status_code == 200, res.text
-    url = res.json()["download_url"]
-    key = url.split("https://dl/", 1)[1]
+    key = res.json()["object_key"]
     zdata = _mem_objstore[key]
     with zipfile.ZipFile(io.BytesIO(zdata)) as zf:
         names = zf.namelist()
