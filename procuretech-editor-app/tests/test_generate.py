@@ -109,3 +109,47 @@ def test_fetch_waiting_image_and_create(monkeypatch):
     assert job.endswith(b"job")
     fresh = asyncio.run(generate.create_waiting_picture(base_url=BASE, username="u"))
     assert fresh.endswith(b"new")
+
+
+def test_build_excel_polls_job_progress(monkeypatch):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/excel/jobs":
+            return httpx.Response(202, json={"request_id": "ex-1", "status": "processing"})
+        if request.url.path == "/excel/jobs/ex-1":
+            seen.append("status")
+            if len(seen) < 2:
+                return httpx.Response(
+                    200,
+                    json={
+                        "request_id": "ex-1",
+                        "status": "processing",
+                        "progress": 40,
+                        "current_step": "4章（システム要件） 非機能要件 / 可用性（2/5）",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "request_id": "ex-1",
+                    "status": "success",
+                    "progress": 100,
+                    "current_step": "完了",
+                },
+            )
+        if request.url.path == "/excel/jobs/ex-1/result":
+            return httpx.Response(200, content=b"XLSXJOB")
+        return httpx.Response(404)
+
+    _install_mock(monkeypatch, handler)
+    steps: list[tuple[int, str]] = []
+    data = asyncio.run(
+        generate.build_excel(
+            "primaryexam",
+            base_url=BASE,
+            on_progress=lambda pct, label: steps.append((pct, label)),
+        )
+    )
+    assert data == b"XLSXJOB"
+    assert any("可用性" in label for _, label in steps)

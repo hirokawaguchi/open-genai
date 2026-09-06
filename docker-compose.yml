@@ -611,6 +611,7 @@ services:
       - EDITOR_GENERATE_URL=${EDITOR_GENERATE_URL:-}
       - EDITOR_GENERATE_API_KEY=${EDITOR_GENERATE_API_KEY:-}
       - EDITOR_GENERATE_TIMEOUT=${EDITOR_GENERATE_TIMEOUT:-180}
+      - EDITOR_EXCEL_TIMEOUT=${EDITOR_EXCEL_TIMEOUT:-900}
       - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
       # 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API に依存させないため、
       #   汎用サービス procuretech-generate-app を既定にする（editor プロファイルで同時起動）。

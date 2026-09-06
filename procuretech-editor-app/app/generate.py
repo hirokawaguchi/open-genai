@@ -37,9 +37,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -47,6 +49,8 @@ import httpx
 EDITOR_GENERATE_URL = os.environ.get("EDITOR_GENERATE_URL", "").rstrip("/")
 EDITOR_GENERATE_API_KEY = os.environ.get("EDITOR_GENERATE_API_KEY", "")
 TIMEOUT = float(os.environ.get("EDITOR_GENERATE_TIMEOUT", "180"))
+# 一次審査表は章ごとに Dify を呼ぶため、生成より長く待つ。
+EXCEL_TIMEOUT = float(os.environ.get("EDITOR_EXCEL_TIMEOUT", "900"))
 DEFAULT_DOC_TYPE = os.environ.get("EDITOR_GENERATE_DOC_TYPE", "specification")
 
 # 素の文書（テーマ無し）の Word 合成先。テーマ固有の生成 API（例: 調達仕様書＝spec-app）に
@@ -268,6 +272,14 @@ def _headers(api_key: str) -> dict[str, str]:
     return {"X-API-Key": api_key} if api_key else {}
 
 
+def _httpx_message(e: BaseException) -> str:
+    """httpx 例外の表示用。ReadTimeout などは str() が空になることがある。"""
+    detail = str(e).strip() or type(e).__name__
+    if isinstance(e, httpx.TimeoutException):
+        return f"生成サービスが時間内に応答しませんでした（{detail}）"
+    return detail
+
+
 # --- API 呼び出し -------------------------------------------------------------
 
 
@@ -406,7 +418,7 @@ async def compose(
                 f"{base_url}/compose", json=body, headers=_headers(api_key)
             )
         except httpx.HTTPError as e:
-            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
     if res.status_code != 200:
         try:
             msg = res.json().get("error") or "Word 合成に失敗しました。"
@@ -420,6 +432,9 @@ class ExcelSkip(Exception):
     """Excel を生成対象なし等でスキップすべきことを示す（422）。message に理由。"""
 
 
+ExcelProgress = Callable[[int, str], None]
+
+
 async def build_excel(
     builder: str,
     *,
@@ -427,12 +442,14 @@ async def build_excel(
     api_key: str = "",
     params: dict[str, Any] | None = None,
     sections: dict[str, str] | None = None,
+    on_progress: ExcelProgress | None = None,
 ) -> bytes:
     """書き出し時に、その時点の Markdown＋保存パラメータから Excel を生成して受け取る。
 
     builder = "quotation" | "primaryexam"
     - 生成不可（対象章なし・パラメータ不足）のとき ExcelSkip を送出（呼び出し元でスキップ＆警告）。
     - その他のエラーは GenerateError。
+    - `/excel/jobs` があれば進捗を on_progress(0-100, step) で返す。未実装なら同期 /excel。
     """
     if not base_url:
         raise GenerateError("文書生成 API が未設定です（このテーマの生成先が未設定）。")
@@ -441,26 +458,91 @@ async def build_excel(
         "params": params or {},
         "sections": sections or {},
     }
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    headers = _headers(api_key)
+    async with httpx.AsyncClient(timeout=EXCEL_TIMEOUT) as client:
         try:
-            res = await client.post(
-                f"{base_url}/excel", json=body, headers=_headers(api_key)
-            )
+            started = await client.post(f"{base_url}/excel/jobs", json=body, headers=headers)
         except httpx.HTTPError as e:
-            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
+        if started.status_code == 404:
+            return await _build_excel_sync(client, base_url, body, headers)
+        if started.status_code == 422:
+            raise ExcelSkip(_excel_error(started, "生成対象がありません。"))
+        if started.status_code not in (200, 202):
+            raise GenerateError(_excel_error(started, "Excel の生成に失敗しました。"))
+        try:
+            job = started.json()
+        except Exception:  # noqa: BLE001
+            job = {}
+        request_id = str((job or {}).get("request_id") or "")
+        if not request_id:
+            return await _build_excel_sync(client, base_url, body, headers)
+        return await _poll_excel_job(client, base_url, request_id, headers, on_progress)
+
+
+async def _build_excel_sync(
+    client: httpx.AsyncClient,
+    base_url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+) -> bytes:
+    try:
+        res = await client.post(f"{base_url}/excel", json=body, headers=headers)
+    except httpx.HTTPError as e:
+        raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
     if res.status_code == 422:
-        try:
-            msg = res.json().get("error") or "生成対象がありません。"
-        except Exception:  # noqa: BLE001
-            msg = "生成対象がありません。"
-        raise ExcelSkip(msg)
+        raise ExcelSkip(_excel_error(res, "生成対象がありません。"))
     if res.status_code != 200:
-        try:
-            msg = res.json().get("error") or "Excel の生成に失敗しました。"
-        except Exception:  # noqa: BLE001
-            msg = "Excel の生成に失敗しました。"
-        raise GenerateError(msg)
+        raise GenerateError(_excel_error(res, "Excel の生成に失敗しました。"))
     return res.content
+
+
+async def _poll_excel_job(
+    client: httpx.AsyncClient,
+    base_url: str,
+    request_id: str,
+    headers: dict[str, str],
+    on_progress: ExcelProgress | None,
+) -> bytes:
+    deadline = asyncio.get_event_loop().time() + EXCEL_TIMEOUT
+    while True:
+        try:
+            st = await client.get(f"{base_url}/excel/jobs/{request_id}", headers=headers)
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
+        if st.status_code != 200:
+            raise GenerateError(_excel_error(st, "Excel の進捗取得に失敗しました。"))
+        payload = st.json() if st.content else {}
+        status = str(payload.get("status") or "").lower()
+        if on_progress:
+            on_progress(int(payload.get("progress") or 0), str(payload.get("current_step") or ""))
+        if status == "success":
+            try:
+                res = await client.get(
+                    f"{base_url}/excel/jobs/{request_id}/result", headers=headers
+                )
+            except httpx.HTTPError as e:
+                raise GenerateError(
+                    f"外部サービスとの通信に失敗しました: {_httpx_message(e)}"
+                ) from e
+            if res.status_code != 200:
+                raise GenerateError(_excel_error(res, "Excel の取得に失敗しました。"))
+            return res.content
+        if status == "error":
+            msg = str(payload.get("error") or "Excel の生成に失敗しました。")
+            if "対象章" in msg or "不足" in msg:
+                raise ExcelSkip(msg)
+            raise GenerateError(msg)
+        if asyncio.get_event_loop().time() >= deadline:
+            raise GenerateError("Excel の作成が時間内に終わりませんでした。")
+        await asyncio.sleep(1.0)
+
+
+def _excel_error(res: httpx.Response, fallback: str) -> str:
+    try:
+        return str(res.json().get("error") or fallback)
+    except Exception:  # noqa: BLE001
+        return fallback
 
 
 def _filename_from_disposition(value: str | None, default: str) -> str:

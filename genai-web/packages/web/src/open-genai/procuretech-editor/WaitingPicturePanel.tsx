@@ -32,9 +32,10 @@ type Props = {
   src?: string | null;
   label: string;
   progress?: number;
+  step?: string | null;
 };
 
-export const WaitingPicturePanel = ({ src, label, progress }: Props) => (
+export const WaitingPicturePanel = ({ src, label, progress, step }: Props) => (
   <div className='flex flex-col items-center gap-2 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3'>
     <img
       src={src || WAITING_FALLBACK_SRC}
@@ -45,5 +46,6 @@ export const WaitingPicturePanel = ({ src, label, progress }: Props) => (
       {label}
       {typeof progress === 'number' ? `（${progress}%）` : ''}
     </p>
+    {step ? <p className='text-dns-14N-130 text-solid-gray-600'>{step}</p> : null}
   </div>
 );

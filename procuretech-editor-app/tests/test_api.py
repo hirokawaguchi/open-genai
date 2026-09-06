@@ -65,6 +65,21 @@ def _create_project(client, name="案件1", headers=USER_A):
     return res.json()["project"]
 
 
+def _compose_until_done(client, project_id, payload=None, headers=USER_A):
+    """合成ジョブを開始し、完了（または失敗）までステータスを取る。"""
+    start = client.post(
+        f"/projects/{project_id}/compose", json=payload or {}, headers=headers
+    )
+    assert start.status_code == 200, start.text
+    started = start.json()
+    rid = started.get("request_id")
+    assert rid
+    assert started["status"] == "processing"
+    st = client.get(f"/projects/{project_id}/composes/{rid}", headers=headers)
+    assert st.status_code == 200, st.text
+    return st.json()
+
+
 def _xlsx_with_marker(marker: str) -> str:
     """B1 マーカー入りの xlsx を base64 で返す。"""
     wb = openpyxl.Workbook()
@@ -588,15 +603,15 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
     monkeypatch.setattr(generate, "compose", fake_compose)
 
     # Excel 出力（見積/一次審査）は書き出し時生成。ここではスキップさせて Word のみ検証。
-    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
         raise generate.ExcelSkip("テスト: スキップ")
 
     monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
     # 既定（テーマ）定義で合成
-    res = client.post(f"/projects/{p['id']}/compose", json={}, headers=USER_A)
-    assert res.status_code == 200, res.text
-    body = res.json()
+    body = _compose_until_done(client, p["id"])
     assert body["status"] == "success"
     assert body["download_url"].startswith("https://dl/")
     assert body["object_key"].startswith(f"{objstore.EDITOR_S3_PREFIX}/")
@@ -647,18 +662,16 @@ def test_compose_overrides_and_embeds_image(client, monkeypatch):
 
     monkeypatch.setattr(generate, "compose", fake_compose)
 
-    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
         raise generate.ExcelSkip("テスト: スキップ")
 
     monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
     override = "# 背景\n\n![diagram](images/pic.png)\n"
-    res = client.post(
-        f"/projects/{p['id']}/compose",
-        json={"overrides": {bg_id: override}},
-        headers=USER_A,
-    )
-    assert res.status_code == 200, res.text
+    body = _compose_until_done(client, p["id"], {"overrides": {bg_id: override}})
+    assert body["status"] == "success"
 
     spec = next(o for o in captured["outputs"] if o["name"] == "調達仕様書")
     # override が S3 の内容より優先される
@@ -746,7 +759,9 @@ def test_compose_builds_excel_at_export(client, monkeypatch, _mem_objstore):
 
     captured = {}
 
-    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
         captured["builder"] = builder
         captured["params"] = params
         captured["sections"] = sections
@@ -783,11 +798,9 @@ def test_compose_builds_excel_at_export(client, monkeypatch, _mem_objstore):
             }
         ],
     }
-    res = client.post(
-        f"/projects/{p['id']}/compose", json={"composition": composition}, headers=USER_A
-    )
-    assert res.status_code == 200, res.text
-    key = res.json()["object_key"]
+    body = _compose_until_done(client, p["id"], {"composition": composition})
+    assert body["status"] == "success"
+    key = body["object_key"]
     zdata = _mem_objstore[key]
     with zipfile.ZipFile(io.BytesIO(zdata)) as zf:
         names = zf.namelist()
@@ -808,7 +821,9 @@ def test_compose_skips_excel_when_no_source(client, monkeypatch, _mem_objstore):
     p = _create_project(client)
     _run_generation_with_sections(client, monkeypatch, p["id"])
 
-    async def fake_build_excel(builder, *, base_url, api_key="", params=None, sections=None):
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
         raise generate.ExcelSkip("一次審査表の対象章がありません。")
 
     monkeypatch.setattr(generate, "build_excel", fake_build_excel)
@@ -842,9 +857,55 @@ def test_compose_skips_excel_when_no_source(client, monkeypatch, _mem_objstore):
             },
         ],
     }
-    res = client.post(
-        f"/projects/{p['id']}/compose", json={"composition": composition}, headers=USER_A
-    )
-    assert res.status_code == 200, res.text
-    body = res.json()
+    body = _compose_until_done(client, p["id"], {"composition": composition})
+    assert body["status"] == "success"
+    assert any(s["name"] == "一次審査表" for s in body.get("skipped", []))
+
+
+def test_compose_skips_excel_when_generate_fails(client, monkeypatch, _mem_objstore):
+    """一次審査表の外部通信失敗では Word など他成果物を残してスキップする。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
+        raise generate.GenerateError("外部サービスとの通信に失敗しました: ReadTimeout")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                zf.writestr(f"{o['name']}.docx", b"DOCX")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    composition = {
+        "theme": "procurement_spec",
+        "outputs": [
+            {
+                "id": "specification",
+                "name": "調達仕様書",
+                "kind": "markdown",
+                "enabled": True,
+                "items": [{"section_key": "background"}],
+            },
+            {
+                "id": "primaryexam",
+                "name": "一次審査表",
+                "kind": "excel",
+                "builder": "primaryexam",
+                "enabled": True,
+                "items": [],
+            },
+        ],
+    }
+    body = _compose_until_done(client, p["id"], {"composition": composition})
+    assert body["status"] == "success"
+    assert "調達仕様書" in (body.get("outputs") or [])
     assert any(s["name"] == "一次審査表" for s in body.get("skipped", []))

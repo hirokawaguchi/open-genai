@@ -95,6 +95,12 @@ export const fetchGeneration = (projectId: string, requestId: string): Promise<E
     `${BASE}/projects/${enc(projectId)}/generations/${enc(requestId)}`,
   );
 
+/** 合成ジョブの進捗を 1 回取得する。 */
+export const fetchCompose = (projectId: string, requestId: string): Promise<EditorComposeResult> =>
+  teamApiFetcher<EditorComposeResult>(
+    `${BASE}/projects/${enc(projectId)}/composes/${enc(requestId)}`,
+  );
+
 /** 生成ジョブの待ち画像（PNG）。失敗時は呼び出し側でフォールバックする。 */
 export const fetchGenerationWaitingBlob = (
   projectId: string,
@@ -265,16 +271,22 @@ export const useEditorActions = () => {
 
   const composeProject = useCallback(
     (projectId: string, composition?: EditorComposition, overrides?: Record<string, string>) =>
-      run(async () => {
+      run(async (): Promise<EditorComposeResult> => {
         const body: Record<string, unknown> = {};
         if (composition) body.composition = composition;
         if (overrides && Object.keys(overrides).length > 0) body.overrides = overrides;
-        const res = await teamApi.post<EditorComposeResult>(
-          `${BASE}/projects/${enc(projectId)}/compose`,
-          body,
-        );
-        return res.data ?? null;
-      }, 'Word 合成に失敗しました。'),
+        try {
+          const res = await teamApi.post<EditorComposeResult>(
+            `${BASE}/projects/${enc(projectId)}/compose`,
+            body,
+          );
+          return res.data ?? { error: '書き出しを開始できませんでした。' };
+        } catch (e) {
+          return {
+            error: errorMessage(e, '書き出しを開始できませんでした。もう一度お試しください。'),
+          };
+        }
+      }, '書き出しを開始できませんでした。もう一度お試しください。'),
     [run],
   );
 
