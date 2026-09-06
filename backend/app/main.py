@@ -3753,6 +3753,41 @@ async def _proxy_procuretech_editor(
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
+async def _proxy_procuretech_editor_bytes(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    *,
+    params: dict[str, Any] | None = None,
+    timeout: float = 240,
+) -> Response:
+    """待ち画像などバイナリ応答をそのまま返す。JSON エラーは JSON のまま返す。"""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, params=params)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "情報化企画書エディタに接続できませんでした。"
+                    "有効化するには `docker compose --profile procuretech-editor up -d` "
+                    "または `COMPOSE_PROFILES=procuretech-editor` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    ctype = (res.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype.startswith("image/"):
+        return Response(content=res.content, media_type=ctype, status_code=res.status_code)
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "情報化企画書エディタから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
 @app.get("/procuretech-editor/config")
 async def procuretech_editor_config(request: Request) -> JSONResponse:
     err, headers = _procuretech_editor_headers(request)
@@ -3963,6 +3998,52 @@ async def procuretech_editor_generation_status(
     )
 
 
+@app.get("/procuretech-editor/projects/{project_id}/generations/{request_id}/waiting")
+async def procuretech_editor_generation_waiting(
+    project_id: str, request_id: str, request: Request
+) -> Response:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor_bytes(
+        "GET",
+        _procuretech_editor_app_url(
+            f"/projects/{project_id}/generations/{request_id}/waiting"
+        ),
+        headers,
+    )
+
+
+@app.get("/procuretech-editor/projects/{project_id}/waiting-picture")
+async def procuretech_editor_project_waiting_picture(
+    project_id: str, request: Request, theme: str | None = None
+) -> Response:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    params = {"theme": theme} if theme else None
+    return await _proxy_procuretech_editor_bytes(
+        "GET",
+        _procuretech_editor_app_url(f"/projects/{project_id}/waiting-picture"),
+        headers,
+        params=params,
+    )
+
+
+@app.get("/procuretech-editor/themes/{theme_id}/waiting-picture")
+async def procuretech_editor_theme_waiting_picture(
+    theme_id: str, request: Request
+) -> Response:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_editor_bytes(
+        "GET",
+        _procuretech_editor_app_url(f"/themes/{theme_id}/waiting-picture"),
+        headers,
+    )
+
+
 @app.get("/procuretech-editor/themes/{theme_id}/inputs/{input_key}/template")
 async def procuretech_editor_input_template(
     theme_id: str, input_key: str, request: Request
@@ -4017,12 +4098,27 @@ async def procuretech_editor_compose(
     if err:
         return err
     body = await request.json()
-    return await _proxy_procuretech_editor(
+    proxied = await _proxy_procuretech_editor(
         "POST",
         _procuretech_editor_app_url(f"/projects/{project_id}/compose"),
         headers,
         body,
     )
+    if proxied.status_code != 200:
+        return proxied
+    try:
+        payload = json.loads(proxied.body)
+    except ValueError:
+        return proxied
+    if not isinstance(payload, dict):
+        return proxied
+    key = str(payload.get("object_key") or "").strip()
+    if ARTIFACT_DELIVERY_MODE == "carrier" and key and objstore.is_managed_key(key):
+        payload["download_url"] = ""
+        payload["delivery"] = "carrier"
+    else:
+        payload["delivery"] = "open"
+    return JSONResponse(status_code=200, content=payload)
 
 
 # ---------------------------------------------------------------------------

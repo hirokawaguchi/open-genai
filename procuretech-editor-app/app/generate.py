@@ -29,7 +29,9 @@
 契約（Nextcloud 非依存・結果は zip で受け取る）:
 
 - POST `{base_url}/generate`   multipart: 各入力(key=ファイル) / form: username, doc_type, options
-- GET  `{base_url}/status/{request_id}`   -> {status, progress, error?}
+- GET  `{base_url}/status/{request_id}`   -> {status, progress, waiting_ready?, error?}
+- GET  `{base_url}/waiting/{request_id}`  -> image/png（任意）
+- POST `{base_url}/waiting-picture`       -> image/png（任意。都度生成。書き出し待ちは案件の既存画像を流用）
 - GET  `{base_url}/result/{request_id}`   -> application/zip
 """
 
@@ -320,6 +322,41 @@ async def get_status(request_id: str, *, base_url: str, api_key: str = "") -> di
     if res.status_code != 200:
         raise GenerateError("生成状況の確認に失敗しました。")
     return res.json()
+
+
+async def fetch_waiting_image(request_id: str, *, base_url: str, api_key: str = "") -> bytes:
+    """生成ジョブの待ち画像（PNG）を取得する。"""
+    if not base_url:
+        raise GenerateError("文書生成 API が未設定です。")
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            res = await client.get(
+                f"{base_url}/waiting/{request_id}", headers=_headers(api_key)
+            )
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+    if res.status_code == 404:
+        raise GenerateError("待ち画像が見つかりません。")
+    if res.status_code != 200:
+        raise GenerateError("待ち画像の取得に失敗しました。")
+    return res.content
+
+
+async def create_waiting_picture(*, base_url: str, api_key: str = "", username: str = "") -> bytes:
+    """書き出し待ち用の画像を生成サービスから取得する。"""
+    if not base_url:
+        raise GenerateError("文書生成 API が未設定です。")
+    body = {"username": username} if username else {}
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            res = await client.post(
+                f"{base_url}/waiting-picture", json=body, headers=_headers(api_key)
+            )
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {e}") from e
+    if res.status_code != 200:
+        raise GenerateError("待ち画像の取得に失敗しました。")
+    return res.content
 
 
 async def fetch_result(request_id: str, *, base_url: str, api_key: str = "") -> bytes:

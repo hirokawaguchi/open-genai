@@ -95,6 +95,19 @@ export const fetchGeneration = (projectId: string, requestId: string): Promise<E
     `${BASE}/projects/${enc(projectId)}/generations/${enc(requestId)}`,
   );
 
+/** 生成ジョブの待ち画像（PNG）。失敗時は呼び出し側でフォールバックする。 */
+export const fetchGenerationWaitingBlob = (
+  projectId: string,
+  requestId: string,
+): Promise<Blob> =>
+  teamApi
+    .getBlob(`${BASE}/projects/${enc(projectId)}/generations/${enc(requestId)}/waiting`)
+    .then((r) => r.blob);
+
+/** 書き出し待ち用の画像（PNG）。Markdown 生成時の既存画像。無ければフォールバック。 */
+export const fetchProjectWaitingBlob = (projectId: string): Promise<Blob> =>
+  teamApi.getBlob(`${BASE}/projects/${enc(projectId)}/waiting-picture`).then((r) => r.blob);
+
 /** プロジェクトの合成定義（保存済み or テーマ既定）と参照可能ファイルを取得する。 */
 export const useEditorComposition = (projectId: string | null) => {
   const key = projectId ? `${BASE}/projects/${enc(projectId)}/composition` : null;

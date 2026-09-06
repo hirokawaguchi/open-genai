@@ -14,14 +14,13 @@ import io
 import json
 import os
 import re
-import uuid
 import zipfile
 from typing import Any
 
 from fastapi import FastAPI, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from . import excel, generate, intauth, objstore, store
+from . import excel, generate, intauth, objstore, store, waiting
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 MAX_UPLOAD_BYTES = int(os.environ.get("EDITOR_MAX_UPLOAD_BYTES", "20971520"))  # 20MB
@@ -112,6 +111,49 @@ def _kind_of(rel_path: str) -> str:
 def _pub_file(f: dict[str, Any]) -> dict[str, Any]:
     """フロントへ返すファイル情報（内部の S3 キーは含めない）。"""
     return {k: v for k, v in f.items() if k != "s3_key"}
+
+
+def _waiting_image_rel(filename: str) -> str:
+    """待ち画像の案件内パス（Word には埋め込まず images/ に置く）。"""
+    base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    return f"images/{base}"
+
+
+def _is_waiting_png_name(name: str) -> bool:
+    return name.lower().endswith("_waiting.png")
+
+
+def _existing_waiting_png(project_id: str, uid: str) -> bytes | None:
+    """Markdown 生成時に案件へ置いた待ち画像を返す。無ければ None。"""
+    files = [
+        f
+        for f in store.list_files(project_id, uid)
+        if _is_waiting_png_name(str(f.get("rel_path") or "").rsplit("/", 1)[-1])
+    ]
+    files.sort(
+        key=lambda f: str(f.get("updated_at") or f.get("created_at") or ""),
+        reverse=True,
+    )
+    for f in files:
+        data = objstore.get_bytes(f.get("s3_key") or "")
+        if data:
+            return data
+    return None
+
+
+def _put_project_bytes(
+    project_id: str, uid: str, rel: str, data: bytes
+) -> dict[str, Any] | None:
+    """案件フォルダへバイト列を保存する（既存があれば上書き）。"""
+    if store.get_project(project_id, uid) is None:
+        return None
+    existing = store.get_file(project_id, uid, rel)
+    s3_key = existing["s3_key"] if existing else store.build_s3_key(uid, project_id, rel)
+    if not objstore.put_bytes(s3_key, data):
+        return None
+    return store.upsert_file(
+        project_id, uid, rel, kind=_kind_of(rel), size=len(data), s3_key=s3_key
+    )
 
 
 def _clean_rel_path(path: str | None) -> str | None:
@@ -693,6 +735,9 @@ def _import_zip_to_project(zip_bytes: bytes, project_id: str, uid: str) -> list[
             rel = _clean_rel_path(inner)
             if rel is None:
                 continue
+            # 待ち画像は案件の images/ に置く（zip ルートに来ても寄せる）。
+            if _is_waiting_png_name(base) and not rel.startswith("images/"):
+                rel = _waiting_image_rel(base)
             data = zf.read(name)
             if len(data) > MAX_UPLOAD_BYTES:
                 continue
@@ -864,7 +909,11 @@ async def generation_status(
         )
     if state != "success":
         return JSONResponse(
-            content={"status": "processing", "progress": status.get("progress")}
+            content={
+                "status": "processing",
+                "progress": status.get("progress"),
+                "waiting_ready": bool(status.get("waiting_ready")),
+            }
         )
     # 成功 → 結果 zip を取り込む。
     if not objstore.is_configured():
@@ -880,6 +929,94 @@ async def generation_status(
         request_id, uid, status="success", imported=True, imported_paths=imported
     )
     return JSONResponse(content={"status": "success", "imported": True, "files": imported})
+
+
+@app.get("/projects/{project_id}/generations/{request_id}/waiting")
+async def generation_waiting_image(
+    project_id: str,
+    request_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    """生成ジョブの待ち画像をプロキシする。取れなければフォールバック PNG。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    gen = store.get_generation(request_id, project_id, uid)
+    if gen is None:
+        return JSONResponse(status_code=404, content={"error": "生成ジョブが見つかりません。"})
+    theme = generate.get_theme(gen.get("theme"))
+    base_url = generate.theme_base_url(theme) if theme else generate.EDITOR_GENERATE_URL
+    api_key = generate.theme_api_key(theme) if theme else generate.EDITOR_GENERATE_API_KEY
+    try:
+        png = await generate.fetch_waiting_image(
+            request_id, base_url=base_url, api_key=api_key
+        )
+    except generate.GenerateError:
+        png = waiting.make_fallback_waiting_png()
+    _put_project_bytes(project_id, uid, _waiting_image_rel(f"{request_id}_waiting.png"), png)
+    return Response(content=png, media_type="image/png")
+
+
+@app.get("/projects/{project_id}/waiting-picture")
+async def project_waiting_picture(
+    project_id: str,
+    theme: str | None = None,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    """書き出し待ち用の画像。Markdown 生成時の既存画像を流用し、無ければフォールバック。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if store.get_project(project_id, uid) is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    _ = theme  # 互換のため受け取るだけ（新規生成しない）
+    png = _existing_waiting_png(project_id, uid) or waiting.make_fallback_waiting_png()
+    return Response(content=png, media_type="image/png")
+
+
+@app.get("/themes/{theme_id}/waiting-picture")
+async def theme_waiting_picture(
+    theme_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    """書き出し待ち用の画像。生成サービスが失敗してもフォールバック PNG。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    theme = generate.get_theme(theme_id)
+    base_url = generate.theme_base_url(theme) if theme else generate.EDITOR_GENERATE_URL
+    api_key = generate.theme_api_key(theme) if theme else generate.EDITOR_GENERATE_API_KEY
+    try:
+        png = await generate.create_waiting_picture(
+            base_url=base_url, api_key=api_key, username=uid
+        )
+    except generate.GenerateError:
+        png = waiting.make_fallback_waiting_png()
+    return Response(content=png, media_type="image/png")
 
 
 # --- composition（出力ファイルの合成定義 + Word 合成実行） --------------------
@@ -1301,16 +1438,17 @@ async def compose_project(
             zf.writestr(arc, data)
 
     project_name = objstore.sanitize_filename(project["name"]) or "project"
-    key = "/".join([objstore.EDITOR_S3_PREFIX, "_exports", f"compose-{uuid.uuid4().hex}.zip"])
+    download_filename = f"{project_name}-output.zip"
+    key = objstore.build_export_key(uid, download_filename)
     if not objstore.put_bytes(key, buf.getvalue(), content_type="application/zip"):
         return JSONResponse(status_code=502, content={"error": "合成結果の保存に失敗しました。"})
-    download_filename = f"{project_name}-output.zip"
     url = objstore.presign_get(key, filename=download_filename, expiry=3600)
     return JSONResponse(
         content={
             "status": "success",
             "download_url": url,
             "download_filename": download_filename,
+            "object_key": key,
             "outputs": included_names,
             "skipped": skipped,
         }

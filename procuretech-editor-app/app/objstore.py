@@ -15,8 +15,10 @@ backend の `app/objstore.py` と同じ環境変数（`S3_*`）を共有しつ�
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import uuid
 from typing import Any
 from urllib.parse import urlparse
 
@@ -44,6 +46,26 @@ def sanitize_filename(name: str | None) -> str:
     base = (name or "").strip().replace("\\", "/").split("/")[-1]
     base = _SAFE_RE.sub("_", base).strip("._-")
     return base or "file"
+
+
+def _user_hash(user_id: str) -> str:
+    return hashlib.sha256((user_id or "").encode("utf-8")).hexdigest()[:32]
+
+
+def build_export_key(user_id: str, filename: str) -> str:
+    """書き出し zip のキー（`<prefix>/<user_hash>/_exports/<uuid>/<filename>`）。
+
+    末尾を表示名にし、backend の carrier 所有者判定（`parts[1] == user_hash`）に載せる。
+    """
+    return "/".join(
+        [
+            EDITOR_S3_PREFIX,
+            _user_hash(user_id),
+            "_exports",
+            uuid.uuid4().hex,
+            sanitize_filename(filename),
+        ]
+    )
 
 
 def _client(endpoint: str) -> Any:
