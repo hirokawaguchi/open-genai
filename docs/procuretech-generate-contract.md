@@ -24,7 +24,7 @@
 | `GET  {base_url}/waiting/{request_id}` | 生成ジョブの待ち画像（任意。`image/png`） |
 | `POST {base_url}/waiting-picture` | 書き出し待ち用の画像（任意。`image/png`） |
 | `GET  {base_url}/result/{request_id}` | 生成結果 zip の取得 |
-| `POST {base_url}/compose` | 順序付き Markdown を Word(`.docx`) に合成し zip で返す |
+| `POST {base_url}/compose` | 順序付き Markdown を指定形式（既定 `.docx`）に合成し zip で返す |
 | `POST {base_url}/excel` | 書き出し時に、その時点の章 Markdown＋保存パラメータから Excel を生成（任意実装） |
 | `GET  {base_url}/template/{input_key}` | 入力（ヒアリングシート）の様式ファイルを配信（任意実装） |
 
@@ -81,6 +81,7 @@
   "outputs": [
     {
       "name": "調達仕様書",
+      "format": "docx",
       "sections": [
         { "filename": "section1.md", "content": "# 背景\n...\n![図](images/zu1.png)" },
         { "filename": "section2.md", "content": "# 目的\n..." }
@@ -95,16 +96,20 @@
 ```
 
 - `outputs[].sections` は**呼び出し元で解決済みの本文を順序どおり**に並べたもの。
-  生成側はこれを連結して `.docx` に変換します（本番は pandoc、実装サンプルは python-docx を使用）。
-- `reference` は任意（Word のスタイル参照ドキュメントの種別など）。
-- `assets` は任意。本文が参照する**画像を `{相対パス: base64}`** で渡す。生成側は本文と
-  同じ相対パスに画像を配置してから変換することで、Word へ画像を埋め込む
-  （pandoc は入力 Markdown と同じディレクトリを `--resource-path` に含めて解決する）。
+- `outputs[].format` は任意。`docx`（既定）/ `html` / `pptx` / `txt` / `md`。
+  省略時は従来どおり `.docx`。未対応の形式は `422` `{"error": "…"}`（その出力は呼び出し元がスキップする）。
+- 生成側は連結した Markdown を指定形式へ変換する。
+  - **docx**: テーマ固有サービス（例: spec-app / pandoc）またはリファレンス実装（python-docx）。
+  - **html / pptx / txt / md**: 公開リファレンス実装 `procuretech-generate-app` が担う。
+    エディタは docx をテーマの `/compose` へ、それ以外を `EDITOR_COMPOSE_URL` へ振り分ける。
+- `reference` は任意（Word のスタイル参照ドキュメントの種別など）。docx 以外では無視してよい。
+- `assets` は任意。本文が参照する**画像を `{相対パス: base64}`** で渡す。視覚形式（docx / html / pptx）では
+  画像を埋め込む。html は data URI で単一ファイルにする。md / txt は画像を埋め込まない。
   相対パスは Markdown の画像記法 `![alt](相対パス)` と一致させること。
   **Mermaid 図はコードのままでは画像化されない**ため、呼び出し元（エディタ）が
-  合成前に PNG 画像へ変換して `assets` に載せ、本文の ```` ```mermaid ```` ブロックを
-  画像参照へ差し替えてから送る。
-- 応答: `application/zip`。出力ファイルごとに `<name>.docx` を格納。
+  視覚形式の合成前に PNG 画像へ変換して `assets` に載せ、本文の ```` ```mermaid ```` ブロックを
+  画像参照へ差し替えてから送る。md / txt では Mermaid をコードのまま残す。
+- 応答: `application/zip`。出力ファイルごとに `<name>.<format>` を格納。
 
 ### POST /excel
 

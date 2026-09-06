@@ -13,10 +13,11 @@ Word(.docx) 合成まで一通り行える。テーマ固有の非公開サー�
 - GET  /waiting/{id}        -> image/png（ジョブの待ち画像）
 - POST /waiting-picture     -> image/png（書き出し待ち用。フォールバック落書き）
 - GET  /result/{id}         -> application/zip（section*.md, README.md, sections.json）
-- POST /compose             JSON {"outputs":[{"name","sections":[{"filename","content"}]}],
+- POST /compose             JSON {"outputs":[{"name","format?","sections":[{"filename","content"}]}],
                                    "assets": {"images/x.png": "<base64>"}}
-                            -> application/zip（<name>.docx）。assets の画像は本文の
-                               `![](相対パス)` に一致すれば .docx へ埋め込む。
+                            -> application/zip（<name>.<format>。format 省略時は docx）。
+                               format: docx / html / pptx / txt / md。
+                               assets の画像は視覚形式（docx / html / pptx）へ埋め込む。
 - GET  /template/{key}      -> 同梱のヒアリングシート様式（xlsx）をダウンロード
 
 `GENERATE_API_KEY` が設定されていれば `X-API-Key` を検証する。
@@ -38,6 +39,15 @@ from typing import Any
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
 
+from app.compose_formats import (
+    SUPPORTED_FORMATS,
+    markdown_to_html,
+    markdown_to_md,
+    markdown_to_pptx,
+    markdown_to_txt,
+    normalize_format,
+)
+from app.dads import BODY, FONT_MONO, MUTED, apply_docx_theme, shade_paragraph, style_run
 from app.waiting import make_fallback_waiting_png
 
 # API キー（旧名 GENERATE_SAMPLE_API_KEY も後方互換で参照）。
@@ -174,12 +184,21 @@ def _add_code_block(doc: Any, lang: str, lines: list[str]) -> None:
 
     if lang == "mermaid":
         note = doc.add_paragraph()
-        run = note.add_run("【Mermaid 図（画像未変換のためソースを表示）】")
-        run.italic = True
+        style_run(
+            note.add_run("【Mermaid 図（画像未変換のためソースを表示）】"),
+            size=Pt(10),
+            color=MUTED,
+            italic=True,
+        )
     para = doc.add_paragraph()
-    run = para.add_run("\n".join(lines))
-    run.font.name = "Courier New"
-    run.font.size = Pt(9)
+    shade_paragraph(para)
+    para.paragraph_format.line_spacing = 1.45
+    style_run(
+        para.add_run("\n".join(lines)),
+        name=FONT_MONO,
+        size=Pt(9),
+        color=BODY,
+    )
 
 
 def _add_line_with_inline_images(doc: Any, line: str, assets: dict[str, bytes]) -> None:
@@ -226,6 +245,7 @@ def _markdown_to_docx(
 
     assets = assets or {}
     doc = Document()
+    apply_docx_theme(doc)
     doc.add_heading(name, level=0)
     for sec in sections:
         content = str(sec.get("content") or "")
@@ -397,14 +417,29 @@ def result(request_id: str, x_api_key: str | None = Header(default=None)) -> Res
     )
 
 
+def _render_output(
+    fmt: str, name: str, sections: list[dict[str, Any]], assets: dict[str, bytes]
+) -> bytes:
+    if fmt == "html":
+        return markdown_to_html(name, sections, assets)
+    if fmt == "pptx":
+        return markdown_to_pptx(name, sections, assets)
+    if fmt == "txt":
+        return markdown_to_txt(sections)
+    if fmt == "md":
+        return markdown_to_md(sections)
+    return _markdown_to_docx(name, sections, assets)
+
+
 @app.post("/compose")
 async def compose(
     request: Request, x_api_key: str | None = Header(default=None)
 ) -> Response:
-    """順序付き Markdown（出力ファイル毎）を .docx に合成して zip で返す。
+    """順序付き Markdown（出力ファイル毎）を指定形式に合成して zip で返す。
 
+    outputs[].format は docx（既定）/ html / pptx / txt / md。
     body.assets（{相対パス: base64}）に本文の `![](相対パス)` と一致する画像を渡すと、
-    ブロック／インラインいずれの画像も .docx へ埋め込む（Mermaid はクライアントが PNG 化して
+    視覚形式（docx / html / pptx）へ埋め込む（Mermaid はクライアントが PNG 化して
     画像として渡す運用）。
     """
     err = _check_key(x_api_key)
@@ -419,24 +454,42 @@ async def compose(
         return JSONResponse(status_code=400, content={"error": "outputs がありません"})
     assets = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
 
-    buf = io.BytesIO()
+    unknown: list[str] = []
+    rendered: list[tuple[str, bytes]] = []
     used: set[str] = set()
+    for i, o in enumerate(outputs, 1):
+        if not isinstance(o, dict):
+            continue
+        name = str(o.get("name") or f"output{i}")
+        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
+        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
+            unknown.append(raw_fmt)
+            continue
+        fmt = normalize_format(raw_fmt)
+        sections = o.get("sections") or []
+        if not isinstance(sections, list):
+            sections = []
+        data = _render_output(fmt, name, sections, assets)
+        arc = f"{name}.{fmt}"
+        n = 2
+        while arc in used:
+            arc = f"{name}({n}).{fmt}"
+            n += 1
+        used.add(arc)
+        rendered.append((arc, data))
+
+    if unknown and not rendered:
+        return JSONResponse(
+            status_code=422,
+            content={"error": f"未対応の出力形式です: {', '.join(sorted(set(unknown)))}"},
+        )
+    if not rendered:
+        return JSONResponse(status_code=400, content={"error": "合成対象の内容がありません"})
+
+    buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, o in enumerate(outputs, 1):
-            if not isinstance(o, dict):
-                continue
-            name = str(o.get("name") or f"output{i}")
-            sections = o.get("sections") or []
-            if not isinstance(sections, list):
-                sections = []
-            docx = _markdown_to_docx(name, sections, assets)
-            arc = f"{name}.docx"
-            n = 2
-            while arc in used:
-                arc = f"{name}({n}).docx"
-                n += 1
-            used.add(arc)
-            zf.writestr(arc, docx)
+        for arc, data in rendered:
+            zf.writestr(arc, data)
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
