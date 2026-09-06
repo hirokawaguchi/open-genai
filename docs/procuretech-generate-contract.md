@@ -21,6 +21,8 @@
 | --- | --- |
 | `POST {base_url}/generate` | 生成ジョブ開始（multipart で Excel をアップロード） |
 | `GET  {base_url}/status/{request_id}` | 進捗ポーリング |
+| `GET  {base_url}/waiting/{request_id}` | 生成ジョブの待ち画像（任意。`image/png`） |
+| `POST {base_url}/waiting-picture` | 書き出し待ち用の画像（任意。`image/png`） |
 | `GET  {base_url}/result/{request_id}` | 生成結果 zip の取得 |
 | `POST {base_url}/compose` | 順序付き Markdown を Word(`.docx`) に合成し zip で返す |
 | `POST {base_url}/excel` | 書き出し時に、その時点の章 Markdown＋保存パラメータから Excel を生成（任意実装） |
@@ -40,13 +42,30 @@
 
 ### GET /status/{request_id}
 
-- 応答: `{"status": "processing" | "success" | "error", "progress": <0-100>, "current_step"?: str, "error"?: str}`
+- 応答: `{"status": "processing" | "success" | "error", "progress": <0-100>, "current_step"?: str, "waiting_ready"?: bool, "error"?: str}`
 - `error` のときは `error` にユーザー提示用メッセージ（例: Dify 失敗理由）を入れることを推奨。
+- `waiting_ready` は任意。待ち画像（プロジェクト識別用。仕様書本文では使わない）が
+  `GET /waiting/{request_id}` で取れるときに `true`。エディタは進捗パーセントと併せて表示する。
+  完了予定時刻は画像にも応答にも含めない。
+
+### GET /waiting/{request_id}
+
+- 任意実装。応答: `200` で `image/png`。未知の `request_id` は `404`。
+- ジョブはあるが画像未準備なら、実装側のフォールバック PNG を返してよい。
+
+### POST /waiting-picture
+
+- 任意実装。ジョブに紐づかない待ち画像を都度生成する。
+- Open GENAI エディタの書き出し待ち表示は、この API を呼ばず、Markdown 生成時に
+  取り込んだ `images/{request_id}_waiting.png` を流用する（無ければフォールバック）。
+- 本文: `{ "username"?: str }`（省略可）。
+- 応答: 常に `200` で `image/png`。画像生成に失敗してもフォールバック PNG を返す。
 
 ### GET /result/{request_id}
 
 - 応答: `application/zip`。中身は以下（詳細は「結果 zip の構造」）。
   - 章別 Markdown（`section*.md`, `README.md`, `rfi1.md` など）
+  - 任意で `images/{request_id}_waiting.png`（待ち画像。案件フォルダの `images/` へ取り込まれる。Word 本文には埋め込まない）
   - `sections.json`（各ファイルへ安定 ID＝`section_key` を付与するマニフェスト）
   - 任意で `template_data.json`（書き出し時の Excel 生成に使う保存パラメータ。
     例: `{"nextyear":"2027","phaselist":"1, 2, 3","projectName":"…"}`）。

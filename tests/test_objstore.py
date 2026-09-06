@@ -40,3 +40,17 @@ def test_keys_from_artifacts_ignores_external_urls() -> None:
 def test_is_managed_key_rejects_path_traversal() -> None:
     objstore = load_service_module("backend/app/objstore.py")
     assert not objstore._is_managed_key("exapp/../secret.txt")
+
+
+def test_is_managed_key_accepts_editor_export() -> None:
+    objstore = load_service_module("backend/app/objstore.py")
+    key = (
+        "procuretech-editor/258d8dc916db8cea2cafb6c3cd0cb024/"
+        "_exports/d79d66da703f4807924be6285fbd65db/case-output.zip"
+    )
+    assert objstore.is_managed_key(key)
+    assert objstore.owns_key(key, "user-a") is False  # hash 不一致
+    user_hash = objstore._opaque_user_segment("user-a")
+    owned = f"procuretech-editor/{user_hash}/_exports/abc/case-output.zip"
+    assert objstore.owns_key(owned, "user-a")
+    assert objstore.filename_from_key(owned) == "case-output.zip"

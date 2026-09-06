@@ -94,3 +94,18 @@ def test_get_status_and_result(monkeypatch):
     assert st["status"] == "success"
     data = asyncio.run(generate.fetch_result("gen-9", base_url=BASE))
     assert data == b"PK\x03\x04zip"
+
+
+def test_fetch_waiting_image_and_create(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/waiting/gen-w":
+            return httpx.Response(200, content=b"\x89PNG\r\n\x1a\njob")
+        if request.url.path == "/waiting-picture":
+            return httpx.Response(200, content=b"\x89PNG\r\n\x1a\nnew")
+        return httpx.Response(404)
+
+    _install_mock(monkeypatch, handler)
+    job = asyncio.run(generate.fetch_waiting_image("gen-w", base_url=BASE, api_key="k"))
+    assert job.endswith(b"job")
+    fresh = asyncio.run(generate.create_waiting_picture(base_url=BASE, username="u"))
+    assert fresh.endswith(b"new")

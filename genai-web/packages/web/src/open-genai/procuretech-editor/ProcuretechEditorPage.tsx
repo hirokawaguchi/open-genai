@@ -34,6 +34,7 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
+import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
 import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
@@ -64,12 +65,15 @@ import type {
 import {
   fetchFileContent,
   fetchGeneration,
+  fetchGenerationWaitingBlob,
+  fetchProjectWaitingBlob,
   useEditorActions,
   useEditorComposition,
   useEditorConfig,
   useEditorProject,
   useEditorProjects,
 } from './useProcuretechEditor';
+import { WaitingPicturePanel } from './WaitingPicturePanel';
 import './procuretechEditor.css';
 
 type TreeNode = {
@@ -376,23 +380,43 @@ const FileManagerModal = ({
 // テーマ既定を初期表示し、プロジェクト単位で並べ替え・ON/OFF・出力追加を上書きできる。
 const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const { data, isLoading, mutate } = useEditorComposition(projectId);
+  const { mutate: mutateProject } = useEditorProject(projectId);
   const actions = useEditorActions();
+  const { downloadCarrier } = useDownloadArtifactCarrier();
   const [outputs, setOutputs] = useState<EditorCompositionOutput[]>([]);
   const [dirty, setDirty] = useState(false);
   const [newOutputName, setNewOutputName] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
+  const [carrierLoading, setCarrierLoading] = useState(false);
   const [compose, setCompose] = useState<
     | { phase: 'idle' }
     | { phase: 'running' }
     | {
         phase: 'done';
         url?: string;
+        objectKey?: string;
+        delivery?: 'open' | 'carrier';
         filename?: string;
         names?: string[];
         skipped?: { name: string; reason: string }[];
       }
     | { phase: 'error'; message: string }
   >({ phase: 'idle' });
+  const [composeWaitingSrc, setComposeWaitingSrc] = useState<string | null>(null);
+  const composeWaitingRef = useRef<string | null>(null);
+
+  const setComposeWaitingUrl = useCallback((url: string | null) => {
+    if (composeWaitingRef.current) URL.revokeObjectURL(composeWaitingRef.current);
+    composeWaitingRef.current = url;
+    setComposeWaitingSrc(url);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (composeWaitingRef.current) URL.revokeObjectURL(composeWaitingRef.current);
+    },
+    [],
+  );
 
   // サーバから取得した定義でローカル状態を初期化（プロジェクト/取得結果が変わったとき）。
   const loadedKey = data ? `${projectId}:${data.saved}:${data.composition.outputs.length}` : null;
@@ -588,6 +612,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
 
   const onCompose = useCallback(async () => {
     setCompose({ phase: 'running' });
+    setComposeWaitingUrl(null);
+    void fetchProjectWaitingBlob(projectId)
+      .then((blob) => {
+        setComposeWaitingUrl(URL.createObjectURL(blob));
+      })
+      .catch(() => undefined);
     let overrides: Record<string, string> = {};
     try {
       overrides = await materializeMermaid();
@@ -599,10 +629,12 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       await mutate(); // 追加した画像ファイルを一覧へ反映
     }
     const res = await actions.composeProject(projectId, currentComposition(), overrides);
-    if (res?.download_url) {
+    if (res?.download_url || res?.object_key) {
       setCompose({
         phase: 'done',
-        url: res.download_url,
+        url: res.download_url || undefined,
+        objectKey: res.object_key,
+        delivery: res.delivery,
         filename: res.download_filename,
         names: res.outputs,
         skipped: res.skipped,
@@ -614,7 +646,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     } else {
       setCompose({ phase: 'error', message: 'Word 合成に失敗しました。' });
     }
-  }, [actions, projectId, currentComposition, materializeMermaid, mutate]);
+  }, [actions, projectId, currentComposition, materializeMermaid, setComposeWaitingUrl]);
 
   if (isLoading && !data) {
     return (
@@ -869,17 +901,47 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
           {savedNotice && (
             <span className='text-dns-14N-130 text-blue-700'>定義を保存しました。</span>
           )}
-          {compose.phase === 'running' && (
-            <span className='text-dns-14N-130 text-solid-gray-600'>合成中…</span>
-          )}
           {compose.phase === 'error' && (
             <span className='text-dns-14N-130 text-error-1'>{compose.message}</span>
           )}
         </div>
+        {compose.phase === 'running' && (
+          <div className='mt-3'>
+            <WaitingPicturePanel src={composeWaitingSrc} label='合成中です。しばらくお待ちください…' />
+          </div>
+        )}
 
         {compose.phase === 'done' && (
           <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
             合成が完了しました{compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
+            {compose.delivery === 'carrier' && compose.objectKey && (
+              <div className='mt-3 space-y-3'>
+                <p className='text-dns-14N-130 leading-175 text-solid-gray-700'>
+                  LGWAN 端末からは成果物を直接ダウンロードできません。「リンクファイル」を保存し、
+                  データ持ち出し経路でインターネット接続端末へ移してから、ファイル内の URL
+                  で取得してください。URL の有効期限はリンクファイル内に記載しています。
+                </p>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={carrierLoading}
+                  onClick={async () => {
+                    setCarrierLoading(true);
+                    try {
+                      await downloadCarrier(compose.objectKey as string);
+                    } finally {
+                      setCarrierLoading(false);
+                    }
+                  }}
+                >
+                  <PiDownloadSimple className='size-4' />
+                  {carrierLoading
+                    ? '取得中…'
+                    : `${compose.filename ?? '成果物'} のリンクファイル`}
+                </Button>
+              </div>
+            )}
             {compose.url && (
               <Button
                 type='button'
@@ -981,10 +1043,25 @@ export const ProcuretechEditorPage = () => {
   const [inputFiles, setInputFiles] = useState<Record<string, File | null>>({});
   const [generation, setGeneration] = useState<
     | { phase: 'idle' }
-    | { phase: 'running'; requestId: string; progress?: number }
+    | { phase: 'running'; requestId: string; progress?: number; waitingReady?: boolean }
     | { phase: 'done'; files: string[] }
     | { phase: 'error'; message: string }
   >({ phase: 'idle' });
+  const [genWaitingSrc, setGenWaitingSrc] = useState<string | null>(null);
+  const genWaitingRef = useRef<string | null>(null);
+
+  const setGenWaitingUrl = useCallback((url: string | null) => {
+    if (genWaitingRef.current) URL.revokeObjectURL(genWaitingRef.current);
+    genWaitingRef.current = url;
+    setGenWaitingSrc(url);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (genWaitingRef.current) URL.revokeObjectURL(genWaitingRef.current);
+    },
+    [],
+  );
   const generateThemes = config?.generate_themes ?? [];
   const allInputsSelected = !!selectedTheme && selectedTheme.inputs.every((i) => inputFiles[i.key]);
 
@@ -1045,14 +1122,15 @@ export const ProcuretechEditorPage = () => {
   }, [viewMode, isMarkdown]);
 
   // 生成ステータスのポーリング（成功時に ExApp 側が結果 zip を取り込む）。
+  // generation 全体を依存にしない（進捗更新のたびに interval がリセットされると待ち画像取得が遅れる）。
+  const runningRequestId = generation.phase === 'running' ? generation.requestId : null;
   useEffect(() => {
-    if (generation.phase !== 'running' || !projectId) return;
-    const requestId = generation.requestId;
+    if (!runningRequestId || !projectId) return;
     let stop = false;
-    const timer = window.setInterval(async () => {
+    const poll = async () => {
       if (stop) return;
       try {
-        const res = await fetchGeneration(projectId, requestId);
+        const res = await fetchGeneration(projectId, runningRequestId);
         const status = String(res.status ?? '').toLowerCase();
         if (status === 'success') {
           setGeneration({ phase: 'done', files: res.files ?? [] });
@@ -1061,17 +1139,32 @@ export const ProcuretechEditorPage = () => {
         } else if (status === 'error') {
           setGeneration({ phase: 'error', message: res.error || '生成に失敗しました。' });
         } else {
-          setGeneration({ phase: 'running', requestId, progress: res.progress });
+          setGeneration({
+            phase: 'running',
+            requestId: runningRequestId,
+            progress: res.progress,
+            waitingReady: res.waiting_ready,
+          });
+          if (res.waiting_ready && !genWaitingRef.current) {
+            void fetchGenerationWaitingBlob(projectId, runningRequestId)
+              .then((blob) => {
+                setGenWaitingUrl(URL.createObjectURL(blob));
+                void mutateProject();
+              })
+              .catch(() => undefined);
+          }
         }
       } catch (_e) {
         setGeneration({ phase: 'error', message: '生成状況の取得に失敗しました。' });
       }
-    }, 2500);
+    };
+    void poll();
+    const timer = window.setInterval(poll, 2500);
     return () => {
       stop = true;
       window.clearInterval(timer);
     };
-  }, [generation, projectId, mutateProject, mutateProjects]);
+  }, [runningRequestId, projectId, mutateProject, mutateProjects, setGenWaitingUrl]);
 
   // プロジェクト選択タブへ戻った際は一覧を再検証する。
   // （ファイル追加/複製/削除は単一プロジェクトしか mutate しないため、
@@ -1232,6 +1325,7 @@ export const ProcuretechEditorPage = () => {
   // 生成モーダルを開く（テーマ選択ステップから）。
   const onOpenGenerate = () => {
     setGeneration({ phase: 'idle' });
+    setGenWaitingUrl(null);
     setSelectedTheme(null);
     setInputFiles({});
     setGenerateStep('theme');
@@ -1265,6 +1359,7 @@ export const ProcuretechEditorPage = () => {
       inputs[spec.key] = await fileToBase64(file);
     }
     setGeneration({ phase: 'idle' });
+    setGenWaitingUrl(null);
     const res = await actions.startGeneration(projectId, {
       theme: selectedTheme.id,
       inputs,
@@ -2388,10 +2483,11 @@ export const ProcuretechEditorPage = () => {
                     );
                   })}
                   {generation.phase === 'running' && (
-                    <p className='rounded-8 border border-blue-300 bg-blue-50 px-3 py-2 text-dns-14N-130 text-solid-gray-800'>
-                      生成中です。しばらくお待ちください…
-                      {typeof generation.progress === 'number' ? `（${generation.progress}%）` : ''}
-                    </p>
+                    <WaitingPicturePanel
+                      src={genWaitingSrc}
+                      label='生成中です。しばらくお待ちください…'
+                      progress={generation.progress}
+                    />
                   )}
                   {generation.phase === 'error' && (
                     <p className='rounded-8 border border-error-2 bg-error-3 px-3 py-2 text-dns-14N-130 text-error-1'>

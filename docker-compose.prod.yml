@@ -126,6 +126,8 @@ services:
       # 成果物の配信方式（LGWAN 等では carrier 推奨。open は署名付きURLを直接提示）
       - ARTIFACT_DELIVERY_MODE=${ARTIFACT_DELIVERY_MODE:-carrier}
       - ARTIFACT_CARRIER_FORMAT=${ARTIFACT_CARRIER_FORMAT:-txt}
+      # Markdown エディタ書き出し zip の接頭辞（carrier の所有者判定対象）
+      - EDITOR_S3_PREFIX=${EDITOR_S3_PREFIX:-procuretech-editor}
       - DIFY_APP_URL=${DIFY_APP_URL:-http://dify-app:8004/invoke}
       # 源内 Web「画像を生成」(/image/generate) 用 SD サーバ
       # SD_BACKEND: a1111（既定・GPU 自前運用）| fastsd（CPU-only, FastSD を外部起動）

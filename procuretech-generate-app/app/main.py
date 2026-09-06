@@ -9,7 +9,9 @@ Word(.docx) 合成まで一通り行える。テーマ固有の非公開サー�
 契約:
 - POST /generate            multipart: 任意キーの Excel / form: username, doc_type, options
                             -> {"request_id": "..."}
-- GET  /status/{id}         -> {"status": processing|success|error, "progress": int}
+- GET  /status/{id}         -> {"status": processing|success|error, "progress": int, "waiting_ready": bool}
+- GET  /waiting/{id}        -> image/png（ジョブの待ち画像）
+- POST /waiting-picture     -> image/png（書き出し待ち用。フォールバック落書き）
 - GET  /result/{id}         -> application/zip（section*.md, README.md, sections.json）
 - POST /compose             JSON {"outputs":[{"name","sections":[{"filename","content"}]}],
                                    "assets": {"images/x.png": "<base64>"}}
@@ -35,6 +37,8 @@ from typing import Any
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
+
+from app.waiting import make_fallback_waiting_png
 
 # API キー（旧名 GENERATE_SAMPLE_API_KEY も後方互換で参照）。
 API_KEY = os.environ.get("GENERATE_API_KEY") or os.environ.get("GENERATE_SAMPLE_API_KEY", "")
@@ -98,7 +102,13 @@ def _bullets_or_paragraph(value: str) -> str:
     return value or "（未記入）"
 
 
-def _build_zip(files: dict[str, bytes], doc_type: str) -> bytes:
+def _build_zip(
+    files: dict[str, bytes],
+    doc_type: str,
+    *,
+    waiting_png: bytes | None = None,
+    request_id: str = "",
+) -> bytes:
     """アップロードされたヒアリングシートから章別 Markdown zip を作る。"""
     pairs: dict[str, str] = {}
     for data in files.values():
@@ -139,6 +149,8 @@ def _build_zip(files: dict[str, bytes], doc_type: str) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, body in outputs.items():
             zf.writestr(name, body)
+        if waiting_png:
+            zf.writestr(f"images/{request_id or 'project'}_waiting.png", waiting_png)
     return buf.getvalue()
 
 
@@ -317,10 +329,13 @@ async def generate(
     if not files:
         return JSONResponse(status_code=400, content={"error": "入力ファイルがありません"})
     request_id = uuid.uuid4().hex
+    waiting_png = make_fallback_waiting_png()
     _JOBS[request_id] = {
         "created": time.time(),
-        "zip": _build_zip(files, doc_type),
+        "zip": _build_zip(files, doc_type, waiting_png=waiting_png, request_id=request_id),
         "doc_type": doc_type,
+        "waiting_png": waiting_png,
+        "waiting_ready": True,
     }
     return JSONResponse(status_code=202, content={"request_id": request_id})
 
@@ -334,10 +349,37 @@ def status(request_id: str, x_api_key: str | None = Header(default=None)) -> JSO
     if job is None:
         return JSONResponse(status_code=404, content={"error": "not found"})
     elapsed = time.time() - job["created"]
+    waiting_ready = bool(job.get("waiting_ready") or job.get("waiting_png"))
     if elapsed < PROCESS_SECONDS:
         pct = int(min(90, (elapsed / max(PROCESS_SECONDS, 0.001)) * 90))
-        return JSONResponse(content={"status": "processing", "progress": pct})
-    return JSONResponse(content={"status": "success", "progress": 100})
+        return JSONResponse(
+            content={"status": "processing", "progress": pct, "waiting_ready": waiting_ready}
+        )
+    return JSONResponse(
+        content={"status": "success", "progress": 100, "waiting_ready": waiting_ready}
+    )
+
+
+@app.get("/waiting/{request_id}")
+def waiting_image(request_id: str, x_api_key: str | None = Header(default=None)) -> Response:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    job = _JOBS.get(request_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    png = job.get("waiting_png") or make_fallback_waiting_png()
+    return Response(content=png, media_type="image/png")
+
+
+@app.post("/waiting-picture")
+async def waiting_picture(
+    request: Request, x_api_key: str | None = Header(default=None)
+) -> Response:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    return Response(content=make_fallback_waiting_png(), media_type="image/png")
 
 
 @app.get("/result/{request_id}")
