@@ -156,6 +156,7 @@ services:
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
+      - OPERATOR_SAML_SOURCE_IPS=${OPERATOR_SAML_SOURCE_IPS:-}
       - OPERATOR_USERS=${OPERATOR_USERS:-}
     volumes:
       - backend_data:/data

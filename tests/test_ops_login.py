@@ -9,16 +9,32 @@ from conftest import load_service_module
 
 
 def _mod(**env: str):
-    for key in ("OPERATOR_LOGIN_HOSTS", "OPERATOR_USERS", "APP_TITLE"):
+    for key in (
+        "OPERATOR_LOGIN_HOSTS",
+        "OPERATOR_USERS",
+        "OPERATOR_SAML_SOURCE_IPS",
+        "APP_TITLE",
+        "FRONTEND_URL",
+        "PUBLIC_URL",
+    ):
         os.environ.pop(key, None)
     os.environ.update(env)
     return load_service_module("backend/app/ops_login.py")
 
 
-def _req(host: str, *, xf_host: str | None = None, proto: str = "https", redirect: str | None = None):
+def _req(
+    host: str,
+    *,
+    xf_host: str | None = None,
+    proto: str = "https",
+    redirect: str | None = None,
+    real_ip: str | None = None,
+):
     headers = {"host": host, "x-forwarded-proto": proto}
     if xf_host:
         headers["x-forwarded-host"] = xf_host
+    if real_ip:
+        headers["x-real-ip"] = real_ip
     params = {"redirect": redirect} if redirect else {}
     return SimpleNamespace(
         headers=headers,
@@ -41,6 +57,24 @@ def test_enabled_only_on_operator_host() -> None:
     assert mod.enabled(_req("paris.procuretech.jp")) is True
     assert mod.enabled(_req("paris.procuretech.bhc.asp.lgwan.jp")) is False
     assert mod.find_user("ops@example.jp")["email"] == "ops@example.jp"
+
+
+def test_saml_source_ip_skips_operator_form() -> None:
+    hashed = bcrypt.hashpw(b"secret", bcrypt.gensalt()).decode()
+    users = json.dumps(
+        [{"email": "ops@example.jp", "name": "運用", "password_hash": hashed, "groups": ["SystemAdminGroup"]}]
+    )
+    mod = _mod(
+        OPERATOR_LOGIN_HOSTS="ops.example.lg.jp",
+        OPERATOR_USERS=users,
+        OPERATOR_SAML_SOURCE_IPS="203.0.113.10",
+        FRONTEND_URL="https://front.example.lg.jp",
+    )
+    front = _req("ops.example.lg.jp", real_ip="203.0.113.10")
+    assert mod.enabled(front) is False
+    assert mod.request_origin(front) == "https://front.example.lg.jp"
+    assert mod.public_host() == "front.example.lg.jp"
+    assert mod.enabled(_req("ops.example.lg.jp", real_ip="198.51.100.20")) is True
 
 
 def test_safe_redirect_rejects_foreign_host() -> None:
