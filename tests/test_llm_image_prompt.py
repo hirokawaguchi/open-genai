@@ -47,3 +47,10 @@ def test_chat_payload_merges_image_extra_after_provider() -> None:
     )
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert payload["response_format"]["type"] == "json_schema"
+
+
+def test_assistant_visible_text_skips_reasoning() -> None:
+    llm = load_service_module("backend/app/llm.py")
+    assert llm._assistant_visible_text({"content": "こんにちは", "reasoning": "think"}) == "こんにちは"
+    assert llm._assistant_visible_text({"content": None, "reasoning_content": "think"}) == ""
+    assert llm._assistant_visible_text({"content": "", "reasoning": "think"}) == ""
