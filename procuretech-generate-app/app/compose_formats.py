@@ -461,29 +461,36 @@ def markdown_to_pptx(
 
     slide = None
     body_lines: list[tuple[str, bool]] = []
+    text_flushed = False
     in_code = False
     code_lang = ""
 
     def flush_text(*, narrow: bool = False) -> None:
-        nonlocal body_lines
+        nonlocal body_lines, text_flushed
         if slide is None or not body_lines:
             body_lines = []
             return
+        # 同じ座標に重ねない（本文のあと画像、そのあとまた本文、で文字が重なっていた）。
+        top = Inches(4.55) if text_flushed else Inches(1.4)
+        height = Inches(2.15) if text_flushed else Inches(5.3)
         width = Inches(6.6) if narrow else Inches(11.9)
-        box = slide.shapes.add_textbox(Inches(0.7), Inches(1.4), width, Inches(5.3))
+        box = slide.shapes.add_textbox(Inches(0.7), top, width, height)
         tf = box.text_frame
         tf.word_wrap = True
         for i, (line, is_bullet) in enumerate(body_lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             text = f"•   {line}" if is_bullet else line
-            _style_paragraph(p, text, size=Pt(18), color=_PPTX_BODY, space_after=Pt(12), space_before=Pt(2))
+            _style_paragraph(p, text, size=Pt(16), color=_PPTX_BODY, space_after=Pt(8), space_before=Pt(0))
+            p.line_spacing = 1.35
         body_lines = []
+        text_flushed = True
 
     def new_slide(title: str) -> None:
-        nonlocal slide
+        nonlocal slide, text_flushed
         flush_text()
         slide = prs.slides.add_slide(blank)
         _add_content_chrome(slide, prs, title)
+        text_flushed = False
 
     def add_image(rel: str) -> None:
         data = assets.get(rel)

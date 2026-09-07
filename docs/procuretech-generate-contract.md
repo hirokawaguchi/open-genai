@@ -102,6 +102,10 @@
   - **docx**: テーマ固有サービス（例: spec-app / pandoc）またはリファレンス実装（python-docx）。
   - **html / pptx / txt / md**: 公開リファレンス実装 `procuretech-generate-app` が担う。
     エディタは docx をテーマの `/compose` へ、それ以外を `EDITOR_COMPOSE_URL` へ振り分ける。
+    pptx は既定で LLM（`OPENAI_BASE_URL`、空なら Ollama）が章・節から layout を選び、
+    決定論レンダラ（デジタル庁デザインシステム）で描く。簡潔化したスライドの根拠原文は
+    スピーカーノートに残す。`GENERATE_PPTX_LLM=0` または LLM 失敗時は見出し分割の
+    決定論変換へ落とす。
 - `reference` は任意（Word のスタイル参照ドキュメントの種別など）。docx 以外では無視してよい。
 - `assets` は任意。本文が参照する**画像を `{相対パス: base64}`** で渡す。視覚形式（docx / html / pptx）では
   画像を埋め込む。html は data URI で単一ファイルにする。md / txt は画像を埋め込まない。
