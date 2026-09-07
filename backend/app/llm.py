@@ -191,6 +191,16 @@ def _content_text(content: Any) -> str:
     return str(content or "")
 
 
+def _assistant_visible_text(part: dict[str, Any]) -> str:
+    """ユーザ向け本文。reasoning / reasoning_content は出さない。"""
+    content = part.get("content")
+    if isinstance(content, str) and content:
+        return content
+    if content is not None and not isinstance(content, str):
+        return _content_text(content)
+    return ""
+
+
 def _is_image_prompt_task(
     messages: list[dict[str, Any]], request_id: str | None = None
 ) -> bool:
@@ -282,12 +292,7 @@ async def _complete(
         data = res.json()
     choices = data.get("choices") or [{}]
     message = choices[0].get("message") or {}
-    return (
-        message.get("content")
-        or message.get("reasoning_content")
-        or message.get("reasoning")
-        or ""
-    )
+    return _assistant_visible_text(message)
 
 
 def _extract_doc_texts_full(message: dict[str, Any]) -> list[tuple[str, str]]:
@@ -390,12 +395,7 @@ async def chat_once(
         data = res.json()
     choices = data.get("choices") or [{}]
     message = choices[0].get("message") or {}
-    answer = (
-        message.get("content")
-        or message.get("reasoning_content")
-        or message.get("reasoning")
-        or ""
-    )
+    answer = _assistant_visible_text(message)
     return _notes_prefix(notes) + answer
 
 
@@ -487,13 +487,7 @@ async def chat_stream(
                         continue
                     choice = (chunk.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
-                    # vLLM reasoning は content が null で reasoning / reasoning_content に載る
-                    text = (
-                        delta.get("content")
-                        or delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or ""
-                    )
+                    text = _assistant_visible_text(delta)
                     if text:
                         yield json.dumps({"text": text}, ensure_ascii=False) + "\n"
                     if choice.get("finish_reason"):
