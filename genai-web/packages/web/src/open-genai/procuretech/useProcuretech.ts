@@ -11,6 +11,8 @@ import type {
   ProcuretechTurnResult,
 } from './types';
 
+const BASE = 'procuretech-navigator';
+
 const errorMessage = (e: unknown, fallback: string): string => {
   if (e instanceof ApiError) {
     const data = e.data as { error?: string } | undefined;
@@ -23,10 +25,10 @@ const errorMessage = (e: unknown, fallback: string): string => {
 
 export const useProcuretechConfig = () => {
   const { data, isLoading } = useSWR<ProcuretechConfig>(
-    'procuretech/config',
+    `${BASE}/config`,
     async () => {
       try {
-        return await teamApiFetcher<ProcuretechConfig>('procuretech/config');
+        return await teamApiFetcher<ProcuretechConfig>(`${BASE}/config`);
       } catch (e) {
         if (e instanceof ApiError && (e.status === 503 || e.status === 502)) {
           const d = e.data as ProcuretechConfig | undefined;
@@ -51,7 +53,7 @@ export const useProcuretechConfig = () => {
 export const useProcuretechSessions = () => {
   const { data, error, isLoading, mutate } = useSWR<{
     sessions: ProcuretechSessionSummary[];
-  }>('procuretech/sessions', teamApiFetcher, {
+  }>(`${BASE}/sessions`, teamApiFetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -64,7 +66,7 @@ export const useProcuretechSessions = () => {
 };
 
 export const useProcuretechSession = (sessionId: string | null) => {
-  const key = sessionId ? `procuretech/sessions/${encodeURIComponent(sessionId)}` : null;
+  const key = sessionId ? `${BASE}/sessions/${encodeURIComponent(sessionId)}` : null;
   const { data, error, isLoading, mutate } = useSWR<ProcuretechSessionDetail>(key, teamApiFetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
@@ -86,7 +88,7 @@ export const useProcuretechActions = () => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<ProcuretechSessionDetail>('procuretech/sessions', {
+        const res = await teamApi.post<ProcuretechSessionDetail>(`${BASE}/sessions`, {
           filename,
           content,
         });
@@ -105,7 +107,7 @@ export const useProcuretechActions = () => {
     setSubmitting(true);
     setError(null);
     try {
-      await teamApi.delete(`procuretech/sessions/${encodeURIComponent(sessionId)}`);
+      await teamApi.delete(`${BASE}/sessions/${encodeURIComponent(sessionId)}`);
       return true;
     } catch (e) {
       setError(errorMessage(e, 'セッションの削除に失敗しました。'));
@@ -125,7 +127,7 @@ export const useProcuretechActions = () => {
       setError(null);
       try {
         const res = await teamApi.post<ProcuretechTurnResult>(
-          `procuretech/sessions/${encodeURIComponent(sessionId)}/chat`,
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
           { section, message },
         );
         return res.data ?? null;
@@ -145,7 +147,7 @@ export const useProcuretechActions = () => {
       setError(null);
       try {
         const res = await teamApi.post<ProcuretechTurnResult>(
-          `procuretech/sessions/${encodeURIComponent(sessionId)}/finalize`,
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/finalize`,
           { section },
         );
         return res.data ?? null;
@@ -165,7 +167,7 @@ export const useProcuretechActions = () => {
       setError(null);
       try {
         const res = await teamApi.post<ProcuretechSessionDetail>(
-          `procuretech/sessions/${encodeURIComponent(sessionId)}/sections/${encodeURIComponent(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/sections/${encodeURIComponent(
             section,
           )}/clear`,
           {},
@@ -221,7 +223,7 @@ export const streamProcuretechChat = async (
 ): Promise<ProcuretechTurnResult | null> => {
   const token = await getIdToken();
   const res = await fetch(
-    buildTeamUrl(`procuretech/sessions/${encodeURIComponent(sessionId)}/chat`),
+    buildTeamUrl(`${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`),
     {
       method: 'POST',
       headers: {
@@ -288,7 +290,7 @@ export const streamProcuretechChat = async (
 export const downloadProcuretechWorkbook = async (sessionId: string): Promise<void> => {
   const token = await getIdToken();
   const res = await fetch(
-    buildTeamUrl(`procuretech/sessions/${encodeURIComponent(sessionId)}/download`),
+    buildTeamUrl(`${BASE}/sessions/${encodeURIComponent(sessionId)}/download`),
     { headers: token ? { Authorization: `Bearer ${token}` } : {} },
   );
   if (!res.ok) {

@@ -51,10 +51,13 @@ export const DOCMAKER_PATH = '/docmaker';
 export const DOCMAKER_EXAPP_ID = 'docmaker';
 
 /** 情報化企画書ナビは汎用 exApp フォームではなく専用ページで提供する */
-export const PROCURETECH_PATH = '/procuretech';
+export const PROCURETECH_PATH = '/procuretech-navigator';
 
 /** 情報化企画書ナビ exApp の識別子（専用ページへ振り替える対象） */
-export const PROCURETECH_EXAPP_ID = 'procuretech';
+export const PROCURETECH_EXAPP_ID = 'procuretech-navigator';
+
+/** リネーム前の exApp ID（ピン留め・旧ブックマーク互換） */
+export const PROCURETECH_LEGACY_EXAPP_ID = 'procuretech';
 
 /** 情報化企画書エディタは汎用 exApp フォームではなく専用ページで提供する */
 export const PROCURETECH_EDITOR_PATH = '/procuretech-editor';
@@ -267,8 +270,8 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   if (item.app.value === DOCMAKER_EXAPP_ID) {
     return DOCMAKER_PATH;
   }
-  // 情報化企画書ナビは専用ページへ振り替える
-  if (item.app.value === PROCURETECH_EXAPP_ID) {
+  // 情報化企画書ナビは専用ページへ振り替える（旧 ID も同じページへ）
+  if (item.app.value === PROCURETECH_EXAPP_ID || item.app.value === PROCURETECH_LEGACY_EXAPP_ID) {
     return PROCURETECH_PATH;
   }
   // 情報化企画書エディタは専用ページへ振り替える

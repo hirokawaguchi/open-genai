@@ -4,7 +4,7 @@
 書き戻しボタンで対応セルへ書き戻して更新版をダウンロードする。
 
 - 庁内: backend が JWT 検証後、HMAC 署名付きで /sessions 等へプロキシする。
-- Compose では profiles: ["procuretech"] でオプション起動する。
+- Compose では profiles: ["procuretech-navigator"] でオプション起動する。
 """
 
 from __future__ import annotations

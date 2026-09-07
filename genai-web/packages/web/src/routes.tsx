@@ -102,9 +102,14 @@ export const createRoutes = (): RouteObject[] => {
     // マイ手続き（docmaker）は独立アプリの専用ページへ（patchform-app を共有）。
     { path: 'docmaker', element: <DocmakerPage /> },
     { path: 'apps/:teamId/docmaker', element: <Navigate to='/docmaker' replace /> },
-    // 情報化企画書ナビは専用ページへ（Compose profiles: ["procuretech"]）。
-    { path: 'procuretech', element: <ProcuretechPage /> },
-    { path: 'apps/:teamId/procuretech', element: <Navigate to='/procuretech' replace /> },
+    // 情報化企画書ナビは専用ページへ（Compose profiles: ["procuretech-navigator"]）。
+    { path: 'procuretech-navigator', element: <ProcuretechPage /> },
+    { path: 'procuretech', element: <Navigate to='/procuretech-navigator' replace /> },
+    {
+      path: 'apps/:teamId/procuretech-navigator',
+      element: <Navigate to='/procuretech-navigator' replace />,
+    },
+    { path: 'apps/:teamId/procuretech', element: <Navigate to='/procuretech-navigator' replace /> },
     // 情報化企画書エディタ（Compose profiles: ["procuretech-editor"]）。
     { path: 'procuretech-editor', element: <ProcuretechEditorPage /> },
     {
