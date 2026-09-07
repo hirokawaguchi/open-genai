@@ -1,10 +1,11 @@
 """文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
 
 Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合成 API の
-「そのまま動く」実装。LLM/Dify には依存せず、同梱の簡単なヒアリングシート
-（`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown を生成し、
-Word(.docx) 合成まで一通り行える。テーマ固有の非公開サービス（例: 調達仕様書=spec-app）を
-差し替える際の雛形であり、テーマ無しの「素の文書」の Word 化の既定バックエンドでもある。
+「そのまま動く」実装。`/generate` は LLM/Dify に依存せず、同梱の簡単なヒアリングシート
+（`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown を生成する。
+`/compose` の pptx は任意で OpenAI 互換 LLM がレイアウトを選び、失敗時は決定論変換へ落とす。
+テーマ固有の非公開サービス（例: 調達仕様書=spec-app）を差し替える際の雛形であり、
+テーマ無しの「素の文書」の合成の既定バックエンドでもある。
 
 契約:
 - POST /generate            multipart: 任意キーの Excel / form: username, doc_type, options
@@ -48,6 +49,8 @@ from app.compose_formats import (
     normalize_format,
 )
 from app.dads import BODY, FONT_MONO, MUTED, apply_docx_theme, shade_paragraph, style_run
+from app.pptx_layouts import render_deck
+from app.pptx_plan import plan_deck
 from app.waiting import make_fallback_waiting_png
 
 # API キー（旧名 GENERATE_SAMPLE_API_KEY も後方互換で参照）。
@@ -423,6 +426,11 @@ def _render_output(
     if fmt == "html":
         return markdown_to_html(name, sections, assets)
     if fmt == "pptx":
+        deck = plan_deck(name, sections, assets)
+        if deck:
+            print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
+            return render_deck(deck, assets)
+        print("[generate] pptx: fallback to heading split")
         return markdown_to_pptx(name, sections, assets)
     if fmt == "txt":
         return markdown_to_txt(sections)
