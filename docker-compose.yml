@@ -126,6 +126,7 @@ services:
       - SAML_SP_SLS_URL=${PUBLIC_URL:-http://localhost}/api/auth/saml/sls
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
+      - OPERATOR_SAML_SOURCE_IPS=${OPERATOR_SAML_SOURCE_IPS:-}
       - OPERATOR_USERS=${OPERATOR_USERS:-}
       # backend(コンテナ内)から IdP メタデータを取得する URL（Keycloak relative /kc）
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}

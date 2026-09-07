@@ -22,7 +22,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -1236,10 +1236,18 @@ async def _prepare_saml_request(request: Request) -> dict[str, Any]:
         form = {k: v for k, v in raw.items()}
     # リバースプロキシ配下では request.url.scheme が http のままになるため、
     # X-Forwarded-* を優先して Recipient 検証用の公開 URL を組み立てる。
+    # 前面プロキシがオリジンへ運用者 Host で来る場合は、PUBLIC_URL のホストで検証する。
     forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host") or request.headers.get(
         "host", "localhost:8000"
     )
+    if ops_login.from_saml_source(request):
+        public = ops_login.public_frontend()
+        parsed = urlparse(public) if public else None
+        if parsed and parsed.hostname:
+            host = parsed.hostname
+            if parsed.scheme in ("http", "https"):
+                forwarded_proto = parsed.scheme
     forwarded_port = request.headers.get("x-forwarded-port")
     if forwarded_port:
         server_port = forwarded_port
@@ -1409,7 +1417,7 @@ async def auth_logout(
 
 @app.post("/auth/ops")
 async def auth_ops(request: Request) -> Response:
-    """運用者ホスト専用の ID/PW ログイン。それ以外の Host では 404。"""
+    """運用者ホスト専用の ID/PW ログイン。Host 不一致または SAML 出口 IP からは 404。"""
     if not ops_login.enabled(request):
         return JSONResponse(status_code=404, content={"error": "not found"})
     error, location, _user = await ops_login.handle_post(
