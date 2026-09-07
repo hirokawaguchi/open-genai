@@ -1,6 +1,7 @@
 """運用者ホスト専用の ID/PW ログイン（Keycloak とは別経路）。
 
 OPERATOR_LOGIN_HOSTS に含まれる Host かつ OPERATOR_USERS が空でないときだけ有効。
+OPERATOR_SAML_SOURCE_IPS（前面プロキシ出口など）からのアクセスは Host が一致しても無効。
 それ以外は呼び出し側が従来の SAML へ進む。
 """
 
@@ -31,6 +32,34 @@ def request_host(request: Any) -> str:
 def operator_hosts() -> set[str]:
     raw = os.environ.get("OPERATOR_LOGIN_HOSTS") or ""
     return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def saml_source_ips() -> set[str]:
+    raw = os.environ.get("OPERATOR_SAML_SOURCE_IPS") or ""
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def request_peer_ip(request: Any) -> str:
+    """nginx の X-Real-IP（$remote_addr）。X-Forwarded-For は使わない。"""
+    real = (request.headers.get("x-real-ip") or "").split(",")[0].strip()
+    if real:
+        return real
+    client = getattr(request, "client", None)
+    return (getattr(client, "host", None) or "").strip()
+
+
+def from_saml_source(request: Any) -> bool:
+    ip = request_peer_ip(request)
+    return bool(ip) and ip in saml_source_ips()
+
+
+def public_frontend() -> str:
+    return (os.environ.get("FRONTEND_URL") or os.environ.get("PUBLIC_URL") or "").rstrip("/")
+
+
+def public_host() -> str:
+    host = (urlparse(public_frontend()).hostname or "").strip().lower()
+    return host
 
 
 def load_users() -> list[dict[str, Any]]:
@@ -71,6 +100,8 @@ def load_users() -> list[dict[str, Any]]:
 
 
 def enabled(request: Any) -> bool:
+    if from_saml_source(request):
+        return False
     hosts = operator_hosts()
     if not hosts or not load_users():
         return False
@@ -78,6 +109,10 @@ def enabled(request: Any) -> bool:
 
 
 def request_origin(request: Any) -> str:
+    if from_saml_source(request):
+        public = public_frontend()
+        if public:
+            return public
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
     if proto not in ("http", "https"):
         proto = "https"
