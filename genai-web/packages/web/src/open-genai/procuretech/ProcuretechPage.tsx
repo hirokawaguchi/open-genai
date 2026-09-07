@@ -46,10 +46,10 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
       情報化企画書ナビは現在有効化されていません
     </p>
     <p className='mt-2 text-solid-gray-700'>
-      {message || 'コンテナを profiles: ["procuretech"] で起動してください。'}
+      {message || 'コンテナを profiles: ["procuretech-navigator"] で起動してください。'}
     </p>
     <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-      docker compose --profile procuretech up -d{'\n'}# または .env に COMPOSE_PROFILES=procuretech
+      docker compose --profile procuretech-navigator up -d{'\n'}# または .env に COMPOSE_PROFILES=procuretech-navigator
     </pre>
   </div>
 );

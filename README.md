@@ -86,7 +86,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `doccheck-app/` | 書類領域分割チェック（オプション・`profiles: ["doccheck"]`。詳細は [`docs/doccheck.md`](docs/doccheck.md)） |
 | `patchform-app/` | フォーム（オプション・`profiles: ["patchform"]`。詳細は [`docs/patchform.md`](docs/patchform.md)） |
 | `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |
-| `procuretech-navigator-app/` | 情報化企画書ナビ（オプション・`profiles: ["procuretech"]`。詳細は [`docs/procuretech.md`](docs/procuretech.md)） |
+| `procuretech-navigator-app/` | 情報化企画書ナビ（オプション・`profiles: ["procuretech-navigator"]`。詳細は [`docs/procuretech.md`](docs/procuretech.md)） |
 | `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（オプション・`profiles: ["procuretech-editor"]`。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
 | `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（`procuretech-editor` プロファイルで同時起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
 | `procuretech-spec-app/` | 調達仕様書の生成/合成（オプション・`profiles: ["procuretech-spec"]`） |

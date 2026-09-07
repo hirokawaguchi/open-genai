@@ -117,7 +117,7 @@ DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rs
 # フォーム（Compose profiles: ["patchform"]）。実 API は /patchform/* プロキシ。
 PATCHFORM_APP_URL = os.environ.get("PATCHFORM_APP_URL", "http://patchform-app:8012/invoke")
 PATCHFORM_PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
-# procureTech Navigator（Compose profiles: ["procuretech"]）。実 API は /procuretech/* プロキシ。
+# procureTech Navigator（Compose profiles: ["procuretech-navigator"]）。実 API は /procuretech-navigator/* プロキシ。
 PROCURETECH_APP_URL = os.environ.get(
     "PROCURETECH_APP_URL", "http://procuretech-navigator-app:8014/invoke"
 )
@@ -492,10 +492,10 @@ DOCMAKER_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-# procureTech Navigator（共通アプリ）。UI は専用ページ /procuretech。
-# Compose profile `procuretech` 未起動時は /health 失敗で一覧非表示。
+# procureTech Navigator（共通アプリ）。UI は専用ページ /procuretech-navigator。
+# Compose profile `procuretech-navigator` 未起動時は /health 失敗で一覧非表示。
 PROCURETECH_SEED: dict[str, Any] = {
-    "exAppId": "procuretech",
+    "exAppId": "procuretech-navigator",
     "teamId": COMMON_TEAM_ID,
     "exAppName": "情報化企画書ナビ",
     "endpoint": (
@@ -512,7 +512,7 @@ PROCURETECH_SEED: dict[str, Any] = {
         "- 専用ページ「情報化企画書ナビ」から情報化企画書（.xlsx）を読み込みます。\n"
         "- 事業の背景・業務の状況・現行システム・目標の4分野をタブで切り替えて対話します。\n"
         "- 各分野で「まとめて」または書き出しボタンを押すと該当欄へ反映し、更新版を取得できます。\n"
-        "- 有効化: `docker compose --profile procuretech up -d` または `COMPOSE_PROFILES=procuretech`。\n"
+        "- 有効化: `docker compose --profile procuretech-navigator up -d` または `COMPOSE_PROFILES=procuretech-navigator`。\n"
     ),
     "copyable": False,
     "status": "published",
@@ -641,6 +641,7 @@ RETIRED_SEED_EXAPP_IDS = [
     "rag-tags",
     "rag-register",
     "rag-maintain",
+    "procuretech",
 ]
 
 
@@ -683,6 +684,27 @@ def _reconcile_stale_seed_labels() -> None:
             updates["howToUse"] = seed.get("howToUse")
         if updates:
             teams_store.update_exapp(team_id, seed["exAppId"], updates)
+
+
+def _migrate_procuretech_exapp_id() -> None:
+    """情報化企画書ナビの exAppId を procuretech → procuretech-navigator へ付け替える。"""
+    old_id = "procuretech"
+    new_id = PROCURETECH_SEED["exAppId"]
+    old = teams_store.get_exapp(COMMON_TEAM_ID, old_id)
+    if not old:
+        return
+    new = teams_store.get_exapp(COMMON_TEAM_ID, new_id)
+    if new:
+        teams_store.update_exapp(
+            COMMON_TEAM_ID,
+            new_id,
+            {
+                "exAppName": old.get("exAppName"),
+                "description": old.get("description"),
+                "howToUse": old.get("howToUse"),
+            },
+        )
+    teams_store.reassign_exapp_refs(COMMON_TEAM_ID, old_id, new_id)
 
 
 def _now_iso() -> str:
@@ -1166,6 +1188,10 @@ def _startup() -> None:
         _reconcile_stale_seed_labels()
     except Exception as e:  # noqa: BLE001
         print(f"[startup] 旧シード文言の整理に失敗: {e}")
+    try:
+        _migrate_procuretech_exapp_id()
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] 情報化企画書ナビ ID の移行に失敗: {e}")
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
         teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
     # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。
@@ -3443,9 +3469,9 @@ async def chosei_event_carrier(
 
 
 # ---------------------------------------------------------------------------
-# 情報化企画書ナビ専用ページ(/procuretech) 用プロキシ
+# 情報化企画書ナビ専用ページ(/procuretech-navigator) 用プロキシ
 #
-# Compose profiles: ["procuretech"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# Compose profiles: ["procuretech-navigator"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
 # スコープは共通チーム(COMMON_TEAM_ID)固定。
 # ---------------------------------------------------------------------------
 def _procuretech_app_url(path: str) -> str:
@@ -3494,8 +3520,8 @@ async def _proxy_procuretech(
             content={
                 "error": (
                     "情報化企画書ナビに接続できませんでした。"
-                    "有効化するには `docker compose --profile procuretech up -d` "
-                    "または `COMPOSE_PROFILES=procuretech` を設定してください。"
+                    "有効化するには `docker compose --profile procuretech-navigator up -d` "
+                    "または `COMPOSE_PROFILES=procuretech-navigator` を設定してください。"
                     f"（詳細: {e}）"
                 ),
                 "enabled": False,
@@ -3551,8 +3577,8 @@ def _procuretech_stream(
                     "event": "error",
                     "error": (
                         "情報化企画書ナビに接続できませんでした。"
-                        "有効化するには `docker compose --profile procuretech up -d` "
-                        "または `COMPOSE_PROFILES=procuretech` を設定してください。"
+                        "有効化するには `docker compose --profile procuretech-navigator up -d` "
+                        "または `COMPOSE_PROFILES=procuretech-navigator` を設定してください。"
                         f"（詳細: {e}）"
                     ),
                 }
@@ -3561,6 +3587,7 @@ def _procuretech_stream(
     return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
 
+@app.get("/procuretech-navigator/config")
 @app.get("/procuretech/config")
 async def procuretech_config(request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3569,6 +3596,7 @@ async def procuretech_config(request: Request) -> JSONResponse:
     return await _proxy_procuretech("GET", _procuretech_app_url("/config"), headers)
 
 
+@app.get("/procuretech-navigator/sessions")
 @app.get("/procuretech/sessions")
 async def procuretech_list_sessions(request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3577,6 +3605,7 @@ async def procuretech_list_sessions(request: Request) -> JSONResponse:
     return await _proxy_procuretech("GET", _procuretech_app_url("/sessions"), headers)
 
 
+@app.post("/procuretech-navigator/sessions")
 @app.post("/procuretech/sessions")
 async def procuretech_create_session(request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3588,6 +3617,7 @@ async def procuretech_create_session(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/procuretech-navigator/sessions/{session_id}")
 @app.get("/procuretech/sessions/{session_id}")
 async def procuretech_get_session(session_id: str, request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3598,6 +3628,7 @@ async def procuretech_get_session(session_id: str, request: Request) -> JSONResp
     )
 
 
+@app.delete("/procuretech-navigator/sessions/{session_id}")
 @app.delete("/procuretech/sessions/{session_id}")
 async def procuretech_delete_session(session_id: str, request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3608,6 +3639,7 @@ async def procuretech_delete_session(session_id: str, request: Request) -> JSONR
     )
 
 
+@app.post("/procuretech-navigator/sessions/{session_id}/chat")
 @app.post("/procuretech/sessions/{session_id}/chat")
 async def procuretech_chat(session_id: str, request: Request) -> Response:
     err, headers = _procuretech_headers(request)
@@ -3619,6 +3651,7 @@ async def procuretech_chat(session_id: str, request: Request) -> Response:
     )
 
 
+@app.post("/procuretech-navigator/sessions/{session_id}/finalize")
 @app.post("/procuretech/sessions/{session_id}/finalize")
 async def procuretech_finalize(session_id: str, request: Request) -> JSONResponse:
     err, headers = _procuretech_headers(request)
@@ -3630,6 +3663,7 @@ async def procuretech_finalize(session_id: str, request: Request) -> JSONRespons
     )
 
 
+@app.post("/procuretech-navigator/sessions/{session_id}/sections/{section_key}/clear")
 @app.post("/procuretech/sessions/{session_id}/sections/{section_key}/clear")
 async def procuretech_clear_section(
     session_id: str, section_key: str, request: Request
@@ -3644,6 +3678,7 @@ async def procuretech_clear_section(
     )
 
 
+@app.get("/procuretech-navigator/sessions/{session_id}/download")
 @app.get("/procuretech/sessions/{session_id}/download")
 async def procuretech_download(session_id: str, request: Request) -> Response:
     """更新済み xlsx を base64 応答から復号し、添付ファイルとして返す。"""

@@ -33,6 +33,8 @@
 
 ## [Unreleased]
 
+- 情報化企画書ナビの専用ページ／API／Compose profile／exAppId を `procuretech-navigator` に揃える。旧 URL `/procuretech` はリダイレクト／エイリアス。既存のピン留めは起動時に付け替える
+
 ## [0.9.0] - 2026-09-04
 
 このリリースのテーマは前回・前々回に続く **「提案実装」**（第3弾）。今回の主役は、

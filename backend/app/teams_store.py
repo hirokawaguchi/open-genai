@@ -866,6 +866,33 @@ def delete_exapp(team_id: str, ex_app_id: str) -> None:
         )
 
 
+def reassign_exapp_refs(team_id: str, old_id: str, new_id: str) -> None:
+    """旧 exAppId のピン・履歴を新 ID へ付け替える。
+
+    新 ID 側に既にあるピンは旧側を捨てる（PK 衝突回避）。履歴は両方残してよいので
+    旧 ID のままにする（監査の識別子を書き換えない）。
+    """
+    with _lock, _connect() as conn:
+        conflict_users = [
+            r["userId"]
+            for r in conn.execute(
+                "SELECT userId FROM user_app_pins WHERE teamId = ? AND itemId = ?",
+                (team_id, new_id),
+            ).fetchall()
+        ]
+        if conflict_users:
+            placeholders = ",".join("?" for _ in conflict_users)
+            conn.execute(
+                f"DELETE FROM user_app_pins WHERE teamId = ? AND itemId = ?"
+                f" AND userId IN ({placeholders})",
+                (team_id, old_id, *conflict_users),
+            )
+        conn.execute(
+            "UPDATE user_app_pins SET itemId = ? WHERE teamId = ? AND itemId = ?",
+            (new_id, team_id, old_id),
+        )
+
+
 def copy_exapp(team_id: str, ex_app_id: str, overrides: dict[str, Any]) -> dict[str, Any] | None:
     src = get_exapp(team_id, ex_app_id)
     if not src:
