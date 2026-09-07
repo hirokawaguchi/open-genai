@@ -76,6 +76,19 @@ def test_markdown_to_pptx_if_available():
     assert data[:2] == b"PK"
 
 
+def test_compose_pptx_without_llm_uses_deterministic_path():
+    pytest.importorskip("pptx")
+    client = TestClient(app)
+    res = client.post(
+        "/compose",
+        json={"outputs": [{"name": "文書", "format": "pptx", "sections": SECTIONS}]},
+    )
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert "文書.pptx" in zf.namelist()
+        assert zf.read("文書.pptx")[:2] == b"PK"
+
+
 def test_markdown_to_docx_uses_dads():
     pytest.importorskip("docx")
     from app.dads import FONT, hex_of, ACCENT
