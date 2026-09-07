@@ -438,7 +438,6 @@ const composeUiFromResult = (
 // テーマ既定を初期表示し、プロジェクト単位で並べ替え・ON/OFF・出力追加を上書きできる。
 const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const { data, isLoading, mutate } = useEditorComposition(projectId);
-  const { mutate: mutateProject } = useEditorProject(projectId);
   const actions = useEditorActions();
   const { downloadCarrier } = useDownloadArtifactCarrier();
   const [outputs, setOutputs] = useState<EditorCompositionOutput[]>([]);
