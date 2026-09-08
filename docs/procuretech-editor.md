@@ -237,10 +237,10 @@ section key／file_id を解決して本文を順に集約し、形式に応じ�
 （`EDITOR_COMPOSE_URL=http://procuretech-generate-app:8016`）。
 入力シートは `procuretech-hearing-app`（`/hearing-sheet`）で作れます。
 視覚形式（docx / html / pptx）の見た目はデジタル庁デザインシステム（DADS）に揃える
-（Blue 900・Solid Gray・Noto Sans JP）。pptx は `OPENAI_BASE_URL` があるとき、章・節から
-多様な layout を選び、簡潔化した根拠原文をスピーカーノートに残す。未設定・失敗時は見出し分割の
-決定論変換。調達仕様書テーマの docx は従来どおり spec-app / pandoc
-（`custom-reference.docx`）側のスタイル。
+（Blue 900・Solid Gray・Noto Sans JP）。html / pptx は同じデッキ計画（主張タイトル → layout →
+伏せたレビュー）で 16:9 スライドにする。根拠原文は pptx のスピーカーノートに残す。
+`GENERATE_PPTX_LLM=0` または計画失敗時は html を長文、pptx を見出し分割へ落とす。
+調達仕様書テーマの docx は従来どおり spec-app / pandoc（`custom-reference.docx`）側のスタイル。
 
 ```bash
 docker compose up -d

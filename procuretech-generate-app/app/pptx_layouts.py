@@ -247,8 +247,26 @@ def _add_content_chrome(slide: Any, prs: Any, title: str) -> None:
 
     _fill_slide(slide)
     _rect(slide, Inches(0), Inches(0), prs.slide_width, Inches(0.08), ACCENT)
-    _textbox(slide, Inches(0.7), Inches(0.28), Inches(12.0), Inches(0.75), title, size=Pt(22), color=INK, bold=True)
-    _rect(slide, Inches(0.7), Inches(1.08), Inches(11.9), Inches(0.012), RULE)
+    _textbox(slide, Inches(0.7), Inches(0.22), Inches(12.0), Inches(0.88), title, size=Pt(20), color=INK, bold=True)
+    _rect(slide, Inches(0.7), Inches(1.12), Inches(11.9), Inches(0.012), RULE)
+
+
+def _add_source(slide: Any, prs: Any, source: str) -> None:
+    from pptx.util import Emu, Inches, Pt
+
+    text = (source or "").strip()
+    if not text:
+        return
+    _textbox(
+        slide,
+        Inches(0.7),
+        Emu(prs.slide_height - Inches(0.38)),
+        Inches(9.5),
+        Inches(0.28),
+        text,
+        size=Pt(10),
+        color=MUTED,
+    )
 
 
 def _add_footers(prs: Any) -> None:
@@ -295,22 +313,57 @@ def _placeholder(slide: Any, left: Any, top: Any, width: Any, height: Any, label
     _textbox(slide, left, top + height / 3, width, height / 3, label or "画像", size=Pt(12), color=MUTED)
 
 
+def _set_cell_border(cell: Any, *, bottom: tuple[int, int, int] | None, width_pt: float) -> None:
+    from lxml import etree
+    from pptx.oxml.ns import qn
+
+    tc = cell._tc
+    tc_pr = tc.get_or_add_tcPr()
+    for child in list(tc_pr):
+        if child.tag == qn("a:lnB"):
+            tc_pr.remove(child)
+    if bottom is None or width_pt <= 0:
+        return
+    ln = etree.SubElement(tc_pr, qn("a:lnB"))
+    ln.set("w", str(int(width_pt * 12700)))
+    sf = etree.SubElement(ln, qn("a:solidFill"))
+    srgb = etree.SubElement(sf, qn("a:srgbClr"))
+    srgb.set("val", f"{bottom[0]:02X}{bottom[1]:02X}{bottom[2]:02X}")
+
+
 def _add_table(slide: Any, left: Any, top: Any, width: Any, height: Any, rows: list[list[str]]) -> None:
+    from pptx.util import Pt
+
     if not rows:
         return
     cols = max(len(r) for r in rows)
     table_shape = slide.shapes.add_table(len(rows), cols, left, top, width, height)
     table = table_shape.table
+    last = len(rows) - 1
     for r_i, row in enumerate(rows):
         for c_i in range(cols):
             cell = table.cell(r_i, c_i)
             cell.text = row[c_i] if c_i < len(row) else ""
+            header = r_i == 0
+            axis = c_i == 0
+            size = Pt(13) if header else (Pt(15) if axis else Pt(12))
             for p in cell.text_frame.paragraphs:
                 for run in p.runs:
-                    _set_run_font(run, size=None, color=INK if r_i == 0 else BODY, bold=r_i == 0)
+                    _set_run_font(
+                        run,
+                        size=size,
+                        color=ACCENT if header else INK,
+                        bold=header or axis,
+                    )
             fill = cell.fill
             fill.solid()
-            fill.fore_color.rgb = _rgb(SURFACE if r_i == 0 else PAPER)
+            fill.fore_color.rgb = _rgb(PAPER)
+            if header:
+                _set_cell_border(cell, bottom=ACCENT, width_pt=1.8)
+            elif r_i < last:
+                _set_cell_border(cell, bottom=RULE, width_pt=0.75)
+            else:
+                _set_cell_border(cell, bottom=None, width_pt=0)
 
 
 def _chart(
@@ -340,7 +393,17 @@ def _chart(
         "pie": XL_CHART_TYPE.PIE,
         "doughnut": XL_CHART_TYPE.DOUGHNUT,
     }.get(kind, XL_CHART_TYPE.BAR_CLUSTERED)
-    slide.shapes.add_chart(chart_type, left, top, width, height, data)
+    frame = slide.shapes.add_chart(chart_type, left, top, width, height, data)
+    palette = (ACCENT, MUTED, BODY, RULE)
+    try:
+        chart = frame.chart
+        for i, ser in enumerate(chart.series):
+            fill = ser.format.fill
+            fill.solid()
+            fill.fore_color.rgb = _rgb(palette[i % len(palette)])
+    except Exception:  # noqa: BLE001
+        pass
+    return frame
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -777,6 +840,113 @@ def _render_case(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str
     _lines(slide, Inches(6.8), Inches(2.0), Inches(5.8), Inches(4.4), metrics, size=Pt(14), bullet=True)
 
 
+@register("axis-table")
+def _render_axis_table(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    from pptx.util import Inches
+
+    headers = [str(h) for h in _as_list(content.get("headers") or ["項目", "内容"])]
+    rows: list[list[str]] = [headers]
+    for row in _as_list(content.get("rows")):
+        if isinstance(row, dict):
+            vals = [str(v) for v in row.values()]
+            rows.append((vals + [""] * len(headers))[: len(headers)])
+        elif isinstance(row, list):
+            rows.append([str(c) for c in row])
+        else:
+            rows.append([str(row)])
+    _add_table(slide, Inches(0.7), Inches(1.4), Inches(11.9), Inches(4.9), rows)
+
+
+@register("premise-conclusion")
+def _render_premise(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches, Pt
+
+    left = content.get("left") if isinstance(content.get("left"), dict) else {}
+    right = content.get("right") if isinstance(content.get("right"), dict) else {}
+    _textbox(slide, Inches(0.7), Inches(1.3), Inches(5.4), Inches(0.4), str(left.get("header") or "前提"), size=Pt(14), color=INK, bold=True)
+    _rect(slide, Inches(0.7), Inches(1.72), Inches(5.4), Inches(0.02), ACCENT)
+    left_rows = _as_list(left.get("rows"))
+    table_rows: list[list[str]] = []
+    for row in left_rows:
+        if isinstance(row, list):
+            table_rows.append([str(c) for c in row[:2]])
+        elif isinstance(row, dict):
+            table_rows.append([str(row.get("axis") or row.get("label") or ""), str(row.get("text") or row.get("body") or "")])
+        else:
+            table_rows.append([str(row), ""])
+    if table_rows:
+        _add_table(slide, Inches(0.7), Inches(1.9), Inches(5.4), Inches(4.4), table_rows)
+    arrow = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, Inches(6.25), Inches(3.7), Inches(0.7), Inches(0.35))
+    _solid(arrow, ACCENT)
+    _textbox(slide, Inches(7.15), Inches(1.3), Inches(5.4), Inches(0.4), str(right.get("header") or "意味合い"), size=Pt(14), color=INK, bold=True)
+    _rect(slide, Inches(7.15), Inches(1.72), Inches(5.4), Inches(0.02), ACCENT)
+    bullets = [str(b) for b in _as_list(right.get("bullets") or right.get("points"))]
+    _lines(slide, Inches(7.15), Inches(1.95), Inches(5.4), Inches(4.3), bullets, size=Pt(14), bullet=True)
+
+
+@register("chevron-steps")
+def _render_chevron(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    steps = _as_list(content.get("steps") or content.get("items"))[:6]
+    if not steps:
+        return
+    n = len(steps)
+    gap = Inches(0.12)
+    total = Inches(11.9)
+    w = (total - gap * (n - 1)) / n
+    top = Inches(2.2)
+    h = Inches(1.6)
+    for i, step in enumerate(steps):
+        left = Inches(0.7) + (w + gap) * i
+        shape = slide.shapes.add_shape(MSO_SHAPE.CHEVRON, left, top, w, h)
+        _solid(shape, ACCENT if i == 0 else SURFACE)
+        if isinstance(step, dict):
+            n_lab = str(step.get("n") or i + 1)
+            title = str(step.get("title") or step.get("heading") or step.get("label") or "")
+            text = str(step.get("text") or step.get("description") or step.get("body") or "")
+        else:
+            n_lab, title, text = str(i + 1), str(step), ""
+        ink = ON_ACCENT if i == 0 else INK
+        _textbox(slide, left + Inches(0.15), top + Inches(0.12), w - Inches(0.4), Inches(0.35), n_lab, size=Pt(11), color=ink, bold=True, align=PP_ALIGN.LEFT)
+        _textbox(slide, left + Inches(0.15), top + Inches(0.45), w - Inches(0.4), Inches(0.45), title, size=Pt(13), color=ink, bold=True)
+        _textbox(slide, left + Inches(0.15), top + Inches(0.95), w - Inches(0.4), Inches(0.5), text, size=Pt(11), color=ink)
+
+
+@register("chart-insight")
+def _render_chart_insight(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    from pptx.util import Inches, Pt
+
+    labels = [str(x) for x in _as_list(content.get("labels"))]
+    values: list[float] = []
+    for v in _as_list(content.get("values")):
+        try:
+            values.append(float(v))
+        except (TypeError, ValueError):
+            values.append(0)
+    if content.get("data") and isinstance(content["data"], dict):
+        labels = labels or [str(x) for x in _as_list(content["data"].get("labels"))]
+        if not values:
+            for v in _as_list(content["data"].get("values")):
+                try:
+                    values.append(float(v))
+                except (TypeError, ValueError):
+                    values.append(0)
+    unit = str(content.get("unit") or "")
+    if unit:
+        _textbox(slide, Inches(0.7), Inches(1.25), Inches(6.3), Inches(0.3), unit, size=Pt(11), color=MUTED)
+    _chart(slide, Inches(0.7), Inches(1.55), Inches(6.4), Inches(4.9), labels, [("値", values)], str(content.get("kind") or "bar"))
+    insight = content.get("insight") if isinstance(content.get("insight"), dict) else {}
+    header = str(insight.get("header") or content.get("insightHeader") or "意味合い")
+    bullets = [str(b) for b in _as_list(insight.get("bullets") or content.get("bullets"))]
+    _textbox(slide, Inches(7.35), Inches(1.3), Inches(5.25), Inches(0.4), header, size=Pt(14), color=INK, bold=True)
+    _rect(slide, Inches(7.35), Inches(1.72), Inches(5.25), Inches(0.02), ACCENT)
+    _lines(slide, Inches(7.35), Inches(1.95), Inches(5.25), Inches(4.4), bullets, size=Pt(14), bullet=True)
+
+
 def validate_deck(deck: Any) -> dict[str, Any] | None:
     if not isinstance(deck, dict):
         return None
@@ -838,6 +1008,7 @@ def render_deck(deck: dict[str, Any], assets: dict[str, bytes] | None = None) ->
         content = slide_def.get("content") if isinstance(slide_def.get("content"), dict) else {}
         renderer = _REGISTRY.get(layout) or _REGISTRY[DEFAULT_LAYOUT]
         renderer(slide, prs, content, assets)
+        _add_source(slide, prs, str(slide_def.get("source") or content.get("source") or ""))
         _add_notes(slide, notes)
     _add_footers(prs)
     out = io.BytesIO()

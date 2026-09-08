@@ -7,8 +7,9 @@ import zipfile
 import pytest
 
 from app.pptx_catalog import LAYOUT_IDS, DEFAULT_LAYOUT, minimal_fixture
+from app.pptx_html import render_deck_html
 from app.pptx_layouts import registered_layouts, render_deck, validate_deck
-from app.pptx_plan import plan_deck
+from app.pptx_plan import _apply_review, _fill_content, parse_source_blocks, plan_deck
 
 
 def test_all_catalog_layouts_are_registered():
@@ -281,3 +282,193 @@ def test_plan_ignores_llm_body_and_covers_all_headings(monkeypatch):
     assert long_a[:20] in (contents[0].get("notes") or "")
     layouts = [s["layout"] for s in contents]
     assert len(set(layouts)) >= 2
+
+
+def test_new_primary_layouts_render_pptx_and_html():
+    for layout in ("axis-table", "premise-conclusion", "chart-insight", "chevron-steps"):
+        deck = {
+            "slides": [
+                {"type": "cover", "title": "検索遅延を索引で解消する"},
+                {
+                    "type": "content",
+                    "title": "待ち時間は索引で下がる",
+                    "layout": layout,
+                    "content": minimal_fixture(layout),
+                },
+            ]
+        }
+        valid = validate_deck(deck) or deck
+        pptx = render_deck(valid, {})
+        html = render_deck_html(valid, {}).decode("utf-8")
+        assert pptx[:2] == b"PK"
+        assert html.count('class="slide"') == 2
+        assert "待ち時間は索引で下がる" in html
+        assert "検索遅延を索引で解消する" in html
+
+
+def test_same_deck_titles_match_in_pptx_notes_and_html():
+    deck = {
+        "slides": [
+            {"type": "cover", "title": "検索遅延を索引で解消する"},
+            {
+                "type": "content",
+                "title": "重複登録は一意制約で止める",
+                "layout": "axis-table",
+                "content": minimal_fixture("axis-table"),
+            },
+        ]
+    }
+    html = render_deck_html(deck, {}).decode("utf-8")
+    assert "重複登録は一意制約で止める" in html
+    assert "検索遅延を索引で解消する" in html
+    data = render_deck(deck, {})
+    assert data[:2] == b"PK"
+
+
+def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "1")
+    calls: list[str] = []
+
+    def fake_complete(messages, **kwargs):
+        blob = messages[-1]["content"]
+        calls.append(blob[:40])
+        if "layout だけ" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "slides": [
+                        {
+                            "type": "content",
+                            "title": "検索が遅く重複がある",
+                            "layout": "axis-table",
+                            "source": {"filename": "a.md", "heading": "背景"},
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        if "作り方は知らない" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "changes": [
+                        {"index": 1, "adopt": True, "title": "検索遅延と重複登録が業務を止めている"},
+                        {"index": 1, "adopt": True, "title": "AcmeCloudが独占する"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "slides": [
+                    {"type": "cover", "title": "更改の論点"},
+                    {
+                        "type": "content",
+                        "title": "検索が遅く重複がある",
+                        "source": {"filename": "a.md", "heading": "背景"},
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck(
+        "文書",
+        [{"filename": "a.md", "content": "# 背景\n検索が遅く、同一案件が重複登録される。\n- 検索が遅い\n- 重複登録\n"}],
+        complete=fake_complete,
+    )
+    assert deck is not None
+    assert len(calls) == 3
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["title"] == "検索遅延と重複登録が業務を止めている"
+    assert "AcmeCloud" not in json.dumps(deck, ensure_ascii=False)
+
+
+def test_parse_and_fill_markdown_table():
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 著者のスタンス概要\n\n"
+                "| 記事 | 主張 | 重要ポイント |\n"
+                "|------|------|-------------|\n"
+                "| 20260904 | **離職＝卒業** | 訓練機会 |\n"
+            ),
+        }
+    ]
+    blocks = parse_source_blocks("文書", sections)
+    assert blocks[0].tables
+    assert blocks[0].tables[0]["headers"] == ["記事", "主張", "重要ポイント"]
+    assert "|" not in (blocks[0].text or "")
+    table = _fill_content("axis-table", blocks[0])
+    assert table["headers"] == ["記事", "主張", "重要ポイント"]
+    assert table["rows"][0][0] == "20260904"
+    assert "離職＝卒業" in table["rows"][0][1]
+    assert "**" not in table["rows"][0][1]
+
+
+def test_plan_deck_forces_axis_table_for_gfm(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# スタンス\n\n"
+                "| 記事 | 主張 |\n"
+                "|------|------|\n"
+                "| 20260904 | 離職＝卒業 |\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {"type": "cover", "title": "文書"},
+                    {
+                        "type": "content",
+                        "title": "スタンス",
+                        "layout": "parallel-items",
+                        "source": {"filename": "a.md", "heading": "スタンス"},
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "axis-table"
+    assert content["content"]["headers"] == ["記事", "主張"]
+    shown = json.dumps(content["content"], ensure_ascii=False)
+    assert "|" not in shown
+    assert "20260904" in shown
+    data = render_deck(deck, {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = "\n".join(
+            zf.read(name).decode("utf-8", errors="replace")
+            for name in zf.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert "<a:tbl>" in xml or "<a:tbl " in xml
+
+
+def test_apply_review_drops_novel_katakana():
+    deck = {
+        "slides": [
+            {"type": "cover", "title": "表紙"},
+            {
+                "type": "content",
+                "title": "検索が遅い",
+                "layout": "axis-table",
+                "content": {"rows": [["検索", "遅い"]]},
+                "notes": "元の本文（背景）\n検索が遅い",
+            },
+        ]
+    }
+    out = _apply_review(
+        deck,
+        {"changes": [{"index": 1, "adopt": True, "title": "ネオシステムが遅い"}]},
+    )
+    assert out["slides"][1]["title"] == "検索が遅い"

@@ -30,13 +30,18 @@ def _flag_on(name: str, default: str = "1") -> bool:
 
 
 def llm_enabled() -> bool:
-    """PPTX プランナ用。未指定時は ON。テストとオフラインは GENERATE_PPTX_LLM=0。
+    """デッキ計画（html / pptx）用。未指定時は ON。テストとオフラインは GENERATE_PPTX_LLM=0。
 
     editor と同様、OPENAI_BASE_URL が空なら OLLAMA_BASE_URL /v1 を使う。
     以前は OPENAI_BASE_URL 必須にしていたため、Ollama だけの環境では
     決定論変換に落ちて見た目が変わらなかった。
     """
     return _flag_on("GENERATE_PPTX_LLM")
+
+
+def review_enabled() -> bool:
+    """伏せた内容レビュー（3 パス目）。未指定時は ON。GENERATE_PPTX_REVIEW=0 で省略。"""
+    return _flag_on("GENERATE_PPTX_REVIEW")
 
 
 def instruction_llm_enabled() -> bool:

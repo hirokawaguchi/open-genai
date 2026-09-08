@@ -91,12 +91,56 @@ def test_compose_unknown_format_is_422():
     assert res.status_code == 422
 
 
+def test_markdown_to_pptx_renders_gfm_table_as_native_table():
+    pytest.importorskip("pptx")
+    from app.compose_formats import markdown_to_pptx
+
+    sections = [
+        {
+            "filename": "t.md",
+            "content": (
+                "# 著者のスタンス概要\n\n"
+                "| 記事 | 主張 |\n"
+                "|------|------|\n"
+                "| 20260904 | 離職＝卒業 |\n"
+                "| 20260701 | データ主権 |\n"
+            ),
+        }
+    ]
+    data = markdown_to_pptx("文書", sections, {})
+    assert data[:2] == b"PK"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = "\n".join(
+            zf.read(name).decode("utf-8", errors="replace")
+            for name in zf.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert "<a:tbl>" in xml or "<a:tbl " in xml
+    assert "20260904" in xml
+    assert "データ主権" in xml
+    assert "|------|" not in xml
+
+
 def test_markdown_to_pptx_if_available():
     pytest.importorskip("pptx")
     from app.compose_formats import markdown_to_pptx
 
     data = markdown_to_pptx("文書", SECTIONS, {})
     assert data[:2] == b"PK"
+
+
+def test_compose_html_without_llm_uses_article_path():
+    client = TestClient(app)
+    res = client.post(
+        "/compose",
+        json={"outputs": [{"name": "文書", "format": "html", "sections": SECTIONS}]},
+    )
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        body = zf.read("文書.html").decode("utf-8")
+    assert "class=\"slide\"" not in body
+    assert "本文です。" in body
+    assert "#0017C1" in body
 
 
 def test_compose_pptx_without_llm_uses_deterministic_path():

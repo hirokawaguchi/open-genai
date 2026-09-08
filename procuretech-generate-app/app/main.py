@@ -4,7 +4,8 @@ Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合�
 「そのまま動く」実装。`/generate` はナビゲーションシート（Markdown 表＋生成指示）
 を読み、設問ごとの材料ファイルと、生成指示に基づく成果物 Markdown を作る。
 成果物は LLM（未設定・失敗時はスキップして README に注記）で書く。
-`/compose` の pptx は任意で OpenAI 互換 LLM がレイアウトを選び、失敗時は決定論変換へ落とす。
+`/compose` の html / pptx は任意で OpenAI 互換 LLM がタイトル列と layout を決め、
+失敗時は決定論変換へ落とす。
 テーマ固有の非公開サービス（例: 調達仕様書=spec-app）を差し替える際の雛形であり、
 テーマ無しの「素の文書」の合成の既定バックエンドでもある。
 
@@ -65,6 +66,8 @@ from app.compose_formats import (
     normalize_format,
 )
 from app.dads import BODY, FONT_MONO, MUTED, apply_docx_theme, shade_paragraph, style_run
+from app.pptx_check import check_deck, check_html_bytes, check_pptx_bytes, format_issues
+from app.pptx_html import render_deck_html
 from app.pptx_layouts import render_deck
 from app.pptx_plan import plan_deck
 from app.waiting import make_fallback_waiting_png
@@ -563,18 +566,27 @@ def result(request_id: str, x_api_key: str | None = Header(default=None)) -> Res
     )
 
 
+def _log_deck_check(fmt: str, deck: dict[str, Any], data: bytes) -> None:
+    issues = check_deck(deck)
+    if fmt == "pptx":
+        issues.extend(check_pptx_bytes(data))
+    elif fmt == "html":
+        issues.extend(check_html_bytes(data))
+    print(f"[generate] {fmt}: {format_issues(issues)}")
+
+
 def _render_output(
     fmt: str, name: str, sections: list[dict[str, Any]], assets: dict[str, bytes]
 ) -> bytes:
-    if fmt == "html":
-        return markdown_to_html(name, sections, assets)
-    if fmt == "pptx":
+    if fmt in {"html", "pptx"}:
         deck = plan_deck(name, sections, assets)
         if deck:
-            print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
-            return render_deck(deck, assets)
-        print("[generate] pptx: fallback to heading split")
-        return markdown_to_pptx(name, sections, assets)
+            print(f"[generate] {fmt}: LLM deck ({len(deck.get('slides') or [])} slides)")
+            data = render_deck_html(deck, assets) if fmt == "html" else render_deck(deck, assets)
+            _log_deck_check(fmt, deck, data)
+            return data
+        print(f"[generate] {fmt}: fallback ({'article html' if fmt == 'html' else 'heading split'})")
+        return markdown_to_html(name, sections, assets) if fmt == "html" else markdown_to_pptx(name, sections, assets)
     if fmt == "txt":
         return markdown_to_txt(sections)
     if fmt == "md":

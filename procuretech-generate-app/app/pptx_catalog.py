@@ -7,7 +7,19 @@ from typing import Any
 SLIDE_TYPES = frozenset({"cover", "section", "content", "case-study", "ending"})
 DEFAULT_LAYOUT = "parallel-items"
 
+PRIMARY_LAYOUTS: tuple[str, ...] = (
+    "axis-table",
+    "premise-conclusion",
+    "before-after-split",
+    "chart-insight",
+    "chevron-steps",
+)
+
 LAYOUT_IDS: tuple[str, ...] = (
+    "axis-table",
+    "premise-conclusion",
+    "chart-insight",
+    "chevron-steps",
     "kpi-three-col",
     "kpi-formula",
     "kpi-logic-tree",
@@ -80,6 +92,7 @@ DIAGRAM_LAYOUTS = frozenset(
 
 NUMERIC_LAYOUTS = frozenset(
     {
+        "chart-insight",
         "kpi-three-col",
         "kpi-formula",
         "text-data-emphasis",
@@ -92,20 +105,19 @@ NUMERIC_LAYOUTS = frozenset(
 )
 
 SELECTION_GUIDE = """\
-内容のタイプ → 推奨 layout（避けるべきもの）
-- 数値KPI: kpi-three-col / text-data-emphasis（本文に数値があるときだけ）
-- 機能・要点 3-4個: parallel-items / numbered-feature-cards（kpi-three-col は使わない）
-- 要件・チェック: checklist-table / numbered-feature-cards
-- Before/After 比較: comparison-table / before-after-split
-- 時系列・沿革: timeline / vertical-timeline / year-list
-- 手順・プロセス（画像なし）: step-flow / three-step-column
-- 人物紹介: ceo-message / member-grid / member-three-col
-- Q&A: qa-grid
-- 引用: quote
-- 表・料金・日程: pricing-table / schedule-list
-- 節に画像または Mermaid PNG がある図的内容: fullscreen-photo または two-col-text-chart ではなく
-  画像を主にした layout（fullscreen-photo）。venn-diagram / cycle / radial-spread 等は画像が無いときだけ。
-- 数値が本文に無いときは KPI・チャート系を選ばない。
+先に基本形を当てる（合わなければ他）
+- 行＝項目・列＝観点の整理: axis-table
+- 左に前提・事実、右に意味合い: premise-conclusion
+- 左右対比: before-after-split
+- 数値の図＋意味合い: chart-insight（本文に数値があるときだけ）
+- 手順・プロセス: chevron-steps
+その他
+- 数値KPIカード: kpi-three-col / text-data-emphasis
+- 要件・チェック: checklist-table
+- 時系列: timeline / schedule-list
+- 画像または Mermaid PNG: fullscreen-photo
+- venn-diagram / funnel 等の関係図名は画像が無いときカードになるので選ばない
+- 数値が本文に無いときはチャート系を選ばない
 """
 
 
@@ -131,6 +143,29 @@ def normalize_layout(raw: Any) -> str:
 def minimal_fixture(layout: str) -> dict[str, Any]:
     """テスト・未知 content の最低限サンプル。"""
     fixtures: dict[str, dict[str, Any]] = {
+        "axis-table": {
+            "headers": ["項目", "現状", "更改後"],
+            "rows": [["検索", "遅い", "索引化"], ["登録", "重複", "一意制約"]],
+            "source": "出典：庁内ヒアリング",
+        },
+        "premise-conclusion": {
+            "left": {"header": "前提", "rows": [["検索", "応答が遅い"], ["登録", "重複がある"]]},
+            "right": {"header": "意味合い", "bullets": ["索引と一意制約を先に入れる"]},
+        },
+        "chart-insight": {
+            "labels": ["現行", "更改後"],
+            "values": [12, 3],
+            "unit": "秒",
+            "insight": {"header": "意味合い", "bullets": ["待ち時間を4分の1にする"]},
+            "source": "出典：計測ログ",
+        },
+        "chevron-steps": {
+            "steps": [
+                {"n": "1", "title": "受付", "text": "申込みを受ける"},
+                {"n": "2", "title": "確認", "text": "職員が点検する"},
+                {"n": "3", "title": "公開", "text": "結果を出す"},
+            ]
+        },
         "kpi-three-col": {
             "items": [
                 {"value": "120%", "label": "成長率"},
