@@ -87,8 +87,9 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `patchform-app/` | フォーム（オプション・`profiles: ["patchform"]`。詳細は [`docs/patchform.md`](docs/patchform.md)） |
 | `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |
 | `procuretech-navigator-app/` | 情報化企画書ナビ（オプション・`profiles: ["procuretech-navigator"]`。詳細は [`docs/procuretech.md`](docs/procuretech.md)） |
-| `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（オプション・`profiles: ["procuretech-editor"]`。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
-| `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（`procuretech-editor` プロファイルで同時起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
+| `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（標準起動。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
+| `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（標準起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
+| `procuretech-hearing-app/` | ヒアリングシート（標準起動。複数資料から generate-app 入力用 Excel を作る。詳細は [`docs/procuretech-hearing.md`](docs/procuretech-hearing.md)） |
 | `procuretech-spec-app/` | 調達仕様書の生成/合成（オプション・`profiles: ["procuretech-spec"]`） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |

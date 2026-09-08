@@ -6,11 +6,15 @@
 別サービスに閉じ込め、Open GENAI 本体はこの契約に沿って HTTP で呼び出すだけです。
 
 公開リポジトリには、この契約を満たす**公開の汎用リファレンス実装** `procuretech-generate-app/`
-を同梱しています。LLM/Dify には依存せず、同梱の簡単なヒアリングシート
-（`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown の生成・Word(.docx) 合成・
-様式ダウンロードまで一通り動作します。テーマ無しの「素の文書」の Word 化の既定バックエンドでもあり
-（`EDITOR_COMPOSE_URL`）、`procuretech-editor` プロファイルで同時起動します。本番のテーマ固有
-生成サービス（例: 調達仕様書）は非公開のため本リポジトリには含めません。
+を同梱しています。ナビゲーションシート
+（`B1=hearing-sheet`、`ナビゲーション`＝Markdown 表、`生成指示`）を読み取り、
+設問ごとの材料ファイルと生成指示に基づく成果物 Markdown の生成・Word(.docx) 合成・
+様式ダウンロードまで一通り動作します。成果物の本文は LLM で書きます
+（未設定・失敗時は成果物を作らず README に注記します）。
+テーマ無しの「素の文書」の Word 化の既定バックエンドでもあり
+（`EDITOR_COMPOSE_URL`）、`docker compose up` で標準起動します。
+入力シートは `procuretech-hearing-app`（専用ページ `/hearing-sheet`）で作れます。
+本番のテーマ固有生成サービス（例: 調達仕様書）は非公開のため本リポジトリには含めません。
 
 - 呼び出し元クライアント: `procuretech-editor-app/app/generate.py`
 - 汎用リファレンス実装（生成側）: `procuretech-generate-app/app/main.py`
@@ -35,10 +39,19 @@
 ### POST /generate
 
 - `multipart/form-data`
-  - ファイル: テーマ定義の各入力 `key`（例: `systemplan`, `global`）＝アップロード Excel。
+  - ファイル: テーマ定義の各入力 `key`（例: `systemplan`, `global`, `hearing`）＝アップロード Excel。
   - フォーム: `username`（利用者識別）, `doc_type`（テーマの文書種別。例 `specification`）,
     `options`（任意の JSON 文字列）。
 - 応答: `{"request_id": "<id>"}`（`200` または `202`）。
+- 汎用リファレンス実装は先頭シートの種別マーカーと 2 セルを読む。
+  - `B1`: 種別マーカー `hearing-sheet`（旧 `navigation-sheet` も可）
+  - A 列 `ナビゲーション` の B セル: Markdown 表 `| 項目 | 値 |`（各行が 1 つの材料ファイル）
+  - A 列 `生成指示` の B セル: 成果物 Markdown を書くための処理指示（LLM）
+  項目の追加・改名・削除は自由。空雛形は `GET /template/hearing`（`navigation` も可）。
+  画面からの作成は [`docs/procuretech-hearing.md`](procuretech-hearing.md)。
+  結果 zip は `README.md`（概要と同梱一覧）、`01_設問名.md`（回答の転記）、
+  指示があるときは `生成文書.md`（`section_key=generated`）を含む。
+  LLM 未設定・失敗・指示空のときは `生成文書.md` を作らず、README の「注記」に理由を書く。
 
 ### GET /status/{request_id}
 
@@ -150,8 +163,9 @@ Excel 出力（見積費用総括表・プロポーザル一次審査表など�
 
 ### GET /template/{input_key}
 
-- テーマ定義の入力 `key`（例: `systemplan`, `global`, `hearing`）に対応する**ヒアリングシート様式**
+- テーマ定義の入力 `key`（例: `systemplan`, `global`, `hearing`, `navigation`）に対応する**様式**
   （空フォームの Excel）を配信する。実装は任意（未対応なら `404`）。
+  汎用リファレンス実装は `hearing` / `navigation` で空のヒアリングシート（`hearing-sheet.xlsx`）を返す。
 - 応答: `200` で `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`、
   `Content-Disposition: attachment; filename="..."`。見つからなければ `404`。
 - テーマ定義の入力に `"template": true` を付けると、エディタの生成ダイアログに
@@ -227,17 +241,17 @@ Excel 出力（見積費用総括表・プロポーザル一次審査表など�
 
 ## ローカル検証（汎用リファレンス実装）
 
-契約を満たす**公開の汎用リファレンス実装** `procuretech-generate-app` は `procuretech-editor`
-プロファイルで同時起動します。`/generate`・`/status`・`/result`・`/compose`・`/excel`・`/template`
-を実装し、同梱の簡単なヒアリングシートで生成〜Word 合成〜様式ダウンロードまで一通り確認できます
+契約を満たす**公開の汎用リファレンス実装** `procuretech-generate-app` は標準起動します。
+`/generate`・`/status`・`/result`・`/compose`・`/excel`・`/template`
+を実装し、ナビゲーションシートで生成〜Word 合成〜様式ダウンロードまで一通り確認できます
 （LLM/Dify 不要）。テーマ無しの素の文書の Word 化は既定でこのサービスが担います。
 
 ```bash
-docker compose --profile procuretech-editor up -d
+docker compose up -d
 # これ単体を生成 API にも使う場合は EDITOR_GENERATE_URL=http://procuretech-generate-app:8016 を設定
 ```
 
-単一入力のサンプルテーマ（ヒアリングシート 1 枚）を試すには、`EDITOR_GENERATE_THEMES` に次を設定します。
+単一入力のサンプルテーマ（ナビゲーションシート 1 枚）を試すには、`EDITOR_GENERATE_THEMES` に次を設定します。
 
 ```json
 [
@@ -247,21 +261,13 @@ docker compose --profile procuretech-editor up -d
     "doc_type": "sample",
     "api_url": "http://procuretech-generate-app:8016",
     "inputs": [
-      { "key": "hearing", "label": "ヒアリングシート（hearing-sample.xlsx）", "marker": "hearing-sample", "accept": ".xlsx", "template": true }
-    ],
-    "sections": [
-      { "key": "background", "label": "背景" },
-      { "key": "purpose", "label": "目的" },
-      { "key": "target", "label": "対象業務" },
-      { "key": "requirements", "label": "主要要件" },
-      { "key": "schedule", "label": "想定スケジュール" }
-    ],
-    "outputs": [
-      { "id": "doc", "name": "サンプル文書", "kind": "markdown", "sections": ["background", "purpose", "target", "requirements", "schedule"] }
+      { "key": "hearing", "label": "ヒアリングシート", "marker": "hearing-sheet", "accept": ".xlsx", "template": true }
     ]
   }
 ]
 ```
+
+入力シートの作り方は [`docs/procuretech-hearing.md`](procuretech-hearing.md) を参照してください。
 
 本番の非公開生成サービスを使う場合は、gitignore 対象のオーバーレイ
 `docker-compose.procuretech-spec.yml` を重ねて起動します。
@@ -269,6 +275,6 @@ docker compose --profile procuretech-editor up -d
 ```bash
 docker compose \
   -f docker-compose.yml -f docker-compose.procuretech-spec.yml \
-  --profile procuretech-editor --profile procuretech-spec up -d
+  --profile procuretech-spec up -d
 # .env で EDITOR_GENERATE_URL=http://procuretech-spec-app:8016 を設定
 ```

@@ -34,6 +34,15 @@
 ## [Unreleased]
 
 - 情報化企画書ナビの専用ページ／API／Compose profile／exAppId を `procuretech-navigator` に揃える。旧 URL `/procuretech` はリダイレクト／エイリアス。既存のピン留めは起動時に付け替える
+- ナビゲーションシート（`procuretech-hearing`）を追加。複数資料から自由項目の Excel を作り、`procuretech-generate-app` の入力とする（詳細は `docs/procuretech-hearing.md`）。専用ページ `/procuretech-hearing`。Markdown エディタの「ヒアリングシートから生成」は生成 API の起動（`/health`）でテーマを出し分け（generate-app は常時、spec-app はオプション）
+
+- Markdown エディタ（`procuretech-editor`）と汎用生成（`procuretech-generate-app`）、ナビゲーションシートは `docker compose up` で標準起動（プロファイル不要）
+- 汎用生成の入力を 2 セル契約（`ナビゲーション`＝Markdown 表、`生成指示`）に変更。空雛形は `GET /template/hearing`（`navigation` も可）
+- Markdown エディタの書き出しで、ナビゲーションシート由来の章（テーマ未定義の `section_key`）を追加・初期表示できるようにした
+- ナビゲーションシート読み込み時、設問は材料ファイル（`01_設問名.md`）にし、生成指示で成果物 `生成文書.md` を追加する。書き出しの既定は成果物のみ。LLM 未設定・失敗時は成果物を作らず README に注記する
+- 表示名を「ナビゲーションシート」から「ヒアリングシート」へ変更（おすすめカード・専用ページ・Markdown エディタのテーマ名）
+- 内部 ID も揃える。B1 マーカー `hearing-sheet`、テーマ id `hearing`、画面 URL `/hearing-sheet`（旧 `navigation-sheet` / `navigation` / `/procuretech-hearing` は互換）
+- HTML 書き出しで Markdown 表（GFM）を `<table>` に変換する
 
 ## [0.9.0] - 2026-09-04
 

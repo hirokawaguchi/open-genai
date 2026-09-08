@@ -45,6 +45,21 @@ def test_validate_type_unknown_expected():
         excel.validate_type(raw, "unknown")
 
 
+def test_validate_type_navsheet_ok():
+    raw = _xlsx_with_marker("hearing-sheet")
+    assert excel.validate_type(raw, "hearing-sheet") == "ヒアリングシート"
+
+
+def test_validate_type_navsheet_accepts_legacy_marker():
+    raw = _xlsx_with_marker("navigation-sheet")
+    assert excel.validate_type(raw, "hearing-sheet") == "ヒアリングシート"
+
+
+def test_validate_type_navsheet_rejects_systemplan():
+    with pytest.raises(excel.ExcelError, match="ヒアリングシート"):
+        excel.validate_type(_xlsx_with_marker("systemplan"), "hearing-sheet")
+
+
 def test_decode_upload_strips_data_url_prefix():
     raw = b"hello-bytes"
     b64 = "data:application/octet-stream;base64," + base64.b64encode(raw).decode()

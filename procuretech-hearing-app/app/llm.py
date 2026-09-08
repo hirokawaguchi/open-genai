@@ -1,4 +1,4 @@
-"""OpenAI 互換 chat/completions（PPTX プランナ用）。editor-app の llm.py と同型。"""
+"""OpenAI 互換 chat/completions（navigator と同じ環境変数）。"""
 
 from __future__ import annotations
 
@@ -16,32 +16,14 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "ollama"
 PROCURETECH_MODEL = (
     os.environ.get("PROCURETECH_MODEL") or os.environ.get("DEFAULT_MODEL") or "qwen2.5:7b"
 )
-REQUEST_TIMEOUT = float(os.environ.get("GENERATE_LLM_TIMEOUT", "120"))
-DEFAULT_MAX_TOKENS = int(os.environ.get("GENERATE_LLM_MAX_TOKENS", "4096"))
-
-
-def _flag_on(name: str, default: str = "1") -> bool:
-    return (os.environ.get(name) or default).strip().lower() not in {
-        "0",
-        "false",
-        "off",
-        "no",
-    }
-
-
-def llm_enabled() -> bool:
-    """PPTX プランナ用。未指定時は ON。テストとオフラインは GENERATE_PPTX_LLM=0。
-
-    editor と同様、OPENAI_BASE_URL が空なら OLLAMA_BASE_URL /v1 を使う。
-    以前は OPENAI_BASE_URL 必須にしていたため、Ollama だけの環境では
-    決定論変換に落ちて見た目が変わらなかった。
-    """
-    return _flag_on("GENERATE_PPTX_LLM")
-
-
-def instruction_llm_enabled() -> bool:
-    """生成指示から成果物 Markdown を書くとき。未指定時は ON。GENERATE_LLM=0 で無効。"""
-    return _flag_on("GENERATE_LLM")
+REQUEST_TIMEOUT = float(os.environ.get("PROCURETECH_LLM_TIMEOUT", "180"))
+DEFAULT_MAX_TOKENS = int(os.environ.get("HEARING_LLM_MAX_TOKENS", "2048"))
+LLM_ENABLED = os.environ.get("HEARING_LLM", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 
 def _headers() -> dict[str, str]:
@@ -59,7 +41,7 @@ def _extra_body() -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
         except json.JSONDecodeError:
-            pass
+            print(f"[hearing] PROCURETECH_EXTRA_BODY が不正な JSON です: {raw[:80]}")
     return {"chat_template_kwargs": {"enable_thinking": False}}
 
 
@@ -67,30 +49,22 @@ def _message_text(message: dict[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str) and content.strip():
         return content.strip()
-    for key in ("reasoning_content", "reasoning"):
-        value = message.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
     return content.strip() if isinstance(content, str) else ""
 
 
-def chat(
-    messages: list[dict[str, str]],
-    *,
-    temperature: float = 0.1,
-    model: str | None = None,
-    max_tokens: int | None = None,
-) -> str:
+async def chat(messages: list[dict[str, str]], *, temperature: float = 0.2) -> str:
+    if not LLM_ENABLED:
+        raise RuntimeError("LLM は無効です（HEARING_LLM=0）")
     payload: dict[str, Any] = {
-        "model": model or PROCURETECH_MODEL,
+        "model": PROCURETECH_MODEL,
         "messages": messages,
         "stream": False,
         "temperature": temperature,
-        "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
+        "max_tokens": DEFAULT_MAX_TOKENS,
     }
     payload.update(_extra_body())
-    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-        res = client.post(
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        res = await client.post(
             f"{OPENAI_BASE_URL}/chat/completions",
             json=payload,
             headers=_headers(),

@@ -106,8 +106,10 @@ services:
       - PROCURETECH_APP_URL=${PROCURETECH_APP_URL:-http://procuretech-navigator-app:8014/invoke}
       # 更新版 xlsx を SeaweedFS(S3) 経由の署名付き URL で配信する（既定は直接ダウンロード）
       - PROCURETECH_DOWNLOAD_VIA_S3=${PROCURETECH_DOWNLOAD_VIA_S3:-}
-      # 情報化企画書エディタ（profiles: ["procuretech-editor"]）
+      # Markdown エディタ（標準起動）
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
+      # ナビゲーションシート（標準起動）
+      - PROCURETECH_HEARING_APP_URL=${PROCURETECH_HEARING_APP_URL:-http://procuretech-hearing-app:8017/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -569,11 +571,9 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-  # 任意: 情報化企画書エディタ（`COMPOSE_PROFILES=procuretech-editor` または `--profile procuretech-editor`）
-  # 案件フォルダ内の生成文書（Markdown）を編集・保存し、Word 変換 API へ統合する。
+  # 標準: Markdown エディタ。案件フォルダ内の生成文書を編集・保存し、文書へ合成する。
   # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
   procuretech-editor-app:
-    profiles: ["procuretech-editor"]
     build: ./procuretech-editor-app
     container_name: open-genai-procuretech-editor-app
     environment:
@@ -596,6 +596,8 @@ services:
       - EDITOR_GENERATE_DOC_TYPE=${EDITOR_GENERATE_DOC_TYPE:-specification}
       # テーマ定義(JSON)。テーマ↔ヒアリングシート↔API を管理者が設定。
       - EDITOR_GENERATE_THEMES=${EDITOR_GENERATE_THEMES:-}
+      - EDITOR_COMPOSE_URL=${EDITOR_COMPOSE_URL:-http://procuretech-generate-app:8016}
+      - EDITOR_COMPOSE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
@@ -605,6 +607,54 @@ services:
       - procuretech_editor_app_data:/data
     expose:
       - "8015"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 標準: 文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）
+  procuretech-generate-app:
+    build:
+      context: .
+      dockerfile: procuretech-generate-app/Dockerfile
+    container_name: open-genai-procuretech-generate-app
+    environment:
+      - GENERATE_API_KEY=${EDITOR_COMPOSE_API_KEY:-${EDITOR_GENERATE_API_KEY:-}}
+      - GENERATE_PROCESS_SECONDS=${GENERATE_PROCESS_SECONDS:-2}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
+      - GENERATE_LLM=${GENERATE_LLM:-1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8016"
+    restart: unless-stopped
+
+  # 標準: ナビゲーションシート（複数資料から記入済み xlsx を作る。generate-app の対）
+  procuretech-hearing-app:
+    build:
+      context: .
+      dockerfile: procuretech-hearing-app/Dockerfile
+    container_name: open-genai-procuretech-hearing-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - HEARING_DB_PATH=/data/procuretech_hearing.db
+      - HEARING_RETENTION_DAYS=${HEARING_RETENTION_DAYS:-30}
+      - MAX_DOC_BYTES=${MAX_DOC_BYTES:-20971520}
+      - HEARING_LLM=${HEARING_LLM:-1}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+      - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
+      - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+    volumes:
+      - procuretech_hearing_app_data:/data
+    expose:
+      - "8017"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -645,3 +695,4 @@ volumes:
   patchform_app_data:
   procuretech_app_data:
   procuretech_editor_app_data:
+  procuretech_hearing_app_data:

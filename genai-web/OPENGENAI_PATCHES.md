@@ -99,7 +99,7 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 案件フォルダ（プロジェクト）内の生成文書（Markdown）を編集・保存し、外部 Word 変換 API へ
 統合するため専用ページ（`/procuretech-editor`）を提供する。プロジェクト／ファイルの CRUD＋
 S3 保存＋分割エディタが必要なため汎用 exApp フォームではなく専用ページ化した。Compose
-`profiles: ["procuretech-editor"]` 未起動時は `/config` 失敗で非表示（案内表示）。外部公開面は
+標準起動。未起動時は `/config` 失敗で非表示（案内表示）。外部公開面は
 持たない（庁内のみ）。旧 `/apps/:teamId/procuretech-editor` は `/procuretech-editor` へリダイレクトする。
 
 | ファイル | 変更内容 |
@@ -109,6 +109,19 @@ S3 保存＋分割エディタが必要なため汎用 exApp フォームでは�
 | `packages/web/src/open-genai/procuretech-editor/` | 専用ページ（プロジェクト一覧・ファイル管理モーダル・`@uiw/react-md-editor` 分割エディタ・書き出し）と SWR フック・型・整形ユーティリティ |
 | `packages/web/src/open-genai/optional-app-health/useOptionalAppAvailable.ts` | `useProcuretechEditorAvailable` を追加 |
 | `packages/web/package.json` | `@uiw/react-md-editor` を追加 |
+
+### ナビゲーションシート専用ページ（Open GENAI 拡張）
+
+複数資料から generate-app 入力用 Excel を作るため専用ページ（`/hearing-sheet`）を提供する。
+項目の増減と行ごと生成が必要なため汎用 exApp フォームではなく専用ページ化した。
+`docker compose up` で標準起動。未起動時は `/config` 失敗で非表示。外部公開面は持たない（庁内のみ）。
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `packages/web/src/routes.tsx` | `/hearing-sheet` ルート追加、旧 `/procuretech-hearing` はリダイレクト |
+| `packages/web/src/layout/navItems.ts` | おすすめに「ヒアリングシート」、`pinnedAppHref` で `procuretech-hearing` を `/hearing-sheet` に振替 |
+| `packages/web/src/open-genai/procuretech-hearing/` | 専用ページ（作業一覧・参考ファイル・動的項目・行ごと生成・xlsx DL）と SWR フック・型 |
+| `packages/web/src/open-genai/optional-app-health/useOptionalAppAvailable.ts` | `useProcuretechHearingAvailable` を追加 |
 
 ### 監査ログ専用ページ（Open GENAI 拡張・管理者限定）
 
@@ -167,10 +180,11 @@ S3 保存＋分割エディタが必要なため汎用 exApp フォームでは�
 | `packages/web/src/open-genai/doccheck/` | 書類領域分割チェック専用ページ（`DoccheckPage`・`useDoccheck`・`types`。Compose profile `doccheck`） |
 | `packages/web/src/open-genai/patchform/` | フォーム専用ページ（`PatchformPage`・編集・詳細・`FillForm`。Compose profile `patchform`） |
 | `packages/web/src/open-genai/procuretech/` | 情報化企画書ナビ専用ページ（`ProcuretechPage`・`useProcuretech`・`types`。Compose profile `procuretech`） |
-| `packages/web/src/open-genai/procuretech-editor/` | 情報化企画書エディタ専用ページ（`ProcuretechEditorPage`・`useProcuretechEditor`・`types`・`format`。Compose profile `procuretech-editor`） |
+| `packages/web/src/open-genai/procuretech-editor/` | Markdown エディタ専用ページ（`ProcuretechEditorPage`・`useProcuretechEditor`・`types`・`format`。標準起動） |
+| `packages/web/src/open-genai/procuretech-hearing/` | ナビゲーションシート専用ページ（`ProcuretechHearingPage`・`useProcuretechHearing`・`types`。標準起動） |
 | `backend/app/teams_store.py` | `user_app_pins` テーブル |
 | `backend/app/image_gen.py` | `is_sd_up()` による SD 稼働確認 |
-| `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword`, `/procuretech-navigator/*`（情報化企画書ナビのプロキシ・`PROCURETECH_SEED`、旧 `/procuretech/*` はエイリアス）, `/procuretech-editor/*`（情報化企画書エディタのプロキシ・`PROCURETECH_EDITOR_SEED`） |
+| `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword`, `/procuretech-navigator/*`（情報化企画書ナビのプロキシ・`PROCURETECH_SEED`、旧 `/procuretech/*` はエイリアス）, `/procuretech-editor/*`（Markdown エディタのプロキシ・`PROCURETECH_EDITOR_SEED`）, `/procuretech-hearing/*`（ナビゲーションシートのプロキシ・`PROCURETECH_HEARING_SEED`） |
 | `prompt-app/app/main.py` | 構造化 REST（`/templates` 一覧・作成・削除、`/templates/{id}/render`）。`/schema`・`/resolve`・`/invoke` も後方互換で維持 |
 | `usermgmt-app/app/main.py` | 構造化 REST（`GET /users`、`POST /users/plan`、`POST /users/apply`）。`/invoke`（Markdown）も後方互換で維持 |
 | `modelpolicy-app/app/main.py` | 構造化 REST（`POST /policy` 書き込み）。`/schema`・`/invoke` も後方互換で維持（読取は backend が直接参照） |

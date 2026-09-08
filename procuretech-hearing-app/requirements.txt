@@ -1,0 +1,9 @@
+fastapi==0.139.0
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+openpyxl==3.1.5
+pypdf==6.16.2
+python-docx==1.1.2
+python-pptx==1.0.2
+xlrd==2.0.2
+olefile==0.47

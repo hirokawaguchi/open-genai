@@ -126,9 +126,13 @@ PROCURETECH_APP_URL = os.environ.get(
 PROCURETECH_DOWNLOAD_VIA_S3 = os.environ.get(
     "PROCURETECH_DOWNLOAD_VIA_S3", ""
 ).strip().lower() in ("1", "true", "yes", "on")
-# 情報化企画書エディタ（Compose profiles: ["procuretech-editor"]）。実 API は /procuretech-editor/* プロキシ。
+# Markdown エディタ。実 API は /procuretech-editor/* プロキシ。
 PROCURETECH_EDITOR_APP_URL = os.environ.get(
     "PROCURETECH_EDITOR_APP_URL", "http://procuretech-editor-app:8015/invoke"
+)
+# ナビゲーションシート。実 API は /procuretech-hearing/* プロキシ。
+PROCURETECH_HEARING_APP_URL = os.environ.get(
+    "PROCURETECH_HEARING_APP_URL", "http://procuretech-hearing-app:8017/invoke"
 )
 PATCHFORM_SERVICE_USER = "service"
 _PATCHFORM_SERVICE_PATHS = re.compile(
@@ -518,8 +522,8 @@ PROCURETECH_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-# 情報化企画書エディタ（共通アプリ）。UI は専用ページ /procuretech-editor。
-# Compose profile `procuretech-editor` 未起動時は /config 失敗で一覧・ナビ非表示。
+# Markdown エディタ（共通アプリ）。UI は専用ページ /procuretech-editor。
+# 未起動時は /config 失敗で一覧・ナビ非表示。
 PROCURETECH_EDITOR_SEED: dict[str, Any] = {
     "exAppId": "procuretech-editor",
     "teamId": COMMON_TEAM_ID,
@@ -540,8 +544,33 @@ PROCURETECH_EDITOR_SEED: dict[str, Any] = {
         "- 「ヒアリングシートから生成」でテーマを選び、必要な Excel を取り込んで章別 Markdown を生成できます。\n"
         "- エディタで内容を編集・保存し、「書き出し・統合」で出力ファイルごとに章を並べて Word へ合成します。\n"
         "- 見積総括表・一次審査表は生成時に作られる Excel をそのまま同梱します（Word 合成とまとめて 1 つの zip）。\n"
-        "- 有効化: `docker compose --profile procuretech-editor up -d` "
-        "または `COMPOSE_PROFILES=procuretech-editor`。\n"
+        "- `docker compose up -d` で標準起動します。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
+# ヒアリングシート（共通アプリ）。UI は専用ページ /hearing-sheet。
+# 未起動時は /config 失敗で一覧・ナビ非表示。
+PROCURETECH_HEARING_SEED: dict[str, Any] = {
+    "exAppId": "procuretech-hearing",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "ヒアリングシート",
+    "endpoint": (
+        PROCURETECH_HEARING_APP_URL
+        if PROCURETECH_HEARING_APP_URL.endswith("/invoke")
+        else PROCURETECH_HEARING_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "複数の参考資料から項目と値を整理し、文書生成用のヒアリングシート（Excel）を作ります。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「ヒアリングシート」で作業を作成します。\n"
+        "- 参考ファイルを追加し、項目（設問）ごとに値を手入力または生成します。\n"
+        "- 記入済みシートをダウンロードし、Markdown エディタの生成入力として使えます。\n"
+        "- `docker compose up -d` で標準起動します。\n"
     ),
     "copyable": False,
     "status": "published",
@@ -631,6 +660,7 @@ EXAPP_SEEDS = [
     DOCMAKER_SEED,
     PROCURETECH_SEED,
     PROCURETECH_EDITOR_SEED,
+    PROCURETECH_HEARING_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -657,6 +687,14 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
         ),
         # 使い方は旧文言（「情報化企画書エディタ」「案件フォルダ」）を含む場合のみ差し替える。
         "old_howto_markers": ("情報化企画書エディタ", "案件フォルダ"),
+    },
+    {
+        "seed": PROCURETECH_HEARING_SEED,
+        "old_name": "ナビゲーションシート",
+        "old_description": (
+            "複数の参考資料から項目と値を整理し、文書生成用のナビゲーションシート（Excel）を作ります。"
+        ),
+        "old_howto_markers": ("ナビゲーションシート",),
     },
 ]
 
@@ -4192,6 +4230,310 @@ async def procuretech_editor_compose_status(
     if not isinstance(payload, dict):
         return proxied
     return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+
+
+# ---------------------------------------------------------------------------
+# ナビゲーションシート専用ページ(/procuretech-hearing) 用プロキシ
+#
+# 未起動時は接続失敗 → 専用ページが案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。
+# ---------------------------------------------------------------------------
+def _procuretech_hearing_app_url(path: str) -> str:
+    if PROCURETECH_HEARING_APP_URL.endswith("/invoke"):
+        base = PROCURETECH_HEARING_APP_URL[: -len("/invoke")]
+    else:
+        base = PROCURETECH_HEARING_APP_URL.rstrip("/")
+    return base + path
+
+
+def _procuretech_hearing_headers(
+    request: Request,
+) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_procuretech_hearing(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 240,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "ヒアリングシートに接続できませんでした。"
+                    "`docker compose up -d` で起動してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "ヒアリングシートから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+async def _proxy_procuretech_hearing_bytes(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    *,
+    timeout: float = 240,
+) -> Response:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "ヒアリングシートに接続できませんでした。"
+                    "`docker compose up -d` で起動してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    ctype = (res.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype.startswith("application/vnd.openxmlformats") or ctype in (
+        "application/octet-stream",
+        "application/zip",
+    ):
+        disposition = res.headers.get("content-disposition") or (
+            'attachment; filename="hearing-sheet.xlsx"'
+        )
+        return Response(
+            content=res.content,
+            media_type=ctype
+            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": disposition},
+            status_code=res.status_code,
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "ヒアリングシートから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/procuretech-hearing/config")
+async def procuretech_hearing_config(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/config"), headers
+    )
+
+
+@app.get("/procuretech-hearing/template")
+async def procuretech_hearing_template(request: Request) -> Response:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing_bytes(
+        "GET", _procuretech_hearing_app_url("/template"), headers
+    )
+
+
+@app.get("/procuretech-hearing/sessions")
+async def procuretech_hearing_list_sessions(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/sessions"), headers
+    )
+
+
+@app.post("/procuretech-hearing/sessions")
+async def procuretech_hearing_create_session(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST", _procuretech_hearing_app_url("/sessions"), headers, body
+    )
+
+
+@app.get("/procuretech-hearing/sessions/{session_id}")
+async def procuretech_hearing_get_session(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url(f"/sessions/{session_id}"), headers
+    )
+
+
+@app.put("/procuretech-hearing/sessions/{session_id}")
+async def procuretech_hearing_put_session(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_hearing(
+        "PUT", _procuretech_hearing_app_url(f"/sessions/{session_id}"), headers, body
+    )
+
+
+@app.delete("/procuretech-hearing/sessions/{session_id}")
+async def procuretech_hearing_delete_session(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE", _procuretech_hearing_app_url(f"/sessions/{session_id}"), headers
+    )
+
+
+@app.post("/procuretech-hearing/sessions/{session_id}/items")
+async def procuretech_hearing_add_item(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/items"),
+        headers,
+        body,
+    )
+
+
+@app.patch("/procuretech-hearing/sessions/{session_id}/items/{item_id}")
+async def procuretech_hearing_patch_item(
+    session_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_hearing(
+        "PATCH",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/items/{item_id}"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/procuretech-hearing/sessions/{session_id}/items/{item_id}")
+async def procuretech_hearing_delete_item(
+    session_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/items/{item_id}"),
+        headers,
+    )
+
+
+@app.post("/procuretech-hearing/sessions/{session_id}/files")
+async def procuretech_hearing_add_file(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/files"),
+        headers,
+        body,
+        timeout=120,
+    )
+
+
+@app.delete("/procuretech-hearing/sessions/{session_id}/files/{file_id}")
+async def procuretech_hearing_delete_file(
+    session_id: str, file_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/files/{file_id}"),
+        headers,
+    )
+
+
+@app.post("/procuretech-hearing/sessions/{session_id}/items/{item_id}/generate")
+async def procuretech_hearing_generate_item(
+    session_id: str, item_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(
+            f"/sessions/{session_id}/items/{item_id}/generate"
+        ),
+        headers,
+        {},
+        timeout=240,
+    )
+
+
+@app.get("/procuretech-hearing/sessions/{session_id}/download")
+async def procuretech_hearing_download(
+    session_id: str, request: Request
+) -> Response:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing_bytes(
+        "GET",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/download"),
+        headers,
+    )
 
 
 # ---------------------------------------------------------------------------

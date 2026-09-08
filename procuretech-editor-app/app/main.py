@@ -825,12 +825,12 @@ async def generate_from_excel(
     theme = generate.get_theme(str(payload.get("theme") or "").strip() or None)
     if theme is None:
         return JSONResponse(status_code=400, content={"error": "不明なテーマです。"})
-    base_url = generate.theme_base_url(theme)
-    if not base_url:
+    if not generate.theme_reachable(theme):
         return JSONResponse(
             status_code=503,
-            content={"error": "このテーマの文書生成 API が未設定です（管理者に確認してください）。"},
+            content={"error": "このテーマの文書生成 API に接続できません。対象コンテナが起動しているか確認してください。"},
         )
+    base_url = generate.theme_base_url(theme)
     files, ferr = _decode_theme_inputs(theme, payload)
     if ferr:
         return ferr
@@ -1042,17 +1042,68 @@ def _resolve_theme_for_project(
     return generate.get_theme(theme_id) or generate.plain_theme()
 
 
-def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:
-    """テーマ既定から合成定義（出力ファイル毎の順序付き section）を作る。"""
+# 生成 zip の README など、既定の合成対象から外す section key。
+_SKIP_AUTO_SECTION_KEYS = {"readme"}
+# ナビゲーションシートの生成指示から作った成果物。書き出しの既定はこの 1 件だけ。
+GENERATED_SECTION_KEY = "generated"
+
+
+def _items_from_project_files(files: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """テーマに章カタログが無いとき、生成指示の成果物だけを合成項目にする。
+
+    設問ごとの材料ファイルはドロップダウンから手動追加する。
+    成果物が無ければ空（README 注記どおりスキップされたとき）。
+    """
+    for f in files or []:
+        if f.get("kind") not in TEXT_KINDS:
+            continue
+        if str(f.get("section_key") or "").strip() == GENERATED_SECTION_KEY:
+            return [{"section_key": GENERATED_SECTION_KEY}]
+    return []
+
+
+def _merge_discovered_sections(
+    catalog: list[dict[str, Any]], files: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """テーマ未定義の section_key（ナビゲーションシート等）を章カタログへ足す。"""
+    known = {str(s.get("key") or "") for s in catalog}
+    extra: list[dict[str, Any]] = []
+    for f in files or []:
+        if f.get("kind") not in TEXT_KINDS:
+            continue
+        sk = str(f.get("section_key") or "").strip()
+        if not sk or sk in known:
+            continue
+        extra.append({"key": sk, "label": f.get("rel_path") or sk})
+        known.add(sk)
+    return [*catalog, *extra]
+
+
+def _default_composition(
+    theme: dict[str, Any], files: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """テーマ既定から合成定義（出力ファイル毎の順序付き section）を作る。
+
+    出力の `sections` が空（ナビゲーションシートなど動的章）のときは、
+    生成指示の成果物（`section_key=generated`）だけを並べる。
+    """
+    discovered = _items_from_project_files(files)
     outputs = []
     for o in generate.theme_outputs(theme):
         kind = o.get("kind", "markdown")
+        sections = o.get("sections", [])
+        if sections:
+            items: list[dict[str, str]] = [{"section_key": k} for k in sections]
+        elif kind != "excel":
+            items = list(discovered)
+        else:
+            items = []
         entry: dict[str, Any] = {
             "id": o["id"],
             "name": o["name"],
             "kind": kind,
             "enabled": True,
-            "items": [{"section_key": k} for k in o.get("sections", [])],
+            "items": items,
         }
         if kind != "excel":
             entry["format"] = generate.normalize_compose_format(o.get("format"))
@@ -1062,13 +1113,15 @@ def _default_composition(theme: dict[str, Any]) -> dict[str, Any]:
     return {"theme": theme.get("id"), "outputs": outputs}
 
 
-def _normalize_composition(data: Any, theme: dict[str, Any]) -> dict[str, Any]:
+def _normalize_composition(
+    data: Any, theme: dict[str, Any], files: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """保存/入力された合成定義を安全な形へ整える。"""
     if not isinstance(data, dict):
-        return _default_composition(theme)
+        return _default_composition(theme, files)
     raw_outputs = data.get("outputs")
     if not isinstance(raw_outputs, list):
-        return _default_composition(theme)
+        return _default_composition(theme, files)
     outputs: list[dict[str, Any]] = []
     for i, o in enumerate(raw_outputs, start=1):
         if not isinstance(o, dict):
@@ -1127,11 +1180,12 @@ async def get_composition(
     theme_def = _resolve_theme_for_project(project_id, uid, hint=theme, saved=saved)
     if theme_def is None:
         return JSONResponse(status_code=400, content={"error": "テーマが未設定です。"})
+    listed = [f for f in store.list_files(project_id, uid) if f["kind"] != "keep"]
     if saved:
-        composition = _normalize_composition(saved, theme_def)
+        composition = _normalize_composition(saved, theme_def, listed)
         is_saved = True
     else:
-        composition = _default_composition(theme_def)
+        composition = _default_composition(theme_def, listed)
         is_saved = False
     files = [
         {
@@ -1140,14 +1194,13 @@ async def get_composition(
             "kind": f["kind"],
             "section_key": f.get("section_key", ""),
         }
-        for f in store.list_files(project_id, uid)
-        if f["kind"] != "keep"
+        for f in listed
     ]
     theme_public = {
         "id": theme_def.get("id"),
         "label": theme_def.get("label", theme_def.get("id")),
         "doc_type": theme_def.get("doc_type", generate.DEFAULT_DOC_TYPE),
-        "sections": generate.theme_sections(theme_def),
+        "sections": _merge_discovered_sections(generate.theme_sections(theme_def), listed),
         "outputs": generate.theme_outputs(theme_def),
         "configured": bool(generate.theme_base_url(theme_def)),
     }
@@ -1293,14 +1346,13 @@ async def _run_compose_job(
             )
             return
         base_url = generate.theme_base_url(theme_def)
-        if body_comp is not None:
-            composition = _normalize_composition(body_comp, theme_def)
-        elif saved:
-            composition = _normalize_composition(saved, theme_def)
-        else:
-            composition = _default_composition(theme_def)
-
         files = store.list_files(project_id, uid)
+        if body_comp is not None:
+            composition = _normalize_composition(body_comp, theme_def, files)
+        elif saved:
+            composition = _normalize_composition(saved, theme_def, files)
+        else:
+            composition = _default_composition(theme_def, files)
         files_by_key: dict[str, dict[str, Any]] = {}
         for f in files:
             sk = f.get("section_key")

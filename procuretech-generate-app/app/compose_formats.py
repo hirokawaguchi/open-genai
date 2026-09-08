@@ -30,6 +30,8 @@ _BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
 _ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.*)$")
+_TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
+_TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
 SUPPORTED_FORMATS = ("docx", "html", "pptx", "txt", "md")
 
@@ -220,6 +222,40 @@ def _inline_html(text: str, assets: dict[str, bytes]) -> str:
     return s
 
 
+def _table_cells(line: str) -> list[str]:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_table_sep(cells: list[str]) -> bool:
+    return bool(cells) and all(
+        _TABLE_SEP_CELL_RE.match(c.replace(" ", "")) for c in cells
+    )
+
+
+def _table_html(block: list[str], assets: dict[str, bytes]) -> str:
+    rows = [_table_cells(ln) for ln in block]
+    header = rows[0]
+    body = [r for r in rows[1:] if not _is_table_sep(r)]
+    width = len(header)
+    parts = ["<table>", "<thead>", "<tr>"]
+    for cell in header:
+        parts.append(f"<th>{_inline_html(cell, assets)}</th>")
+    parts.extend(["</tr>", "</thead>", "<tbody>"])
+    for row in body:
+        padded = row + [""] * width
+        parts.append("<tr>")
+        for cell in padded[:width]:
+            parts.append(f"<td>{_inline_html(cell, assets)}</td>")
+        parts.append("</tr>")
+    parts.extend(["</tbody>", "</table>"])
+    return "".join(parts)
+
+
 def markdown_to_html(
     name: str, sections: list[dict[str, Any]], assets: dict[str, bytes] | None = None
 ) -> bytes:
@@ -243,7 +279,10 @@ def markdown_to_html(
         chunks.append(f"<pre><code>{body}</code></pre>")
         in_code, code_lang, code_lines = False, "", []
 
-    for raw_line in _join_sections(sections).splitlines():
+    lines = _join_sections(sections).splitlines()
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
         stripped = raw_line.strip()
         if stripped.startswith("```"):
             if in_code:
@@ -251,18 +290,33 @@ def markdown_to_html(
             else:
                 close_list()
                 in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
+            i += 1
             continue
         if in_code:
             code_lines.append(raw_line)
+            i += 1
             continue
+        if _TABLE_LINE_RE.match(stripped):
+            block = [raw_line]
+            j = i + 1
+            while j < len(lines) and _TABLE_LINE_RE.match(lines[j].strip()):
+                block.append(lines[j])
+                j += 1
+            if len(block) >= 2 and _is_table_sep(_table_cells(block[1])):
+                close_list()
+                chunks.append(_table_html(block, assets))
+                i = j
+                continue
         if not stripped:
             close_list()
+            i += 1
             continue
         hm = _HEADING_RE.match(stripped)
         if hm:
             close_list()
             level = min(len(hm.group(1)) + 1, 4)
             chunks.append(f"<h{level}>{html.escape(hm.group(2).strip())}</h{level}>")
+            i += 1
             continue
         m = _IMAGE_LINE_RE.match(stripped)
         if m:
@@ -273,6 +327,7 @@ def markdown_to_html(
                 chunks.append(f'<p><img src="{_data_uri(rel, data)}" alt=""></p>')
             else:
                 chunks.append(f'<p class="figure-missing">[画像: {html.escape(rel)}]</p>')
+            i += 1
             continue
         bm = _BULLET_RE.match(raw_line)
         if bm:
@@ -280,12 +335,15 @@ def markdown_to_html(
                 chunks.append("<ul>")
                 in_list = True
             chunks.append(f"<li>{_inline_html(bm.group(2), assets)}</li>")
+            i += 1
             continue
         close_list()
         if stripped.startswith("> "):
             chunks.append(f"<blockquote><p>{_inline_html(stripped[2:], assets)}</p></blockquote>")
+            i += 1
             continue
         chunks.append(f"<p>{_inline_html(stripped, assets)}</p>")
+        i += 1
     if in_code:
         flush_code()
     close_list()

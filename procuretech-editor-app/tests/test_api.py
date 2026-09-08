@@ -24,6 +24,14 @@ def _fresh_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _theme_health_ok(monkeypatch):
+    from app import generate
+
+    monkeypatch.setattr(generate, "probe_theme_health", lambda _url: True)
+    generate.clear_health_cache()
+
+
+@pytest.fixture(autouse=True)
 def _mem_objstore(monkeypatch):
     """objstore を辞書ベースのメモリ実装に差し替える（store/main が共有参照）。"""
     blobs: dict[str, bytes] = {}
@@ -90,7 +98,15 @@ def _xlsx_with_marker(marker: str) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def test_config_reports_flags(client):
+def test_config_reports_flags(client, monkeypatch):
+    from app import generate
+
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://spec.test")
+    nav = generate.get_theme("navigation")
+    if nav is not None:
+        monkeypatch.setitem(nav, "api_url", "http://generate.test")
+    monkeypatch.setattr(generate, "probe_theme_health", lambda _url: True)
+    generate.clear_health_cache()
     res = client.get("/config", headers=USER_A)
     assert res.status_code == 200
     body = res.json()
@@ -98,7 +114,10 @@ def test_config_reports_flags(client):
     assert "markers" in body
     assert "generate_configured" in body
     assert isinstance(body.get("generate_themes"), list)
-    assert body["generate_themes"] and body["generate_themes"][0]["id"] == "procurement_spec"
+    assert body["generate_themes"] and {t["id"] for t in body["generate_themes"]} >= {
+        "hearing",
+        "procurement_spec",
+    }
 
 
 def test_generate_requires_configured(client, monkeypatch):
@@ -554,6 +573,114 @@ def test_composition_plain_default_for_empty_project(client):
     assert outputs[0]["items"] == []
     # 調達仕様書テーマの章立て（背景〜その他）が並んでいないこと
     assert outputs[0]["id"] != "specification"
+
+
+def _run_generation_navigation(client, monkeypatch, project_id):
+    """ナビゲーションテーマで、テーマカタログに無い section_key 付き zip を取り込む。"""
+    from app import generate
+
+    async def fake_start(files, *, base_url, api_key="", username, doc_type=None, options=None):
+        return {"request_id": "gen-nav"}
+
+    async def fake_status(request_id, *, base_url, api_key=""):
+        return {"status": "success", "progress": 100}
+
+    async def fake_result(request_id, *, base_url, api_key=""):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("README.md", "# 文書\n生成メモ")
+            zf.writestr("生成文書.md", "# 成果物\n本文")
+            zf.writestr("01_目的.md", "# 目的\n本文1")
+            zf.writestr("02_範囲.md", "# 範囲\n本文2")
+            zf.writestr(
+                "sections.json",
+                (
+                    '{"theme":"sample","sections":['
+                    '{"file":"README.md","section_key":"readme","order":1},'
+                    '{"file":"生成文書.md","section_key":"generated","order":2},'
+                    '{"file":"01_目的.md","section_key":"purpose","order":11},'
+                    '{"file":"02_範囲.md","section_key":"scope","order":12}]}'
+                ),
+            )
+        return buf.getvalue()
+
+    nav = generate.get_theme("navigation")
+    if nav is not None:
+        monkeypatch.setitem(nav, "api_url", "http://generate.test")
+    monkeypatch.setattr(generate, "start_generation", fake_start)
+    monkeypatch.setattr(generate, "get_status", fake_status)
+    monkeypatch.setattr(generate, "fetch_result", fake_result)
+    start = client.post(
+        f"/projects/{project_id}/generate",
+        json={"theme": "hearing", "inputs": {"hearing": _xlsx_with_marker("hearing-sheet")}},
+        headers=USER_A,
+    )
+    assert start.status_code == 200, start.text
+    rid = start.json()["request_id"]
+    st = client.get(f"/projects/{project_id}/generations/{rid}", headers=USER_A)
+    assert st.status_code == 200, st.text
+    assert st.json()["imported"] is True
+
+
+def test_composition_navigation_uses_generated_files(client, monkeypatch):
+    """ナビゲーションテーマの既定合成は、生成指示の成果物だけを入れる。"""
+    p = _create_project(client)
+    _run_generation_navigation(client, monkeypatch, p["id"])
+    res = client.get(f"/projects/{p['id']}/composition", headers=USER_A)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["saved"] is False
+    assert body["theme"]["id"] == "hearing"
+    doc = body["composition"]["outputs"][0]
+    keys = [it["section_key"] for it in doc["items"]]
+    assert keys == ["generated"]
+    catalog_keys = {s["key"] for s in body["theme"]["sections"]}
+    assert catalog_keys >= {"generated", "purpose", "scope", "readme"}
+
+
+def test_composition_navigation_empty_without_generated(client, monkeypatch):
+    """成果物が無い（生成指示スキップ）ときは、既定の文書は空のまま。"""
+    from app import generate
+
+    p = _create_project(client)
+
+    async def fake_start(files, *, base_url, api_key="", username, doc_type=None, options=None):
+        return {"request_id": "gen-nav-skip"}
+
+    async def fake_status(request_id, *, base_url, api_key=""):
+        return {"status": "success", "progress": 100}
+
+    async def fake_result(request_id, *, base_url, api_key=""):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("README.md", "# 文書\n注記")
+            zf.writestr("01_目的.md", "# 目的\n本文1")
+            zf.writestr(
+                "sections.json",
+                (
+                    '{"theme":"sample","sections":['
+                    '{"file":"README.md","section_key":"readme","order":1},'
+                    '{"file":"01_目的.md","section_key":"purpose","order":11}]}'
+                ),
+            )
+        return buf.getvalue()
+
+    nav = generate.get_theme("navigation")
+    if nav is not None:
+        monkeypatch.setitem(nav, "api_url", "http://generate.test")
+    monkeypatch.setattr(generate, "start_generation", fake_start)
+    monkeypatch.setattr(generate, "get_status", fake_status)
+    monkeypatch.setattr(generate, "fetch_result", fake_result)
+    start = client.post(
+        f"/projects/{p['id']}/generate",
+        json={"theme": "hearing", "inputs": {"hearing": _xlsx_with_marker("hearing-sheet")}},
+        headers=USER_A,
+    )
+    assert start.status_code == 200, start.text
+    rid = start.json()["request_id"]
+    assert client.get(f"/projects/{p['id']}/generations/{rid}", headers=USER_A).json()["imported"]
+    body = client.get(f"/projects/{p['id']}/composition", headers=USER_A).json()
+    assert body["composition"]["outputs"][0]["items"] == []
 
 
 def test_composition_save_and_get(client, monkeypatch):
