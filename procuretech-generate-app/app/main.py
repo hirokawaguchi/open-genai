@@ -1,8 +1,9 @@
 """文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
 
 Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合成 API の
-「そのまま動く」実装。`/generate` は LLM/Dify に依存せず、同梱の簡単なヒアリングシート
-（`materials/hearing/hearing-sample.xlsx`）を読み取り、章別 Markdown を生成する。
+「そのまま動く」実装。`/generate` はナビゲーションシート（Markdown 表＋生成指示）
+を読み、設問ごとの材料ファイルと、生成指示に基づく成果物 Markdown を作る。
+成果物は LLM（未設定・失敗時はスキップして README に注記）で書く。
 `/compose` の pptx は任意で OpenAI 互換 LLM がレイアウトを選び、失敗時は決定論変換へ落とす。
 テーマ固有の非公開サービス（例: 調達仕様書=spec-app）を差し替える際の雛形であり、
 テーマ無しの「素の文書」の合成の既定バックエンドでもある。
@@ -29,16 +30,31 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 import re
 import time
 import uuid
 import zipfile
 from pathlib import Path
+import sys
 from typing import Any
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
+
+
+def _ensure_shared() -> None:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "shared" / "navsheet.py").exists():
+            if str(parent) not in sys.path:
+                sys.path.insert(0, str(parent))
+            return
+
+
+_ensure_shared()
+from shared.navsheet import NavSheet, empty_workbook, parse_workbook, slug_for  # noqa: E402
 
 from app.compose_formats import (
     SUPPORTED_FORMATS,
@@ -61,19 +77,8 @@ PROCESS_SECONDS = float(
     or os.environ.get("GENERATE_SAMPLE_PROCESS_SECONDS", "2")
 )
 
-# 同梱のヒアリングシート様式（key -> ファイル名）。/template/{key} で配信する。
-HEARING_DIR = Path(os.environ.get("HEARING_DIR", "materials/hearing"))
-TEMPLATES: dict[str, str] = {"hearing": "hearing-sample.xlsx"}
-
-# ヒアリングシート（項目|値）の「項目」ラベル -> (section_key, 章タイトル, 出力ファイル名, 表示順)
-FIELDS: list[tuple[str, str, str, str, int]] = [
-    ("背景", "background", "背景", "section1.md", 2),
-    ("目的", "purpose", "目的", "section2.md", 3),
-    ("対象業務", "target", "対象業務", "section3.md", 4),
-    ("主要要件", "requirements", "主要要件", "section4.md", 5),
-    ("想定スケジュール", "schedule", "想定スケジュール", "section5.md", 6),
-]
-TITLE_LABEL = "案件名"
+TEMPLATE_KEYS = {"hearing", "navigation"}
+TEMPLATE_FILENAME = "hearing-sheet.xlsx"
 
 app = FastAPI(title="ProcureTech Generate", version="1.0.0")
 
@@ -87,24 +92,21 @@ def _check_key(x_api_key: str | None) -> JSONResponse | None:
     return None
 
 
-def _read_pairs(raw: bytes) -> dict[str, str]:
-    """ヒアリングシート先頭シートの A 列(項目)/B 列(値) を dict にする。"""
-    import openpyxl
+def _read_nav_sheet(files: dict[str, bytes]) -> NavSheet:
+    for data in files.values():
+        try:
+            return parse_workbook(data)
+        except Exception:  # noqa: BLE001
+            continue
+    return NavSheet()
 
-    pairs: dict[str, str] = {}
-    wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-    try:
-        ws = wb[wb.sheetnames[0]]
-        for row in ws.iter_rows(values_only=True):
-            if not row:
-                continue
-            label = str(row[0]).strip() if row[0] is not None else ""
-            value = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-            if label:
-                pairs[label] = value
-    finally:
-        wb.close()
-    return pairs
+
+GENERATED_FILENAME = "生成文書.md"
+GENERATED_SECTION_KEY = "generated"
+README_FILENAME = "README.md"
+README_SECTION_KEY = "readme"
+_RESERVED_KEYS = {README_SECTION_KEY, GENERATED_SECTION_KEY}
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
 def _bullets_or_paragraph(value: str) -> str:
@@ -115,6 +117,121 @@ def _bullets_or_paragraph(value: str) -> str:
     return value or "（未記入）"
 
 
+def _safe_stem(label: str, index: int) -> str:
+    raw = _UNSAFE_NAME.sub("", (label or "").strip()) or f"項目{index}"
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw[:80] or f"項目{index}"
+
+
+def _unique_name(name: str, used: set[str]) -> str:
+    if name not in used:
+        return name
+    stem, ext = (name.rsplit(".", 1) + [""])[:2] if "." in name else (name, "")
+    suffix = f".{ext}" if ext else ""
+    n = 2
+    while True:
+        cand = f"{stem}-{n}{suffix}"
+        if cand not in used:
+            return cand
+        n += 1
+
+
+def _section_key(label: str, index: int, used: set[str]) -> str:
+    key = slug_for(label, index)
+    if key in _RESERVED_KEYS:
+        key = f"item-{index}"
+    n = 2
+    base = key
+    while key in used:
+        key = f"{base}-{n}"
+        n += 1
+    return key
+
+
+def _materials_markdown(rows: list[Any]) -> str:
+    parts: list[str] = []
+    for i, row in enumerate(rows, start=1):
+        heading = (row.label or "").strip() or f"項目{i}"
+        parts.append(f"## {heading}\n")
+        parts.append(_bullets_or_paragraph(row.value))
+        parts.append("")
+    return "\n".join(parts).strip()
+
+
+def _unwrap_md(text: str) -> str:
+    """モデルが全体をフェンスで包んだ場合は外す。"""
+    raw = (text or "").strip()
+    m = re.match(r"^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$", raw, re.IGNORECASE)
+    return (m.group(1) if m else raw).strip()
+
+
+def _write_generated_document(instruction: str, rows: list[Any]) -> tuple[str | None, str | None]:
+    """生成指示から成果物 Markdown を書く。(本文, スキップ理由) を返す。"""
+    from app.llm import chat, instruction_llm_enabled
+
+    if not instruction.strip():
+        return None, "生成指示が空のため、成果物は作っていません。"
+    if not instruction_llm_enabled():
+        return None, "LLM が無効のため、生成指示に基づく成果物は作っていません。"
+    materials = _materials_markdown(rows) or "（設問の回答はありません）"
+    try:
+        text = chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "あなたは文書作成アシスタントです。"
+                        "利用者の「生成指示」に従い、提供された設問と回答だけを材料にして、"
+                        "完成した Markdown 文書を 1 本書いてください。"
+                        "前置き・説明・注意書きは書かず、本文の Markdown だけを出力してください。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"# 生成指示\n\n{instruction.strip()}\n\n"
+                        f"# 材料（ナビゲーションシートの設問と回答）\n\n{materials}\n"
+                    ),
+                },
+            ]
+        )
+    except Exception as e:  # noqa: BLE001
+        return None, f"生成指示に基づく成果物の作成に失敗したため、スキップしました（{e}）。"
+    body = _unwrap_md(text)
+    if not body:
+        return None, "モデルの応答が空のため、生成指示に基づく成果物は作っていません。"
+    return body + "\n", None
+
+
+def _readme_body(
+    *,
+    title: str,
+    doc_type: str,
+    ts: str,
+    inventory: list[tuple[str, str]],
+    note: str | None,
+) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        "このプロジェクトは、参考資料を読み込んで作成した"
+        "ヒアリングシートを、"
+        "Markdown エディタから読み込んで生成したものです。",
+        "",
+        f"- 生成日時: {ts}",
+        f"- 文書種別: `{doc_type}`",
+        "",
+        "## 同梱ファイル",
+        "",
+    ]
+    for name, desc in inventory:
+        lines.append(f"- `{name}` — {desc}")
+    if note:
+        lines.extend(["", "## 注記", "", note])
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _build_zip(
     files: dict[str, bytes],
     doc_type: str,
@@ -122,38 +239,66 @@ def _build_zip(
     waiting_png: bytes | None = None,
     request_id: str = "",
 ) -> bytes:
-    """アップロードされたヒアリングシートから章別 Markdown zip を作る。"""
-    pairs: dict[str, str] = {}
-    for data in files.values():
-        try:
-            pairs = _read_pairs(data)
-        except Exception:  # noqa: BLE001
-            pairs = {}
-        break  # サンプルは先頭の 1 ファイルのみ使用
-
-    title = pairs.get(TITLE_LABEL) or "サンプル調達案件"
+    """ナビゲーションシートから材料ファイル＋生成指示の成果物 zip を作る。"""
+    sheet = _read_nav_sheet(files)
+    title = next((r.label for r in sheet.rows if r.label.strip()), "文書")
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    instruction = sheet.instruction.strip()
 
     outputs: dict[str, str] = {}
-    manifest: list[dict[str, Any]] = [
-        {"file": "README.md", "section_key": "readme", "title": "README", "order": 1}
-    ]
-    outputs["README.md"] = (
-        f"# {title}\n\n"
-        f"> このファイルは汎用生成サービス（procuretech-generate-app）が生成しました"
-        f"（doc_type: `{doc_type}`）。\n"
-        f"> 本番では非公開の生成サービスがテンプレート＋LLM/Dify で章別 Markdown を生成します。\n\n"
-        f"- 生成日時: {ts}\n"
-    )
-    for label, key, section_title, filename, order in FIELDS:
-        body = _bullets_or_paragraph(pairs.get(label, ""))
-        outputs[filename] = f"# {section_title}\n\n{body}\n"
+    manifest: list[dict[str, Any]] = []
+    inventory: list[tuple[str, str]] = []
+    used_names: set[str] = {README_FILENAME, "sections.json"}
+    used_keys: set[str] = {README_SECTION_KEY}
+
+    generated, skip_note = _write_generated_document(instruction, sheet.rows)
+    if generated:
+        outputs[GENERATED_FILENAME] = generated
+        used_names.add(GENERATED_FILENAME)
+        used_keys.add(GENERATED_SECTION_KEY)
         manifest.append(
-            {"file": filename, "section_key": key, "title": section_title, "order": order}
+            {
+                "file": GENERATED_FILENAME,
+                "section_key": GENERATED_SECTION_KEY,
+                "title": "生成文書",
+                "order": 2,
+                "role": "generated",
+            }
         )
+        inventory.append((GENERATED_FILENAME, "生成指示に基づく成果物"))
 
-    import json
+    for i, row in enumerate(sheet.rows, start=1):
+        heading = (row.label or "").strip() or f"項目{i}"
+        filename = _unique_name(f"{i:02d}_{_safe_stem(heading, i)}.md", used_names)
+        used_names.add(filename)
+        key = _section_key(heading, i, used_keys)
+        used_keys.add(key)
+        outputs[filename] = f"# {heading}\n\n{_bullets_or_paragraph(row.value)}\n"
+        manifest.append(
+            {
+                "file": filename,
+                "section_key": key,
+                "title": heading,
+                "order": i + 10,
+                "role": "source",
+            }
+        )
+        inventory.append((filename, f"設問「{heading}」の回答（材料）"))
 
+    inventory.insert(0, (README_FILENAME, "このプロジェクトの概要と同梱ファイル一覧"))
+    outputs[README_FILENAME] = _readme_body(
+        title=title, doc_type=doc_type, ts=ts, inventory=inventory, note=skip_note
+    )
+    manifest.insert(
+        0,
+        {
+            "file": README_FILENAME,
+            "section_key": README_SECTION_KEY,
+            "title": "README",
+            "order": 1,
+            "role": "readme",
+        },
+    )
     outputs["sections.json"] = json.dumps(
         {"theme": "sample", "sections": manifest}, ensure_ascii=False, indent=2
     )
@@ -324,14 +469,12 @@ def template(key: str, x_api_key: str | None = Header(default=None)) -> Response
     err = _check_key(x_api_key)
     if err:
         return err
-    filename = TEMPLATES.get(key)
-    path = HEARING_DIR / filename if filename else None
-    if not path or not path.is_file():
+    if key not in TEMPLATE_KEYS:
         return JSONResponse(status_code=404, content={"error": "template not found"})
     return Response(
-        content=path.read_bytes(),
+        content=empty_workbook(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{TEMPLATE_FILENAME}"'},
     )
 
 
@@ -502,4 +645,19 @@ async def compose(
         content=buf.getvalue(),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="compose.zip"'},
+    )
+
+
+@app.get("/template/{input_key}")
+def template(input_key: str, x_api_key: str | None = Header(default=None)) -> Response:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    key = (input_key or "").strip().lower()
+    if key not in TEMPLATE_KEYS:
+        return JSONResponse(status_code=404, content={"error": "template not found"})
+    return Response(
+        content=empty_workbook(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{TEMPLATE_FILENAME}"'},
     )

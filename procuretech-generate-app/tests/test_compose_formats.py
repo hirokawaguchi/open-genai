@@ -40,6 +40,29 @@ def test_markdown_to_html_embeds_css_and_data_uri():
     assert "Noto Sans JP" in html
 
 
+def test_markdown_to_html_renders_gfm_table():
+    sections = [
+        {
+            "filename": "t.md",
+            "content": (
+                "# 概要\n\n"
+                "| 記事 | 主張 |\n"
+                "|------|------|\n"
+                "| 20260904 | **離職＝卒業** |\n"
+                "| 20260701 | データ主権 |\n"
+            ),
+        }
+    ]
+    body = markdown_to_html("文書", sections, {}).decode("utf-8")
+    assert "<table>" in body
+    assert "<th>記事</th>" in body
+    assert "<th>主張</th>" in body
+    assert "<td>20260904</td>" in body
+    assert "<strong>離職＝卒業</strong>" in body
+    assert "|------|" not in body
+    assert "<p>| 記事" not in body
+
+
 def test_compose_zip_respects_format():
     client = TestClient(app)
     res = client.post(

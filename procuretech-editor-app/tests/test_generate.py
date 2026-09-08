@@ -19,7 +19,14 @@ def test_normalize_compose_format():
 
 def test_default_theme_present():
     ids = [t["id"] for t in generate.THEMES]
+    assert ids[0] == "hearing"
     assert "procurement_spec" in ids
+    nav = generate.get_theme("hearing")
+    assert nav is not None
+    assert nav["id"] == "hearing"
+    assert nav["label"] == "ヒアリングシート"
+    assert generate.get_theme("navigation") is nav
+    assert [i["key"] for i in nav["inputs"]] == ["hearing"]
     theme = generate.get_theme("procurement_spec")
     assert theme is not None
     keys = [i["key"] for i in theme["inputs"]]
@@ -28,18 +35,37 @@ def test_default_theme_present():
 
 def test_public_themes_hides_secrets(monkeypatch):
     monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", BASE)
+    monkeypatch.setattr(generate, "probe_theme_health", lambda _url: True)
+    generate.clear_health_cache()
     pub = generate.public_themes()
-    assert pub and pub[0]["id"] == "procurement_spec"
-    assert pub[0]["configured"] is True
+    assert pub and {t["id"] for t in pub} >= {"procurement_spec"}
+    spec = next(t for t in pub if t["id"] == "procurement_spec")
+    assert spec["configured"] is True
     # 秘匿情報は含めない
-    assert "api_url" not in pub[0]
-    assert "api_key" not in pub[0]
+    assert "api_url" not in spec
+    assert "api_key" not in spec
 
 
-def test_is_configured_reflects_url(monkeypatch):
-    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "")
-    assert generate.is_configured() is False
+def test_public_themes_omits_unreachable(monkeypatch):
+    nav = generate.get_theme("navigation")
+    assert nav is not None
+    monkeypatch.setitem(nav, "api_url", "http://generate.test")
+    monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", "http://spec.test")
+    monkeypatch.setattr(
+        generate, "probe_theme_health", lambda url: "generate.test" in url
+    )
+    generate.clear_health_cache()
+    ids = [t["id"] for t in generate.public_themes()]
+    assert ids == ["hearing"]
+
+
+def test_is_configured_reflects_reachability(monkeypatch):
     monkeypatch.setattr(generate, "EDITOR_GENERATE_URL", BASE)
+    monkeypatch.setattr(generate, "probe_theme_health", lambda _url: False)
+    generate.clear_health_cache()
+    assert generate.is_configured() is False
+    monkeypatch.setattr(generate, "probe_theme_health", lambda _url: True)
+    generate.clear_health_cache()
     assert generate.is_configured() is True
 
 

@@ -8,6 +8,7 @@ import {
   usePatchformAvailable,
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
+  useProcuretechHearingAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -65,6 +66,12 @@ export const PROCURETECH_EDITOR_PATH = '/procuretech-editor';
 /** 情報化企画書エディタ exApp の識別子（専用ページへ振り替える対象） */
 export const PROCURETECH_EDITOR_EXAPP_ID = 'procuretech-editor';
 
+/** ヒアリングシートは汎用 exApp フォームではなく専用ページで提供する */
+export const PROCURETECH_HEARING_PATH = '/hearing-sheet';
+
+/** ヒアリングシート exApp の識別子（専用ページへ振り替える対象） */
+export const PROCURETECH_HEARING_EXAPP_ID = 'procuretech-hearing';
+
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
 
@@ -104,6 +111,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const patchformAvailable = usePatchformAvailable();
   const procuretechAvailable = useProcuretechAvailable();
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
+  const procuretechHearingAvailable = useProcuretechHearingAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const registryApps = useExAppStore((s) => s.exApps);
@@ -224,6 +232,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (procuretechHearingAvailable) {
+      items.push({
+        label: nameOf(PROCURETECH_HEARING_EXAPP_ID, 'ヒアリングシート'),
+        to: PROCURETECH_HEARING_PATH,
+        description: descOf(
+          PROCURETECH_HEARING_EXAPP_ID,
+          '複数の参考資料から項目と値を整理し、文書生成用の Excel を作ります。',
+        ),
+      });
+    }
+
     items.push({
       label: 'ナレッジ管理',
       to: KNOWLEDGE_PATH,
@@ -237,6 +256,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     patchformAvailable,
     procuretechAvailable,
     procuretechEditorAvailable,
+    procuretechHearingAvailable,
     registryApps,
   ]);
 };
@@ -277,6 +297,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 情報化企画書エディタは専用ページへ振り替える
   if (item.app.value === PROCURETECH_EDITOR_EXAPP_ID) {
     return PROCURETECH_EDITOR_PATH;
+  }
+  // ナビゲーションシートは専用ページへ振り替える
+  if (item.app.value === PROCURETECH_HEARING_EXAPP_ID) {
+    return PROCURETECH_HEARING_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

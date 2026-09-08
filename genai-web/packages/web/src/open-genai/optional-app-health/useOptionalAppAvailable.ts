@@ -20,7 +20,7 @@ const fetchConfigAvailable = async (path: string): Promise<boolean> => {
  * 未起動（502/503 / enabled=false）は非表示。取得前も出さない（ちらつき防止）。
  */
 const useOptionalAppAvailable = (path: string): boolean => {
-  const { data } = useSWR<boolean>(path, () => fetchConfigAvailable(path), {
+  const { data } = useSWR<boolean>(['optional-app-available', path], () => fetchConfigAvailable(path), {
     suspense: false,
     revalidateOnFocus: false,
     refreshInterval: 60_000,
@@ -38,3 +38,6 @@ export const useProcuretechAvailable = (): boolean =>
 
 export const useProcuretechEditorAvailable = (): boolean =>
   useOptionalAppAvailable('procuretech-editor/config');
+
+export const useProcuretechHearingAvailable = (): boolean =>
+  useOptionalAppAvailable('procuretech-hearing/config');

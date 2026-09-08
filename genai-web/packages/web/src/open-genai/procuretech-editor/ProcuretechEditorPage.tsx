@@ -34,6 +34,7 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
+import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
 import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
@@ -521,7 +522,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       if (item.section_key) {
         const f = fileByKey[item.section_key];
         return {
-          label: sectionLabel[item.section_key] ?? item.section_key,
+          label: sectionLabel[item.section_key] ?? f?.rel_path ?? item.section_key,
           path: f?.rel_path,
           available: !!f,
         };
@@ -549,10 +550,19 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     () => files.filter((f) => f.kind === 'markdown' || f.kind === 'text'),
     [files],
   );
-  const sectionOptions = useMemo(
-    () => (theme?.sections ?? []).filter((s) => !!fileByKey[s.key] && !excelSectionKeys.has(s.key)),
-    [theme, fileByKey, excelSectionKeys],
-  );
+  const sectionOptions = useMemo(() => {
+    const fromTheme = (theme?.sections ?? []).filter(
+      (s) => !!fileByKey[s.key] && !excelSectionKeys.has(s.key),
+    );
+    const known = new Set(fromTheme.map((s) => s.key));
+    const extras = composable
+      .filter(
+        (f) =>
+          !!f.section_key && !known.has(f.section_key) && !excelSectionKeys.has(f.section_key),
+      )
+      .map((f) => ({ key: f.section_key as string, label: f.rel_path }));
+    return [...fromTheme, ...extras];
+  }, [theme, fileByKey, excelSectionKeys, composable]);
   const fileOptions = useMemo(() => composable.filter((f) => !f.section_key), [composable]);
 
   const update = useCallback((next: EditorCompositionOutput[]) => {
@@ -1133,7 +1143,7 @@ export const ProcuretechEditorPage = () => {
   const [inputFiles, setInputFiles] = useState<Record<string, File | null>>({});
   const [generation, setGeneration] = useState<
     | { phase: 'idle' }
-    | { phase: 'running'; requestId: string; progress?: number; waitingReady?: boolean }
+    | { phase: 'running'; requestId?: string; progress?: number; waitingReady?: boolean }
     | { phase: 'done'; files: string[] }
     | { phase: 'error'; message: string }
   >({ phase: 'idle' });
@@ -1442,24 +1452,38 @@ export const ProcuretechEditorPage = () => {
   // 選択テーマのヒアリングシート（複数）から章別 Markdown 生成を開始する。
   const onStartGenerate = async () => {
     if (!projectId || !selectedTheme || !allInputsSelected) return;
-    const inputs: Record<string, string> = {};
-    for (const spec of selectedTheme.inputs) {
-      const file = inputFiles[spec.key];
-      if (!file) return;
-      inputs[spec.key] = await fileToBase64(file);
-    }
-    setGeneration({ phase: 'idle' });
+    if (generation.phase === 'running') return;
+    setGeneration({ phase: 'running' });
     setGenWaitingUrl(null);
-    const res = await actions.startGeneration(projectId, {
-      theme: selectedTheme.id,
-      inputs,
-    });
-    if (!res) return;
-    if (res.request_id) {
-      setGeneration({ phase: 'running', requestId: res.request_id });
-    } else if (res.error) {
-      setGeneration({ phase: 'error', message: res.error });
-    } else {
+    try {
+      const inputs: Record<string, string> = {};
+      for (const spec of selectedTheme.inputs) {
+        const file = inputFiles[spec.key];
+        if (!file) {
+          setGeneration({ phase: 'error', message: 'ファイルが選択されていません。' });
+          return;
+        }
+        inputs[spec.key] = await fileToBase64(file);
+      }
+      const res = await actions.startGeneration(projectId, {
+        theme: selectedTheme.id,
+        inputs,
+      });
+      if (!res) {
+        setGeneration({
+          phase: 'error',
+          message: '生成を開始できませんでした。もう一度お試しください。',
+        });
+        return;
+      }
+      if (res.request_id) {
+        setGeneration({ phase: 'running', requestId: res.request_id });
+      } else if (res.error) {
+        setGeneration({ phase: 'error', message: res.error });
+      } else {
+        setGeneration({ phase: 'error', message: '生成を開始できませんでした。' });
+      }
+    } catch {
       setGeneration({ phase: 'error', message: '生成を開始できませんでした。' });
     }
   };
@@ -2442,7 +2466,10 @@ export const ProcuretechEditorPage = () => {
         onClose={() => (generation.phase === 'running' ? undefined : setGenerateOpen(false))}
       >
         <CustomDialogPanel className='max-w-xl'>
-          <CustomDialogHeader hasClose onClose={() => setGenerateOpen(false)}>
+          <CustomDialogHeader
+            hasClose={generation.phase !== 'running'}
+            onClose={() => (generation.phase === 'running' ? undefined : setGenerateOpen(false))}
+          >
             <span className='inline-flex items-center gap-2'>
               <PiTable className='size-6 text-solid-gray-700' />
               ヒアリングシートから生成
@@ -2619,28 +2646,27 @@ export const ProcuretechEditorPage = () => {
                       >
                         {generation.phase === 'done' ? '閉じる' : 'キャンセル'}
                       </Button>
-                      <Button
+                      <LoadingButton
                         type='button'
                         variant='solid-fill'
                         size='md'
+                        loading={generation.phase === 'running'}
                         disabled={
                           selectedTheme.configured === false ||
                           !allInputsSelected ||
-                          actions.submitting ||
-                          generation.phase === 'running' ||
                           generation.phase === 'done'
                         }
                         onClick={onStartGenerate}
                       >
                         <span className='inline-flex items-center gap-1 whitespace-nowrap'>
-                          <PiMagicWand className='size-4' />
+                          {generation.phase !== 'running' && <PiMagicWand className='size-4' />}
                           {generation.phase === 'running'
                             ? '生成中…'
                             : generation.phase === 'done'
                               ? '取り込み済み'
                               : '生成して取り込み'}
                         </span>
-                      </Button>
+                      </LoadingButton>
                     </div>
                   </div>
                 </>

@@ -5,11 +5,13 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY requirements.txt ./
+# ビルドコンテキストはリポジトリルート（shared/navsheet を共有するため）
+COPY procuretech-generate-app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY materials ./materials
+COPY shared ./shared
+COPY procuretech-generate-app/app ./app
+COPY procuretech-generate-app/materials ./materials
 
 EXPOSE 8016
 

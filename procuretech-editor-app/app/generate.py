@@ -24,7 +24,9 @@
     }
   ]
 
-未設定時は、従来どおり `EDITOR_GENERATE_URL` を用いる単一テーマ（調達仕様書）を既定で用いる。
+未設定時は、ナビゲーションシート（generate-app）と調達仕様書（EDITOR_GENERATE_URL）の
+2 テーマを既定で持つ。画面に出すのは、生成 API の `/health` が通るテーマだけ
+（generate-app は標準起動、spec-app はオプション）。
 
 契約（Nextcloud 非依存・結果は zip で受け取る）:
 
@@ -41,6 +43,7 @@ import asyncio
 import base64
 import json
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -79,6 +82,48 @@ class GenerateError(RuntimeError):
 
 
 # --- テーマ定義 ---------------------------------------------------------------
+
+HEARING_THEME_ID = "hearing"
+HEARING_THEME_ALIASES = frozenset({"navigation"})
+
+
+def _navigation_theme() -> dict[str, Any]:
+    """hearing-app で作ったヒアリングシート → generate-app の汎用生成。"""
+    return {
+        "id": HEARING_THEME_ID,
+        "label": "ヒアリングシート",
+        "description": (
+            "ヒアリングシート（hearing で作成した Excel）から"
+            "設問ごとの材料と、生成指示に基づく成果物 Markdown を作ります。"
+        ),
+        "doc_type": "sample",
+        "api_url": EDITOR_COMPOSE_URL,
+        "api_key": EDITOR_COMPOSE_API_KEY,
+        "inputs": [
+            {
+                "key": "hearing",
+                "label": "ヒアリングシート",
+                "marker": "hearing-sheet",
+                "accept": ".xlsx",
+                "template": True,
+            }
+        ],
+        "sections": [],
+        "outputs": [
+            {"id": "doc", "name": "文書", "kind": "markdown", "sections": []}
+        ],
+    }
+
+
+def _normalize_theme_id(theme_id: str | None) -> str:
+    tid = (theme_id or "").strip()
+    return HEARING_THEME_ID if tid in HEARING_THEME_ALIASES else tid
+
+
+def _with_navigation(themes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if any(_normalize_theme_id(str(t.get("id") or "")) == HEARING_THEME_ID for t in themes):
+        return themes
+    return [_navigation_theme(), *themes]
 
 
 def _default_theme() -> dict[str, Any]:
@@ -169,8 +214,10 @@ def _load_themes() -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             data = None
         if isinstance(data, list) and data:
-            return [t for t in data if isinstance(t, dict) and t.get("id")]
-    return [_default_theme()]
+            return _with_navigation(
+                [t for t in data if isinstance(t, dict) and t.get("id")]
+            )
+    return _with_navigation([_default_theme()])
 
 
 THEMES: list[dict[str, Any]] = _load_themes()
@@ -202,11 +249,15 @@ def plain_theme() -> dict[str, Any]:
 
 
 def get_theme(theme_id: str | None) -> dict[str, Any] | None:
-    """テーマ id からテーマ定義を返す。未指定なら先頭テーマ。見つからなければ None。"""
+    """テーマ id からテーマ定義を返す。未指定なら先頭テーマ。見つからなければ None。
+
+    旧 id `navigation` は `hearing` として解決する。
+    """
     if not theme_id:
         return THEMES[0] if THEMES else None
+    wanted = _normalize_theme_id(theme_id)
     for t in THEMES:
-        if t.get("id") == theme_id:
+        if _normalize_theme_id(str(t.get("id") or "")) == wanted:
             return t
     return None
 
@@ -214,6 +265,39 @@ def get_theme(theme_id: str | None) -> dict[str, Any] | None:
 def theme_base_url(theme: dict[str, Any]) -> str:
     """テーマの生成 API ベース URL（未指定なら共通 EDITOR_GENERATE_URL）。"""
     return str(theme.get("api_url") or EDITOR_GENERATE_URL or "").rstrip("/")
+
+
+HEALTH_TTL_SECONDS = 20.0
+HEALTH_TIMEOUT = 1.5
+_health_cache: dict[str, tuple[float, bool]] = {}
+
+
+def probe_theme_health(url: str) -> bool:
+    """生成サービスの `/health` が 200 なら起動中とみなす。"""
+    try:
+        with httpx.Client(timeout=HEALTH_TIMEOUT) as client:
+            res = client.get(f"{url.rstrip('/')}/health")
+        return res.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def theme_reachable(theme: dict[str, Any]) -> bool:
+    """URL があり、相手コンテナが応答しているか（短い TTL でキャッシュ）。"""
+    url = theme_base_url(theme)
+    if not url:
+        return False
+    now = time.monotonic()
+    hit = _health_cache.get(url)
+    if hit and now - hit[0] < HEALTH_TTL_SECONDS:
+        return hit[1]
+    ok = probe_theme_health(url)
+    _health_cache[url] = (now, ok)
+    return ok
+
+
+def clear_health_cache() -> None:
+    _health_cache.clear()
 
 
 def theme_api_key(theme: dict[str, Any]) -> str:
@@ -251,16 +335,18 @@ def theme_outputs(theme: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def public_themes() -> list[dict[str, Any]]:
-    """フロントへ返すテーマ一覧（api_url / api_key 等の秘匿情報は含めない）。"""
+    """フロントへ返すテーマ一覧（起動中の生成 API だけ。秘匿情報は含めない）。"""
     out: list[dict[str, Any]] = []
     for t in THEMES:
+        if not theme_reachable(t):
+            continue
         out.append(
             {
                 "id": t.get("id"),
                 "label": t.get("label", t.get("id")),
                 "description": t.get("description", ""),
                 "doc_type": t.get("doc_type", DEFAULT_DOC_TYPE),
-                "configured": bool(theme_base_url(t)),
+                "configured": True,
                 "inputs": [
                     {
                         "key": i.get("key"),
@@ -280,8 +366,8 @@ def public_themes() -> list[dict[str, Any]]:
 
 
 def is_configured() -> bool:
-    """少なくとも 1 つのテーマで生成 API が解決できるか。"""
-    return any(theme_base_url(t) for t in THEMES)
+    """少なくとも 1 つのテーマで生成 API が起動しているか。"""
+    return any(theme_reachable(t) for t in THEMES)
 
 
 def _headers(api_key: str) -> dict[str, str]:

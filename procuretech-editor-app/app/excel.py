@@ -6,6 +6,7 @@
 
 - `systemplan`: 情報化企画書（システム化計画書）本体
 - `global`: 全般的事項（案件横断の共通設定）
+- `hearing-sheet`: ヒアリングシート（hearing / generate-app。旧 `navigation-sheet` も可）
 
 `B1` が期待値と一致しない場合はユーザーに提示可能な `ExcelError` を送出する。
 """
@@ -22,6 +23,12 @@ SHEET_MARKER_CELL = "B1"
 MARKERS: dict[str, str] = {
     "systemplan": "情報化企画書",
     "global": "全般的事項",
+    "hearing-sheet": "ヒアリングシート",
+    "navigation-sheet": "ヒアリングシート",  # 旧マーカー
+}
+_MARKER_EQUIV: dict[str, set[str]] = {
+    "hearing-sheet": {"hearing-sheet", "navigation-sheet"},
+    "navigation-sheet": {"hearing-sheet", "navigation-sheet"},
 }
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -91,12 +98,13 @@ def read_marker(raw: bytes) -> str:
 
 
 def validate_type(raw: bytes, expected: str) -> str:
-    """期待する種別（systemplan / global）と一致するか検証し、表示名を返す。"""
+    """期待する種別と一致するか検証し、表示名を返す。"""
     expected = (expected or "").strip().lower()
     if expected not in MARKERS:
         raise ExcelError(f"未知の種別です: {expected}")
     marker = read_marker(raw)
-    if marker != expected:
+    accepted = _MARKER_EQUIV.get(expected, {expected})
+    if marker not in accepted:
         label = MARKERS[expected]
         raise ExcelError(
             f"この Excel は「{label}」ファイルではありません（識別情報 B1 が一致しません）。"
