@@ -43,6 +43,7 @@
 - 表示名を「ナビゲーションシート」から「ヒアリングシート」へ変更（おすすめカード・専用ページ・Markdown エディタのテーマ名）
 - 内部 ID も揃える。B1 マーカー `hearing-sheet`、テーマ id `hearing`、画面 URL `/hearing-sheet`（旧 `navigation-sheet` / `navigation` / `/procuretech-hearing` は互換）
 - HTML 書き出しで Markdown 表（GFM）を `<table>` に変換する
+- html / pptx 書き出しを同じデッキ計画にする（主張タイトル・4基本形・機械検査・伏せたレビュー）。HTML は 16:9 スライド（計画失敗時のみ従来の長文）
 
 ## [0.9.0] - 2026-09-04
 

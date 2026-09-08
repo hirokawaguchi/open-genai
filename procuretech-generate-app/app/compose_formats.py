@@ -237,6 +237,27 @@ def _is_table_sep(cells: list[str]) -> bool:
     )
 
 
+def parse_gfm_table(lines: list[str]) -> dict[str, list[list[str]] | list[str]] | None:
+    """GFM 表を headers / rows に分解する。区切り行は捨てる。"""
+    raw = [ln for ln in lines if ln.strip()]
+    if len(raw) < 2:
+        return None
+    parsed = [_table_cells(ln) for ln in raw]
+    header = parsed[0]
+    if not header or not any(header):
+        return None
+    width = len(header)
+    rows: list[list[str]] = []
+    for cells in parsed[1:]:
+        if _is_table_sep(cells):
+            continue
+        padded = cells + [""] * width
+        rows.append(padded[:width])
+    if not rows:
+        return None
+    return {"headers": header, "rows": rows}
+
+
 def _table_html(block: list[str], assets: dict[str, bytes]) -> str:
     rows = [_table_cells(ln) for ln in block]
     header = rows[0]
@@ -519,9 +540,26 @@ def markdown_to_pptx(
 
     slide = None
     body_lines: list[tuple[str, bool]] = []
+    table_buf: list[str] = []
     text_flushed = False
     in_code = False
     code_lang = ""
+
+    def flush_table() -> None:
+        nonlocal table_buf, text_flushed
+        parsed = parse_gfm_table(table_buf)
+        table_buf = []
+        if not parsed or slide is None:
+            return
+        from pptx.util import Inches
+
+        from app.pptx_layouts import _add_table
+
+        rows = [list(parsed["headers"]), *[list(r) for r in parsed["rows"]]]
+        top = Inches(4.55) if text_flushed else Inches(1.4)
+        height = Inches(2.15) if text_flushed else Inches(5.1)
+        _add_table(slide, Inches(0.7), top, Inches(11.9), height, rows)
+        text_flushed = True
 
     def flush_text(*, narrow: bool = False) -> None:
         nonlocal body_lines, text_flushed
@@ -546,6 +584,7 @@ def markdown_to_pptx(
     def new_slide(title: str) -> None:
         nonlocal slide, text_flushed
         flush_text()
+        flush_table()
         slide = prs.slides.add_slide(blank)
         _add_content_chrome(slide, prs, title)
         text_flushed = False
@@ -583,6 +622,7 @@ def markdown_to_pptx(
                 body_lines.append((raw_line, False))
             continue
         if not stripped:
+            flush_table()
             continue
         hm = _HEADING_RE.match(stripped)
         if hm and len(hm.group(1)) <= 2:
@@ -591,8 +631,15 @@ def markdown_to_pptx(
         if hm:
             if slide is None:
                 new_slide(name)
+            flush_table()
             body_lines.append((hm.group(2).strip(), False))
             continue
+        if _TABLE_LINE_RE.match(stripped):
+            if slide is None:
+                new_slide(name)
+            table_buf.append(stripped)
+            continue
+        flush_table()
         m = _IMAGE_LINE_RE.match(stripped)
         if m:
             add_image(_rel_of(m.group(1)))
@@ -606,6 +653,7 @@ def markdown_to_pptx(
         if text:
             body_lines.append((text, bool(bm)))
     flush_text()
+    flush_table()
     _add_slide_footers(prs)
 
     out = io.BytesIO()

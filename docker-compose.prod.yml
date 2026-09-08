@@ -625,6 +625,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
+      - GENERATE_PPTX_REVIEW=${GENERATE_PPTX_REVIEW:-1}
       - GENERATE_LLM=${GENERATE_LLM:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
