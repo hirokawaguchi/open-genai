@@ -36,6 +36,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
+from app.exapp_history import history_inputs
 from shared import ssrfguard
 
 from . import (
@@ -941,28 +942,6 @@ def _redact_for_audit(inputs: Any) -> Any:
             continue
         out[k] = v
     return out
-
-
-def _history_inputs(inputs: Any) -> Any:
-    """履歴用に inputs.files の本文(base64)を落とす。ファイル名は残す。"""
-    if not isinstance(inputs, dict):
-        return inputs
-    files = inputs.get("files")
-    if not isinstance(files, list):
-        return inputs
-    slim_files: list[Any] = []
-    for entry in files:
-        if not isinstance(entry, dict):
-            slim_files.append(entry)
-            continue
-        inner = []
-        for f in entry.get("files") or []:
-            if isinstance(f, dict):
-                inner.append({"filename": f.get("filename", "file"), "content": ""})
-            else:
-                inner.append(f)
-        slim_files.append({**entry, "files": inner})
-    return {**inputs, "files": slim_files}
 
 
 def _is_http_url(url: Any) -> bool:
@@ -2709,7 +2688,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "inputs": _history_inputs(inputs),
+                    "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
                     "progress": "",
@@ -2920,7 +2899,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "inputs": _history_inputs(inputs),
+                    "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
                     "progress": "",
