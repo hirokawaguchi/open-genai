@@ -15,6 +15,12 @@ export const useExAppInvokeState = () => {
       store.setExAppResponse(null);
       if (isApiError(error)) {
         const data = error.data as { error?: string };
+        if (error.status === 413) {
+          throw new Error(
+            data?.error ||
+              'ファイルが大きすぎます。音声はおおよそ180MBまでです。分割してから再度お試しください。',
+          );
+        }
         throw new Error(
           data?.error ||
             '処理中にエラーが発生しました。時間をおいて再度お試しください。解消しない場合は管理者にお問い合わせください。',
