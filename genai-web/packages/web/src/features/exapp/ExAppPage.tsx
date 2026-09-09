@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useMemo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
-import { useLocation, useParams } from 'react-router';
+import { Navigate, useLocation, useParams } from 'react-router';
+import { builtinRouteOf } from '@/features/exapps/utils/builtinExApp';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -34,6 +35,7 @@ export const ExAppPage = () => {
     isLoading: isExAppLoading,
     error: exAppFetchError,
   } = useFetchExApp(teamId, exAppId);
+  const builtinRoute = builtinRouteOf(exApp?.config);
 
   useEffect(() => {
     clear();
@@ -118,6 +120,10 @@ export const ExAppPage = () => {
   const pageTitle = exApp?.exAppName
     ? `${exApp.exAppName}${APP_TITLE ? ` | ${APP_TITLE}` : ''}`
     : undefined;
+
+  if (builtinRoute) {
+    return <Navigate to={builtinRoute} replace />;
+  }
 
   return (
     <LayoutBody>

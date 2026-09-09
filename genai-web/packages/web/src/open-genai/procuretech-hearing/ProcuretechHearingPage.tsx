@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/dads/Label';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PROCURETECH_HEARING_EXAPP_ID } from '@/layout/navItems';
@@ -45,6 +46,11 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
 );
 
 export const ProcuretechHearingPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    PROCURETECH_HEARING_EXAPP_ID,
+    'ヒアリングシート',
+  );
   const { config, isLoading: configLoading, unavailable } = useHearingConfig();
   const { sessions, mutate: mutateSessions } = useHearingSessions();
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -188,7 +194,7 @@ export const ProcuretechHearingPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='ヒアリングシート' />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-4 p-6 lg:p-8'>
         <ManagedAppHeader
           teamId={COMMON_EXAPPS_TEAM_ID}

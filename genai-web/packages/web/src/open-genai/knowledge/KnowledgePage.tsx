@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PageTitle } from '@/components/PageTitle';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Label } from '@/components/ui/dads/Label';
 import { Select } from '@/components/ui/dads/Select';
-import { APP_TITLE } from '@/constants';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { DocsSection } from './DocsSection';
 import { RegisterSection } from './RegisterSection';
@@ -19,6 +20,11 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 export const KnowledgePage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    'knowledge',
+    'ナレッジ管理',
+  );
   const { scopes, isSystemAdmin, isLoading: scopesLoading } = useScopes();
   const [scope, setScope] = useState('');
   const [tab, setTab] = useState<Tab>('docs');
@@ -38,16 +44,17 @@ export const KnowledgePage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`ナレッジ管理${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto p-6 max-w-(--page-width) lg:p-8'>
-        <BreadcrumbsNav
-          items={[{ label: 'ホーム', to: '/' }, { label: 'ナレッジ管理' }]}
-          className='mb-4'
-        />
-        <h1 className='mb-2 text-std-20B-160 lg:text-std-24B-150'>ナレッジ管理</h1>
-        <p className='mb-6 text-solid-gray-600'>
-          共有ナレッジや所属チームの資料を登録・管理します。検索は「AIアプリ」のナレッジ検索から行えます。
-        </p>
+        <div className='mb-6'>
+          <ManagedAppHeader
+            teamId={COMMON_EXAPPS_TEAM_ID}
+            exAppId='knowledge'
+            fallbackTitle='ナレッジ管理'
+            fallbackDescription='共有ナレッジや所属チームの資料を登録・管理します。検索は「ナレッジ検索」から行えます。'
+            breadcrumbItems={[{ label: 'ホーム', to: '/' }, { label: 'ナレッジ管理' }]}
+          />
+        </div>
 
         {/* スコープセレクタ */}
         <div className='mb-6 flex flex-col gap-1.5'>

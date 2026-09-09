@@ -2,7 +2,12 @@ import { useRef } from 'react';
 import { ModelSelector } from '@/features/generate-image/components/ModelSelector';
 import { useStickyHeader } from '@/features/generate-image/hooks/useStickyHeader';
 
-export const GenerateImageStickyHeader = () => {
+type Props = {
+  title?: string;
+};
+
+export const GenerateImageStickyHeader = (props: Props) => {
+  const title = props.title || '画像を生成';
   const sentinelRef = useRef<HTMLDivElement>(null);
   const isSticky = useStickyHeader(sentinelRef);
 
@@ -20,7 +25,7 @@ export const GenerateImageStickyHeader = () => {
             aria-hidden={true}
             className='hidden text-std-16B-170 group-data-[is-sticky="true"]/sticky:block'
           >
-            画像を生成
+            {title}
           </p>
           <ModelSelector />
         </div>

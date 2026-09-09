@@ -1,6 +1,7 @@
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
-import { APP_TITLE } from '@/constants';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { DiagramGenerateForm } from '@/features/generate-diagram/components/DiagramGenerateForm';
 import { DiagramGeneratingStep } from '@/features/generate-diagram/components/DiagramGeneratingStep';
 import { DiagramHeader } from '@/features/generate-diagram/components/DiagramHeader';
@@ -19,6 +20,11 @@ import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { LayoutBody } from '@/layout/LayoutBody';
 
 export const GenerateDiagramPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    'diagram',
+    'ダイアグラムを生成',
+  );
   const { usecase, chatId } = useUsecasePath();
   const { loading, messages } = useDiagram(usecase, chatId);
 
@@ -43,7 +49,7 @@ export const GenerateDiagramPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`ダイアグラムを生成${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto p-6 max-w-(--page-width) lg:p-8'>
         <DiagramHeader />
         <Divider className='my-6' />

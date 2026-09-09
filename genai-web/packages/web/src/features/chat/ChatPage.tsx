@@ -92,7 +92,7 @@ export const ChatPage = () => {
     }
   }, [messages, setContent, shouldAutoSubmit, search, state]);
 
-  const { title } = useChatTitle(chatTitle);
+  const { title, appName = 'チャット', description } = useChatTitle(chatTitle);
 
   const { accept, fileUploadable } = useFileUploadable();
 
@@ -180,10 +180,10 @@ export const ChatPage = () => {
               chatId
                 ? [
                     { label: 'ホーム', to: '/' },
-                    { label: 'チャット', to: '/chat' },
+                    { label: appName, to: '/chat' },
                     { label: title },
                   ]
-                : [{ label: 'ホーム', to: '/' }, { label: 'チャット' }]
+                : [{ label: 'ホーム', to: '/' }, { label: appName }]
             }
             className='mb-4'
           />
@@ -200,6 +200,9 @@ export const ChatPage = () => {
               </Button>
             )}
           </div>
+          {!chatId && description && (
+            <p className='mt-2 text-std-16N-170 text-solid-gray-700'>{description}</p>
+          )}
         </div>
 
         <div className='flex justify-between gap-10 xl:gap-16'>

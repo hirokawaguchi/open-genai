@@ -3,10 +3,12 @@ import { Button } from '@/components/ui/dads/Button';
 import { linkDefaultStyle } from '@/components/ui/dads/Link';
 import { decomposeId } from '@/utils/decomposeId';
 import { formatDateTime } from '@/utils/formatDateTime';
-import { getChatHistoryLink, getUsecaseLabel, resolveChatUsecase } from '@/utils/usecasePath';
+import { useUsecaseLabelFn } from '@/features/exapps/hooks/useUsecaseLabel';
+import { getChatHistoryLink, resolveChatUsecase } from '@/utils/usecasePath';
 import { useChatHistorySidebar } from '../hooks/useChatHistorySidebar';
 
 export const ChatHistorySidebar = () => {
+  const usecaseLabel = useUsecaseLabelFn();
   const { displayedChats, isLoading } = useChatHistorySidebar();
   const { chatId } = useParams();
 
@@ -51,7 +53,7 @@ export const ChatHistorySidebar = () => {
                       {formatDateTime(chat.createdDate)}
                     </time>
                     <span className='text-dns-14N-130 text-solid-gray-600'>
-                      {getUsecaseLabel(usecase)}
+                      {usecaseLabel(usecase)}
                     </span>
                     <p
                       className={`${linkDefaultStyle} group-hover/history:text-blue-900 group-hover/history:decoration-[calc(3/16*1rem)] group-aria-[current='page']/history:font-bold group-aria-[current='page']/history:text-blue-1000!`}
