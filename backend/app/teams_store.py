@@ -27,8 +27,9 @@ COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
 ADMIN_TEAM_ID = "00000000-0000-0000-0000-0000000000a1"
 ADMIN_TEAM_NAME = "管理者ツール"
 
-# GenU 組み込み機能（DB 未登録）の itemId。共通チームのアプリとしてピン留め対象になる。
-GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram"})
+# GenU 組み込み機能の itemId。共通チームのカタログ（名前・紹介・公開）として登録し、
+# ピン留め対象にもする。knowledge は専用ページだが同じカタログで出し分ける。
+GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram", "knowledge"})
 
 # 利用者ごとのピン留め上限
 MAX_APP_PINS = 8
@@ -190,7 +191,7 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
     """
     with _lock, _connect() as conn:
         exists = conn.execute(
-            "SELECT exAppId, teamId, exAppName, description, howToUse"
+            "SELECT exAppId, teamId, exAppName, description, howToUse, status"
             " FROM exapps WHERE exAppId = ?",
             (app["exAppId"],),
         ).fetchone()
@@ -201,6 +202,8 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             name = (exists["exAppName"] or "").strip() or app.get("exAppName", "")
             description = (exists["description"] or "").strip() or app.get("description", "")
             how_to_use = (exists["howToUse"] or "").strip() or app.get("howToUse", "")
+            # 公開ステータスは管理者がメニュー表示の切り替えに使うので上書きしない
+            status = (exists["status"] or "").strip() or app.get("status", "published")
             # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）
             conn.execute(
                 "UPDATE exapps SET teamId=?, exAppName=?, endpoint=?, apiKey=?, config=?,"
@@ -216,7 +219,7 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
                     description,
                     how_to_use,
                     1 if app.get("copyable") else 0,
-                    app.get("status", "published"),
+                    status,
                     now,
                     app["exAppId"],
                 ),
@@ -840,11 +843,42 @@ def create_exapp(team_id: str, data: dict[str, Any]) -> dict[str, Any]:
     return _row_to_exapp(r)
 
 
+def is_builtin_exapp(app: dict[str, Any] | None) -> bool:
+    """源内の汎用ページ（チャット等）をカタログ登録した組み込みアプリか。"""
+    if not app:
+        return False
+    try:
+        cfg = json.loads(app.get("config") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return bool(cfg.get("builtin"))
+
+
+def list_builtin_exapps() -> list[dict[str, Any]]:
+    """組み込みカタログ（下書き含む）。メニュー表示の判定用。"""
+    teams = {t["teamId"]: t["teamName"] for t in list_teams()}
+    with _lock, _connect() as conn:
+        rows = conn.execute("SELECT * FROM exapps").fetchall()
+    result = []
+    for r in rows:
+        app = _row_to_exapp(r)
+        if is_builtin_exapp(app):
+            result.append({**app, "teamName": teams.get(app["teamId"], "")})
+    return result
+
+
 def update_exapp(team_id: str, ex_app_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
     current = get_exapp(team_id, ex_app_id)
     if not current:
         return None
-    merged = {**current, **{k: v for k, v in data.items() if v is not None}}
+    incoming = {k: v for k, v in data.items() if v is not None}
+    if is_builtin_exapp(current):
+        incoming = {
+            k: incoming[k]
+            for k in ("exAppName", "description", "howToUse", "status")
+            if k in incoming
+        }
+    merged = {**current, **incoming}
     merged["createdDate"] = current["createdDate"]
     with _lock, _connect() as conn:
         _write_exapp(conn, ex_app_id, team_id, merged)
@@ -854,7 +888,11 @@ def update_exapp(team_id: str, ex_app_id: str, data: dict[str, Any]) -> dict[str
     return _row_to_exapp(r)
 
 
-def delete_exapp(team_id: str, ex_app_id: str) -> None:
+def delete_exapp(team_id: str, ex_app_id: str) -> bool:
+    """削除する。組み込みカタログは削除不可（False）。"""
+    current = get_exapp(team_id, ex_app_id)
+    if current and is_builtin_exapp(current):
+        return False
     with _lock, _connect() as conn:
         conn.execute(
             "DELETE FROM exapps WHERE teamId = ? AND exAppId = ?",
@@ -864,6 +902,7 @@ def delete_exapp(team_id: str, ex_app_id: str) -> None:
             "DELETE FROM user_app_pins WHERE teamId = ? AND itemId = ?",
             (team_id, ex_app_id),
         )
+    return True
 
 
 def reassign_exapp_refs(team_id: str, old_id: str, new_id: str) -> None:
@@ -948,7 +987,11 @@ def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
 def _is_pinnable_app(user_id: str, team_id: str, item_id: str, is_system_admin: bool) -> bool:
     """ピン留め可能か（本人が見える公開 exApp、または共通チームの GenU 機能）。"""
     if team_id == COMMON_TEAM_ID and item_id in GENU_APP_IDS:
-        return True
+        app = get_exapp(COMMON_TEAM_ID, item_id)
+        # 未シード環境の後方互換。登録済みなら公開中だけピン留め可。
+        if app is None:
+            return True
+        return app.get("status") == "published"
     visible = list_visible_exapps(user_id, is_system_admin)
     return any(a["teamId"] == team_id and a["exAppId"] == item_id for a in visible)
 

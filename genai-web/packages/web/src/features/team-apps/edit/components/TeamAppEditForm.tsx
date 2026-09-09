@@ -20,6 +20,7 @@ import { EXAPP_STATUS_OPTIONS, MARKDOWN_EXAMPLE } from '@/constants';
 import { isApiError } from '@/lib/fetcher';
 import { escapeNewlinesInJsonFields } from '@/utils/escapeNewlinesInJsonFields';
 import { focus } from '@/utils/focus';
+import { isBuiltinExApp } from '@/features/exapps/utils/builtinExApp';
 import { useUpdateTeamApp } from '../hooks/useUpdateTeamApp';
 import { teamAppEditSchema } from '../schema';
 
@@ -29,6 +30,7 @@ type Props = {
 
 export const TeamAppEditForm = (props: Props) => {
   const { app } = props;
+  const builtin = isBuiltinExApp(app);
 
   const navigate = useNavigate();
 
@@ -113,7 +115,7 @@ export const TeamAppEditForm = (props: Props) => {
           <RequirementBadge>※必須</RequirementBadge>
         </Label>
         <SupportText id={`team-app-description-support`}>
-          一覧に表示する簡単な説明（30文字程度）
+          おすすめ・アプリ一覧に表示する簡単な説明（30文字程度）
         </SupportText>
         <Input
           id={`team-app-description`}
@@ -167,6 +169,8 @@ export const TeamAppEditForm = (props: Props) => {
         </Disclosure>
       </div>
 
+      {!builtin && (
+        <>
       <Divider className='my-6' />
 
       <div className='flex flex-col gap-1.5'>
@@ -297,6 +301,8 @@ export const TeamAppEditForm = (props: Props) => {
           </ErrorText>
         )}
       </div>
+        </>
+      )}
 
       <Divider className='my-6' />
 
@@ -306,7 +312,7 @@ export const TeamAppEditForm = (props: Props) => {
           <RequirementBadge>※必須</RequirementBadge>
         </Label>
         <SupportText id={`team-app-status-support`}>
-          下書きの場合、一覧には表示されません
+          下書きにすると、おすすめ・すべてのAIアプリ・ピン留め対象から消えます
         </SupportText>
         <Select
           id={`team-app-status`}
@@ -330,6 +336,8 @@ export const TeamAppEditForm = (props: Props) => {
         )}
       </div>
 
+      {!builtin && (
+        <>
       <Divider className='my-6' />
 
       <fieldset>
@@ -338,6 +346,8 @@ export const TeamAppEditForm = (props: Props) => {
         </Legend>
         <Checkbox {...register('copyable')}>このAIアプリをコピー可能にする</Checkbox>
       </fieldset>
+        </>
+      )}
 
       {error && (
         <section className='my-4'>

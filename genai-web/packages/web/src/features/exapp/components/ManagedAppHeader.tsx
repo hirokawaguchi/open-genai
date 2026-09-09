@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { PiBookOpenBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
-import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { ExAppHeader } from './ExAppHeader';
 import { ExAppUsageMarkdownRenderer } from './ExAppUsageMarkdownRenderer';
 
@@ -35,20 +35,26 @@ export const ManagedAppHeader = (props: Props) => {
     enabled = true,
     children,
   } = props;
-  const { data: exApp } = useFetchExApp(enabled ? teamId : '', enabled ? exAppId : '');
+  const { title, description, howToUse: howTo, exApp } = useRegisteredAppMeta(
+    teamId,
+    exAppId,
+    fallbackTitle,
+    fallbackDescription,
+    enabled,
+  );
 
   if (exApp && !breadcrumbItems && !children) {
     return <ExAppHeader exApp={exApp} />;
   }
 
-  const title = (exApp?.exAppName || '').trim() || fallbackTitle;
-  const description = (exApp?.description || '').trim() || fallbackDescription;
-  const howTo = (exApp?.howToUse || '').trim();
-  const crumbs = breadcrumbItems ?? [
+  const defaultCrumbs = [
     { label: 'ホーム', to: '/' },
     { label: 'AIアプリ', to: '/apps' },
     { label: title },
   ];
+  const crumbs = (breadcrumbItems ?? defaultCrumbs).map((c) =>
+    c.label === fallbackTitle ? { ...c, label: title } : c,
+  );
 
   return (
     <div className='flex flex-col gap-4'>

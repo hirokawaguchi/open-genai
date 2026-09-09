@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PROMPT_EXAPP_ID } from '@/layout/navItems';
@@ -23,6 +24,11 @@ const MODES: { id: Mode; label: string }[] = [
  * プレビュー→チャットへ、というカタログ型 UI を専用ページとして提供する。
  */
 export const PromptTemplatesPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    PROMPT_EXAPP_ID,
+    'プロンプトテンプレート',
+  );
   const [mode, setMode] = useState<Mode>('use');
   const { templates, teams, canCreateStandard, isLoading, loadError, mutate } =
     usePromptTemplates();
@@ -35,7 +41,7 @@ export const PromptTemplatesPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='プロンプトテンプレート' />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <ManagedAppHeader
           teamId={COMMON_EXAPPS_TEAM_ID}

@@ -2,7 +2,8 @@ import { useCallback, useEffect } from 'react';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { Switch } from '@/components/ui/Switch';
-import { APP_TITLE } from '@/constants';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { TranslateForm } from '@/features/translate/components/TranslateForm';
 import { TranslateHeader } from '@/features/translate/components/TranslateHeader';
 import { useReset } from '@/features/translate/hooks/useReset';
@@ -18,6 +19,7 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { debounce } from '@/utils/debounce';
 
 export const TranslatePage = () => {
+  const { documentTitle } = useRegisteredAppMeta(COMMON_EXAPPS_TEAM_ID, 'translate', '翻訳');
   const { sentence, additionalContext, language } = useTranslateStore();
 
   const { usecase, chatId } = useUsecasePath();
@@ -86,7 +88,7 @@ export const TranslatePage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`翻訳${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto p-6 max-w-(--page-width) lg:p-8'>
         <TranslateHeader />
         <Divider className='my-6' />

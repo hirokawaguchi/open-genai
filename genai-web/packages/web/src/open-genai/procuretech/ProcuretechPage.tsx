@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PROCURETECH_EXAPP_ID } from '@/layout/navItems';
@@ -330,6 +331,11 @@ const ExportPanel = ({
 };
 
 export const ProcuretechPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    PROCURETECH_EXAPP_ID,
+    '情報化企画書ナビ',
+  );
   const { config, isLoading: configLoading, unavailable } = useProcuretechConfig();
   const { sessions, mutate: mutateSessions } = useProcuretechSessions();
   const { createSession, deleteSession, submitting, error, setError } = useProcuretechActions();
@@ -418,7 +424,7 @@ export const ProcuretechPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='情報化企画書ナビ' />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-4 p-6 lg:p-8'>
         <ManagedAppHeader
           teamId={COMMON_EXAPPS_TEAM_ID}

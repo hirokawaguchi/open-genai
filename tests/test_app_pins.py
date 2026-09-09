@@ -39,6 +39,104 @@ def _make_team_with_app(store, team_name="テストチーム", admin="admin@exam
     return team, app
 
 
+def test_seed_preserves_edited_status(teams_store) -> None:
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "diagram",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "ダイアグラムを生成",
+            "endpoint": "http://127.0.0.1/builtin/diagram",
+            "config": '{"builtin": true, "route": "/diagram"}',
+            "description": "説明",
+            "howToUse": "使い方",
+            "status": "published",
+        }
+    )
+    teams_store.update_exapp(
+        teams_store.COMMON_TEAM_ID, "diagram", {"status": "draft"}
+    )
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "diagram",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "ダイアグラムを生成",
+            "endpoint": "http://127.0.0.1/builtin/diagram",
+            "config": '{"builtin": true, "route": "/diagram"}',
+            "description": "説明",
+            "howToUse": "使い方",
+            "status": "published",
+        }
+    )
+    app = teams_store.get_exapp(teams_store.COMMON_TEAM_ID, "diagram")
+    assert app["status"] == "draft"
+
+
+def test_builtin_update_keeps_endpoint(teams_store) -> None:
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "chat",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "チャット",
+            "endpoint": "http://127.0.0.1/builtin/chat",
+            "config": '{"builtin": true, "route": "/chat"}',
+            "description": "着想や整理のための壁打ち",
+            "howToUse": "使い方",
+            "status": "published",
+        }
+    )
+    teams_store.update_exapp(
+        teams_store.COMMON_TEAM_ID,
+        "chat",
+        {
+            "exAppName": "AIに質問",
+            "description": "アイディア出しや思考整理など",
+            "endpoint": "http://evil.example/invoke",
+            "status": "published",
+        },
+    )
+    app = teams_store.get_exapp(teams_store.COMMON_TEAM_ID, "chat")
+    assert app["exAppName"] == "AIに質問"
+    assert app["description"] == "アイディア出しや思考整理など"
+    assert app["endpoint"] == "http://127.0.0.1/builtin/chat"
+
+
+def test_cannot_delete_builtin(teams_store) -> None:
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "chat",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "チャット",
+            "endpoint": "http://127.0.0.1/builtin/chat",
+            "config": '{"builtin": true, "route": "/chat"}',
+            "description": "d",
+            "howToUse": "h",
+            "status": "published",
+        }
+    )
+    assert teams_store.delete_exapp(teams_store.COMMON_TEAM_ID, "chat") is False
+    assert teams_store.get_exapp(teams_store.COMMON_TEAM_ID, "chat") is not None
+
+
+def test_pin_rejects_draft_builtin(teams_store) -> None:
+    teams_store.upsert_seed_exapp(
+        {
+            "exAppId": "diagram",
+            "teamId": teams_store.COMMON_TEAM_ID,
+            "exAppName": "ダイアグラムを生成",
+            "endpoint": "http://127.0.0.1/builtin/diagram",
+            "config": '{"builtin": true, "route": "/diagram"}',
+            "description": "d",
+            "howToUse": "h",
+            "status": "draft",
+        }
+    )
+    pins, error = teams_store.add_user_app_pin(
+        "user@example.com", teams_store.COMMON_TEAM_ID, "diagram", False
+    )
+    assert pins is None
+    assert error is not None
+
+
 def test_seed_preserves_edited_description_and_howto(teams_store) -> None:
     teams_store.upsert_seed_exapp(
         {
