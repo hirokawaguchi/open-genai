@@ -12,7 +12,8 @@ import { useChatList } from '@/hooks/useChatList';
 import { useHighlight } from '@/hooks/useHighlight';
 import { decomposeId } from '@/utils/decomposeId';
 import { focus } from '@/utils/focus';
-import { getChatHistoryLink, getUsecaseLabel, resolveChatUsecase } from '@/utils/usecasePath';
+import { useUsecaseLabelFn } from '@/features/exapps/hooks/useUsecaseLabel';
+import { getChatHistoryLink, resolveChatUsecase } from '@/utils/usecasePath';
 
 type Props = {
   className?: string;
@@ -22,6 +23,7 @@ type Props = {
 };
 
 export const ChatListItem = (props: Props) => {
+  const usecaseLabel = useUsecaseLabelFn();
   const { className, chat, onUpdateTitle, highlightWords } = props;
 
   const [isEditing, setIsEditing] = useState(false);
@@ -101,7 +103,7 @@ export const ChatListItem = (props: Props) => {
                 to={getChatHistoryLink(chat)}
               >
                 <span className='text-dns-14N-130 text-solid-gray-600 no-underline'>
-                  {getUsecaseLabel(usecase)}
+                  {usecaseLabel(usecase)}
                 </span>
                 <div className='flex w-full items-center justify-start'>
                   <div className='relative flex-1'>

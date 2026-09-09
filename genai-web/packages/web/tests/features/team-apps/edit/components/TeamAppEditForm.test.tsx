@@ -623,7 +623,7 @@ describe('TeamAppEditForm', () => {
     it('has support text for description field', () => {
       renderWithRouter();
 
-      const supportText = screen.getByText(/一覧に表示する簡単な説明/);
+      const supportText = screen.getByText(/アプリ一覧に表示する簡単な説明/);
       expect(supportText).toBeDefined();
     });
 

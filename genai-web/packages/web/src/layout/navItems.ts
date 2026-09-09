@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
-import { useExAppStore } from '@/features/exapps/stores/useExAppStore';
+import { useExAppCatalog } from '@/features/exapps/hooks/useExAppCatalog';
+import { isCatalogListed } from '@/features/exapps/utils/builtinExApp';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import {
@@ -114,7 +115,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const procuretechHearingAvailable = useProcuretechHearingAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
-  const registryApps = useExAppStore((s) => s.exApps);
+  const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
 
   return useMemo(() => {
     const metaById = new Map<string, { name: string; description: string }>();
@@ -128,67 +129,76 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     }
     const nameOf = (id: string, fallback: string) => metaById.get(id)?.name || fallback;
     const descOf = (id: string, fallback: string) => metaById.get(id)?.description || fallback;
+    const listed = (id: string) => isCatalogListed(id, registryApps, catalogLoaded);
 
-    const items: NavLinkItem[] = [
-      {
-        label: 'チャット',
+    const items: NavLinkItem[] = [];
+
+    if (listed('chat')) {
+      items.push({
+        label: nameOf('chat', 'チャット'),
         to: '/chat',
         state: { shouldReset: true },
-        description: '着想や整理のための壁打ち',
-      },
-    ];
+        description: descOf('chat', '着想や整理のための壁打ち'),
+      });
+    }
 
-    if (isUseCaseEnabled('generate')) {
+    if (isUseCaseEnabled('generate') && listed('generate')) {
       items.push({
-        label: '文章を生成',
+        label: nameOf('generate', '文章を生成'),
         to: '/generate',
-        description: '手元の情報をもとに文章を作成',
+        description: descOf('generate', '手元の情報をもとに文章を作成'),
       });
     }
-    if (isUseCaseEnabled('translate')) {
+    if (isUseCaseEnabled('translate') && listed('translate')) {
       items.push({
-        label: '翻訳',
+        label: nameOf('translate', '翻訳'),
         to: '/translate',
-        description: '手元の文章を他の言語に翻訳',
+        description: descOf('translate', '手元の文章を他の言語に翻訳'),
       });
     }
-    if (isUseCaseEnabled('image') && imageAvailable) {
+    if (isUseCaseEnabled('image') && imageAvailable && listed('image')) {
       items.push({
-        label: '画像を生成',
+        label: nameOf('image', '画像を生成'),
         to: '/image',
-        description: 'プロンプトから資料用の挿絵やイメージ案を作成',
+        description: descOf('image', 'プロンプトから資料用の挿絵やイメージ案を作成'),
       });
     }
-    if (isUseCaseEnabled('diagram')) {
+    if (isUseCaseEnabled('diagram') && listed('diagram')) {
       items.push({
-        label: 'ダイアグラムを生成',
+        label: nameOf('diagram', 'ダイアグラムを生成'),
         to: '/diagram',
-        description: 'テキストからフローチャートやマインドマップを作成',
+        description: descOf('diagram', 'テキストからフローチャートやマインドマップを作成'),
       });
     }
 
-    items.push({
-      label: nameOf('whisper', '文字起こし'),
-      to: WHISPER_EXAPP_PATH,
-      description: descOf('whisper', '音声ファイルから文字起こし'),
-    });
+    if (listed('whisper')) {
+      items.push({
+        label: nameOf('whisper', '文字起こし'),
+        to: WHISPER_EXAPP_PATH,
+        description: descOf('whisper', '音声ファイルから文字起こし'),
+      });
+    }
 
-    items.push({
-      label: nameOf(PROMPT_EXAPP_ID, 'プロンプトテンプレート'),
-      to: PROMPT_TEMPLATES_PATH,
-      description: descOf(PROMPT_EXAPP_ID, '標準／共有テンプレートを選んでチャットへ'),
-    });
+    if (listed(PROMPT_EXAPP_ID)) {
+      items.push({
+        label: nameOf(PROMPT_EXAPP_ID, 'プロンプトテンプレート'),
+        to: PROMPT_TEMPLATES_PATH,
+        description: descOf(PROMPT_EXAPP_ID, '標準／共有テンプレートを選んでチャットへ'),
+      });
+    }
 
-    items.push({
-      label: nameOf(CHOSEI_EXAPP_ID, '日程調整'),
-      to: CHOSEI_PATH,
-      description: descOf(
-        CHOSEI_EXAPP_ID,
-        '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
-      ),
-    });
+    if (listed(CHOSEI_EXAPP_ID)) {
+      items.push({
+        label: nameOf(CHOSEI_EXAPP_ID, '日程調整'),
+        to: CHOSEI_PATH,
+        description: descOf(
+          CHOSEI_EXAPP_ID,
+          '庁内・外部参加者向けの日程調整。専用画面で作成・回答・集計できます。',
+        ),
+      });
+    }
 
-    if (doccheckAvailable) {
+    if (doccheckAvailable && listed(DOCCHECK_EXAPP_ID)) {
       items.push({
         label: nameOf(DOCCHECK_EXAPP_ID, '書類読取とチェック'),
         to: DOCCHECK_PATH,
@@ -199,7 +209,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (patchformAvailable) {
+    if (patchformAvailable && listed(PATCHFORM_EXAPP_ID)) {
       items.push({
         label: nameOf(PATCHFORM_EXAPP_ID, 'フォーム'),
         to: PATCHFORM_PATH,
@@ -210,7 +220,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (procuretechAvailable) {
+    if (procuretechAvailable && listed(PROCURETECH_EXAPP_ID)) {
       items.push({
         label: nameOf(PROCURETECH_EXAPP_ID, '情報化企画書ナビ'),
         to: PROCURETECH_PATH,
@@ -221,7 +231,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (procuretechEditorAvailable) {
+    if (procuretechEditorAvailable && listed(PROCURETECH_EDITOR_EXAPP_ID)) {
       items.push({
         label: nameOf(PROCURETECH_EDITOR_EXAPP_ID, 'Markdown エディタ'),
         to: PROCURETECH_EDITOR_PATH,
@@ -232,7 +242,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (procuretechHearingAvailable) {
+    if (procuretechHearingAvailable && listed(PROCURETECH_HEARING_EXAPP_ID)) {
       items.push({
         label: nameOf(PROCURETECH_HEARING_EXAPP_ID, 'ヒアリングシート'),
         to: PROCURETECH_HEARING_PATH,
@@ -243,11 +253,16 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    items.push({
-      label: 'ナレッジ管理',
-      to: KNOWLEDGE_PATH,
-      description: '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
-    });
+    if (listed('knowledge')) {
+      items.push({
+        label: nameOf('knowledge', 'ナレッジ管理'),
+        to: KNOWLEDGE_PATH,
+        description: descOf(
+          'knowledge',
+          '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
+        ),
+      });
+    }
 
     return items;
   }, [
@@ -258,6 +273,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     procuretechEditorAvailable,
     procuretechHearingAvailable,
     registryApps,
+    catalogLoaded,
   ]);
 };
 
