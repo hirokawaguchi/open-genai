@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { CHOSEI_EXAPP_ID } from '@/layout/navItems';
@@ -32,6 +33,11 @@ const newRow = (): DateRow => ({
  * Compose profiles: ["chosei"] 未起動時は有効化手順を案内する。
  */
 export const ChoseiPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    CHOSEI_EXAPP_ID,
+    '日程調整',
+  );
   const navigate = useNavigate();
   const { config, isLoading: configLoading, unavailable } = useChoseiConfig();
   const { events, isLoading, loadError, mutate } = useChoseiEvents();
@@ -80,7 +86,7 @@ export const ChoseiPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='日程調整' />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <ManagedAppHeader
           teamId={COMMON_EXAPPS_TEAM_ID}

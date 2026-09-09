@@ -1,14 +1,14 @@
 import { useCallback, useState } from 'react';
-import { PiBookOpenBold } from 'react-icons/pi';
 import { useNavigate } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { RightPanelCloseIcon } from '@/components/ui/icons/RightPanelClose';
 import { RightPanelOpenIcon } from '@/components/ui/icons/RightPanelOpen';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
-import { APP_TITLE } from '@/constants';
 import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
 import { useGenerateImageHandler } from '@/features/generate-image/hooks/useGenerateImageHandler';
 import { usePersistImageResult } from '@/features/generate-image/hooks/usePersistImageResult';
@@ -32,6 +32,11 @@ import { SketchMaskDialogs } from './components/SketchMaskDialogs';
 import { Canvas } from './types';
 
 export const GenerateImagePage = () => {
+  const { title: appName, documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    'image',
+    '画像を生成',
+  );
   const {
     prompt,
     setPrompt,
@@ -179,77 +184,75 @@ export const GenerateImagePage = () => {
   const breadcrumbItems = [
     { label: 'ホーム', to: '/' },
     { label: 'AIアプリ', to: '/apps' },
-    { label: '画像を生成', to: chatId ? undefined : '/image' },
+    { label: appName, to: chatId ? undefined : '/image' },
     ...(chatTitle ? [{ label: chatTitle }] : []),
   ];
 
   return (
     <>
-      <PageTitle title={`画像を生成${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto max-w-(--page-width) min-h-[calc(100dvh-var(--header-height))] pt-6 px-6 lg:px-8 lg:pt-8'>
-        <div className='mb-3.5'>
-          <BreadcrumbsNav items={breadcrumbItems} className='mb-4' />
-          <h1 className='flex justify-start text-std-20B-160 lg:text-std-24B-150'>画像を生成</h1>
-        </div>
-
-        <Disclosure className='mb-6 rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='prose prose-sm mt-3 max-w-full'>
-            <h2>このアプリでできること</h2>
-            <p>
-              プロンプト（文章）から画像を生成します。資料の挿絵やイメージ案の作成、
-              たたき台づくりに役立ちます。
-            </p>
-            <h3>操作方法</h3>
-            <ol>
-              <li>下部の入力欄に、生成したい画像の内容を入力して送信します（英語推奨・具体的に）。</li>
-              <li>右側の「生成結果」に画像が表示されます。</li>
-              <li>
-                「詳細設定」を開くと、ネガティブプロンプト・画像サイズ・ステップ数・シード・
-                スタイルなどを調整できます。
-              </li>
-              <li>スケッチ／マスク機能で、下絵や修正したい範囲を指定した生成もできます。</li>
-            </ol>
-            <h3>入力例・コツ</h3>
-            <ul>
-              <li>
-                プロンプトは具体的に。例:{' '}
-                <code>a flat vector illustration of a city hall, simple, clean</code>
-              </li>
-              <li>
-                避けたい要素はネガティブプロンプトに。例: <code>blurry, text, watermark</code>
-              </li>
-              <li>ステップ数を増やすと描き込みが増えますが、生成に時間がかかります。</li>
-            </ul>
-            <h3>前提（Stable Diffusion）</h3>
-            <p>
-              画像の描画にはホスト上の AUTOMATIC1111 互換サーバ（既定: ポート <code>7860</code>
-              ）が必要です。未起動の場合は別ターミナルで{' '}
-              <code>python3 scripts/mock-sd-server.py</code>（検証用）または Stable Diffusion
-              WebUI を <code>--api --listen --port 7860</code> 付きで起動してください。
-            </p>
-            <Disclosure className='my-4'>
-              <DisclosureSummary>仕組み・注意</DisclosureSummary>
-              <div className='pl-7'>
+        <div className='mb-6'>
+          <ManagedAppHeader
+            teamId={COMMON_EXAPPS_TEAM_ID}
+            exAppId='image'
+            fallbackTitle='画像を生成'
+            fallbackDescription='プロンプトから資料用の挿絵やイメージ案を作成'
+            breadcrumbItems={breadcrumbItems}
+            fallbackHowTo={
+              <div className='prose prose-sm mt-3 max-w-full'>
+                <h2>このアプリでできること</h2>
+                <p>
+                  プロンプト（文章）から画像を生成します。資料の挿絵やイメージ案の作成、
+                  たたき台づくりに役立ちます。
+                </p>
+                <h3>操作方法</h3>
+                <ol>
+                  <li>下部の入力欄に、生成したい画像の内容を入力して送信します（英語推奨・具体的に）。</li>
+                  <li>右側の「生成結果」に画像が表示されます。</li>
+                  <li>
+                    「詳細設定」を開くと、ネガティブプロンプト・画像サイズ・ステップ数・シード・
+                    スタイルなどを調整できます。
+                  </li>
+                  <li>スケッチ／マスク機能で、下絵や修正したい範囲を指定した生成もできます。</li>
+                </ol>
+                <h3>入力例・コツ</h3>
                 <ul>
-                  <li>生成AI（画像生成モデル）がプロンプトに基づいて画像を生成します。</li>
-                  <li>同じ入力でも生成結果は毎回変わることがあります（シード固定で再現性を高められます）。</li>
-                  <li>生成画像の公開・配布時は、著作権・肖像権にご注意ください。</li>
+                  <li>
+                    プロンプトは具体的に。例:{' '}
+                    <code>a flat vector illustration of a city hall, simple, clean</code>
+                  </li>
+                  <li>
+                    避けたい要素はネガティブプロンプトに。例: <code>blurry, text, watermark</code>
+                  </li>
+                  <li>ステップ数を増やすと描き込みが増えますが、生成に時間がかかります。</li>
                 </ul>
+                <h3>前提（Stable Diffusion）</h3>
+                <p>
+                  画像の描画にはホスト上の AUTOMATIC1111 互換サーバ（既定: ポート <code>7860</code>
+                  ）が必要です。未起動の場合は別ターミナルで{' '}
+                  <code>python3 scripts/mock-sd-server.py</code>（検証用）または Stable Diffusion
+                  WebUI を <code>--api --listen --port 7860</code> 付きで起動してください。
+                </p>
+                <Disclosure className='my-4'>
+                  <DisclosureSummary>仕組み・注意</DisclosureSummary>
+                  <div className='pl-7'>
+                    <ul>
+                      <li>生成AI（画像生成モデル）がプロンプトに基づいて画像を生成します。</li>
+                      <li>同じ入力でも生成結果は毎回変わることがあります（シード固定で再現性を高められます）。</li>
+                      <li>生成画像の公開・配布時は、著作権・肖像権にご注意ください。</li>
+                    </ul>
+                  </div>
+                </Disclosure>
               </div>
-            </Disclosure>
-          </div>
-        </Disclosure>
+            }
+          />
+        </div>
 
         <div className='flex gap-6 xl:gap-8'>
           <div className='flex min-w-0 flex-1 justify-between gap-12 xl:gap-16'>
           <div className='flex min-w-0 flex-1 flex-col'>
-            <GenerateImageStickyHeader />
+            <GenerateImageStickyHeader title={appName} />
 
             <div className='flex-1 pt-4 pb-6 px-2'>
               <GenerateImageAssistant

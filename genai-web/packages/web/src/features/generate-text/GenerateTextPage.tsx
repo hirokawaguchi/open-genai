@@ -1,6 +1,7 @@
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
-import { APP_TITLE } from '@/constants';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
+import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { GenerateTextForm } from '@/features/generate-text/components/GenerateTextForm';
 import { GenerateTextHeader } from '@/features/generate-text/components/GenerateTextHeader';
 import { GenerateTextResult } from '@/features/generate-text/components/GenerateTextResult';
@@ -15,6 +16,11 @@ import { useReset } from './hooks/useReset';
 import { useSetDefaultValues } from './hooks/useSetDefaultValues';
 
 export const GenerateTextPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    'generate',
+    '文章を生成',
+  );
   const { usecase, chatId } = useUsecasePath();
   const { loading, messages, postChat } = useChat(usecase, chatId);
 
@@ -54,7 +60,7 @@ export const GenerateTextPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title={`文章を生成${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto p-6 max-w-(--page-width) lg:p-8'>
         <GenerateTextHeader />
         <Divider className='my-6' />

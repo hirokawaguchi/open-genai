@@ -11,6 +11,7 @@ import {
 import { MoreVertIcon } from '@/components/ui/icons/MoreVertIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
+import { builtinRouteOf, isBuiltinExApp } from '@/features/exapps/utils/builtinExApp';
 import { useFocusNewItemOnLoadMore } from '@/hooks/useFocusNewItemOnLoadMore';
 import { download } from '@/utils/createDownloadLink';
 import { formatDateTime } from '@/utils/formatDateTime';
@@ -52,6 +53,8 @@ export const TeamAppList = (props: Props) => {
       <ul ref={listRef} className='flex w-full flex-col'>
         {apps.map((app) => {
           const lastUpdated = app.updatedDate || app.createdDate;
+          const builtin = isBuiltinExApp(app);
+          const href = builtinRouteOf(app.config) || `/apps/${app.teamId}/${app.exAppId}`;
           return (
             <li
               className='relative grid w-full grid-cols-[1fr_auto] items-center border-b border-solid border-solid-gray-420'
@@ -59,7 +62,7 @@ export const TeamAppList = (props: Props) => {
             >
               <div className='flex flex-col items-start gap-4 px-4 py-4 text-dns-16N-130 leading-tight!'>
                 <Link
-                  to={`/apps/${app.teamId}/${app.exAppId}`}
+                  to={href}
                   className={`${linkDefaultStyle} ${linkHoverStyle} ${linkFocusStyle} ${linkActiveStyle}`}
                 >
                   {app.exAppName}
@@ -143,6 +146,7 @@ export const TeamAppList = (props: Props) => {
                         </button>
                       )}
                     </MenuItem>
+                    {!builtin && (
                     <MenuItem>
                       {({ focus }) => (
                         <button
@@ -155,6 +159,7 @@ export const TeamAppList = (props: Props) => {
                         </button>
                       )}
                     </MenuItem>
+                    )}
                   </MenuItems>
                 </Menu>
               </div>

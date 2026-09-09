@@ -33,7 +33,9 @@ upstream のバージョンアップ後は、本ファイルの差分箇所を�
 | `packages/web/src/features/landing/LandingPage.tsx` | 「ピン留め」セクション（`PinnedAppsSection`）を Suspense 境界で追加 / 既定「画像を生成」カードを SD 稼働時のみ表示 |
 | `packages/web/src/features/exapps/components/ExAppList.tsx` | 各カードにピン留めボタンを付与 |
 | `packages/web/src/features/exapps/components/ExAppListCard.tsx` | 任意 prop `pinControl` でピンボタンを描画 |
-| `packages/web/src/features/exapps/hooks/useGenUApps.ts` | 「画像を生成」を SD ヘルスチェック(`useImageAvailable`)で出し分け |
+| `packages/web/src/features/exapps/hooks/useGenUApps.ts` | 「画像を生成」を SD ヘルスチェック(`useImageAvailable`)で出し分け。カタログの公開ステータスと紹介文に追従 |
+| `packages/web/src/layout/navItems.ts` | おすすめも同じカタログ（下書きは非表示・文言はレジストリ） |
+| `packages/web/src/features/exapps/utils/builtinExApp.ts` | 組み込みカタログ判定 |
 
 ### 画像生成(SD)ヘルスチェックによる表示出し分け
 

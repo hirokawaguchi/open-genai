@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { DOCCHECK_EXAPP_ID } from '@/layout/navItems';
@@ -86,6 +87,11 @@ type TabItem = {
  * Compose profiles: ["doccheck"] 未起動時は有効化手順を案内する。
  */
 export const DoccheckPage = () => {
+  const { documentTitle } = useRegisteredAppMeta(
+    COMMON_EXAPPS_TEAM_ID,
+    DOCCHECK_EXAPP_ID,
+    '書類読取とチェック',
+  );
   const { config, isLoading: configLoading, unavailable, mutate: mutateConfig } =
     useDoccheckConfig();
   const canArbitrate = config?.can_arbitrate === true;
@@ -495,7 +501,7 @@ export const DoccheckPage = () => {
 
   return (
     <LayoutBody>
-      <PageTitle title='書類読取とチェック' />
+      <PageTitle title={documentTitle} />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         <ManagedAppHeader
           teamId={COMMON_EXAPPS_TEAM_ID}

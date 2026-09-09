@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router';
 import { KNOWLEDGE_EXAPP_IDS } from '@/layout/navItems';
 import { uniqBy } from '@/utils/uniqBy';
+import { isBuiltinExApp } from '../utils/builtinExApp';
 import { useExAppStore } from '../stores/useExAppStore';
 import type { ExAppOptions } from '../types';
 import { useFetchExApps } from './useFetchExApps';
@@ -29,7 +30,10 @@ export const useExApps = () => {
 
       // draft と、/knowledge へ集約済みの旧管理系（タグ/登録/管理）は一覧から除外
       const publishedExApps = newExApps.filter(
-        (exApp) => exApp.status !== 'draft' && !KNOWLEDGE_EXAPP_IDS.has(exApp.exAppId),
+        (exApp) =>
+          exApp.status !== 'draft' &&
+          !KNOWLEDGE_EXAPP_IDS.has(exApp.exAppId) &&
+          !isBuiltinExApp(exApp),
       );
 
       const newTeamOptions = uniqBy(

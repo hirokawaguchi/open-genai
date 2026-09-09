@@ -202,6 +202,115 @@ RAG_SEED: dict[str, Any] = {
 # 専用ページ /knowledge に統合済み（旧 rag-tags / rag-register / rag-maintain）。
 
 
+def _builtin_seed(
+    ex_app_id: str,
+    name: str,
+    description: str,
+    how_to_use: str,
+    route: str,
+) -> dict[str, Any]:
+    """源内の汎用／専用ページを、共通アプリ編集のカタログとして登録する。"""
+    return {
+        "exAppId": ex_app_id,
+        "teamId": COMMON_TEAM_ID,
+        "exAppName": name,
+        "endpoint": f"http://127.0.0.1/builtin/{ex_app_id}",
+        "apiKey": "",
+        "config": json.dumps({"builtin": True, "route": route}, ensure_ascii=False),
+        "placeholder": "",
+        "description": description,
+        "howToUse": how_to_use,
+        "copyable": False,
+        "status": "published",
+    }
+
+
+CHAT_SEED = _builtin_seed(
+    "chat",
+    "チャット",
+    "着想や整理のための壁打ち",
+    (
+        "## このアプリでできること\n\n"
+        "着想や整理のための壁打ちに使います。質問やメモを入力すると、"
+        "生成AIが返答します。\n\n"
+        "## 操作手順\n\n"
+        "1. 下部の入力欄に質問や整理したい内容を書きます。\n"
+        "2. 必要ならファイルを添付します。\n"
+        "3. 送信すると会話が始まります。続きも同じ画面で聞けます。\n"
+    ),
+    "/chat",
+)
+GENERATE_SEED = _builtin_seed(
+    "generate",
+    "文章を生成",
+    "手元の情報をもとに文章を作成",
+    (
+        "## 想定用途\n\n"
+        "ビジネスメールや記事などの文章をAIが代行して作成できます。"
+        "文書のドラフティングに役立ちます。\n\n"
+        "## 操作方法\n\n"
+        "文章の元になる情報と、文章の形式を入力して実行します。"
+        "利用するAIモデルは画面上部で選べます。\n"
+    ),
+    "/generate",
+)
+TRANSLATE_SEED = _builtin_seed(
+    "translate",
+    "翻訳",
+    "手元の文章を他の言語に翻訳",
+    (
+        "## 想定用途\n\n"
+        "文章を英語／日本語／中国語／韓国語／フランス語／スペイン語／ドイツ語の"
+        "いずれかに翻訳できます。カジュアルな文体などの指定もできます。\n\n"
+        "## 操作方法\n\n"
+        "翻訳したい文章だけを入力し、言語を選んで実行します。"
+        "「翻訳して」といった指示は不要です。\n"
+    ),
+    "/translate",
+)
+IMAGE_SEED = _builtin_seed(
+    "image",
+    "画像を生成",
+    "プロンプトから資料用の挿絵やイメージ案を作成",
+    (
+        "## このアプリでできること\n\n"
+        "プロンプト（文章）から画像を生成します。資料の挿絵やイメージ案、"
+        "たたき台づくりに役立ちます。画像生成サーバが止まっているときは"
+        "メニューに出ません。\n\n"
+        "## 操作方法\n\n"
+        "入力欄に生成したい画像の内容を書いて送信します（英語推奨・具体的に）。\n"
+    ),
+    "/image",
+)
+DIAGRAM_SEED = _builtin_seed(
+    "diagram",
+    "ダイアグラムを生成",
+    "テキストからフローチャートやマインドマップを作成",
+    (
+        "## 想定用途\n\n"
+        "文章を元に、フローチャート／円グラフ／マインドマップなどの"
+        "ダイアグラムを生成できます。\n\n"
+        "## 操作方法\n\n"
+        "図にしたい文章を入力して実行します。生成された図の正確性は"
+        "利用者が確認してください。\n"
+    ),
+    "/diagram",
+)
+KNOWLEDGE_SEED = _builtin_seed(
+    "knowledge",
+    "ナレッジ管理",
+    "共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）",
+    (
+        "## このアプリでできること\n\n"
+        "共有ナレッジや所属チームの資料を登録・分類・管理します。"
+        "検索は「ナレッジ検索」アプリから行います。\n\n"
+        "## 操作方法\n\n"
+        "対象スコープを選び、ドキュメント管理／登録／タグ管理のタブで操作します。\n"
+    ),
+    "/knowledge",
+)
+
+
 # 文字起こし(Whisper) AI アプリ
 WHISPER_APP_URL = os.environ.get("WHISPER_APP_URL", "http://whisper-app:8002/invoke")
 _WHISPER_FORM = (
@@ -649,6 +758,12 @@ def _ensure_team_rag_search() -> None:
 
 
 EXAPP_SEEDS = [
+    CHAT_SEED,
+    GENERATE_SEED,
+    TRANSLATE_SEED,
+    IMAGE_SEED,
+    DIAGRAM_SEED,
+    KNOWLEDGE_SEED,
     RAG_SEED,
     WHISPER_SEED,
     AUDIT_SEED,
@@ -2518,10 +2633,21 @@ async def list_exapps(request: Request) -> list[Any]:
         candidates = [
             a for a in candidates if a.get("exAppId") not in ADMIN_ONLY_EXAPP_IDS
         ]
+    # 組み込みカタログは下書きも含めて返す（メニュー表示の判定用。ヘルス不要）
+    seen = {(a["teamId"], a["exAppId"]) for a in candidates}
+    for builtin in teams_store.list_builtin_exapps():
+        if builtin.get("exAppId") in RETIRED_SEED_EXAPP_IDS:
+            continue
+        key = (builtin["teamId"], builtin["exAppId"])
+        if key not in seen:
+            candidates.append(builtin)
+            seen.add(key)
+    service_apps = [a for a in candidates if not teams_store.is_builtin_exapp(a)]
+    builtin_apps = [a for a in candidates if teams_store.is_builtin_exapp(a)]
     checks = await asyncio.gather(
-        *[_is_app_up(a["endpoint"]) for a in candidates], return_exceptions=True
+        *[_is_app_up(a["endpoint"]) for a in service_apps], return_exceptions=True
     )
-    return [a for a, ok in zip(candidates, checks) if ok is True]
+    return [a for a, ok in zip(service_apps, checks) if ok is True] + builtin_apps
 
 
 @app.get("/my/app-pins")
@@ -2626,6 +2752,11 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+    if teams_store.is_builtin_exapp(app_def):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みアプリは専用ページから利用してください"},
+        )
 
     # 管理者限定 exApp（監査ログ参照 等）は非管理者の実行を拒否
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
@@ -2832,6 +2963,11 @@ async def invoke_exapp_stream(request: Request) -> Any:
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+    if teams_store.is_builtin_exapp(app_def):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みアプリは専用ページから利用してください"},
+        )
 
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
         return _forbidden("このアプリの実行には管理者権限が必要です")
@@ -3053,6 +3189,11 @@ async def get_exapp_schema(request: Request) -> JSONResponse:
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+    if teams_store.is_builtin_exapp(app_def):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みアプリは専用ページから利用してください"},
+        )
 
     # 管理者限定アプリのフォーム定義は非管理者に返さない
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
@@ -3117,6 +3258,11 @@ async def resolve_exapp_schema(request: Request) -> JSONResponse:
     app_def = teams_store.get_exapp(team_id, ex_app_id)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+    if teams_store.is_builtin_exapp(app_def):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みアプリは専用ページから利用してください"},
+        )
 
     if ex_app_id in ADMIN_ONLY_EXAPP_IDS and not _is_system_admin(claims):
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
@@ -6623,7 +6769,11 @@ async def delete_exapp(team_id: str, ex_app_id: str, request: Request) -> JSONRe
     claims = _claims_from_request(request)
     if not _can_manage_team(claims, team_id):
         return _forbidden()
-    teams_store.delete_exapp(team_id, ex_app_id)
+    if not teams_store.delete_exapp(team_id, ex_app_id):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みアプリは削除できません。非表示にする場合は下書きにしてください"},
+        )
     return JSONResponse(content={})
 
 
