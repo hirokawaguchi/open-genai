@@ -206,7 +206,14 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
       dropEmptyAssistant();
       if (isApiError(error)) {
         const data = error.data as { error?: string };
-        setError(data?.error || GENERIC_ERROR);
+        if (error.status === 413) {
+          setError(
+            data?.error ||
+              'ファイルが大きすぎます。音声はおおよそ180MBまでです。分割してから再度お試しください。',
+          );
+        } else {
+          setError(data?.error || GENERIC_ERROR);
+        }
       } else {
         setError(GENERIC_ERROR);
       }

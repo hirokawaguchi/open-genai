@@ -206,7 +206,7 @@ WHISPER_APP_URL = os.environ.get("WHISPER_APP_URL", "http://whisper-app:8002/inv
 _WHISPER_FORM = (
     '{'
     '"audio":{"type":"file","title":"音声ファイル",'
-    '"desc":"文字起こしする音声を添付してください。",'
+    '"desc":"文字起こしする音声を添付してください（目安180MBまで）。",'
     '"accept":"audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg","multiple":false,"required":true},'
     '"language":{"type":"select","title":"言語",'
     '"items":[{"title":"自動判定","value":"auto"},{"title":"日本語","value":"ja"},'
@@ -233,6 +233,7 @@ WHISPER_SEED: dict[str, Any] = {
         "3. 「実行」を押すと、タイムスタンプ付きの文字起こし結果が表示されます。\n\n"
         "## コツ・注意\n\n"
         "- 長い音声は処理に時間がかかります。区切って投入すると安定します。\n"
+        "- ファイルの目安は 180MB までです。それを超える場合は分割してください。\n"
         "- 雑音が少なくクリアな音声ほど精度が上がります。\n"
         "- 固有名詞や専門用語は誤変換されることがあります。結果は必ず確認してください。\n"
         "- 文字起こし結果はコピーして、そのままチャットで要約・議事録化に使えます。"
@@ -940,6 +941,28 @@ def _redact_for_audit(inputs: Any) -> Any:
             continue
         out[k] = v
     return out
+
+
+def _history_inputs(inputs: Any) -> Any:
+    """履歴用に inputs.files の本文(base64)を落とす。ファイル名は残す。"""
+    if not isinstance(inputs, dict):
+        return inputs
+    files = inputs.get("files")
+    if not isinstance(files, list):
+        return inputs
+    slim_files: list[Any] = []
+    for entry in files:
+        if not isinstance(entry, dict):
+            slim_files.append(entry)
+            continue
+        inner = []
+        for f in entry.get("files") or []:
+            if isinstance(f, dict):
+                inner.append({"filename": f.get("filename", "file"), "content": ""})
+            else:
+                inner.append(f)
+        slim_files.append({**entry, "files": inner})
+    return {**inputs, "files": slim_files}
 
 
 def _is_http_url(url: Any) -> bool:
@@ -2686,7 +2709,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "inputs": inputs,
+                    "inputs": _history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
                     "progress": "",
@@ -2897,7 +2920,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "inputs": inputs,
+                    "inputs": _history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
                     "progress": "",
