@@ -33,6 +33,7 @@
 
 ## [Unreleased]
 
+- 文字起こしなど大きな添付が 64MB 上限で 413 になる問題を修正（nginx `client_max_body_size` を 256MB に。超過時は分割を案内する JSON）。履歴には音声の base64 本文を残さない
 - 情報化企画書ナビの専用ページ／API／Compose profile／exAppId を `procuretech-navigator` に揃える。旧 URL `/procuretech` はリダイレクト／エイリアス。既存のピン留めは起動時に付け替える
 - ナビゲーションシート（`procuretech-hearing`）を追加。複数資料から自由項目の Excel を作り、`procuretech-generate-app` の入力とする（詳細は `docs/procuretech-hearing.md`）。専用ページ `/procuretech-hearing`。Markdown エディタの「ヒアリングシートから生成」は生成 API の起動（`/health`）でテーマを出し分け（generate-app は常時、spec-app はオプション）
 
