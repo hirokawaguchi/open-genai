@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from app.main import _history_inputs
+from app.exapp_history import history_inputs
 
 
 def test_history_inputs_strips_file_content() -> None:
-    slim = _history_inputs(
+    slim = history_inputs(
         {
             "language": "auto",
             "files": [
@@ -22,5 +22,5 @@ def test_history_inputs_strips_file_content() -> None:
 
 def test_history_inputs_leaves_non_file_payloads() -> None:
     payload = {"language": "ja"}
-    assert _history_inputs(payload) == payload
-    assert _history_inputs("x") == "x"
+    assert history_inputs(payload) == payload
+    assert history_inputs("x") == "x"
