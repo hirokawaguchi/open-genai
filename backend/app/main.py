@@ -1563,6 +1563,24 @@ async def auth_me(authorization: str | None = Header(default=None)) -> JSONRespo
     return JSONResponse(content=claims)
 
 
+@app.post("/auth/refresh")
+async def auth_refresh(
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """作業中のアプリ JWT を同一 claims で再発行する（Keycloak 再認証なし）。
+
+    有効な、または期限切れ直後（猶予内）の JWT を Bearer で受け取り、新しい JWT を返す。
+    それ以外は 401（フロントはログイン画面へ誘導する）。
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    try:
+        token = auth.refresh_token(authorization[7:])
+    except Exception:  # noqa: BLE001 - トークン不正/猶予超過は 401 に集約
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    return JSONResponse(content={"token": token})
+
+
 @app.get("/auth/logout")
 async def auth_logout(
     request: Request, token: str | None = Query(default=None)

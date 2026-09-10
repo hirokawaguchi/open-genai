@@ -1,4 +1,4 @@
-import { clearToken, getIdToken, getToken, login } from '@/local/localAuth';
+import { clearToken, getIdToken, getToken, login, refreshSession } from '@/local/localAuth';
 
 // 401（認証切れ/不正トークン）を受けたら、壊れたトークンを破棄して
 // 素直にログイン画面へ戻す。多重リダイレクトを避けるためのガード付き。
@@ -89,6 +89,7 @@ const createApiClient = (baseURL: string) => {
     path: string,
     body?: unknown,
     options?: RequestOptions,
+    retried = false,
   ): Promise<ApiResponse<T>> => {
     const url = buildUrl(baseURL, path, options?.params);
     const authHeaders = await getAuthHeaders(body !== undefined);
@@ -101,6 +102,11 @@ const createApiClient = (baseURL: string) => {
 
     if (!res.ok) {
       if (res.status === 401) {
+        // すぐログアウトせず、まず JWT のサイレント再発行を 1 回だけ試す。
+        // 成功したら同じリクエストを新トークンで再実行する。
+        if (!retried && (await refreshSession())) {
+          return request<T>(method, path, body, options, true);
+        }
         handleUnauthorized();
       }
       const errorData = await parseResponseBody<unknown>(res);
@@ -114,6 +120,7 @@ const createApiClient = (baseURL: string) => {
   const getBlob = async (
     path: string,
     options?: RequestOptions,
+    retried = false,
   ): Promise<{ blob: Blob; disposition: string | null; status: number }> => {
     const url = buildUrl(baseURL, path, options?.params);
     const authHeaders = await getAuthHeaders(false);
@@ -125,6 +132,9 @@ const createApiClient = (baseURL: string) => {
 
     if (!res.ok) {
       if (res.status === 401) {
+        if (!retried && (await refreshSession())) {
+          return getBlob(path, options, true);
+        }
         handleUnauthorized();
       }
       const errorData = await parseResponseBody<unknown>(res);
