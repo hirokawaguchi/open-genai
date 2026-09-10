@@ -117,6 +117,8 @@ services:
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- SAML 認証 (backend = SAML SP) ---
       - APP_JWT_SECRET=${APP_JWT_SECRET:-change-me-open-genai-secret}
+      # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
+      - APP_JWT_TTL=${APP_JWT_TTL:-43200}
       # 起動時の既定パスワード警告用（未変更なら stderr にガイドを出す）
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
       - FILES_URL_SECRET=${FILES_URL_SECRET:-}
