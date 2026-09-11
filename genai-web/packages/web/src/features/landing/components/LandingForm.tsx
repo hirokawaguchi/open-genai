@@ -12,9 +12,11 @@ import { ChatNotificationDialogButton } from '@/features/chat/components/ChatNot
 import { ModelSelector } from '@/features/landing/components/ModelSelector';
 import { TOP_CHAT_SYSTEM_PROMPT, TOP_CHAT_SYSTEM_PROMPT_TITLE } from '@/features/landing/constants';
 import { LandingChatFormSchema, landingChatFormSchema } from '@/features/landing/schema';
-import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 
 export const LandingForm = () => {
+  const { hint } = useSubmitKey();
   const navigate = useNavigate();
   const [isNotificationDialogOpen, setIsNotificationDialogOpen] = useState(false);
 
@@ -66,7 +68,7 @@ export const LandingForm = () => {
             onKeyDown={requestSubmitOnEnter}
             {...register('chatInput')}
           />
-          <SupportText id='chat-input-submit-hint'>{submitKeyHint}</SupportText>
+          <SupportText id='chat-input-submit-hint'>{hint}</SupportText>
           <div className='flex justify-end'>
             {errors.chatInput && (
               <ErrorText className='mr-auto -mt-1' id='chat-input-error'>

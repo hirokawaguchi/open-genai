@@ -93,10 +93,18 @@ vi.mock('@/components/ui/icons/SendIcon', () => ({
   SendIcon: () => <span />,
 }));
 
+vi.mock('@/hooks/useSubmitKey', () => ({
+  useSubmitKey: () => ({
+    key: 'enter',
+    setKey: () => {},
+    hint: 'Enter で送信 / Shift+Enter で改行',
+  }),
+}));
+
 vi.mock('@/utils/keyboard', () => ({
   isSubmitKey: () => false,
   requestSubmitOnEnter: () => {},
-  submitKeyHint: 'Enter で送信 / Shift+Enter で改行',
+  submitKeyHint: () => 'Enter で送信 / Shift+Enter で改行',
 }));
 
 const defaultProps = {

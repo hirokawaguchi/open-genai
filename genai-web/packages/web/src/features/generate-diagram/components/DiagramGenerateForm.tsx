@@ -17,7 +17,8 @@ import { SupportText } from '@/components/ui/dads/SupportText';
 import { useDiagram } from '@/features/generate-diagram/hooks/useDiagram';
 import { useDiagramStore } from '@/features/generate-diagram/stores/useDiagramStore';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { DIAGRAM_DATA } from '../constants';
 import { DiagramFormSchema, diagramFormSchema } from '../schema';
 import { DiagramTypeButton } from './DiagramTypeButton';
@@ -31,6 +32,7 @@ const otherTypeOptions = Object.values(DIAGRAM_DATA).filter(
 );
 
 export const DiagramGenerateForm = () => {
+  const { hint } = useSubmitKey();
   const { content, setContent, selectedType, setSelectedType, setDiagramGenerationError } =
     useDiagramStore();
 
@@ -149,7 +151,7 @@ export const DiagramGenerateForm = () => {
         </div>
 
         <SupportText id='generate-diagram-submit-hint' className='mb-3 text-center'>
-          {submitKeyHint}
+          {hint}
         </SupportText>
 
         <div className='flex justify-center'>
