@@ -10,7 +10,7 @@ import {
   UpdateTitleResponse,
 } from 'genai-web';
 import { genUApi } from '@/lib/fetcher';
-import { getIdToken } from '@/local/localAuth';
+import { getIdToken, refreshSession } from '@/local/localAuth';
 import { decomposeId } from '@/utils/decomposeId';
 
 export type SaveImageResultRequest = {
@@ -74,16 +74,24 @@ export const predict = async (req: PredictRequest): Promise<string> => {
  * yield して呼び出し側 (useChat) の JSON.parse が壊れないようにする。
  */
 export async function* predictStream(req: PredictRequest) {
-  const token = await getIdToken();
+  const callOnce = async (): Promise<Response> => {
+    const token = await getIdToken();
+    return fetch(`${import.meta.env.VITE_APP_API_ENDPOINT}/predict/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(req),
+    });
+  };
 
-  const res = await fetch(`${import.meta.env.VITE_APP_API_ENDPOINT}/predict/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(req),
-  });
+  let res = await callOnce();
+
+  // 401 のときはまず JWT のサイレント再発行を 1 回試し、成功したら再実行する。
+  if (res.status === 401 && (await refreshSession())) {
+    res = await callOnce();
+  }
 
   if (!res.ok || !res.body) {
     throw new Error(`ストリーム取得に失敗しました (status: ${res.status})`);

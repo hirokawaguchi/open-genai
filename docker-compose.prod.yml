@@ -148,6 +148,8 @@ services:
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api
       - FRONTEND_URL=${PUBLIC_URL}
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
+      # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
+      - APP_JWT_TTL=${APP_JWT_TTL:-43200}
       # 起動時の既定パスワード警告用（Keycloak 本体の認証とは別。backend が検知して案内する）
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
       - FILES_URL_SECRET=${FILES_URL_SECRET:-}
