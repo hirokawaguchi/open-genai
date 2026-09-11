@@ -3,6 +3,7 @@ import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PasswordForm } from './components/PasswordForm';
 import { ProfileForm } from './components/ProfileForm';
+import { SubmitKeySettings } from './components/SubmitKeySettings';
 import { useMyProfile } from './useMyProfile';
 
 export const SettingsPage = () => {
@@ -15,7 +16,7 @@ export const SettingsPage = () => {
         <div className='flex flex-col gap-1'>
           <h1 className='text-std-22B-150 text-solid-gray-900'>アカウント設定</h1>
           <p className='text-dns-16N-170 text-solid-gray-700'>
-            表示名（姓名）とパスワードを変更できます。
+            表示名（姓名）とパスワード、プロンプト入力の送信キーを変更できます。
           </p>
         </div>
 
@@ -60,6 +61,16 @@ export const SettingsPage = () => {
             </section>
           </>
         )}
+
+        <section className='flex flex-col gap-4 rounded-8 border border-solid-gray-300 bg-white p-5'>
+          <div className='flex flex-col gap-1'>
+            <h2 className='text-std-18B-160 text-solid-gray-900'>入力</h2>
+            <p className='text-dns-14N-130 text-solid-gray-600'>
+              チャットや文章生成など、プロンプトを送るときのキーです。この端末に保存されます。
+            </p>
+          </div>
+          <SubmitKeySettings />
+        </section>
       </div>
     </LayoutBody>
   );

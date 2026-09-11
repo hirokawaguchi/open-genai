@@ -1,7 +1,9 @@
 import { PiBookOpenBold } from 'react-icons/pi';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
 
 export const ChatHints = () => {
+  const { hint } = useSubmitKey();
   return (
     <div className='w-full rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-solid-gray-800'>
       <Disclosure>
@@ -15,9 +17,8 @@ export const ChatHints = () => {
           <div>
           <dt className='mb-2 text-std-18B-160'>チャットの使い方</dt>
           <dd>
-            下部の入力欄にメッセージを入力して送信すると、AIから回答が返ってきます。Enter
-            で送信、Shift+Enter
-            で改行できます。質問・依頼・相談など、業務に関することを自由に送ってみてください。一度の質問で完結しなくても大丈夫です。回答後もそのまま会話を続けることで、タスクをより深く進められます。
+            下部の入力欄にメッセージを入力して送信すると、AIから回答が返ってきます。{hint}
+            です。質問・依頼・相談など、業務に関することを自由に送ってみてください。一度の質問で完結しなくても大丈夫です。回答後もそのまま会話を続けることで、タスクをより深く進められます。
           </dd>
         </div>
         <div>

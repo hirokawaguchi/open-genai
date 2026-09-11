@@ -9,7 +9,8 @@ import { SupportText } from '@/components/ui/dads/SupportText';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { TranslateFormSchema, translateFormSchema } from '../schema';
 import { TranslatedResult } from './TranslatedResult';
 
@@ -21,6 +22,7 @@ type Props = {
 
 export const TranslateForm = (props: Props) => {
   const { typingTextOutput, translatedSentence, getTranslation } = props;
+  const { hint } = useSubmitKey();
 
   const { sentence, setSentence, additionalContext, setAdditionalContext, language } =
     useTranslateStore();
@@ -114,7 +116,7 @@ export const TranslateForm = (props: Props) => {
         </div>
 
         <SupportText id='translate-submit-hint' className='mt-4 text-center'>
-          {submitKeyHint}
+          {hint}
         </SupportText>
 
         <div className='mt-3 flex justify-center'>

@@ -20,7 +20,8 @@ import {
   useGenerateImageStore,
 } from '@/features/generate-image/stores/useGenerateImageStore';
 import { findModelDisplayNameByModelId, MODELS } from '@/models';
-import { isSubmitKey, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { isSubmitKey } from '@/utils/keyboard';
 import {
   AMAZON_ADVANCED_GENERATION_MODE,
   AMAZON_MODELS,
@@ -44,6 +45,7 @@ type Props = {
 };
 
 export const ImageGeneratorForm = (props: Props) => {
+  const { hint } = useSubmitKey();
   const {
     generating,
     loadingChat,
@@ -600,7 +602,7 @@ export const ImageGeneratorForm = (props: Props) => {
       </div>
 
       <SupportText id='generate-image-submit-hint' className='mt-4 mb-2 text-center text-dns-14N-130!'>
-        {submitKeyHint}
+        {hint}
       </SupportText>
 
       <div className='flex flex-row-reverse items-center justify-center gap-x-5'>

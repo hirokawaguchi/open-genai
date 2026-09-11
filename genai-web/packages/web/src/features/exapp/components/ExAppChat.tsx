@@ -4,10 +4,12 @@ import { Markdown } from '@/components/Markdown';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { isApiError } from '@/lib/fetcher';
-import { submitKeyHint, isSubmitKey } from '@/utils/keyboard';
+import { isSubmitKey } from '@/utils/keyboard';
 import { newId } from '@/utils/uuid';
 import { ExAppConversation, useExAppConversations } from '../hooks/useExAppConversations';
 import { useInvokeExApp } from '../hooks/useInvokeExApp';
@@ -61,6 +63,7 @@ const extractFileNames = (inputs: Record<string, unknown>): string[] | undefined
 };
 
 export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
+  const { hint } = useSubmitKey();
   const { invokeExAppStream } = useInvokeExApp();
   const { conversations, mutate: mutateConversations } = useExAppConversations(
     exApp.teamId,
@@ -356,6 +359,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
           </div>
         )}
 
+        <SupportText id='exapp-chat-submit-hint'>{hint}</SupportText>
         <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -363,7 +367,8 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
           onCompositionStart={() => (isComposing.current = true)}
           onCompositionEnd={() => (isComposing.current = false)}
           rows={2}
-          placeholder={`メッセージを入力（${submitKeyHint}）`}
+          placeholder='メッセージを入力'
+          aria-describedby='exapp-chat-submit-hint'
           className='w-full'
         />
 

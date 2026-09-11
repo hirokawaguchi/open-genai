@@ -4,7 +4,7 @@ import { Label } from '@/components/ui/dads/Label';
 import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { Textarea } from '@/components/ui/dads/Textarea';
-import { requestSubmitOnEnter } from '@/utils/keyboard';
+import { requestEnterSubmit } from '@/utils/keyboard';
 import { GovAIFormUITextarea } from '../../types';
 
 type Props = {
@@ -41,7 +41,7 @@ export const ExAppTextarea = (props: Props) => {
             .filter(Boolean)
             .join(' ') || undefined
         }
-        onKeyDown={requestSubmitOnEnter}
+        onKeyDown={requestEnterSubmit}
         {...register(id, {
           required: uiConfig.required ?? false,
           minLength: uiConfig.min_length ?? undefined,
