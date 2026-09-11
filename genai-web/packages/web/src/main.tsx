@@ -6,7 +6,13 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { BrowserRouter } from 'react-router';
 import { OnlineStatusProvider } from '@/components/OnlineStatusProvider';
 import { GlobalErrorFallback } from '@/components/ui/GlobalErrorFallback';
-import { captureTokenFromUrl, clearToken, isAuthenticated, login } from '@/local/localAuth';
+import {
+  captureTokenFromUrl,
+  clearToken,
+  isAuthenticated,
+  login,
+  startSessionKeepAlive,
+} from '@/local/localAuth';
 
 // ACS からのリダイレクトで付与された #token= を取り込む（描画前に実行）
 captureTokenFromUrl();
@@ -27,6 +33,8 @@ const AuthGate = ({ children }: { children: ReactNode }) => {
     login();
     return null;
   }
+  // 認証済みの間は、期限前にサイレント再発行してセッションを維持する
+  startSessionKeepAlive();
   return <>{children}</>;
 };
 

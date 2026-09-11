@@ -19,7 +19,12 @@ from onelogin.saml2.settings import OneLogin_Saml2_Settings
 
 APP_JWT_SECRET = os.environ.get("APP_JWT_SECRET", "change-me-open-genai-secret")
 JWT_ALG = "HS256"
-JWT_TTL_SECONDS = int(os.environ.get("APP_JWT_TTL", "28800"))  # 8 時間
+JWT_TTL_SECONDS = int(os.environ.get("APP_JWT_TTL", "43200"))  # 12 時間
+# 時計ずれで作業中に 401 にならないよう、検証時に許す猶予（秒）。
+JWT_LEEWAY_SECONDS = int(os.environ.get("APP_JWT_LEEWAY", "60"))
+# 期限切れ直後でも同一 claims で再発行を許す猶予（秒）。
+# （タブがスリープ等で keep-alive が一瞬止まっても復帰できるようにする）
+JWT_REFRESH_GRACE_SECONDS = int(os.environ.get("APP_JWT_REFRESH_GRACE", "300"))
 
 SP_ENTITY_ID = os.environ.get(
     "SAML_SP_ENTITY_ID", "http://localhost:8000/auth/saml/metadata"
@@ -154,4 +159,40 @@ def mint_token(
 
 
 def verify_token(token: str) -> dict[str, Any]:
-    return jwt.decode(token, APP_JWT_SECRET, algorithms=[JWT_ALG])
+    return jwt.decode(
+        token,
+        APP_JWT_SECRET,
+        algorithms=[JWT_ALG],
+        leeway=JWT_LEEWAY_SECONDS,
+    )
+
+
+def refresh_token(token: str) -> str:
+    """有効な（または期限切れ直後・猶予内の）JWT から同一 claims で新 JWT を発行する。
+
+    Keycloak への再認証は行わない。作業中の突然ログアウトを避けるための延長用。
+    - 通常検証を通れば、そのまま再発行。
+    - 期限切れのときだけ、署名を検証しつつ `exp` を無視して読み、`JWT_REFRESH_GRACE_SECONDS`
+      以内なら再発行する。それ以上経過・署名不正は例外を送出（呼び出し側で 401）。
+    """
+    try:
+        claims = verify_token(token)
+    except jwt.ExpiredSignatureError:
+        claims = jwt.decode(
+            token,
+            APP_JWT_SECRET,
+            algorithms=[JWT_ALG],
+            options={"verify_exp": False},
+        )
+        exp = claims.get("exp")
+        if not isinstance(exp, (int, float)):
+            raise
+        if int(time.time()) - int(exp) > JWT_REFRESH_GRACE_SECONDS:
+            raise
+    return mint_token(
+        sub=claims.get("sub", ""),
+        email=claims.get("email", ""),
+        name=claims.get("name", ""),
+        groups=list(claims.get("groups") or []),
+        session_index=claims.get("sidx"),
+    )

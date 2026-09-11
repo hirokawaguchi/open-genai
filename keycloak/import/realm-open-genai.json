@@ -5,6 +5,8 @@
   "loginTheme": "keycloak",
   "sslRequired": "none",
   "registrationAllowed": false,
+  "ssoSessionIdleTimeout": 43200,
+  "ssoSessionMaxLifespan": 43200,
   "groups": [
     { "name": "SystemAdminGroup" },
     { "name": "TeamAdminGroup" },
