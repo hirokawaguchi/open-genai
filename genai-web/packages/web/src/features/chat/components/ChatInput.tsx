@@ -24,7 +24,8 @@ import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { FILE_LIMIT } from '../constants';
 import { ChatFormSchema, chatFormSchema } from '../schema';
 
@@ -36,6 +37,7 @@ type Props = {
 
 export const ChatInput = (props: Props) => {
   const { onSend, fileUpload, accept } = props;
+  const { hint } = useSubmitKey();
 
   const { usecase, chatId } = useUsecasePath();
   const { content, setContent, hasSent, setHasSent } = useChatStore();
@@ -153,7 +155,7 @@ export const ChatInput = (props: Props) => {
             : '追加で質問や不明点などあれば返答してみましょう'}
         </h2>
         <SupportText id='chat-input-submit-hint' className='mb-1'>
-          {submitKeyHint}
+          {hint}
         </SupportText>
         <div className='relative flex items-end bg-white'>
           <div className='flex w-full flex-col gap-2'>
