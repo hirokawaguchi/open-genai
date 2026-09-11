@@ -14,7 +14,7 @@ import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { isJSON } from '@/utils/isJSON';
-import { submitKeyHint } from '@/utils/keyboard';
+import { ENTER_SUBMIT_HINT } from '@/utils/keyboard';
 import { newId } from '@/utils/uuid';
 import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
 import { getExAppHistoriesKey } from '../hooks/useFetchInvokedExAppHistories';
@@ -303,7 +303,7 @@ ${parsedHistory.outputs}
         {validationError && <ErrorText>＊{validationError}</ErrorText>}
 
         <div className='flex flex-col items-center gap-3'>
-          <SupportText id='exapp-submit-hint'>{submitKeyHint}</SupportText>
+          <SupportText id='exapp-submit-hint'>{ENTER_SUBMIT_HINT}</SupportText>
           <Button
             aria-disabled={requestLoading ? true : undefined}
             variant='solid-fill'

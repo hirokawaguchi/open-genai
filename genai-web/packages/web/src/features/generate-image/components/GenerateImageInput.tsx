@@ -7,7 +7,8 @@ import { SendIcon } from '@/components/ui/icons/SendIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { requestSubmitOnEnter, submitKeyHint } from '@/utils/keyboard';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { type GenerateImageChatFormSchema, generateImageChatFormSchema } from '../schema';
 
 type Props = {
@@ -20,6 +21,7 @@ type Props = {
 
 export const GenerateImageInput = (props: Props) => {
   const { textareaId, content, onChangeContent, onSend } = props;
+  const { hint } = useSubmitKey();
 
   const { usecase, chatId } = useUsecasePath();
   const { loading: chatLoading } = useChat(usecase, chatId);
@@ -51,7 +53,7 @@ export const GenerateImageInput = (props: Props) => {
         生成したい画像の内容を入力してみましょう
       </h2>
       <SupportText id={`${textareaId}-submit-hint`} className='mb-1'>
-        {submitKeyHint}
+        {hint}
       </SupportText>
       <div className='flex w-full flex-col gap-2'>
         <AutoResizeTextarea

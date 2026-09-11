@@ -9,11 +9,14 @@ import {
 import { PiDownloadSimpleBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
+import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { isSubmitKey } from '@/utils/keyboard';
 import { PROCURETECH_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
 import type { ProcuretechSection, ProcuretechSessionDetail } from './types';
@@ -66,6 +69,7 @@ const SectionChat = ({
   sessionId: string;
   onChanged: () => void | Promise<void>;
 }) => {
+  const { hint } = useSubmitKey();
   const { finalize, clearSection, submitting, error, setError } = useProcuretechActions();
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -112,8 +116,7 @@ const SectionChat = ({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter で送信 / Shift+Enter で改行。日本語入力の変換確定 Enter は送信しない。
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (isSubmitKey(e)) {
       e.preventDefault();
       void submit();
     }
@@ -220,8 +223,9 @@ const SectionChat = ({
 
       <form onSubmit={onSubmit} className='flex flex-col gap-2'>
         <Label htmlFor={`pt-input-${section.key}`} size='sm'>
-          メッセージ（Enter で送信 / Shift+Enter で改行）
+          メッセージ
         </Label>
+        <SupportText id={`pt-input-${section.key}-submit-hint`}>{hint}</SupportText>
         <textarea
           id={`pt-input-${section.key}`}
           className='w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
@@ -229,6 +233,7 @@ const SectionChat = ({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
+          aria-describedby={`pt-input-${section.key}-submit-hint`}
           placeholder={section.chat_placeholder}
         />
         <div className='flex flex-wrap items-center gap-2'>
