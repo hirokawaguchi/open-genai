@@ -10,6 +10,7 @@ import {
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
   useNotebookAvailable,
+  useSshAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -73,6 +74,12 @@ export const NOTEBOOK_PATH = '/notebook';
 /** ノートブック exApp の識別子（専用ページへ振り替える対象） */
 export const NOTEBOOK_EXAPP_ID = 'notebook';
 
+/** Web SSH は汎用 exApp フォームではなく専用ページで提供する */
+export const SSH_PATH = '/ssh';
+
+/** Web SSH exApp の識別子（専用ページへ振り替える対象） */
+export const SSH_EXAPP_ID = 'ssh';
+
 /** 旧ヒアリングシート ID（ピン留めの振り替え用） */
 export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
 
@@ -116,6 +123,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const procuretechAvailable = useProcuretechAvailable();
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
   const notebookAvailable = useNotebookAvailable();
+  const sshAvailable = useSshAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -256,6 +264,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (sshAvailable && listed(SSH_EXAPP_ID)) {
+      items.push({
+        label: nameOf(SSH_EXAPP_ID, 'SSH 端末'),
+        to: SSH_PATH,
+        description: descOf(
+          SSH_EXAPP_ID,
+          '管理者が登録した接続先へ、ブラウザから SSH でログインします。',
+        ),
+      });
+    }
+
     if (listed('knowledge')) {
       items.push({
         label: nameOf('knowledge', 'ナレッジ管理'),
@@ -275,6 +294,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     procuretechAvailable,
     procuretechEditorAvailable,
     notebookAvailable,
+    sshAvailable,
     registryApps,
     catalogLoaded,
   ]);
@@ -317,11 +337,11 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   if (item.app.value === PROCURETECH_EDITOR_EXAPP_ID) {
     return PROCURETECH_EDITOR_PATH;
   }
-  if (
-    item.app.value === NOTEBOOK_EXAPP_ID ||
-    item.app.value === NOTEBOOK_LEGACY_EXAPP_ID
-  ) {
+  if (item.app.value === NOTEBOOK_EXAPP_ID || item.app.value === NOTEBOOK_LEGACY_EXAPP_ID) {
     return NOTEBOOK_PATH;
+  }
+  if (item.app.value === SSH_EXAPP_ID) {
+    return SSH_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
