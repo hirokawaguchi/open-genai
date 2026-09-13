@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -72,7 +72,8 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/
 # 認証不要のパス
 # /health は完全一致のみ（/health/details は JWT 必須）。
 # /files/ は Authorization を付けられない img/PUT 用。認可は HMAC クエリで行う。
-PUBLIC_EXACT_PATHS = frozenset({"/health"})
+# /ssh/ws はブラウザが Upgrade に Authorization を付けられない。JWT は accept 後の最初の JSON で検証する。
+PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws"})
 PUBLIC_PATH_PREFIXES = (
     "/auth/",
     "/files/",
@@ -131,6 +132,9 @@ PROCURETECH_DOWNLOAD_VIA_S3 = os.environ.get(
 PROCURETECH_EDITOR_APP_URL = os.environ.get(
     "PROCURETECH_EDITOR_APP_URL", "http://procuretech-editor-app:8015/invoke"
 )
+# Web SSH（Compose profiles: ["ssh"]）。実 API は /ssh/* と /ssh/ws。
+SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
+
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
     os.environ.get("NOTEBOOK_APP_URL")
@@ -694,6 +698,36 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# Web SSH（共通アプリ）。UI は専用ページ /ssh。Compose profile `ssh` 未起動時は
+# /health 失敗で一覧非表示。endpoint はヘルスチェック用（実 API は /ssh/* プロキシ）。
+SSH_SEED: dict[str, Any] = {
+    "exAppId": "ssh",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "SSH 端末",
+    "endpoint": (
+        SSH_APP_URL
+        if SSH_APP_URL.endswith("/invoke")
+        else SSH_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": (
+        "管理者が登録した接続先へ、ブラウザから SSH でログインします。"
+        "メンテナンスや SSH 上のサービス操作に使います。"
+    ),
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 一覧から接続先を選び、ユーザー名とパスワードを入力して接続します。\n"
+        "- 接続先の追加・変更はシステム管理者だけが行えます。\n"
+        "- パスワードはサーバに保存しません。接続が切れたら再入力してください。\n"
+        "- 有効化するには `docker compose --profile ssh up -d` "
+        "または `.env` に `COMPOSE_PROFILES=ssh` を設定します。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -785,6 +819,7 @@ EXAPP_SEEDS = [
     PROCURETECH_SEED,
     PROCURETECH_EDITOR_SEED,
     PROCURETECH_HEARING_SEED,
+    SSH_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -1435,7 +1470,7 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def audit_access_middleware(request: Request, call_next):
-    if request.method == "OPTIONS":
+    if request.method == "OPTIONS" or request.url.path == "/ssh/ws":
         return await call_next(request)
     started = time.monotonic()
     response = await call_next(request)
@@ -3735,6 +3770,277 @@ async def chosei_event_carrier(
         media_type=media,
         headers={"Content-Disposition": disposition},
     )
+
+
+# ---------------------------------------------------------------------------
+# Web SSH 専用ページ(/ssh) 用プロキシ
+#
+# Compose profiles: ["ssh"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。パスワードは監査に残さない。
+# ---------------------------------------------------------------------------
+def _ssh_app_url(path: str) -> str:
+    if SSH_APP_URL.endswith("/invoke"):
+        base = SSH_APP_URL[: -len("/invoke")]
+    else:
+        base = SSH_APP_URL.rstrip("/")
+    return base + path
+
+
+def _ssh_ws_url() -> str:
+    http_url = _ssh_app_url("/ws")
+    if http_url.startswith("https://"):
+        return "wss://" + http_url[len("https://") :]
+    if http_url.startswith("http://"):
+        return "ws://" + http_url[len("http://") :]
+    return http_url
+
+
+def _ssh_headers_from_claims(claims: dict[str, Any]) -> tuple[JSONResponse | None, dict[str, str]]:
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+def _ssh_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    return _ssh_headers_from_claims(_claims_from_request(request))
+
+
+async def _proxy_ssh(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 30,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "SSH サービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile ssh up -d` "
+                    "または `COMPOSE_PROFILES=ssh` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "SSH サービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+def _open_ssh_upstream(url: str, headers: dict[str, str]):
+    import websockets
+
+    try:
+        return websockets.connect(url, additional_headers=headers)
+    except TypeError:
+        return websockets.connect(url, extra_headers=list(headers.items()))
+
+
+@app.get("/ssh/config")
+async def ssh_config(request: Request) -> JSONResponse:
+    err, headers = _ssh_headers(request)
+    if err:
+        return err
+    return await _proxy_ssh("GET", _ssh_app_url("/config"), headers)
+
+
+@app.get("/ssh/hosts")
+async def ssh_list_hosts(request: Request) -> JSONResponse:
+    err, headers = _ssh_headers(request)
+    if err:
+        return err
+    return await _proxy_ssh("GET", _ssh_app_url("/hosts"), headers)
+
+
+@app.post("/ssh/hosts")
+async def ssh_create_host(request: Request) -> JSONResponse:
+    err, headers = _ssh_headers(request)
+    if err:
+        return err
+    if not _is_system_admin(_claims_from_request(request)):
+        return JSONResponse(status_code=403, content={"error": "管理者のみ接続先を登録できます"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_ssh("POST", _ssh_app_url("/hosts"), headers, body)
+
+
+@app.put("/ssh/hosts/{host_id}")
+async def ssh_update_host(host_id: str, request: Request) -> JSONResponse:
+    err, headers = _ssh_headers(request)
+    if err:
+        return err
+    if not _is_system_admin(_claims_from_request(request)):
+        return JSONResponse(status_code=403, content={"error": "管理者のみ接続先を更新できます"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_ssh(
+        "PUT", _ssh_app_url(f"/hosts/{quote(host_id)}"), headers, body
+    )
+
+
+@app.delete("/ssh/hosts/{host_id}")
+async def ssh_delete_host(host_id: str, request: Request) -> JSONResponse:
+    err, headers = _ssh_headers(request)
+    if err:
+        return err
+    if not _is_system_admin(_claims_from_request(request)):
+        return JSONResponse(status_code=403, content={"error": "管理者のみ接続先を削除できます"})
+    return await _proxy_ssh("DELETE", _ssh_app_url(f"/hosts/{quote(host_id)}"), headers)
+
+
+@app.websocket("/ssh/ws")
+async def ssh_ws(websocket: WebSocket) -> None:
+    """ブラウザ ↔ ssh-app の PTY 中継。最初の JSON で JWT を受け取る。"""
+    await websocket.accept()
+    started = time.monotonic()
+    claims: dict[str, Any] = {}
+    host_meta = ""
+    try:
+        raw = await websocket.receive_text()
+        try:
+            first = json.loads(raw)
+        except json.JSONDecodeError:
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        if not isinstance(first, dict):
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        token = str(first.pop("token", "") or "")
+        try:
+            claims = auth.verify_token(token)
+        except Exception:  # noqa: BLE001
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "認証が必要です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4401)
+            return
+        err, headers = _ssh_headers_from_claims(claims)
+        if err:
+            await websocket.send_text(err.body.decode("utf-8") if err.body else '{"error":"unauthorized"}')
+            await websocket.close(code=4401)
+            return
+        host_id = str(first.get("hostId") or first.get("host_id") or "")
+        username = str(first.get("username") or "")
+        host_meta = f"hostId={host_id} user={username}"
+        audit.record(
+            action="ssh.connect",
+            usecase="ssh",
+            exAppId="ssh",
+            teamId=COMMON_TEAM_ID,
+            input_text=host_meta,
+            status=200,
+            user_id=_user_id(claims),
+            user_email=claims.get("email"),
+            user_name=claims.get("name"),
+            groups=claims.get("groups") or [],
+        )
+        ws_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+        async with _open_ssh_upstream(_ssh_ws_url(), ws_headers) as upstream:
+            await upstream.send(json.dumps(first, ensure_ascii=False))
+
+            async def browser_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        await upstream.close()
+                        return
+                    if message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+                    elif message.get("text") is not None:
+                        await upstream.send(message["text"])
+
+            async def upstream_to_browser() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            done, pending = await asyncio.wait(
+                {
+                    asyncio.create_task(browser_to_upstream()),
+                    asyncio.create_task(upstream_to_browser()),
+                },
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                exc = task.exception()
+                if exc and not isinstance(exc, (WebSocketDisconnect, Exception)):
+                    raise exc
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        try:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": (
+                            "SSH サービスに接続できませんでした。"
+                            "有効化するには `docker compose --profile ssh up -d` "
+                            "または `COMPOSE_PROFILES=ssh` を設定してください。"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"[ssh] websocket error: {e}")
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        if claims:
+            audit.record(
+                action="ssh.disconnect",
+                usecase="ssh",
+                exAppId="ssh",
+                teamId=COMMON_TEAM_ID,
+                input_text=host_meta,
+                status=200,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                user_id=_user_id(claims),
+                user_email=claims.get("email"),
+                user_name=claims.get("name"),
+                groups=claims.get("groups") or [],
+            )
 
 
 # ---------------------------------------------------------------------------
