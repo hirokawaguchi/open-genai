@@ -39,5 +39,5 @@ export const useProcuretechAvailable = (): boolean =>
 export const useProcuretechEditorAvailable = (): boolean =>
   useOptionalAppAvailable('procuretech-editor/config');
 
-export const useProcuretechHearingAvailable = (): boolean =>
-  useOptionalAppAvailable('procuretech-hearing/config');
+export const useNotebookAvailable = (): boolean =>
+  useOptionalAppAvailable('notebook/config');

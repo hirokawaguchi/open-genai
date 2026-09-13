@@ -4,12 +4,13 @@ import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
 import { getIdToken } from '@/local/localAuth';
 import { parseDownloadFilename } from '@/open-genai/procuretech/format';
 import type {
-  HearingConfig,
-  HearingSessionDetail,
-  HearingSessionSummary,
+  NotebookConfig,
+  NotebookItem,
+  NotebookSessionDetail,
+  NotebookSessionSummary,
 } from './types';
 
-const BASE = 'procuretech-hearing';
+const BASE = 'notebook';
 
 const errorMessage = (e: unknown, fallback: string): string => {
   if (e instanceof ApiError) {
@@ -43,18 +44,18 @@ const triggerBlobDownload = async (res: Response, fallback: string): Promise<voi
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 };
 
-export const useHearingConfig = () => {
-  const { data, isLoading } = useSWR<HearingConfig>(
+export const useNotebookConfig = () => {
+  const { data, isLoading } = useSWR<NotebookConfig>(
     `${BASE}/config`,
     async () => {
       try {
-        return await teamApiFetcher<HearingConfig>(`${BASE}/config`);
+        return await teamApiFetcher<NotebookConfig>(`${BASE}/config`);
       } catch (e) {
         if (e instanceof ApiError && (e.status === 503 || e.status === 502)) {
-          const d = e.data as HearingConfig | undefined;
+          const d = e.data as NotebookConfig | undefined;
           return {
             enabled: false,
-            error: d?.error || errorMessage(e, 'ヒアリングシートに接続できません'),
+            error: d?.error || errorMessage(e, 'ノートブックに接続できません'),
           };
         }
         throw e;
@@ -70,9 +71,9 @@ export const useHearingConfig = () => {
   };
 };
 
-export const useHearingSessions = () => {
+export const useNotebookSessions = () => {
   const { data, error, isLoading, mutate } = useSWR<{
-    sessions: HearingSessionSummary[];
+    sessions: NotebookSessionSummary[];
   }>(`${BASE}/sessions`, teamApiFetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
@@ -80,38 +81,38 @@ export const useHearingSessions = () => {
   return {
     sessions: data?.sessions ?? [],
     isLoading,
-    loadError: error ? errorMessage(error, '作業一覧の取得に失敗しました。') : null,
+    loadError: error ? errorMessage(error, 'ノート一覧の取得に失敗しました。') : null,
     mutate,
   };
 };
 
-export const useHearingSession = (sessionId: string | null) => {
+export const useNotebookSession = (sessionId: string | null) => {
   const key = sessionId ? `${BASE}/sessions/${encodeURIComponent(sessionId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<HearingSessionDetail>(key, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<NotebookSessionDetail>(key, teamApiFetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
   return {
     detail: data ?? null,
     isLoading,
-    loadError: error ? errorMessage(error, '作業の取得に失敗しました。') : null,
+    loadError: error ? errorMessage(error, 'ノートの取得に失敗しました。') : null,
     mutate,
   };
 };
 
-export const useHearingActions = () => {
+export const useNotebookActions = () => {
   const [submitting, setSubmitting] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const createSession = useCallback(async (title?: string): Promise<HearingSessionDetail | null> => {
+  const createSession = useCallback(async (title?: string): Promise<NotebookSessionDetail | null> => {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await teamApi.post<HearingSessionDetail>(`${BASE}/sessions`, { title: title ?? '' });
+      const res = await teamApi.post<NotebookSessionDetail>(`${BASE}/sessions`, { title: title ?? '' });
       return res.data ?? null;
     } catch (e) {
-      setError(errorMessage(e, '作業の作成に失敗しました。'));
+      setError(errorMessage(e, 'ノートの作成に失敗しました。'));
       return null;
     } finally {
       setSubmitting(false);
@@ -122,16 +123,16 @@ export const useHearingActions = () => {
     async (
       sessionId: string,
       body: { title?: string; instruction?: string },
-    ): Promise<HearingSessionDetail | null> => {
+    ): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
-        const res = await teamApi.put<HearingSessionDetail>(
+        const res = await teamApi.put<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}`,
           body,
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '作業の更新に失敗しました。'));
+        setError(errorMessage(e, 'ノートの更新に失敗しました。'));
         return null;
       }
     },
@@ -145,17 +146,17 @@ export const useHearingActions = () => {
       await teamApi.delete(`${BASE}/sessions/${encodeURIComponent(sessionId)}`);
       return true;
     } catch (e) {
-      setError(errorMessage(e, '作業の削除に失敗しました。'));
+      setError(errorMessage(e, 'ノートの削除に失敗しました。'));
       return false;
     } finally {
       setSubmitting(false);
     }
   }, []);
 
-  const addItem = useCallback(async (sessionId: string): Promise<HearingSessionDetail | null> => {
+  const addItem = useCallback(async (sessionId: string): Promise<NotebookSessionDetail | null> => {
     setError(null);
     try {
-      const res = await teamApi.post<HearingSessionDetail>(
+      const res = await teamApi.post<NotebookSessionDetail>(
         `${BASE}/sessions/${encodeURIComponent(sessionId)}/items`,
         {},
       );
@@ -170,11 +171,11 @@ export const useHearingActions = () => {
     async (
       sessionId: string,
       itemId: string,
-      body: { label?: string; value?: string },
-    ): Promise<HearingSessionDetail | null> => {
+      body: { label?: string; value?: string; citations?: NotebookItem['citations'] },
+    ): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
-        const res = await teamApi.patch<HearingSessionDetail>(
+        const res = await teamApi.patch<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/items/${encodeURIComponent(itemId)}`,
           body,
         );
@@ -188,10 +189,10 @@ export const useHearingActions = () => {
   );
 
   const deleteItem = useCallback(
-    async (sessionId: string, itemId: string): Promise<HearingSessionDetail | null> => {
+    async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
-        const res = await teamApi.delete<HearingSessionDetail>(
+        const res = await teamApi.delete<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/items/${encodeURIComponent(itemId)}`,
         );
         return res.data ?? null;
@@ -208,11 +209,11 @@ export const useHearingActions = () => {
       sessionId: string,
       filename: string,
       content: string,
-    ): Promise<HearingSessionDetail | null> => {
+    ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<HearingSessionDetail>(
+        const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/files`,
           { filename, content },
         );
@@ -228,10 +229,10 @@ export const useHearingActions = () => {
   );
 
   const deleteFile = useCallback(
-    async (sessionId: string, fileId: string): Promise<HearingSessionDetail | null> => {
+    async (sessionId: string, fileId: string): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
-        const res = await teamApi.delete<HearingSessionDetail>(
+        const res = await teamApi.delete<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}`,
         );
         return res.data ?? null;
@@ -243,12 +244,71 @@ export const useHearingActions = () => {
     [],
   );
 
+  const addKnowledgeRef = useCallback(
+    async (
+      sessionId: string,
+      body: { scope: string; doc_id: string },
+    ): Promise<NotebookSessionDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/knowledge-refs`,
+          body,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'ナレッジの追加に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const deleteKnowledgeRef = useCallback(
+    async (sessionId: string, refId: string): Promise<NotebookSessionDetail | null> => {
+      setError(null);
+      try {
+        const res = await teamApi.delete<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/knowledge-refs/${encodeURIComponent(refId)}`,
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'ナレッジ参照の削除に失敗しました。'));
+        return null;
+      }
+    },
+    [],
+  );
+
+  const chat = useCallback(
+    async (sessionId: string, question: string): Promise<NotebookSessionDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
+          { question },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '対話に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   const generateItem = useCallback(
-    async (sessionId: string, itemId: string): Promise<HearingSessionDetail | null> => {
+    async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
       setGeneratingId(itemId);
       setError(null);
       try {
-        const res = await teamApi.post<HearingSessionDetail>(
+        const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/items/${encodeURIComponent(itemId)}/generate`,
           {},
         );
@@ -272,6 +332,9 @@ export const useHearingActions = () => {
     deleteItem,
     addFile,
     deleteFile,
+    addKnowledgeRef,
+    deleteKnowledgeRef,
+    chat,
     generateItem,
     submitting,
     generatingId,
@@ -280,7 +343,7 @@ export const useHearingActions = () => {
   };
 };
 
-export const downloadHearingTemplate = async (): Promise<void> => {
+export const downloadHearingSheetTemplate = async (): Promise<void> => {
   const token = await getIdToken();
   const res = await fetch(buildTeamUrl(`${BASE}/template`), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -292,7 +355,7 @@ export const downloadHearingTemplate = async (): Promise<void> => {
   await triggerBlobDownload(res, 'hearing-sheet.xlsx');
 };
 
-export const downloadHearingWorkbook = async (sessionId: string): Promise<void> => {
+export const downloadHearingSheetWorkbook = async (sessionId: string): Promise<void> => {
   const token = await getIdToken();
   const res = await fetch(
     buildTeamUrl(`${BASE}/sessions/${encodeURIComponent(sessionId)}/download`),

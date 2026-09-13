@@ -1,4 +1,4 @@
-"""ナビゲーションシート（generate-app の対）。複数資料から自由項目の xlsx を作る。"""
+"""ノートブック。資料を構造化して項目・対話・ヒアリングシートにする。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import extract, intauth, llm, store
+from . import extract, ground, intauth, llm, retrieve, store, structure
 
 for parent in Path(__file__).resolve().parents:
     if (parent / "shared" / "navsheet.py").exists():
@@ -26,7 +26,7 @@ API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 RETENTION_DAYS = int(os.environ.get("HEARING_RETENTION_DAYS", "30"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_DOC_BYTES", str(20 * 1024 * 1024)))
 
-app = FastAPI(title="Open GENAI Hearing Sheet", version="0.1.0")
+app = FastAPI(title="Open GENAI Notebook", version="0.2.0")
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -212,12 +212,16 @@ async def patch_item(session_id: str, item_id: str, request: Request) -> JSONRes
     if err:
         return err
     body = await request.json()
+    cites = body.get("citations") if "citations" in body else None
+    if cites is not None and not isinstance(cites, list):
+        cites = []
     detail = store.update_item(
         session_id,
         uid,
         item_id,
         label=body.get("label") if "label" in body else None,
         value=body.get("value") if "value" in body else None,
+        citations=cites,
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -254,11 +258,27 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
             content={"error": f"未対応の形式です: {filename}"},
         )
     error = ""
+    nodes: list[dict] = []
+    briefing: dict = {}
     try:
-        extract.extract_file(filename, raw)
+        pages = extract.extract_pages(filename, raw)
+        nodes = structure.build_nodes(pages)
+        for n in nodes:
+            n["source"] = filename
+        briefing = structure.briefing_from_nodes(filename, nodes)
+        sample = "\n".join(str(n.get("text") or "") for n in nodes[:6])
+        briefing = await ground.enrich_briefing(filename, briefing, sample)
     except extract.DocExtractError as e:
         error = str(e)
-    detail = store.add_file(session_id, uid, filename=filename, raw=raw, error=error)
+    detail = store.add_file(
+        session_id,
+        uid,
+        filename=filename,
+        raw=raw,
+        error=error,
+        nodes=nodes,
+        briefing=briefing,
+    )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     return JSONResponse(content=detail)
@@ -291,44 +311,96 @@ async def generate_item(session_id: str, item_id: str, request: Request) -> JSON
     label = (item.get("label") or "").strip()
     if not label:
         return JSONResponse(status_code=400, content={"error": "項目名（設問）を入力してください"})
-    blobs = store.list_file_blobs(session_id, uid) or []
-    texts: list[str] = []
-    for filename, raw, file_err in blobs:
-        if file_err:
-            continue
-        try:
-            texts.append(f"# {filename}\n\n{extract.extract_file(filename, raw)}")
-        except extract.DocExtractError:
-            continue
-    if not texts:
-        return JSONResponse(
-            status_code=400, content={"error": "読める参考ファイルがありません"}
-        )
-    material = "\n\n".join(texts)
-    if len(material) > 80_000:
-        material = material[:80_000] + "\n…(以下省略)"
     try:
-        answer = await llm.chat(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "参考資料だけを根拠に、設問へ日本語で答えてください。"
-                        "前置きや見出しは不要です。資料に無いことは"
-                        "「資料から判断できない」と書いてください。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"# 設問\n{label}\n\n# 参考資料\n{material}",
-                },
-            ]
+        answer, cites = await ground.answer_from_sources(
+            session_id,
+            uid,
+            label,
+            instruction=str(detail.get("instruction") or ""),
         )
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:  # noqa: BLE001
         return JSONResponse(
             status_code=502, content={"error": f"生成に失敗しました: {e}"}
         )
-    detail = store.update_item(session_id, uid, item_id, value=answer)
+    detail = store.update_item(
+        session_id,
+        uid,
+        item_id,
+        value=retrieve.strip_citation_marks(answer),
+        citations=cites,
+    )
+    return JSONResponse(content=detail)
+
+
+@app.post("/sessions/{session_id}/knowledge-refs")
+async def add_knowledge_ref(session_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    body = await request.json()
+    nodes = body.get("nodes") or []
+    if not isinstance(nodes, list) or not nodes:
+        return JSONResponse(status_code=400, content={"error": "ノードがありません"})
+    briefing = body.get("briefing") if isinstance(body.get("briefing"), dict) else {}
+    detail = store.add_knowledge_ref(
+        session_id,
+        uid,
+        scope=str(body.get("scope") or ""),
+        doc_id=str(body.get("doc_id") or ""),
+        source=str(body.get("source") or ""),
+        title=str(body.get("title") or body.get("source") or ""),
+        nodes=[n for n in nodes if isinstance(n, dict)],
+        briefing=briefing,
+    )
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=detail)
+
+
+@app.delete("/sessions/{session_id}/knowledge-refs/{ref_id}")
+def remove_knowledge_ref(session_id: str, ref_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail = store.delete_knowledge_ref(session_id, uid, ref_id)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=detail)
+
+
+@app.post("/sessions/{session_id}/chat")
+async def chat(session_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not llm.LLM_ENABLED:
+        return JSONResponse(status_code=503, content={"error": "LLM が無効です"})
+    body = await request.json()
+    question = str(body.get("question") or body.get("content") or "").strip()
+    if not question:
+        return JSONResponse(status_code=400, content={"error": "質問を入力してください"})
+    detail = store.get_session(session_id, uid)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    store.add_message(session_id, uid, role="user", content=question)
+    try:
+        answer, cites = await ground.answer_from_sources(
+            session_id,
+            uid,
+            question,
+            instruction=str(detail.get("instruction") or ""),
+        )
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"生成に失敗しました: {e}"}
+        )
+    detail = store.add_message(
+        session_id, uid, role="assistant", content=answer, citations=cites
+    )
     return JSONResponse(content=detail)
 
 
@@ -342,7 +414,10 @@ def download(session_id: str, request: Request) -> Response:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     sheet = NavSheet(
         rows=[
-            NavRow(label=i.get("label") or "", value=i.get("value") or "")
+            NavRow(
+                label=i.get("label") or "",
+                value=retrieve.strip_citation_marks(i.get("value") or ""),
+            )
             for i in detail["items"]
         ],
         instruction=detail.get("instruction") or "",

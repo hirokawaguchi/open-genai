@@ -5,11 +5,11 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY procuretech-hearing-app/requirements.txt ./
+COPY notebook-app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared ./shared
-COPY procuretech-hearing-app/app ./app
+COPY notebook-app/app ./app
 
 EXPOSE 8017
 
