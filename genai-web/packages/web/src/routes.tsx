@@ -42,7 +42,7 @@ import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProcedu
 import { PatchformWizardPage } from '@/open-genai/patchform/PatchformWizardPage';
 import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
 import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
-import { ProcuretechHearingPage } from '@/open-genai/procuretech-hearing/ProcuretechHearingPage';
+import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
@@ -117,16 +117,21 @@ export const createRoutes = (): RouteObject[] => {
       path: 'apps/:teamId/procuretech-editor',
       element: <Navigate to='/procuretech-editor' replace />,
     },
-    // ヒアリングシート（標準起動）。旧 URL はリダイレクト。
-    { path: 'hearing-sheet', element: <ProcuretechHearingPage /> },
-    { path: 'procuretech-hearing', element: <Navigate to='/hearing-sheet' replace /> },
+    // ノートブック（notebook-app）。旧 URL はリダイレクト。
+    { path: 'notebook', element: <NotebookPage /> },
+    { path: 'hearing-sheet', element: <Navigate to='/notebook' replace /> },
+    { path: 'procuretech-hearing', element: <Navigate to='/notebook' replace /> },
+    {
+      path: 'apps/:teamId/notebook',
+      element: <Navigate to='/notebook' replace />,
+    },
     {
       path: 'apps/:teamId/hearing-sheet',
-      element: <Navigate to='/hearing-sheet' replace />,
+      element: <Navigate to='/notebook' replace />,
     },
     {
       path: 'apps/:teamId/procuretech-hearing',
-      element: <Navigate to='/hearing-sheet' replace />,
+      element: <Navigate to='/notebook' replace />,
     },
     // 旧 URL 互換：フォーム配下の「マイ手続き」は docmaker へ寄せる。
     { path: 'patchform/my', element: <Navigate to='/docmaker' replace /> },

@@ -17,7 +17,7 @@ docker compose up -d --build
 ```
 
 外部公開面は持たず、庁内利用（backend 経由）のみです。
-汎用生成（`procuretech-generate-app`）とヒアリングシート（`procuretech-hearing-app`）も同時に標準起動します。
+汎用生成（`procuretech-generate-app`）とノートブック（`notebook-app`）も同時に標準起動します。
 
 ## 構成
 
@@ -235,7 +235,7 @@ section key／file_id を解決して本文を順に集約し、形式に応じ�
 `/generate` は LLM/Dify なしでナビゲーションシートから章を作ります。
 テーマ無しの「素の文書」の合成は既定でこのサービスが担います
 （`EDITOR_COMPOSE_URL=http://procuretech-generate-app:8016`）。
-入力シートは `procuretech-hearing-app`（`/hearing-sheet`）で作れます。
+入力シートは `notebook-app`（`/notebook`、旧 `/hearing-sheet`）で作れます。
 視覚形式（docx / html / pptx）の見た目はデジタル庁デザインシステム（DADS）に揃える
 （Blue 900・Solid Gray・Noto Sans JP）。html / pptx は同じデッキ計画（主張タイトル → layout →
 伏せたレビュー）で 16:9 スライドにする。根拠原文は pptx のスピーカーノートに残す。

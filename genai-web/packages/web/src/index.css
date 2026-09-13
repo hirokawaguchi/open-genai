@@ -165,6 +165,14 @@
   .prose-sm :where(h6) {
     @apply mt-4 mb-0 text-std-16N-170;
   }
+  .prose :where(strong, b) {
+    @apply font-700;
+  }
+
+  .prose :where(em, i) {
+    font-style: italic;
+  }
+
   /* Paragraph */
 
   .prose :where(p),

@@ -9,7 +9,7 @@ import {
   usePatchformAvailable,
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
-  useProcuretechHearingAvailable,
+  useNotebookAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -67,11 +67,14 @@ export const PROCURETECH_EDITOR_PATH = '/procuretech-editor';
 /** 情報化企画書エディタ exApp の識別子（専用ページへ振り替える対象） */
 export const PROCURETECH_EDITOR_EXAPP_ID = 'procuretech-editor';
 
-/** ヒアリングシートは汎用 exApp フォームではなく専用ページで提供する */
-export const PROCURETECH_HEARING_PATH = '/hearing-sheet';
+/** ノートブックは汎用 exApp フォームではなく専用ページで提供する */
+export const NOTEBOOK_PATH = '/notebook';
 
-/** ヒアリングシート exApp の識別子（専用ページへ振り替える対象） */
-export const PROCURETECH_HEARING_EXAPP_ID = 'procuretech-hearing';
+/** ノートブック exApp の識別子（専用ページへ振り替える対象） */
+export const NOTEBOOK_EXAPP_ID = 'notebook';
+
+/** 旧ヒアリングシート ID（ピン留めの振り替え用） */
+export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
 
 /** 監査ログは管理者限定の専用ページで提供する */
 export const AUDIT_ADMIN_PATH = '/admin/audit';
@@ -112,7 +115,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const patchformAvailable = usePatchformAvailable();
   const procuretechAvailable = useProcuretechAvailable();
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
-  const procuretechHearingAvailable = useProcuretechHearingAvailable();
+  const notebookAvailable = useNotebookAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -242,13 +245,13 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (procuretechHearingAvailable && listed(PROCURETECH_HEARING_EXAPP_ID)) {
+    if (notebookAvailable && listed(NOTEBOOK_EXAPP_ID)) {
       items.push({
-        label: nameOf(PROCURETECH_HEARING_EXAPP_ID, 'ヒアリングシート'),
-        to: PROCURETECH_HEARING_PATH,
+        label: nameOf(NOTEBOOK_EXAPP_ID, 'ノートブック'),
+        to: NOTEBOOK_PATH,
         description: descOf(
-          PROCURETECH_HEARING_EXAPP_ID,
-          '複数の参考資料から項目と値を整理し、文書生成用の Excel を作ります。',
+          NOTEBOOK_EXAPP_ID,
+          '参考資料を集めて調べ、項目として整理します。必要ならヒアリングシートも作れます。',
         ),
       });
     }
@@ -271,7 +274,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     patchformAvailable,
     procuretechAvailable,
     procuretechEditorAvailable,
-    procuretechHearingAvailable,
+    notebookAvailable,
     registryApps,
     catalogLoaded,
   ]);
@@ -314,9 +317,11 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   if (item.app.value === PROCURETECH_EDITOR_EXAPP_ID) {
     return PROCURETECH_EDITOR_PATH;
   }
-  // ナビゲーションシートは専用ページへ振り替える
-  if (item.app.value === PROCURETECH_HEARING_EXAPP_ID) {
-    return PROCURETECH_HEARING_PATH;
+  if (
+    item.app.value === NOTEBOOK_EXAPP_ID ||
+    item.app.value === NOTEBOOK_LEGACY_EXAPP_ID
+  ) {
+    return NOTEBOOK_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
