@@ -13,7 +13,7 @@
 （未設定・失敗時は成果物を作らず README に注記します）。
 テーマ無しの「素の文書」の Word 化の既定バックエンドでもあり
 （`EDITOR_COMPOSE_URL`）、`docker compose up` で標準起動します。
-入力シートは `procuretech-hearing-app`（専用ページ `/hearing-sheet`）で作れます。
+入力シートは `notebook-app`（専用ページ `/notebook`）で作れます。
 本番のテーマ固有生成サービス（例: 調達仕様書）は非公開のため本リポジトリには含めません。
 
 - 呼び出し元クライアント: `procuretech-editor-app/app/generate.py`
@@ -48,7 +48,7 @@
   - A 列 `ナビゲーション` の B セル: Markdown 表 `| 項目 | 値 |`（各行が 1 つの材料ファイル）
   - A 列 `生成指示` の B セル: 成果物 Markdown を書くための処理指示（LLM）
   項目の追加・改名・削除は自由。空雛形は `GET /template/hearing`（`navigation` も可）。
-  画面からの作成は [`docs/procuretech-hearing.md`](procuretech-hearing.md)。
+  画面からの作成は [`docs/notebook.md`](notebook.md)。
   結果 zip は `README.md`（概要と同梱一覧）、`01_設問名.md`（回答の転記）、
   指示があるときは `生成文書.md`（`section_key=generated`）を含む。
   LLM 未設定・失敗・指示空のときは `生成文書.md` を作らず、README の「注記」に理由を書く。
@@ -268,7 +268,7 @@ docker compose up -d
 ]
 ```
 
-入力シートの作り方は [`docs/procuretech-hearing.md`](procuretech-hearing.md) を参照してください。
+入力シートの作り方は [`docs/notebook.md`](notebook.md) を参照してください。
 
 本番の非公開生成サービスを使う場合は、gitignore 対象のオーバーレイ
 `docker-compose.procuretech-spec.yml` を重ねて起動します。

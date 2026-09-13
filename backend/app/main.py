@@ -131,10 +131,13 @@ PROCURETECH_DOWNLOAD_VIA_S3 = os.environ.get(
 PROCURETECH_EDITOR_APP_URL = os.environ.get(
     "PROCURETECH_EDITOR_APP_URL", "http://procuretech-editor-app:8015/invoke"
 )
-# ナビゲーションシート。実 API は /procuretech-hearing/* プロキシ。
-PROCURETECH_HEARING_APP_URL = os.environ.get(
-    "PROCURETECH_HEARING_APP_URL", "http://procuretech-hearing-app:8017/invoke"
+# ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
+NOTEBOOK_APP_URL = (
+    os.environ.get("NOTEBOOK_APP_URL")
+    or os.environ.get("PROCURETECH_HEARING_APP_URL")
+    or "http://notebook-app:8017/invoke"
 )
+PROCURETECH_HEARING_APP_URL = NOTEBOOK_APP_URL
 PATCHFORM_SERVICE_USER = "service"
 _PATCHFORM_SERVICE_PATHS = re.compile(
     r"^/patchform/(?:procedures(?:/[^/]+(?:/(?:applications|export))?)?|applications/[^/]+(?:/export)?)$"
@@ -661,12 +664,12 @@ PROCURETECH_EDITOR_SEED: dict[str, Any] = {
     "status": "published",
 }
 
-# ヒアリングシート（共通アプリ）。UI は専用ページ /hearing-sheet。
+# ノートブック（共通アプリ）。UI は専用ページ /notebook。実装は notebook-app。
 # 未起動時は /config 失敗で一覧・ナビ非表示。
 PROCURETECH_HEARING_SEED: dict[str, Any] = {
-    "exAppId": "procuretech-hearing",
+    "exAppId": "notebook",
     "teamId": COMMON_TEAM_ID,
-    "exAppName": "ヒアリングシート",
+    "exAppName": "ノートブック",
     "endpoint": (
         PROCURETECH_HEARING_APP_URL
         if PROCURETECH_HEARING_APP_URL.endswith("/invoke")
@@ -675,12 +678,16 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": "",
-    "description": "複数の参考資料から項目と値を整理し、文書生成用のヒアリングシート（Excel）を作ります。",
+    "description": (
+        "参考資料を集めて調べ、項目として整理します。"
+        "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
+    ),
     "howToUse": (
         "## 使い方\n\n"
-        "- 専用ページ「ヒアリングシート」で作業を作成します。\n"
-        "- 参考ファイルを追加し、項目（設問）ごとに値を手入力または生成します。\n"
-        "- 記入済みシートをダウンロードし、Markdown エディタの生成入力として使えます。\n"
+        "- 専用ページ「ノートブック」でノートを作成します。\n"
+        "- 参考ファイルや既存ナレッジをソースに追加します（取込時に構造化します）。\n"
+        "- 項目（設問）ごとに値を手入力または生成します。対話でも同じソースを使えます。\n"
+        "- 記入済みヒアリングシートをダウンロードし、Markdown エディタの生成入力として使えます。\n"
         "- `docker compose up -d` で標準起動します。\n"
     ),
     "copyable": False,
@@ -789,6 +796,7 @@ RETIRED_SEED_EXAPP_IDS = [
     "rag-register",
     "rag-maintain",
     "procuretech",
+    "procuretech-hearing",
 ]
 
 
@@ -812,6 +820,14 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "複数の参考資料から項目と値を整理し、文書生成用のナビゲーションシート（Excel）を作ります。"
         ),
         "old_howto_markers": ("ナビゲーションシート",),
+    },
+    {
+        "seed": PROCURETECH_HEARING_SEED,
+        "old_name": "ヒアリングシート",
+        "old_description": (
+            "複数の参考資料から項目と値を整理し、文書生成用のヒアリングシート（Excel）を作ります。"
+        ),
+        "old_howto_markers": ("専用ページ「ヒアリングシート」",),
     },
 ]
 
@@ -860,6 +876,29 @@ def _migrate_procuretech_exapp_id() -> None:
             },
         )
     teams_store.reassign_exapp_refs(COMMON_TEAM_ID, old_id, new_id)
+
+
+def _migrate_hearing_to_notebook() -> None:
+    """ヒアリングシートの exAppId を procuretech-hearing → notebook へ付け替える。"""
+    old_id = "procuretech-hearing"
+    new_id = PROCURETECH_HEARING_SEED["exAppId"]
+    old = teams_store.get_exapp(COMMON_TEAM_ID, old_id)
+    if not old:
+        return
+    stale_names = {"ヒアリングシート", "ナビゲーションシート"}
+    new = teams_store.get_exapp(COMMON_TEAM_ID, new_id)
+    if new and (old.get("exAppName") or "") not in stale_names:
+        teams_store.update_exapp(
+            COMMON_TEAM_ID,
+            new_id,
+            {
+                "exAppName": old.get("exAppName"),
+                "description": old.get("description"),
+                "howToUse": old.get("howToUse"),
+            },
+        )
+    teams_store.reassign_exapp_refs(COMMON_TEAM_ID, old_id, new_id)
+    teams_store.delete_exapp(COMMON_TEAM_ID, old_id)
 
 
 def _now_iso() -> str:
@@ -1347,6 +1386,10 @@ def _startup() -> None:
         _migrate_procuretech_exapp_id()
     except Exception as e:  # noqa: BLE001
         print(f"[startup] 情報化企画書ナビ ID の移行に失敗: {e}")
+    try:
+        _migrate_hearing_to_notebook()
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] ノートブック ID の移行に失敗: {e}")
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
         teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
     # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。
@@ -2319,6 +2362,28 @@ async def knowledge_list_docs(
     if tags:
         params["tags"] = tags
     return await _knowledge_get("/knowledge/docs", claims, scope, params)
+
+
+@app.get("/knowledge/docs/{doc_id}/toc")
+async def knowledge_doc_toc(
+    doc_id: str, request: Request, scope: str = Query(default="")
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    return await _knowledge_get(f"/knowledge/docs/{doc_id}/toc", claims, scope)
+
+
+@app.post("/knowledge/docs/{doc_id}/nodes")
+async def knowledge_doc_nodes(doc_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope)
+    if err:
+        return err
+    return await _knowledge_post(f"/knowledge/docs/{doc_id}/nodes", claims, scope, body)
 
 
 def _knowledge_scope_from_body(body: dict[str, Any]) -> str:
@@ -4399,10 +4464,11 @@ async def procuretech_editor_compose_status(
 
 
 # ---------------------------------------------------------------------------
-# ナビゲーションシート専用ページ(/procuretech-hearing) 用プロキシ
+# ノートブック専用ページ(/notebook) 用プロキシ
 #
 # 未起動時は接続失敗 → 専用ページが案内を表示する。
 # スコープは共通チーム(COMMON_TEAM_ID)固定。
+# 旧 /procuretech-hearing/* はエイリアス。
 # ---------------------------------------------------------------------------
 def _procuretech_hearing_app_url(path: str) -> str:
     if PROCURETECH_HEARING_APP_URL.endswith("/invoke"):
@@ -4451,7 +4517,7 @@ async def _proxy_procuretech_hearing(
             status_code=503,
             content={
                 "error": (
-                    "ヒアリングシートに接続できませんでした。"
+                    "ノートブックに接続できませんでした。"
                     "`docker compose up -d` で起動してください。"
                     f"（詳細: {e}）"
                 ),
@@ -4461,7 +4527,7 @@ async def _proxy_procuretech_hearing(
     try:
         payload = res.json()
     except ValueError:
-        payload = {"error": "ヒアリングシートから不正な応答を受け取りました"}
+        payload = {"error": "ノートブックから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
@@ -4480,7 +4546,7 @@ async def _proxy_procuretech_hearing_bytes(
             status_code=503,
             content={
                 "error": (
-                    "ヒアリングシートに接続できませんでした。"
+                    "ノートブックに接続できませんでした。"
                     "`docker compose up -d` で起動してください。"
                     f"（詳細: {e}）"
                 ),
@@ -4505,10 +4571,11 @@ async def _proxy_procuretech_hearing_bytes(
     try:
         payload = res.json()
     except ValueError:
-        payload = {"error": "ヒアリングシートから不正な応答を受け取りました"}
+        payload = {"error": "ノートブックから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
+@app.get("/notebook/config")
 @app.get("/procuretech-hearing/config")
 async def procuretech_hearing_config(request: Request) -> JSONResponse:
     err, headers = _procuretech_hearing_headers(request)
@@ -4519,6 +4586,7 @@ async def procuretech_hearing_config(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/notebook/template")
 @app.get("/procuretech-hearing/template")
 async def procuretech_hearing_template(request: Request) -> Response:
     err, headers = _procuretech_hearing_headers(request)
@@ -4529,6 +4597,7 @@ async def procuretech_hearing_template(request: Request) -> Response:
     )
 
 
+@app.get("/notebook/sessions")
 @app.get("/procuretech-hearing/sessions")
 async def procuretech_hearing_list_sessions(request: Request) -> JSONResponse:
     err, headers = _procuretech_hearing_headers(request)
@@ -4539,6 +4608,7 @@ async def procuretech_hearing_list_sessions(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/notebook/sessions")
 @app.post("/procuretech-hearing/sessions")
 async def procuretech_hearing_create_session(request: Request) -> JSONResponse:
     err, headers = _procuretech_hearing_headers(request)
@@ -4553,6 +4623,7 @@ async def procuretech_hearing_create_session(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/notebook/sessions/{session_id}")
 @app.get("/procuretech-hearing/sessions/{session_id}")
 async def procuretech_hearing_get_session(
     session_id: str, request: Request
@@ -4565,6 +4636,7 @@ async def procuretech_hearing_get_session(
     )
 
 
+@app.put("/notebook/sessions/{session_id}")
 @app.put("/procuretech-hearing/sessions/{session_id}")
 async def procuretech_hearing_put_session(
     session_id: str, request: Request
@@ -4578,6 +4650,7 @@ async def procuretech_hearing_put_session(
     )
 
 
+@app.delete("/notebook/sessions/{session_id}")
 @app.delete("/procuretech-hearing/sessions/{session_id}")
 async def procuretech_hearing_delete_session(
     session_id: str, request: Request
@@ -4590,6 +4663,7 @@ async def procuretech_hearing_delete_session(
     )
 
 
+@app.post("/notebook/sessions/{session_id}/items")
 @app.post("/procuretech-hearing/sessions/{session_id}/items")
 async def procuretech_hearing_add_item(
     session_id: str, request: Request
@@ -4609,6 +4683,7 @@ async def procuretech_hearing_add_item(
     )
 
 
+@app.patch("/notebook/sessions/{session_id}/items/{item_id}")
 @app.patch("/procuretech-hearing/sessions/{session_id}/items/{item_id}")
 async def procuretech_hearing_patch_item(
     session_id: str, item_id: str, request: Request
@@ -4625,6 +4700,7 @@ async def procuretech_hearing_patch_item(
     )
 
 
+@app.delete("/notebook/sessions/{session_id}/items/{item_id}")
 @app.delete("/procuretech-hearing/sessions/{session_id}/items/{item_id}")
 async def procuretech_hearing_delete_item(
     session_id: str, item_id: str, request: Request
@@ -4639,6 +4715,7 @@ async def procuretech_hearing_delete_item(
     )
 
 
+@app.post("/notebook/sessions/{session_id}/files")
 @app.post("/procuretech-hearing/sessions/{session_id}/files")
 async def procuretech_hearing_add_file(
     session_id: str, request: Request
@@ -4656,6 +4733,7 @@ async def procuretech_hearing_add_file(
     )
 
 
+@app.delete("/notebook/sessions/{session_id}/files/{file_id}")
 @app.delete("/procuretech-hearing/sessions/{session_id}/files/{file_id}")
 async def procuretech_hearing_delete_file(
     session_id: str, file_id: str, request: Request
@@ -4670,6 +4748,7 @@ async def procuretech_hearing_delete_file(
     )
 
 
+@app.post("/notebook/sessions/{session_id}/items/{item_id}/generate")
 @app.post("/procuretech-hearing/sessions/{session_id}/items/{item_id}/generate")
 async def procuretech_hearing_generate_item(
     session_id: str, item_id: str, request: Request
@@ -4688,6 +4767,7 @@ async def procuretech_hearing_generate_item(
     )
 
 
+@app.get("/notebook/sessions/{session_id}/download")
 @app.get("/procuretech-hearing/sessions/{session_id}/download")
 async def procuretech_hearing_download(
     session_id: str, request: Request
@@ -4699,6 +4779,129 @@ async def procuretech_hearing_download(
         "GET",
         _procuretech_hearing_app_url(f"/sessions/{session_id}/download"),
         headers,
+    )
+
+
+async def _snapshot_knowledge_doc(
+    claims: dict[str, Any], scope: str, doc_id: str
+) -> tuple[JSONResponse | None, dict[str, Any]]:
+    toc_res = await _knowledge_get(f"/knowledge/docs/{doc_id}/toc", claims, scope)
+    if toc_res.status_code != 200:
+        return toc_res, {}
+    toc = toc_res.body
+    try:
+        payload = json.loads(toc)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "目次の取得に失敗しました"}), {}
+    toc_nodes = payload.get("nodes") or []
+    node_ids = [str(n.get("node_id") or "") for n in toc_nodes if n.get("node_id")]
+    source = str(payload.get("source") or "")
+    if not node_ids:
+        return (
+            JSONResponse(status_code=400, content={"error": "構造化されていない資料です"}),
+            {},
+        )
+    nodes_res = await _knowledge_post(
+        f"/knowledge/docs/{doc_id}/nodes",
+        claims,
+        scope,
+        {"scope": scope, "node_ids": node_ids},
+    )
+    if nodes_res.status_code != 200:
+        return nodes_res, {}
+    try:
+        node_payload = json.loads(nodes_res.body)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"error": "本文の取得に失敗しました"}), {}
+    raw_nodes = node_payload.get("nodes") or []
+    nodes = [
+        {
+            "title": n.get("title") or "",
+            "text": n.get("text") or "",
+            "summary": n.get("summary") or "",
+            "page_start": n.get("page_start"),
+            "page_end": n.get("page_end"),
+            "source": source,
+        }
+        for n in raw_nodes
+        if isinstance(n, dict)
+    ]
+    outline = [str(n.get("title") or "") for n in nodes if n.get("title")]
+    briefing = {
+        "summary": next((str(n.get("summary") or "") for n in nodes if n.get("summary")), source),
+        "terms": [],
+        "outline": outline[:40],
+    }
+    return None, {
+        "scope": scope,
+        "doc_id": doc_id,
+        "source": source or doc_id,
+        "title": source or doc_id,
+        "nodes": nodes,
+        "briefing": briefing,
+    }
+
+
+@app.post("/notebook/sessions/{session_id}/knowledge-refs")
+@app.post("/procuretech-hearing/sessions/{session_id}/knowledge-refs")
+async def procuretech_hearing_add_knowledge_ref(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    scope = str(body.get("scope") or "").strip()
+    doc_id = str(body.get("doc_id") or "").strip()
+    claims = _claims_from_request(request)
+    authz = _knowledge_authz(claims, scope)
+    if authz:
+        return authz
+    snap_err, snap = await _snapshot_knowledge_doc(claims, scope, doc_id)
+    if snap_err:
+        return snap_err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/knowledge-refs"),
+        headers,
+        snap,
+        timeout=120,
+    )
+
+
+@app.delete("/notebook/sessions/{session_id}/knowledge-refs/{ref_id}")
+@app.delete("/procuretech-hearing/sessions/{session_id}/knowledge-refs/{ref_id}")
+async def procuretech_hearing_delete_knowledge_ref(
+    session_id: str, ref_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/knowledge-refs/{ref_id}"),
+        headers,
+    )
+
+
+@app.post("/notebook/sessions/{session_id}/chat")
+@app.post("/procuretech-hearing/sessions/{session_id}/chat")
+async def procuretech_hearing_chat(
+    session_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/chat"),
+        headers,
+        body,
+        timeout=240,
     )
 
 

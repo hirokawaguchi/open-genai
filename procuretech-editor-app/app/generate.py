@@ -88,7 +88,7 @@ HEARING_THEME_ALIASES = frozenset({"navigation"})
 
 
 def _navigation_theme() -> dict[str, Any]:
-    """hearing-app で作ったヒアリングシート → generate-app の汎用生成。"""
+    """notebook-app で作ったヒアリングシート → generate-app の汎用生成。"""
     return {
         "id": HEARING_THEME_ID,
         "label": "ヒアリングシート",

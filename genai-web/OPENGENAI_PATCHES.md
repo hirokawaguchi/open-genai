@@ -120,10 +120,10 @@ S3 保存＋分割エディタが必要なため汎用 exApp フォームでは�
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `packages/web/src/routes.tsx` | `/hearing-sheet` ルート追加、旧 `/procuretech-hearing` はリダイレクト |
-| `packages/web/src/layout/navItems.ts` | おすすめに「ヒアリングシート」、`pinnedAppHref` で `procuretech-hearing` を `/hearing-sheet` に振替 |
-| `packages/web/src/open-genai/procuretech-hearing/` | 専用ページ（作業一覧・参考ファイル・動的項目・行ごと生成・xlsx DL）と SWR フック・型 |
-| `packages/web/src/open-genai/optional-app-health/useOptionalAppAvailable.ts` | `useProcuretechHearingAvailable` を追加 |
+| `packages/web/src/routes.tsx` | `/notebook` ルート追加、旧 `/hearing-sheet` `/procuretech-hearing` はリダイレクト |
+| `packages/web/src/layout/navItems.ts` | おすすめに「ノートブック」、`pinnedAppHref` で `notebook` / 旧 `procuretech-hearing` を `/notebook` に振替 |
+| `packages/web/src/open-genai/notebook/` | 専用ページ（`NotebookPage`・`useNotebook`・`types`。作業一覧・ソース・項目・対話・xlsx DL） |
+| `packages/web/src/open-genai/optional-app-health/useOptionalAppAvailable.ts` | `useNotebookAvailable` を追加 |
 
 ### 監査ログ専用ページ（Open GENAI 拡張・管理者限定）
 
@@ -183,7 +183,7 @@ S3 保存＋分割エディタが必要なため汎用 exApp フォームでは�
 | `packages/web/src/open-genai/patchform/` | フォーム専用ページ（`PatchformPage`・編集・詳細・`FillForm`。Compose profile `patchform`） |
 | `packages/web/src/open-genai/procuretech/` | 情報化企画書ナビ専用ページ（`ProcuretechPage`・`useProcuretech`・`types`。Compose profile `procuretech`） |
 | `packages/web/src/open-genai/procuretech-editor/` | Markdown エディタ専用ページ（`ProcuretechEditorPage`・`useProcuretechEditor`・`types`・`format`。標準起動） |
-| `packages/web/src/open-genai/procuretech-hearing/` | ナビゲーションシート専用ページ（`ProcuretechHearingPage`・`useProcuretechHearing`・`types`。標準起動） |
+| `packages/web/src/open-genai/notebook/` | ノートブック専用ページ（`NotebookPage`・`useNotebook`・`types`。標準起動） |
 | `backend/app/teams_store.py` | `user_app_pins` テーブル |
 | `backend/app/image_gen.py` | `is_sd_up()` による SD 稼働確認 |
 | `backend/app/main.py` | `GET/POST/DELETE /my/app-pins`, `GET /image/health`, `GET/POST/DELETE /prompts/templates`, `POST /prompts/templates/{id}/render`, `GET /admin/users`, `POST /admin/users/plan`, `POST /admin/users/apply`, `GET/POST /admin/model-policy`, `GET/POST /admin/ngword`, `/procuretech-navigator/*`（情報化企画書ナビのプロキシ・`PROCURETECH_SEED`、旧 `/procuretech/*` はエイリアス）, `/procuretech-editor/*`（Markdown エディタのプロキシ・`PROCURETECH_EDITOR_SEED`）, `/procuretech-hearing/*`（ナビゲーションシートのプロキシ・`PROCURETECH_HEARING_SEED`） |
