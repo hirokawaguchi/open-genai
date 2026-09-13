@@ -108,8 +108,8 @@ services:
       - PROCURETECH_DOWNLOAD_VIA_S3=${PROCURETECH_DOWNLOAD_VIA_S3:-}
       # Markdown エディタ（標準起動）
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
-      # ナビゲーションシート（標準起動）
-      - PROCURETECH_HEARING_APP_URL=${PROCURETECH_HEARING_APP_URL:-http://procuretech-hearing-app:8017/invoke}
+      # ノートブック（標準起動）
+      - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -635,12 +635,12 @@ services:
       - "8016"
     restart: unless-stopped
 
-  # 標準: ナビゲーションシート（複数資料から記入済み xlsx を作る。generate-app の対）
-  procuretech-hearing-app:
+  # 標準: ノートブック（資料を構造化し、項目・対話・ヒアリングシート Excel を作る）
+  notebook-app:
     build:
       context: .
-      dockerfile: procuretech-hearing-app/Dockerfile
-    container_name: open-genai-procuretech-hearing-app
+      dockerfile: notebook-app/Dockerfile
+    container_name: open-genai-notebook-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
@@ -655,6 +655,7 @@ services:
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
+      # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）
       - procuretech_hearing_app_data:/data
     expose:
       - "8017"
@@ -698,4 +699,5 @@ volumes:
   patchform_app_data:
   procuretech_app_data:
   procuretech_editor_app_data:
+  # ノートブック用。既存環境のボリューム名を維持する。
   procuretech_hearing_app_data:

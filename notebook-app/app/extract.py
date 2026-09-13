@@ -31,13 +31,23 @@ def allowed_name(filename: str) -> bool:
     return any(name.endswith(ext) for ext in _ACCEPT)
 
 
-def extract_file(filename: str, raw: bytes) -> str:
+def extract_pages(filename: str, raw: bytes) -> list[dict]:
     pages = extract_doc_pages(filename, "", base64.b64encode(raw).decode("ascii"))
-    parts = [str(p.get("text") or "").strip() for p in pages if p.get("text")]
-    text = "\n\n".join(parts).strip()
-    if not text:
+    if not any(str(p.get("text") or "").strip() for p in pages):
         raise DocExtractError(f"{filename} からテキストを抽出できませんでした")
-    return text
+    return pages
 
 
-__all__ = ["DocExtractError", "accept_exts", "allowed_name", "extract_file"]
+def extract_file(filename: str, raw: bytes) -> str:
+    pages = extract_pages(filename, raw)
+    parts = [str(p.get("text") or "").strip() for p in pages if p.get("text")]
+    return "\n\n".join(parts).strip()
+
+
+__all__ = [
+    "DocExtractError",
+    "accept_exts",
+    "allowed_name",
+    "extract_file",
+    "extract_pages",
+]
