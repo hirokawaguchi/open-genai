@@ -33,6 +33,8 @@ WEB_TEST_TARGETS=(
   tests/features/chat/ChatPage.test.tsx
   tests/features/generate-image/utils/parseAssistantImageContent.test.ts
   tests/features/exapp/components/ExAppConversationList.test.tsx
+  tests/open-genai/ssh/sshWsUrl.test.ts
+  tests/open-genai/ssh/encodePty.test.ts
 )
 
 while [ $# -gt 0 ]; do

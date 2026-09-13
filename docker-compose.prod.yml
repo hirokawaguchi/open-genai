@@ -110,6 +110,8 @@ services:
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # ノートブック（標準起動）
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
+      # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
+      - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。
@@ -663,6 +665,25 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: Web SSH（`COMPOSE_PROFILES=ssh` または `--profile ssh`）
+  # ホストポートは公開しない。backend からのみ到達する。
+  ssh-app:
+    profiles: ["ssh"]
+    build: ./ssh-app
+    container_name: open-genai-ssh-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - SSH_DB_PATH=/data/ssh.db
+      - SSH_IDLE_SECONDS=${SSH_IDLE_SECONDS:-1800}
+      - SSH_MAX_SESSIONS_PER_USER=${SSH_MAX_SESSIONS_PER_USER:-2}
+      - SSH_CONNECT_TIMEOUT=${SSH_CONNECT_TIMEOUT:-20}
+    volumes:
+      - ssh_app_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -701,3 +722,4 @@ volumes:
   procuretech_editor_app_data:
   # ノートブック用。既存環境のボリューム名を維持する。
   procuretech_hearing_app_data:
+  ssh_app_data:

@@ -72,6 +72,7 @@ deletion-report-*.txt
 !/docs/procuretech-editor.md
 !/docs/notebook.md
 !/docs/procuretech-hearing.md
+!/docs/ssh.md
 
 # 運用者ログインの初期平文（サーバ内のみ）
 /.ops-credentials

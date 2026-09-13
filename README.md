@@ -61,7 +61,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 ### 4 つの柱
 
-1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、日程調整（オプション profile）、書類領域分割チェック（オプション profile）、オンライン申請フォーム・手続き（申請束）・マイ手続き（オプション profile）、Markdown エディタ＋各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で。生成 API はプラガブル、オプション profile）、契約終了時の完全削除と報告書生成
+1. **自治体実務を想定した機能** — 監査ログ（3 年以上保持）、利用者 CSV 一括管理、モデル利用制御、禁止語／個人情報検知（添付警告・ナレッジラベル、任意の GiNZA NER）、プロンプトテンプレート、日程調整（オプション profile）、書類領域分割チェック（オプション profile）、オンライン申請フォーム・手続き（申請束）・マイ手続き（オプション profile）、Markdown エディタ＋各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で。生成 API はプラガブル、オプション profile）、Web SSH 端末（オプション profile）、契約終了時の完全削除と報告書生成
 2. **チーム主体・複数所属** — 主所属は1つ、兼務・プロジェクトは追加タグ。親チーム所属者は配下を閲覧できる。AI アプリ・RAG ナレッジ・保存プロンプトの共有は **所属チーム** を軸に制御
 3. **源内 UI 制約の opt-in 拡張** — Form Spec v1（条件表示・リアクティブフォーム・プレビュー）、`dynamic_schema` による動的フォーム、各画面の折りたたみヘルプ。既存 exApp は無改修で従来どおり動作
 4. **成果物のオブジェクトストレージ** — AI アプリ（Dify 等）が生成したファイルを SeaweedFS に保存し、backend 経由で署名付き URL を提示
@@ -90,6 +90,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（標準起動。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
 | `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（標準起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
 | `notebook-app/` | ノートブック（標準起動。資料を構造化して項目・対話・ヒアリングシート Excel を作る。詳細は [`docs/notebook.md`](docs/notebook.md)） |
+| `ssh-app/` | Web SSH 端末（オプション・`profiles: ["ssh"]`。詳細は [`docs/ssh.md`](docs/ssh.md)） |
 | `procuretech-spec-app/` | 調達仕様書の生成/合成（オプション・`profiles: ["procuretech-spec"]`） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |

@@ -45,6 +45,7 @@ import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/Procurete
 import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
+import { SshPage } from '@/open-genai/ssh/SshPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { Layout } from './layout/Layout';
@@ -133,6 +134,9 @@ export const createRoutes = (): RouteObject[] => {
       path: 'apps/:teamId/procuretech-hearing',
       element: <Navigate to='/notebook' replace />,
     },
+    // Web SSH（Compose profiles: ["ssh"]）。
+    { path: 'ssh', element: <SshPage /> },
+    { path: 'apps/:teamId/ssh', element: <Navigate to='/ssh' replace /> },
     // 旧 URL 互換：フォーム配下の「マイ手続き」は docmaker へ寄せる。
     { path: 'patchform/my', element: <Navigate to='/docmaker' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。

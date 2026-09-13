@@ -33,6 +33,7 @@
 
 ## [Unreleased]
 
+- Web SSH 端末を追加した。Compose profile `ssh` でオプション起動し、専用ページは `/ssh`。システム管理者が登録した接続先カタログだけに、認証済みユーザーがブラウザ（xterm）からパスワード認証で入れる。パスワードは保存せず、接続開始／切断だけを監査する。`/ssh/ws` の握手は JWT ミドルウェア対象外（トークンは最初の JSON）。nginx は `/api/ssh/ws` を rewrite せず Upgrade する。同じマシンの `localhost` は `host.docker.internal` に読み替える。画面は 80×25、PTY 出力の二重読みをやめ、入力は UTF-8。詳細は [`docs/ssh.md`](docs/ssh.md)
 - ヒアリングシートをノートブックへ回収した。表示名・`exAppId`・画面 URL は `notebook` / `/notebook`（旧 ID と `/hearing-sheet` は付け替え・リダイレクト）。実装は `notebook-app` / `open-genai-notebook-app`、フロントは `genai-web/.../notebook/`（`NotebookPage`）。取込時に全文を構造化し、項目生成と対話が同じソースを根拠にする。ヒアリングシート Excel と editor の「ヒアリングシートから生成」は維持
 - チャット／文章生成／翻訳／画像生成／ダイアグラム／ナレッジ管理を共通アプリのカタログに載せ、「AIアプリの編集」で名前・紹介・使い方・公開ステータスを変えられるようにした。下書きにするとおすすめ・アプリ一覧・ピン留め対象から消える。シード再適用でも管理者が直した公開ステータスは保持する
 - 文字起こしなど大きな添付が 64MB 上限で 413 になる問題を修正（nginx `client_max_body_size` を 256MB に。超過時は分割を案内する JSON）。履歴には音声の base64 本文を残さない
