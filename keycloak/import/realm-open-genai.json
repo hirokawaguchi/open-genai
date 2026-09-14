@@ -18,8 +18,8 @@
       "enabled": true,
       "emailVerified": true,
       "email": "admin@example.com",
-      "firstName": "管理",
-      "lastName": "者",
+      "firstName": "者",
+      "lastName": "管理",
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],
@@ -30,8 +30,8 @@
       "enabled": true,
       "emailVerified": true,
       "email": "user@example.com",
-      "firstName": "一般",
-      "lastName": "ユーザー",
+      "firstName": "ユーザー",
+      "lastName": "一般",
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],
