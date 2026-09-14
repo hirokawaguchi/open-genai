@@ -20,8 +20,14 @@ _ALIASES = {
     "mail": "email",
     "firstname": "firstName",
     "first_name": "firstName",
+    "givenname": "firstName",
+    "given_name": "firstName",
+    "名": "firstName",
     "lastname": "lastName",
     "last_name": "lastName",
+    "familyname": "lastName",
+    "family_name": "lastName",
+    "姓": "lastName",
     "name": "name",
     "displayname": "name",
     "password": "password",
@@ -85,10 +91,19 @@ def normalized_action(row: dict[str, str]) -> str:
     return (row.get("action") or "upsert").strip().lower()
 
 
+def _split_japanese_name(name: str) -> tuple[str, str]:
+    """表示名「姓 名」を Keycloak の lastName / firstName に分ける。1語なら姓側へ。"""
+    parts = [p for p in name.split() if p]
+    if len(parts) >= 2:
+        return parts[0], " ".join(parts[1:])
+    return (parts[0] if parts else ""), ""
+
+
 def build_user_representation(row: dict[str, str]) -> dict[str, Any]:
     """Keycloak のユーザ表現(UserRepresentation) を組み立てる。
 
-    - name のみ指定で firstName/lastName 未指定なら firstName に name を入れる。
+    - name のみ指定で firstName/lastName 未指定なら、空白区切りなら「姓 名」に分割する。
+      1語のときは lastName（表示名の先頭＝姓側）に入れる。
     - password 指定時は credentials を付与（temporary は列で上書き可、既定 false）。
     """
     rep: dict[str, Any] = {
@@ -98,10 +113,10 @@ def build_user_representation(row: dict[str, str]) -> dict[str, Any]:
     if row.get("email"):
         rep["email"] = row["email"]
         rep["emailVerified"] = True
-    first = row.get("firstName")
-    last = row.get("lastName")
-    if not first and row.get("name"):
-        first = row["name"]
+    first = (row.get("firstName") or "").strip()
+    last = (row.get("lastName") or "").strip()
+    if not first and not last and row.get("name"):
+        last, first = _split_japanese_name(row["name"])
     if first:
         rep["firstName"] = first
     if last:

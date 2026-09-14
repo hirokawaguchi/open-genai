@@ -14,7 +14,7 @@
 
 CSV 見出し（別名可・大文字小文字問わず）:
     action(create/update/delete/upsert, 既定 upsert), username(必須), email,
-    firstName, lastName, name, password, groups(; か , 区切り), enabled, temporary
+    firstName(名), lastName(姓), name(姓 名), password, groups(; か , 区切り), enabled, temporary
 """
 
 from __future__ import annotations
