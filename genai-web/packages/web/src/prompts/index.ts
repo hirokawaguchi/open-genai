@@ -3,7 +3,7 @@ import { claudePrompter } from './claude';
 
 // 現状 prompter は Claude 用のものしか存在しない
 export const getPrompter = (modelId: string) => {
-  if (modelId.includes('claude')) {
+  if (modelId?.includes('claude')) {
     return claudePrompter;
   } else {
     // デフォルトでは Claude の prompter を返す

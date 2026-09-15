@@ -5,25 +5,93 @@ from __future__ import annotations
 import re
 from typing import Any
 
-CHAR_BUDGET = 24_000
-_TOKEN = re.compile(r"[A-Za-z0-9\u3040-\u30ff\u4e00-\u9fff]{2,}")
+CHAR_BUDGET = 12_000
+MAX_NODES = 12
+_SPLIT = re.compile(r"[はがをにのへとでも、。！？?\s　]+")
+_STOP = frozenset(
+    {
+        "です",
+        "ます",
+        "した",
+        "する",
+        "こと",
+        "ため",
+        "もの",
+        "よう",
+        "この",
+        "その",
+        "どの",
+        "それ",
+        "これ",
+        "あれ",
+        "なに",
+        "何か",
+        "どう",
+        "どんな",
+        "して",
+        "いる",
+        "ある",
+        "ない",
+        "なる",
+        "できる",
+        "である",
+    }
+)
+_EXPAND: dict[str, tuple[str, ...]] = {
+    "対象": ("対象者", "補助対象", "交付対象"),
+    "対象者": ("対象", "補助対象"),
+    "金額": ("額", "支給額", "補助額", "交付額"),
+    "いくら": ("金額", "額", "支給額"),
+    "期限": ("期日", "期間", "まで"),
+    "要件": ("条件", "資格"),
+    "目的": ("趣旨", "概要"),
+}
 
 
 def _tokens(text: str) -> set[str]:
-    return {m.group(0).lower() for m in _TOKEN.finditer(text or "")}
+    out: set[str] = set()
+    for part in _SPLIT.split(text or ""):
+        part = part.strip().lower()
+        if len(part) < 2:
+            continue
+        out.add(part)
+        for n in (2, 3):
+            if len(part) < n:
+                continue
+            for i in range(len(part) - n + 1):
+                out.add(part[i : i + n])
+    return out
+
+
+def _query_tokens(query: str) -> set[str]:
+    raw = _tokens(query)
+    extra: set[str] = set()
+    for t in raw:
+        extra.update(_EXPAND.get(t, ()))
+    return {t for t in (raw | extra) if t not in _STOP and len(t) >= 2}
 
 
 def _score(query: str, node: dict[str, Any]) -> float:
-    q = _tokens(query)
+    q = _query_tokens(query)
     if not q:
         return 0.0
-    hay = _tokens(
-        f"{node.get('title') or ''} {node.get('summary') or ''} {node.get('text') or ''}"
-    )
+    title = str(node.get("title") or "")
+    summary = str(node.get("summary") or "")
+    text = str(node.get("text") or "")
+    hay = _tokens(f"{title} {summary} {text}")
     if not hay:
         return 0.0
-    hit = len(q & hay)
-    return hit / max(len(q), 1) + min(len((node.get("text") or "")) / 8000.0, 0.2)
+    hit = 0.0
+    for t in q:
+        if t in hay:
+            hit += 2.0 if len(t) >= 3 else 0.6
+    score = hit / max(len(q), 1)
+    if q & _tokens(title):
+        score += 0.45
+    blob = title + summary + text
+    if any(len(t) >= 3 and t in blob for t in q):
+        score += 0.2
+    return score
 
 
 def select_nodes(
@@ -32,19 +100,19 @@ def select_nodes(
     *,
     budget: int = CHAR_BUDGET,
 ) -> list[dict[str, Any]]:
-    """小さければ全文、大きければ設問との重なり順で節を取る。"""
+    """設問との重なり順で節を取る。ヒットがあるときは無関係な節を捨てる。"""
     usable = [n for n in nodes if (n.get("text") or "").strip()]
     if not usable:
         return []
-    total = sum(len(str(n.get("text") or "")) for n in usable)
-    if total <= budget:
-        return usable
-    ranked = sorted(usable, key=lambda n: _score(query, n), reverse=True)
+    scored = [(_score(query, n), n) for n in usable]
+    hits = [(s, n) for s, n in scored if s > 0]
+    if hits:
+        ranked = [n for _, n in sorted(hits, key=lambda x: x[0], reverse=True)][:MAX_NODES]
+    else:
+        ranked = usable[:3]
     picked: list[dict[str, Any]] = []
     used = 0
     for n in ranked:
-        if _score(query, n) <= 0 and picked:
-            continue
         text = str(n.get("text") or "")
         if used and used + len(text) > budget:
             remain = budget - used

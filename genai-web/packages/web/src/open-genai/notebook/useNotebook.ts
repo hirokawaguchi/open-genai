@@ -6,8 +6,10 @@ import { parseDownloadFilename } from '@/open-genai/procuretech/format';
 import type {
   NotebookConfig,
   NotebookItem,
+  NotebookMcp,
   NotebookSessionDetail,
   NotebookSessionSummary,
+  NotebookSkill,
 } from './types';
 
 const BASE = 'notebook';
@@ -86,6 +88,37 @@ export const useNotebookSessions = () => {
   };
 };
 
+export const useNotebookMcps = () => {
+  const { data, error, isLoading, mutate } = useSWR<{ mcps: NotebookMcp[] }>(
+    `${BASE}/mcps`,
+    teamApiFetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+  return {
+    mcps: data?.mcps ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, 'MCP 一覧の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
+export const useNotebookSkills = () => {
+  const { data, error, isLoading, mutate } = useSWR<{
+    skills: NotebookSkill[];
+    tools?: string[];
+  }>(`${BASE}/skills`, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  return {
+    skills: data?.skills ?? [],
+    toolNames: data?.tools ?? [],
+    isLoading,
+    loadError: error ? errorMessage(error, 'AIタイプ一覧の取得に失敗しました。') : null,
+    mutate,
+  };
+};
+
 export const useNotebookSession = (sessionId: string | null) => {
   const key = sessionId ? `${BASE}/sessions/${encodeURIComponent(sessionId)}` : null;
   const { data, error, isLoading, mutate } = useSWR<NotebookSessionDetail>(key, teamApiFetcher, {
@@ -122,7 +155,7 @@ export const useNotebookActions = () => {
   const updateSession = useCallback(
     async (
       sessionId: string,
-      body: { title?: string; instruction?: string },
+      body: { title?: string; instruction?: string; mcps?: { id: string; enabled: boolean }[] },
     ): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
@@ -284,13 +317,17 @@ export const useNotebookActions = () => {
   );
 
   const chat = useCallback(
-    async (sessionId: string, question: string): Promise<NotebookSessionDetail | null> => {
+    async (
+      sessionId: string,
+      question: string,
+      skillId?: string,
+    ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
-          { question },
+          { question, skill_id: skillId || undefined },
         );
         return res.data ?? null;
       } catch (e) {
@@ -302,6 +339,90 @@ export const useNotebookActions = () => {
     },
     [],
   );
+
+  const createSkill = useCallback(
+    async (body: {
+      name: string;
+      personality?: string;
+      instructions?: string;
+      tools?: string[];
+    }): Promise<NotebookSkill | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSkill>(`${BASE}/skills`, body);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'AIタイプの作成に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const updateMcp = useCallback(
+    async (
+      mcpId: string,
+      body: { connected?: boolean; prompt?: string; reset_prompt?: boolean },
+    ): Promise<NotebookMcp | null> => {
+      setError(null);
+      try {
+        const res = await teamApi.put<NotebookMcp>(`${BASE}/mcps/${encodeURIComponent(mcpId)}`, body);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'MCP の更新に失敗しました。'));
+        return null;
+      }
+    },
+    [],
+  );
+
+  const createMcp = useCallback(
+    async (body: { name: string; url: string; prompt?: string }): Promise<NotebookMcp | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookMcp>(`${BASE}/mcps`, body);
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'MCP の追加に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
+  const deleteMcp = useCallback(async (mcpId: string): Promise<boolean> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await teamApi.delete(`${BASE}/mcps/${encodeURIComponent(mcpId)}`);
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, 'MCP の削除に失敗しました。'));
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  const deleteSkill = useCallback(async (skillId: string): Promise<boolean> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await teamApi.delete(`${BASE}/skills/${encodeURIComponent(skillId)}`);
+      return true;
+    } catch (e) {
+        setError(errorMessage(e, 'AIタイプの削除に失敗しました。'));
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
 
   const generateItem = useCallback(
     async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
@@ -335,6 +456,11 @@ export const useNotebookActions = () => {
     addKnowledgeRef,
     deleteKnowledgeRef,
     chat,
+    createSkill,
+    deleteSkill,
+    updateMcp,
+    createMcp,
+    deleteMcp,
     generateItem,
     submitting,
     generatingId,

@@ -302,6 +302,34 @@ async def create_project(
     return JSONResponse(content={"project": project})
 
 
+@app.patch("/projects/{project_id}")
+async def rename_project(
+    project_id: str,
+    payload: dict[str, Any],
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "プロジェクト名を入力してください。"})
+    if len(name) > 200:
+        return JSONResponse(status_code=400, content={"error": "プロジェクト名が長すぎます。"})
+    project = store.rename_project(project_id, uid, name)
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    return JSONResponse(content={"project": project})
+
+
 @app.get("/projects/{project_id}")
 async def get_project(
     project_id: str,

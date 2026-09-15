@@ -15,8 +15,11 @@ export const useSetDefaultValues = () => {
   const { modelIds: availableModels } = MODELS;
 
   useEffect(() => {
+    const fallback = availableModels[0];
     if (!search) {
-      setModelId(availableModels[0]);
+      if (fallback) {
+        setModelId(fallback);
+      }
       return;
     }
 
@@ -28,8 +31,8 @@ export const useSetDefaultValues = () => {
     const modelId = params.modelId;
     if (modelId && availableModels.includes(modelId)) {
       setModelId(modelId);
-    } else {
-      setModelId(availableModels[0]);
+    } else if (fallback) {
+      setModelId(fallback);
     }
   }, [search]);
 };
