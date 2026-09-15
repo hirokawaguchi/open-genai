@@ -26,16 +26,26 @@ export const useSetDefaultValues = () => {
 
       setChatContent(params.content ?? '');
 
-      setModelId(modelIds.includes(params.modelId ?? '') ? params.modelId! : defaultModelId);
+      const nextModelId = modelIds.includes(params.modelId ?? '')
+        ? params.modelId!
+        : defaultModelId;
+      if (nextModelId) {
+        setModelId(nextModelId);
+      }
 
-      setImageGenModelId(
-        imageGenModelIds.includes(params.imageModelId ?? '')
-          ? params.imageModelId!
-          : defaultImageGenModelId,
-      );
+      const nextImageModelId = imageGenModelIds.includes(params.imageModelId ?? '')
+        ? params.imageModelId!
+        : defaultImageGenModelId;
+      if (nextImageModelId) {
+        setImageGenModelId(nextImageModelId);
+      }
     } else {
-      setModelId(defaultModelId);
-      setImageGenModelId(defaultImageGenModelId);
+      if (defaultModelId) {
+        setModelId(defaultModelId);
+      }
+      if (defaultImageGenModelId) {
+        setImageGenModelId(defaultImageGenModelId);
+      }
     }
   }, [search]);
 };

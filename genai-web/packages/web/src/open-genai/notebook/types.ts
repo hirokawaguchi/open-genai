@@ -4,6 +4,29 @@ export type NotebookLlmConfig = {
   base_url?: string;
 };
 
+export type NotebookMcpStatus = {
+  enabled: boolean;
+  shared?: boolean;
+  tools?: string[];
+};
+
+export type NotebookMcp = {
+  id: string;
+  catalog_id: string;
+  name: string;
+  kind: 'builtin' | 'remote' | string;
+  url: string;
+  description: string;
+  prompt: string;
+  default_prompt?: string;
+  prompt_is_default?: boolean;
+  tools: string[];
+  connected: boolean;
+  available: boolean;
+  builtin: boolean;
+  enabled?: boolean;
+};
+
 export type NotebookConfig = {
   enabled?: boolean;
   error?: string;
@@ -11,6 +34,11 @@ export type NotebookConfig = {
   max_upload_bytes?: number;
   retention_days?: number;
   llm?: NotebookLlmConfig;
+  tools?: string[];
+  mcp?: {
+    knowledge?: NotebookMcpStatus;
+    catalog?: { catalog_id: string; name: string; description: string }[];
+  };
 };
 
 export type NotebookSessionSummary = {
@@ -39,6 +67,7 @@ export type NotebookBriefing = {
   summary?: string;
   terms?: string[];
   outline?: string[];
+  ocr?: boolean;
 };
 
 export type NotebookFile = {
@@ -61,12 +90,28 @@ export type NotebookKnowledgeRef = {
   briefing?: NotebookBriefing;
 };
 
+export type NotebookToolTrace = {
+  name: string;
+  result?: string;
+};
+
 export type NotebookMessage = {
   id: string;
   role: 'user' | 'assistant' | string;
   content: string;
   citations?: NotebookCitation[];
+  tool_trace?: NotebookToolTrace[];
   created_at: string;
+};
+
+export type NotebookSkill = {
+  id: string;
+  name: string;
+  personality: string;
+  instructions: string;
+  tools: string[];
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type NotebookSessionDetail = {
@@ -79,4 +124,5 @@ export type NotebookSessionDetail = {
   files: NotebookFile[];
   knowledge_refs?: NotebookKnowledgeRef[];
   messages?: NotebookMessage[];
+  mcps?: NotebookMcp[];
 };

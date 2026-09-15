@@ -507,6 +507,8 @@ SAML 経由で backend に渡る主な属性:
 
 1. 左メニュー **Users** → **Add user**
 2. **Username**（必須）・**Email**（推奨: 源内の利用者 ID として使われます）・姓名を入力 → **Create**
+   - Keycloak の **Last name = 姓**、**First name = 名** です（日本語の「姓→名」とは欄の並びが逆）
+   - 源内の表示名は `姓 名`（Last name + First name）になります
 3. **Credentials** タブ → **Set password**（**Temporary** を OFF にすると初回変更を求めません）
 4. **Groups** タブ → **Join Group** → 一般利用者なら `UserGroup`、システム管理者なら `SystemAdminGroup`
 

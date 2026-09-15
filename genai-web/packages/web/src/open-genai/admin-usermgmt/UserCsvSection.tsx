@@ -81,8 +81,9 @@ export const UserCsvSection = ({ onApplied }: Props) => {
           CSV（貼り付け）
         </Label>
         <SupportText>
-          見出し: action, username, email, firstName, lastName, name, password, groups, enabled。
-          action は create / update / delete / upsert（既定 upsert）。
+          見出し: action, username, email, lastName（姓）, firstName（名）, name（姓
+          名）, password, groups, enabled。action は create / update / delete / upsert（既定
+          upsert）。name だけ書く場合は「山田 太郎」のように空白で姓と名を分けます。
         </SupportText>
         <Textarea
           id='csv-text'

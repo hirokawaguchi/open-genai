@@ -1,6 +1,39 @@
 from app import retrieve, store, structure
 
 
+def test_build_nodes_from_office_articles():
+    pages = [
+        {
+            "page": 1,
+            "text": "第1条（目的）\nこの要綱は支援を行う。\n第2条（対象）\n市民を対象とする。",
+        }
+    ]
+    nodes = structure.build_nodes(pages)
+    titles = [n["title"] for n in nodes]
+    assert any("第1条" in t for t in titles)
+    assert any("第2条" in t for t in titles)
+
+
+def test_select_nodes_caps_count():
+    nodes = [
+        {"title": f"節{i}", "text": f"予算の説明{i}。対象と金額を書く。", "source": "a.pdf"}
+        for i in range(30)
+    ]
+    picked = retrieve.select_nodes("予算の対象と金額", nodes)
+    assert 1 <= len(picked) <= retrieve.MAX_NODES
+
+
+def test_select_nodes_drops_unrelated_when_hit():
+    nodes = [
+        {"title": "対象", "text": "補助対象者は市民とする。", "source": "a.pdf"},
+        {"title": "天気", "text": "今日は晴れである。", "source": "b.pdf"},
+    ]
+    picked = retrieve.select_nodes("対象者は誰か", nodes)
+    texts = " ".join(n.get("text") or "" for n in picked)
+    assert "補助対象者" in texts
+    assert "晴れ" not in texts
+
+
 def test_build_nodes_from_markdown_headings():
     pages = [
         {"page": 1, "text": "# 背景\n\n予算が不足している。\n\n# 対策\n\n人員を増やす。"}

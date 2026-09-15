@@ -23,3 +23,14 @@ def test_session_item_and_file_roundtrip(tmp_path, monkeypatch):
     assert blobs and blobs[0][1] == b"hello"
 
     assert store.get_session(sid, "other") is None
+
+
+def test_create_session_assigns_timestamp_title(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    first = store.create_session(user_id="u1")
+    second = store.create_session(user_id="u1")
+    assert first["title"].startswith("ノート ")
+    assert second["title"].startswith("ノート ")
+    assert first["title"] != second["title"]

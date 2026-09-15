@@ -684,7 +684,7 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
     "placeholder": "",
     "description": (
         "参考資料を集めて調べ、項目として整理します。"
-        "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
+        "Markdown エディタに読み込ませるヒアリングシートも作成できます。"
     ),
     "howToUse": (
         "## 使い方\n\n"
@@ -863,6 +863,15 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "複数の参考資料から項目と値を整理し、文書生成用のヒアリングシート（Excel）を作ります。"
         ),
         "old_howto_markers": ("専用ページ「ヒアリングシート」",),
+    },
+    {
+        "seed": PROCURETECH_HEARING_SEED,
+        "old_name": "ノートブック",
+        "old_description": (
+            "参考資料を集めて調べ、項目として整理します。"
+            "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
+        ),
+        "old_howto_markers": (),
     },
 ]
 
@@ -4437,6 +4446,19 @@ async def procuretech_editor_create_project(request: Request) -> JSONResponse:
     )
 
 
+@app.patch("/procuretech-editor/projects/{project_id}")
+async def procuretech_editor_rename_project(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "PATCH", _procuretech_editor_app_url(f"/projects/{project_id}"), headers, body
+    )
+
+
 @app.get("/procuretech-editor/projects/{project_id}")
 async def procuretech_editor_get_project(
     project_id: str, request: Request
@@ -5186,6 +5208,120 @@ async def procuretech_hearing_delete_knowledge_ref(
     return await _proxy_procuretech_hearing(
         "DELETE",
         _procuretech_hearing_app_url(f"/sessions/{session_id}/knowledge-refs/{ref_id}"),
+        headers,
+    )
+
+
+@app.get("/notebook/skills")
+@app.get("/procuretech-hearing/skills")
+async def notebook_list_skills(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/skills"), headers
+    )
+
+
+@app.post("/notebook/skills")
+@app.post("/procuretech-hearing/skills")
+async def notebook_create_skill(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST", _procuretech_hearing_app_url("/skills"), headers, body
+    )
+
+
+@app.put("/notebook/skills/{skill_id}")
+@app.put("/procuretech-hearing/skills/{skill_id}")
+async def notebook_put_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "PUT",
+        _procuretech_hearing_app_url(f"/skills/{skill_id}"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/notebook/skills/{skill_id}")
+@app.delete("/procuretech-hearing/skills/{skill_id}")
+async def notebook_delete_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/skills/{skill_id}"),
+        headers,
+    )
+
+
+@app.get("/notebook/mcps")
+@app.get("/procuretech-hearing/mcps")
+async def notebook_list_mcps(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/mcps"), headers
+    )
+
+
+@app.post("/notebook/mcps")
+@app.post("/procuretech-hearing/mcps")
+async def notebook_create_mcp(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST", _procuretech_hearing_app_url("/mcps"), headers, body
+    )
+
+
+@app.put("/notebook/mcps/{mcp_id}")
+@app.put("/procuretech-hearing/mcps/{mcp_id}")
+async def notebook_put_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "PUT",
+        _procuretech_hearing_app_url(f"/mcps/{mcp_id}"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/notebook/mcps/{mcp_id}")
+@app.delete("/procuretech-hearing/mcps/{mcp_id}")
+async def notebook_delete_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/mcps/{mcp_id}"),
         headers,
     )
 
