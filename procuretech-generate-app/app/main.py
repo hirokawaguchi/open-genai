@@ -1,7 +1,7 @@
 """文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
 
 Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合成 API の
-「そのまま動く」実装。`/generate` はナビゲーションシート（Markdown 表＋生成指示）
+「そのまま動く」実装。`/generate` はヒアリングシート（設問と回答の別セル＋生成指示）
 を読み、設問ごとの材料ファイルと、生成指示に基づく成果物 Markdown を作る。
 成果物は LLM（未設定・失敗時はスキップして README に注記）で書く。
 `/compose` の html / pptx は任意で OpenAI 互換 LLM がタイトル列と layout を決め、
@@ -112,12 +112,24 @@ _RESERVED_KEYS = {README_SECTION_KEY, GENERATED_SECTION_KEY}
 _UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
+_MD_LINE = re.compile(r"^(#{1,6}\s|```|\||[-*+] |\d+\.\s|> )")
+
+
+def _looks_like_markdown(value: str) -> bool:
+    return any(_MD_LINE.match(ln.lstrip()) for ln in (value or "").splitlines())
+
+
 def _bullets_or_paragraph(value: str) -> str:
-    """複数行の値は箇条書き、単一行はそのまま段落にする。"""
-    lines = [ln.strip() for ln in value.splitlines() if ln.strip()]
+    """プレーンな複数行だけ箇条書きにする。表・見出しなど Markdown はそのまま転記する。"""
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return "（未記入）"
+    if _looks_like_markdown(text):
+        return text
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if len(lines) > 1:
         return "\n".join(f"- {ln}" for ln in lines)
-    return value or "（未記入）"
+    return text
 
 
 def _safe_stem(label: str, index: int) -> str:

@@ -92,6 +92,9 @@ const useChatStore = create<{
   };
 
   const setModelId = (id: string, newModelId: string) => {
+    if (!newModelId) {
+      return;
+    }
     set((state) => {
       return {
         modelIds: {

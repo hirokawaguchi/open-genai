@@ -17,6 +17,8 @@ type Props = {
   breadcrumbItems?: Crumb[];
   /** false のとき DB を読まずフォールバックだけ出す（庁外ゲスト画面など） */
   enabled?: boolean;
+  /** true のとき使い方の開閉は出さない（呼び出し側でモーダルにする） */
+  hideHowTo?: boolean;
   children?: ReactNode;
 };
 
@@ -33,6 +35,7 @@ export const ManagedAppHeader = (props: Props) => {
     fallbackHowTo,
     breadcrumbItems,
     enabled = true,
+    hideHowTo = false,
     children,
   } = props;
   const { title, description, howToUse: howTo, exApp } = useRegisteredAppMeta(
@@ -43,7 +46,7 @@ export const ManagedAppHeader = (props: Props) => {
     enabled,
   );
 
-  if (exApp && !breadcrumbItems && !children) {
+  if (exApp && !breadcrumbItems && !children && !hideHowTo) {
     return <ExAppHeader exApp={exApp} />;
   }
 
@@ -64,31 +67,32 @@ export const ManagedAppHeader = (props: Props) => {
       {description && (
         <p className='text-std-16N-170 text-solid-gray-700'>{description}</p>
       )}
-      {howTo ? (
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3'>
-            <ExAppUsageMarkdownRenderer content={howTo} size='sm' />
-          </div>
-        </Disclosure>
-      ) : fallbackHowTo ? (
-        <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
-          <DisclosureSummary>
-            <span className='flex items-center text-std-16B-150'>
-              <PiBookOpenBold className='mr-2 size-5 flex-none' />
-              使い方（クリックで開閉）
-            </span>
-          </DisclosureSummary>
-          <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
-            {fallbackHowTo}
-          </div>
-        </Disclosure>
-      ) : null}
+      {!hideHowTo &&
+        (howTo ? (
+          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+            <DisclosureSummary>
+              <span className='flex items-center text-std-16B-150'>
+                <PiBookOpenBold className='mr-2 size-5 flex-none' />
+                使い方（クリックで開閉）
+              </span>
+            </DisclosureSummary>
+            <div className='mt-3'>
+              <ExAppUsageMarkdownRenderer content={howTo} size='sm' />
+            </div>
+          </Disclosure>
+        ) : fallbackHowTo ? (
+          <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>
+            <DisclosureSummary>
+              <span className='flex items-center text-std-16B-150'>
+                <PiBookOpenBold className='mr-2 size-5 flex-none' />
+                使い方（クリックで開閉）
+              </span>
+            </DisclosureSummary>
+            <div className='mt-3 flex flex-col gap-1.5 text-std-16N-170 text-solid-gray-700'>
+              {fallbackHowTo}
+            </div>
+          </Disclosure>
+        ) : null)}
     </div>
   );
 };

@@ -22,8 +22,13 @@ export const useSetDefaultValues = () => {
       setInformation(params.information ?? '');
       setContext(params.context ?? '');
 
-      setModelId(availableModels.includes(params.modelId ?? '') ? params.modelId! : defaultModelId);
-    } else {
+      const nextModelId = availableModels.includes(params.modelId ?? '')
+        ? params.modelId!
+        : defaultModelId;
+      if (nextModelId) {
+        setModelId(nextModelId);
+      }
+    } else if (defaultModelId) {
       setModelId(defaultModelId);
     }
   }, [search]);

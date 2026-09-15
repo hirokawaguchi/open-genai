@@ -588,6 +588,11 @@ export const modelMetadata: Record<string, ModelMetadata> = {
   },
   // ==== Open GENAI: DGX Spark llama.cpp / vLLM ====
   // modelId は各サーバの /v1/models と一致させる。
+  'gemma-4-26B-A4B-it-Q4_K_M.gguf': {
+    // Gemma 4 はマルチモーダル。画像 + ドキュメント添付に対応。
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'Gemma 4 26B A4B (ローカル・画像対応)',
+  },
   'qwen3.5-9b': {
     flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
     displayName: 'Qwen3.5 9B (Spark・画像対応)',

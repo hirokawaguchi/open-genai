@@ -29,6 +29,15 @@ def test_get_project_scoped_by_user():
     assert store.get_project(p["id"], "user-b") is None
 
 
+def test_rename_project():
+    p = store.create_project("user-a", "案件1")
+    renamed = store.rename_project(p["id"], "user-a", "案件2")
+    assert renamed is not None
+    assert renamed["name"] == "案件2"
+    assert store.rename_project(p["id"], "user-b", "他人") is None
+    assert store.get_project(p["id"], "user-a")["name"] == "案件2"
+
+
 def test_upsert_and_list_files_and_count():
     p = store.create_project("user-a", "案件1")
     f = store.upsert_file(p["id"], "user-a", "01.md", kind="markdown", size=10)
