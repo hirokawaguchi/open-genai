@@ -17,6 +17,7 @@
 | [v0.7.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.7.0) | `d7ae61e` | 提案実装：書類読取とチェック・日程調整（chosei）・様式 Excel 文書生成（自治体の「あったらいいな」を AI で実現） |
 | [v0.8.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.8.0) | `b1943d1` 以降 | 提案実装（第2弾）：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP |
 | [v0.9.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.9.0) | `d48cb96` 以降 | 提案実装（第3弾）：Markdown エディタ＋オプションの各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で作成。生成 API はプラガブル＝契約は OSS 公開・生成ロジックは非公開アプリに閉じ込め可能） |
+| [v0.10.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.10.0) | `1a135f0` 以降 | ノートブック（調べて項目に整理・スキル/MCP/OCR）・Web SSH・アプリ表示の編集・ヒアリングシート |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -32,6 +33,21 @@
 ---
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-09-15
+
+このリリースの主役は **ノートブック** です。参考資料を集めて調べ、項目として整理し、
+必要ならヒアリングシート Excel を Markdown エディタへ渡せます。対話にはスキルと短い
+ハーネスが入り、ノート単位で MCP（共有ナレッジ・時刻・天気・Wikipedia）を使えます。
+スキャン PDF は RapidOCR で読み、条文見出しで節分けして設問に効く箇所だけを材料にします。
+
+あわせて庁内運用を厚くしました。**Web SSH**（カタログ上の接続先だけ）、
+共通アプリの表示名・紹介の編集、認証のサイレント再発行、文字起こしの大容量添付、
+Markdown エディタ／ヒアリングシートの書き出しを整えています。
+
+仕様の詳細は [`docs/notebook.md`](docs/notebook.md) / [`docs/ssh.md`](docs/ssh.md) を参照してください。
+
+---
 
 - ヒアリングシートを Markdown エディタへ読み込むとき、表・見出しなどの Markdown 回答を箇条書きで包まず転記する
 - ノートブックの対話で、長い回答が `max_tokens` で途中切れしないよう上限を広げ、切れたときは続きを足す。調べ中の文言を「このノートで有効にしているMCPを使っています」に揃える
@@ -567,7 +583,8 @@ Dify エラー分類の改善に加え、公式リポジトリとしてのガバ
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...v0.7.0
