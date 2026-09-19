@@ -291,7 +291,7 @@ docker compose up --build
   - `KEYCLOAK_ADMIN_PASSWORD`（**初回起動前**に設定。詳細は[認証節の「運用開始時」](#運用開始時本番閉域-パスワード変更)）
   - `S3_*`（`S3_PUBLIC_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` 等。詳細は[成果物ファイル節](#成果物ファイルseaweedfs-再ホスト)）
 - TLS 証明書を `proxy/certs/{fullchain.pem,privkey.pem}` に配置（`docker-compose.prod.yml` が `/etc/nginx/certs` にマウント。詳細は [`proxy/certs/README.md`](proxy/certs/README.md)）。
-- Keycloak の SAML クライアント（SP）登録を `PUBLIC_URL` に合わせる（初回 import 前に `keycloak/import/realm-open-genai.json` を編集、または admin コンソールで更新。詳細は[SAML 節](#源内側の設定変更時に必要な作業)）。庁内 FQDN と運用者 FQDN を分ける場合は ACS/SLS を `PUBLIC_URL` 側、`SAML_SP_ENTITY_ID` だけ既存 clientId に固定できる。運用者ホストだけ Keycloak を使わない ID/PW は `OPERATOR_LOGIN_HOSTS` / `OPERATOR_USERS`（`.env.prod.example`）。
+- Keycloak の SAML クライアント（SP）登録を `PUBLIC_URL` に合わせる（初回 import 前に `keycloak/import/realm-open-genai.json` を編集、または admin コンソールで更新。詳細は[SAML 節](#源内側の設定変更時に必要な作業)）。庁内 FQDN とインターネット FQDN を分ける場合は ACS/SLS を `PUBLIC_URL` 側、`SAML_SP_ENTITY_ID` だけ既存 clientId に固定できる。インターネット入口の ID/PW は `PORTAL_LOGIN_HOSTS`。本体の戻り先は `FRONTEND_URL`。前面プロキシ出口は `OPERATOR_SAML_SOURCE_IPS`。運用者ホストだけ Keycloak を使わない ID/PW は `OPERATOR_LOGIN_HOSTS` / `OPERATOR_USERS`（`.env.prod.example`）。
 
 ### 初回デプロイ（本番 TLS）
 
