@@ -60,7 +60,8 @@ docker compose up -d --build
    「書き出す」を押すと、ExApp が定義に従い各出力を組み立てる**非同期ジョブ**を開始し、
    待ち画面に進捗パーセントと作業中ステップ（文書合成／Excel 作成／保存）を出す。
    成果物は 1 つの zip にまとめる。配信は AI アプリ成果物と同じ
-   `ARTIFACT_DELIVERY_MODE` に従う（`open`=署名付き URL、`carrier`=案内ファイル）。
+   `ARTIFACT_DELIVERY_MODE` に従う（`open`=署名付き URL、`carrier`=案内ファイル、
+   `auto`=Host が `*.lgwan.jp` なら案内ファイル）。
    - 出力ファイルには 2 種類ある。
      - **kind=markdown**: 含める章を順に集約する。`format=docx`（省略時）はテーマの `{api_url}/compose`、
        `html` / `pptx` / `txt` / `md` は汎用合成サービス（`EDITOR_COMPOSE_URL`＝generate-app）へ送る。
