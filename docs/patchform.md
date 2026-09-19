@@ -164,7 +164,7 @@ POST /public/api/procedures/{id}/resolve   # 必要書類の dry-run（Bearer）
 
 - 由来の記録: `uploaded_files.origin`（`internal` / `external`）。公開（ゲスト/外部）アップロードは `external`。
 - 庁内 DL: `GET /patchform/applications/{id}/items/{item_id}/file` は、`external` 由来かつ SeaweedFS 設定時に JSON（`{rehosted, file_url|object_key, mime_type, delivery}`）を返します。`internal` 由来やストレージ未設定時は従来どおりバイナリをストリームします。
-- carrier: `ARTIFACT_DELIVERY_MODE=carrier` のとき `file_url` を空にして `object_key` を返し、庁内フロントは `/exapps/artifact-carrier` でリンクファイルを取得します（`ExAppArtifactDownloads` と同じ作法）。
+- carrier: `ARTIFACT_DELIVERY_MODE` が `carrier`、または `auto` かつ Host が `*.lgwan.jp` のとき `file_url` を空にして `object_key` を返し、庁内フロントは `/exapps/artifact-carrier` でリンクファイルを取得します（`ExAppArtifactDownloads` と同じ作法）。
 - 再ホストは backend に集約し、`patchform-app` は無改造。庁内由来の添付は従来どおりです。
 
 ## 庁内バッチ（サービス認証）
@@ -226,6 +226,6 @@ OpenAI 互換 API（既定は Ollama）でフォーム定義の作成・修正�
 | `PATCHFORM_EXT_SECRET` | 庁外セッションの署名鍵（HMAC）。本番は固定必須。未設定はサービスキー流用→無ければ再起動で失効 | |
 | `PATCHFORM_MAGIC_TTL_MIN` | マジックリンクの有効分数（単回・短命） | `15` |
 | `PATCHFORM_EXT_SESSION_TTL_DAYS` | 庁外セッションの有効日数 | `30` |
-| `ARTIFACT_DELIVERY_MODE` | 添付/成果物の配信（`open`=署名付きURL / `carrier`=リンクファイル）。backend 側 | `open` |
+| `ARTIFACT_DELIVERY_MODE` | 添付/成果物の配信（`open`=常に署名付きURL / `carrier`=常にリンクファイル / `auto`=Host が `*.lgwan.jp` なら carrier）。backend 側 | `open` |
 | `PROCEDURE_MCP_PORT` | 手続き MCP のホストポート | `8013` |
 | `PROCEDURE_MCP_BIND` | 手続き MCP のバインド（既定は loopback） | `127.0.0.1` |

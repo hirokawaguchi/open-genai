@@ -49,6 +49,7 @@ from . import (
     ngwords,
     objstore,
     access_split,
+    artifact_delivery,
     ops_login,
     portal_login,
     policy,
@@ -1190,12 +1191,12 @@ _ARTIFACT_ALLOWED_HOSTS = {
 _ARTIFACT_MAX_BYTES = int(os.environ.get("ARTIFACT_MAX_BYTES", str(50 * 1024 * 1024)))
 
 # 成果物の配信方式（LGWAN 対応）。
-# - "open"    : 署名付き URL を outputs に直接リンクとして提示（開発・直接 DL 可能な環境向け）。
-# - "carrier" : 署名付き URL を UI に出さず、別途「リンクファイル(.txt/.html)」として
-#               持ち出させる（LGWAN 端末から成果物本体へ直接アクセスできない環境向け）。
-ARTIFACT_DELIVERY_MODE = (os.environ.get("ARTIFACT_DELIVERY_MODE", "open").strip().lower())
-if ARTIFACT_DELIVERY_MODE not in ("open", "carrier"):
-    ARTIFACT_DELIVERY_MODE = "open"
+# - "open"    : 常に署名付き URL を直接リンク（開発・直接 DL 可能な環境向け）。
+# - "carrier" : 常に「リンクファイル(.txt/.html)」で持ち出させる。
+# - "auto"    : Host が *.lgwan.jp なら carrier、それ以外は open。
+ARTIFACT_DELIVERY_MODE = artifact_delivery.normalize_mode(
+    os.environ.get("ARTIFACT_DELIVERY_MODE", "open")
+)
 # キャリアファイルの既定形式（"txt" / "html" / "both"）。"both" は UI からの format 指定で切替。
 ARTIFACT_CARRIER_FORMAT = (os.environ.get("ARTIFACT_CARRIER_FORMAT", "txt").strip().lower())
 if ARTIFACT_CARRIER_FORMAT not in ("txt", "html", "both"):
@@ -1302,9 +1303,11 @@ async def _rehost_artifacts(
         final_url = presigned or (file_url if _is_http_url(file_url) else "")
         # http(s) 以外(javascript:/data:/相対 等)はリンク化・成果物化しない（注入防止）
         safe_url = final_url if _is_http_url(final_url) else ""
-        # carrier モードでは自前ストレージに保存できた成果物の署名 URL を UI から隠し、
+        # carrier では自前ストレージに保存できた成果物の署名 URL を UI から隠し、
         # object_key 経由で別途「リンクファイル」を発行させる（LGWAN 端末は本体へ直接届かない）。
-        carrier = ARTIFACT_DELIVERY_MODE == "carrier" and bool(object_key)
+        carrier = artifact_delivery.use_carrier(
+            ARTIFACT_DELIVERY_MODE, request
+        ) and bool(object_key)
         art_out = {
             **a,
             "file_url": "" if carrier else safe_url,
@@ -4756,12 +4759,18 @@ async def procuretech_editor_put_composition(
     )
 
 
-def _apply_editor_delivery(payload: dict[str, Any]) -> dict[str, Any]:
-    """成功した書き出し結果に ARTIFACT_DELIVERY_MODE を載せる。"""
+def _apply_editor_delivery(
+    payload: dict[str, Any], request: Request
+) -> dict[str, Any]:
+    """成功した書き出し結果に、このリクエストの配信方式を載せる。"""
     if str(payload.get("status") or "") != "success":
         return payload
     key = str(payload.get("object_key") or "").strip()
-    if ARTIFACT_DELIVERY_MODE == "carrier" and key and objstore.is_managed_key(key):
+    if (
+        artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request)
+        and key
+        and objstore.is_managed_key(key)
+    ):
         payload["download_url"] = ""
         payload["delivery"] = "carrier"
     else:
@@ -4791,7 +4800,9 @@ async def procuretech_editor_compose(
         return proxied
     if not isinstance(payload, dict):
         return proxied
-    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+    return JSONResponse(
+        status_code=200, content=_apply_editor_delivery(payload, request)
+    )
 
 
 @app.get("/procuretech-editor/projects/{project_id}/composes/{request_id}")
@@ -4814,7 +4825,9 @@ async def procuretech_editor_compose_status(
         return proxied
     if not isinstance(payload, dict):
         return proxied
-    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+    return JSONResponse(
+        status_code=200, content=_apply_editor_delivery(payload, request)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -6638,7 +6651,7 @@ async def patchform_download_item_file(
                 or f'attachment; filename="{fallback_name}"'
             },
         )
-    carrier = ARTIFACT_DELIVERY_MODE == "carrier"
+    carrier = artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request)
     return JSONResponse(
         content={
             "rehosted": True,
