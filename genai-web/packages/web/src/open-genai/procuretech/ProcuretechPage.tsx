@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { PiDownloadSimpleBold } from 'react-icons/pi';
+import { PiDownloadSimple, PiDownloadSimpleBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { SupportText } from '@/components/ui/dads/SupportText';
@@ -21,6 +21,7 @@ import { PROCURETECH_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
 import type { ProcuretechSection, ProcuretechSessionDetail } from './types';
 import {
+  downloadProcuretechTemplate,
   downloadProcuretechWorkbook,
   fileToBase64,
   streamProcuretechChat,
@@ -40,6 +41,11 @@ const Spinner = () => (
 
 const UPLOAD_TAB = 'upload';
 const EXPORT_TAB = 'export';
+
+const FALLBACK_TEMPLATES = [
+  { key: 'systemplan', label: '情報化企画書（systemplan.xlsx）', filename: 'systemplan.xlsx' },
+  { key: 'global', label: '全般的事項（global.xlsx）', filename: 'global.xlsx' },
+];
 
 const UnavailableNotice = ({ message }: { message?: string }) => (
   <div
@@ -380,6 +386,19 @@ export const ProcuretechPage = () => {
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  const onDownloadTemplate = async (key: string, filename: string) => {
+    setDownloadError(null);
+    try {
+      await downloadProcuretechTemplate(key, filename);
+    } catch (e) {
+      setDownloadError(
+        e instanceof ApiError
+          ? ((e.data as { error?: string } | undefined)?.error ?? '様式のダウンロードに失敗しました。')
+          : '様式のダウンロードに失敗しました。',
+      );
+    }
+  };
+
   const onDownload = async () => {
     if (!sessionId) return;
     setDownloadError(null);
@@ -438,7 +457,7 @@ export const ProcuretechPage = () => {
           fallbackDescription='情報化企画書（Excel）を読み込み、4分野をAIとの対話で整理して各欄へ書き出します。'
           fallbackHowTo={
             <>
-              <p>・「読み込み」タブで情報化企画書（.xlsx）を読み込みます。</p>
+              <p>・「読み込み」タブで情報化企画書（.xlsx）を読み込みます。様式（記入サンプル付き）は同じ画面からダウンロードできます。</p>
               <p>・項番1〜4のタブを切り替え、AIと対話して内容を整理します（Enterで送信）。</p>
               <p>・「この項番の内容を整理して情報化企画書に書き戻す」で該当欄へ書き出します。</p>
               <p>・「書き出し」タブから更新版をダウンロードできます。</p>
@@ -468,7 +487,7 @@ export const ProcuretechPage = () => {
               <section className='flex flex-col gap-4'>
                 <div className='flex flex-col gap-2'>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    情報化企画書の様式（.xlsx）を読み込みます。
+                    情報化企画書の様式（.xlsx）を読み込みます。記入サンプル付きの様式は下からダウンロードできます。
                   </p>
                   <input
                     ref={fileRef}
@@ -491,6 +510,29 @@ export const ProcuretechPage = () => {
                       {submitting && !detail ? '読み込み中...' : '.xlsx ファイルを選択してください'}
                     </p>
                   </div>
+                  <div className='flex flex-col gap-2'>
+                    {(config?.templates?.length ? config.templates : FALLBACK_TEMPLATES).map(
+                      (tmpl) => (
+                        <div key={tmpl.key} className='flex flex-col gap-1'>
+                          <span className='text-dns-14N-130 text-solid-gray-700'>{tmpl.label}</span>
+                          <button
+                            type='button'
+                            onClick={() => onDownloadTemplate(tmpl.key, tmpl.filename)}
+                            className='inline-flex w-fit items-center gap-1 text-dns-14N-130 text-blue-700 underline-offset-2 hover:underline'
+                            title='記入サンプル付きの様式をダウンロード'
+                          >
+                            <PiDownloadSimple className='size-4' />
+                            様式をダウンロード
+                          </button>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                  {downloadError && (
+                    <p className='text-dns-16N-130 text-error-1' role='alert'>
+                      {downloadError}
+                    </p>
+                  )}
                   {error && (
                     <p className='text-dns-16N-130 text-error-1' role='alert'>
                       {error}

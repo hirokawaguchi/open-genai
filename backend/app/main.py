@@ -4144,6 +4144,49 @@ async def _proxy_procuretech(
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
+async def _proxy_procuretech_bytes(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    *,
+    timeout: float = 60,
+) -> Response:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "情報化企画書ナビに接続できませんでした。"
+                    "有効化するには `docker compose --profile procuretech-navigator up -d` "
+                    "または `COMPOSE_PROFILES=procuretech-navigator` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    ctype = (res.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype.startswith("application/vnd.openxmlformats") or ctype in (
+        "application/octet-stream",
+        "application/zip",
+    ):
+        disposition = res.headers.get("content-disposition") or "attachment"
+        return Response(
+            content=res.content,
+            media_type=ctype
+            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": disposition},
+            status_code=res.status_code,
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "情報化企画書ナビから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
 def _procuretech_stream(
     method: str,
     url: str,
@@ -4204,6 +4247,17 @@ async def procuretech_config(request: Request) -> JSONResponse:
     if err:
         return err
     return await _proxy_procuretech("GET", _procuretech_app_url("/config"), headers)
+
+
+@app.get("/procuretech-navigator/templates/{key}")
+@app.get("/procuretech/templates/{key}")
+async def procuretech_template(key: str, request: Request) -> Response:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_bytes(
+        "GET", _procuretech_app_url(f"/templates/{key}"), headers
+    )
 
 
 @app.get("/procuretech-navigator/sessions")
