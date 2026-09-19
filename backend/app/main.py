@@ -48,7 +48,9 @@ from . import (
     llm,
     ngwords,
     objstore,
+    access_split,
     ops_login,
+    portal_login,
     policy,
     security_warn,
     storage,
@@ -1546,9 +1548,16 @@ def _saml_script_name(request: Request) -> str:
 
 @app.get("/auth/login")
 async def auth_login(request: Request) -> Response:
+    dest = access_split.login_destination(request)
+    if dest.kind == "portal":
+        return HTMLResponse(content=portal_login.login_form(request))
+    if dest.kind == "redirect" and dest.url:
+        return RedirectResponse(dest.url, status_code=302)
+    if dest.kind == "blank":
+        return HTMLResponse(content="", status_code=200)
     if ops_login.enabled(request):
         return HTMLResponse(content=ops_login.login_form(request))
-    relay = request.query_params.get("redirect") or FRONTEND_URL
+    relay = request.query_params.get("redirect") or dest.relay or access_split.lgwan_public() or FRONTEND_URL
     try:
         req = await _prepare_saml_request(request)
         saml_auth = auth.build_saml_auth(req)
@@ -1571,8 +1580,9 @@ async def auth_login(request: Request) -> Response:
 async def auth_acs(request: Request) -> Response:
     req = await _prepare_saml_request(request)
     saml_auth = auth.build_saml_auth(req)
-    relay = req["post_data"].get("RelayState") or FRONTEND_URL
-    target = relay if str(relay).startswith("http") else FRONTEND_URL
+    saml_home = access_split.lgwan_public() or FRONTEND_URL
+    relay = req["post_data"].get("RelayState") or saml_home
+    target = relay if str(relay).startswith("http") else saml_home
 
     try:
         saml_auth.process_response()
@@ -1584,7 +1594,7 @@ async def auth_acs(request: Request) -> Response:
         )
         # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
         auth.reset_settings_cache()
-        return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
+        return RedirectResponse(f"{saml_home}/auth-error", status_code=303)
 
     errors = saml_auth.get_errors()
     if errors or not saml_auth.is_authenticated():
@@ -1595,7 +1605,7 @@ async def auth_acs(request: Request) -> Response:
         )
         # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
         auth.reset_settings_cache()
-        return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
+        return RedirectResponse(f"{saml_home}/auth-error", status_code=303)
 
     attrs = saml_auth.get_attributes()
     # 識別子(メール)は表記ゆれで別人物扱いにならないよう正規化して用いる
@@ -1711,6 +1721,22 @@ async def auth_ops(request: Request) -> Response:
     )
     if error or not location:
         body = ops_login.login_form(request, error=error or "ログインに失敗しました。")
+        return HTMLResponse(status_code=401, content=body)
+    return RedirectResponse(location, status_code=303)
+
+
+@app.post("/auth/portal")
+async def auth_portal(request: Request) -> Response:
+    """インターネット入口専用ログイン。Host 不一致は 404。権限は Keycloak の所属グループ。"""
+    if not portal_login.enabled(request):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    error, location, _user, ident = await portal_login.handle_post(
+        request, mint_token=auth.mint_token, audit=audit
+    )
+    if error or not location:
+        body = portal_login.login_form(
+            request, error=error or "ログインに失敗しました。", ident=ident
+        )
         return HTMLResponse(status_code=401, content=body)
     return RedirectResponse(location, status_code=303)
 

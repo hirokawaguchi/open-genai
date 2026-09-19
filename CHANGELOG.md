@@ -34,6 +34,9 @@
 
 ## [Unreleased]
 
+- インターネット入口ホスト（`PORTAL_LOGIN_HOSTS`）では Keycloak の ID/PW でログインし、成功後は `FRONTEND_URL` へ戻す。庁内公開面（`PUBLIC_URL`）は SAML のまま。前面プロキシ出口 IP（`OPERATOR_SAML_SOURCE_IPS`）がインターネット本体へ来た場合は庁内 URL へ返す
+- 本番 web ビルドが TypeScript の `Array.at` / `Uint8Array` 型で落ちるのを直す（ノートブック・Web SSH）
+
 ## [0.10.0] - 2026-09-15
 
 このリリースの主役は **ノートブック** です。参考資料を集めて調べ、項目として整理し、

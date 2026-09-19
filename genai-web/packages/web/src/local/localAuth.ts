@@ -160,8 +160,14 @@ export const startSessionKeepAlive = (): void => {
   });
 };
 
-/** backend の SAML ログインへリダイレクト（戻り先は現在のオリジン） */
+/** インターネット本体では入口 FQDN へ。庁内ホストでは従来の /auth/login。 */
 export const login = (): void => {
+  const portal = String(import.meta.env.VITE_PORTAL_PUBLIC_URL || '').replace(/\/$/, '');
+  const internetHost = String(import.meta.env.VITE_INTERNET_APP_HOST || '').toLowerCase();
+  if (portal && internetHost && window.location.hostname.toLowerCase() === internetHost) {
+    window.location.href = `${portal}/api/auth/login`;
+    return;
+  }
   const redirect = window.location.origin;
   window.location.href = `${API_ENDPOINT}/auth/login?redirect=${encodeURIComponent(redirect)}`;
 };
