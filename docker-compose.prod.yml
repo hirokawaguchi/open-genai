@@ -127,7 +127,7 @@ services:
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
       - S3_ARTIFACT_RETENTION_DAYS=${S3_ARTIFACT_RETENTION_DAYS:-30}
       - S3_ARTIFACT_PURGE_INTERVAL=${S3_ARTIFACT_PURGE_INTERVAL:-86400}
-      # 成果物の配信方式（LGWAN 等では carrier 推奨。open は署名付きURLを直接提示）
+      # 成果物の配信方式（open / carrier / auto。auto は Host が *.lgwan.jp なら carrier）
       - ARTIFACT_DELIVERY_MODE=${ARTIFACT_DELIVERY_MODE:-carrier}
       - ARTIFACT_CARRIER_FORMAT=${ARTIFACT_CARRIER_FORMAT:-txt}
       # Markdown エディタ書き出し zip の接頭辞（carrier の所有者判定対象）

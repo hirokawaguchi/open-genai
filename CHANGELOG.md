@@ -34,6 +34,7 @@
 
 ## [Unreleased]
 
+- 成果物配信 `ARTIFACT_DELIVERY_MODE` に `auto` を追加。`open`（常に直接DL）/`carrier`（常にリンクファイル）に加え、Host が `*.lgwan.jp` のときだけリンクファイルにする
 - インターネット入口ホスト（`PORTAL_LOGIN_HOSTS`）では Keycloak の ID/PW でログインし、成功後は `FRONTEND_URL` へ戻す。庁内公開面（`PUBLIC_URL`）は SAML のまま。前面プロキシ出口 IP（`OPERATOR_SAML_SOURCE_IPS`）がインターネット本体へ来た場合は庁内 URL へ返す
 - 本番 web ビルドが TypeScript の `Array.at` / `Uint8Array` 型で落ちるのを直す（ノートブック・Web SSH）
 
