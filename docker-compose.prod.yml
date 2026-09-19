@@ -147,8 +147,11 @@ services:
       - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
+      - PUBLIC_URL=${PUBLIC_URL}
+      - LGWAN_PUBLIC_URL=${LGWAN_PUBLIC_URL:-${PUBLIC_URL}}
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api
-      - FRONTEND_URL=${PUBLIC_URL}
+      - FRONTEND_URL=${FRONTEND_URL:-${PUBLIC_URL}}
+      - PORTAL_PUBLIC_URL=${PORTAL_PUBLIC_URL:-}
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
       # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
       - APP_JWT_TTL=${APP_JWT_TTL:-43200}
@@ -164,6 +167,11 @@ services:
       - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
       - OPERATOR_SAML_SOURCE_IPS=${OPERATOR_SAML_SOURCE_IPS:-}
       - OPERATOR_USERS=${OPERATOR_USERS:-}
+      - PORTAL_LOGIN_HOSTS=${PORTAL_LOGIN_HOSTS:-}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/kc}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_PASSWORD_VERIFY_CLIENT=${KEYCLOAK_PASSWORD_VERIFY_CLIENT:-admin-cli}
     volumes:
       - backend_data:/data
     extra_hosts:
@@ -235,6 +243,8 @@ services:
         # 単引用符必須。二重なしだと YAML が JSON 配列と解釈し引用符が落ちる
         VITE_APP_MODEL_IDS: '${VITE_APP_MODEL_IDS:-}'
         VITE_APP_HIDDEN_USE_CASES: '${VITE_APP_HIDDEN_USE_CASES:-{}}'
+        VITE_PORTAL_PUBLIC_URL: ${PORTAL_PUBLIC_URL:-}
+        VITE_INTERNET_APP_HOST: ${VITE_INTERNET_APP_HOST:-}
     container_name: open-genai-web
     expose:
       - "80"
