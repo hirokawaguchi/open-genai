@@ -287,6 +287,28 @@ export const streamProcuretechChat = async (
   return result;
 };
 
+export const downloadProcuretechTemplate = async (
+  key: string,
+  fallbackFilename = `${key}.xlsx`,
+): Promise<void> => {
+  const token = await getIdToken();
+  const res = await fetch(buildTeamUrl(`${BASE}/templates/${encodeURIComponent(key)}`), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => undefined);
+    throw new ApiError(res.status, data);
+  }
+  const blob = await res.blob();
+  const filename = parseDownloadFilename(res.headers.get('Content-Disposition'), fallbackFilename);
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+};
+
 export const downloadProcuretechWorkbook = async (sessionId: string): Promise<void> => {
   const token = await getIdToken();
   const res = await fetch(

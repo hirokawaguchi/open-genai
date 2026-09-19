@@ -7,6 +7,12 @@ export type ProcuretechSectionMeta = {
   chat_placeholder: string;
 };
 
+export type ProcuretechTemplate = {
+  key: string;
+  label: string;
+  filename: string;
+};
+
 export type ProcuretechConfig = {
   enabled: boolean;
   error?: string;
@@ -15,6 +21,7 @@ export type ProcuretechConfig = {
   max_upload_bytes?: number;
   marker_value?: string;
   llm?: { model?: string; base_url?: string };
+  templates?: ProcuretechTemplate[];
 };
 
 export type ProcuretechMessage = {
