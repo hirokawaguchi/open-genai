@@ -85,8 +85,9 @@ export const NotebookChat = ({
   const selectedSkill = skills.find((s) => s.id === skillId);
   const empty = messages.length === 0 && !submitting;
 
-  const lastKey = messages.at(-1)?.id ?? '';
-  const lastText = messages.at(-1)?.content ?? '';
+  const lastMessage = messages[messages.length - 1];
+  const lastKey = lastMessage?.id ?? '';
+  const lastText = lastMessage?.content ?? '';
 
   useEffect(() => {
     const node = formRef.current;
