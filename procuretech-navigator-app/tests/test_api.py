@@ -242,3 +242,29 @@ def test_delete_session(client):
     sid = _upload(client, "u1").json()["id"]
     assert client.delete(f"/sessions/{sid}", headers=_headers("u1")).status_code == 200
     assert client.get(f"/sessions/{sid}", headers=_headers("u1")).status_code == 404
+
+
+def test_download_templates(client):
+    cfg = client.get("/config", headers=_headers("u1"))
+    assert cfg.status_code == 200
+    keys = {t["key"] for t in cfg.json()["templates"]}
+    assert keys == {"systemplan", "global"}
+
+    for key, marker in (("systemplan", "systemplan"), ("global", "global")):
+        res = client.get(f"/templates/{key}", headers=_headers("u1"))
+        assert res.status_code == 200, res.text
+        assert "spreadsheetml" in res.headers["content-type"]
+        assert f"{key}.xlsx" in res.headers.get("content-disposition", "")
+        import openpyxl
+        import io
+
+        ws = openpyxl.load_workbook(io.BytesIO(res.content), data_only=True).active
+        assert ws["B1"].value == marker
+
+    missing = client.get("/templates/unknown", headers=_headers("u1"))
+    assert missing.status_code == 404
+
+
+def test_download_templates_requires_auth(client):
+    res = client.get("/templates/systemplan")
+    assert res.status_code == 401
