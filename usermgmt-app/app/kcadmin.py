@@ -35,6 +35,14 @@ _ALIASES = {
     "group": "groups",
     "enabled": "enabled",
     "temporary": "temporary",
+    # 棟（テナント）。ID か棟名を書ける。解決・検証は backend 側で行う。
+    "tenant": "tenant",
+    "tenantid": "tenant",
+    "tenant_id": "tenant",
+    "tenantname": "tenant",
+    "tenant_name": "tenant",
+    "テナント": "tenant",
+    "棟": "tenant",
 }
 
 
@@ -141,8 +149,11 @@ def plan_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         planned.append(
             {
                 "username": row.get("username", ""),
+                "email": row.get("email", ""),
                 "action": action,
                 "groups": parse_groups(row.get("groups")),
+                # 棟は Keycloak には保存しない。backend が解決・付与するため素通しで返す。
+                "tenant": (row.get("tenant") or "").strip(),
                 "rep": build_user_representation(row) if action != "delete" and not err else None,
                 "error": err,
             }

@@ -39,6 +39,9 @@ TENANT_ROLE_PRIMARY = "primary"
 TENANT_ROLE_GUEST = "guest"
 TENANT_ROLE_SHARED = "shared"
 FIXED_TENANT_IDS = frozenset({DEFAULT_TENANT_ID, SHARED_TENANT_ID})
+# 「どの棟にも所属していない」を表す番兵。実在の tenantId(UUID) とは衝突しない。
+# 履歴・カタログ・ナレッジのフィルタで使うと何にも一致せず、空を返す。
+NO_TENANT_ID = "__none__"
 
 # GenU 組み込み機能の itemId。共通チームのカタログ（名前・紹介・公開）として登録し、
 # ピン留め対象にもする。knowledge は専用ページだが同じカタログで出し分ける。
@@ -660,9 +663,42 @@ def _ensure_home_key(conn: sqlite3.Connection, user_id: str) -> None:
 
 
 def ensure_user_home_tenant(user_id: str) -> None:
-    """チーム未所属でもデフォルト棟の主鍵を付ける（ログイン時）。"""
+    """デフォルト棟の主鍵を付ける（既存DBの一度きり移行専用）。
+
+    真のマルチテナント運用では新規ログインで自動付与しない。棟は利用者登録時に
+    指定するか、後から招待で付ける。移行スクリプトや管理操作からのみ呼ぶこと。
+    """
     with _lock, _connect() as conn:
         _ensure_home_key(conn, user_id)
+
+
+def find_org_tenant(token: str) -> dict[str, Any] | None:
+    """棟の ID か名前で組織棟を1件解決する。共有棟・基盤棟は対象外。
+
+    利用者登録で棟を必須指定するときに使う（ID 完全一致を優先、無ければ名前一致）。
+    """
+    token = (token or "").strip()
+    if not token:
+        return None
+    by_id = get_tenant(token)
+    if by_id and by_id["kind"] == TENANT_KIND_ORG and by_id["tenantId"] != SHARED_TENANT_ID:
+        return by_id
+    norm = normalize_org_name(token)
+    for t in list_tenants():
+        if t["kind"] != TENANT_KIND_ORG or t["tenantId"] == SHARED_TENANT_ID:
+            continue
+        if normalize_org_name(t["tenantName"]) == norm:
+            return t
+    return None
+
+
+def get_primary_tenant_name(user_id: str) -> str | None:
+    """利用者の主鍵の棟名（一覧表示の所属棟ラベル用）。無ければ None。"""
+    tid = get_primary_tenant_id(user_id)
+    if not tid:
+        return None
+    t = get_tenant(tid)
+    return t["tenantName"] if t else None
 
 
 # ---------------------------------------------------------------------------
@@ -1416,7 +1452,8 @@ def get_active_tenant_id(user_id: str, *, allow_any: bool = False) -> str:
         return primary
     if can_access_tenant(SHARED_TENANT_ID, user_id):
         return SHARED_TENANT_ID
-    return DEFAULT_TENANT_ID
+    # どの棟の鍵も無ければ、デフォルト棟へは落とさず「所属なし」を返す。
+    return NO_TENANT_ID
 
 
 def set_active_tenant_id(
