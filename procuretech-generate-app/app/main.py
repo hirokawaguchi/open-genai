@@ -59,13 +59,13 @@ from shared.navsheet import NavSheet, empty_workbook, parse_workbook, slug_for  
 
 from app.compose_formats import (
     SUPPORTED_FORMATS,
+    markdown_to_docx,
     markdown_to_html,
     markdown_to_md,
     markdown_to_pptx,
     markdown_to_txt,
     normalize_format,
 )
-from app.dads import BODY, FONT_MONO, MUTED, apply_docx_theme, shade_paragraph, style_run
 from app.pptx_check import check_deck, check_html_bytes, check_pptx_bytes, format_issues
 from app.pptx_html import render_deck_html
 from app.pptx_layouts import render_deck
@@ -327,136 +327,11 @@ def _build_zip(
     return buf.getvalue()
 
 
-# 画像のみの行（ブロック画像として大きく埋め込む）。
-_IMAGE_LINE_RE = re.compile(r"^!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)$")
-# 行内（インライン）画像。テキストと混在していても抽出できる。
-_INLINE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-
-
-def _rel_of(match_group: str) -> str:
-    return match_group.replace("\\", "/").lstrip("/")
-
-
-def _add_code_block(doc: Any, lang: str, lines: list[str]) -> None:
-    """フェンス付きコードブロックを等幅段落で出力する。
-
-    Mermaid はサーバ側では描画できない（本来はクライアントが合成前に PNG 化して画像へ差し替える）。
-    未変換のまま届いた場合の保険として、注記＋ソースを崩さず出力する。
-    """
-    from docx.shared import Pt
-
-    if lang == "mermaid":
-        note = doc.add_paragraph()
-        style_run(
-            note.add_run("【Mermaid 図（画像未変換のためソースを表示）】"),
-            size=Pt(10),
-            color=MUTED,
-            italic=True,
-        )
-    para = doc.add_paragraph()
-    shade_paragraph(para)
-    para.paragraph_format.line_spacing = 1.45
-    style_run(
-        para.add_run("\n".join(lines)),
-        name=FONT_MONO,
-        size=Pt(9),
-        color=BODY,
-    )
-
-
-def _add_line_with_inline_images(doc: Any, line: str, assets: dict[str, bytes]) -> None:
-    """テキストと行内画像が混在する行を、画像を埋め込みつつ 1 段落で出力する。"""
-    from docx.shared import Cm
-
-    matches = list(_INLINE_IMAGE_RE.finditer(line))
-    if not matches:
-        doc.add_paragraph(line)
-        return
-    para = doc.add_paragraph()
-    last = 0
-    for m in matches:
-        pre = line[last : m.start()]
-        if pre:
-            para.add_run(pre)
-        rel = _rel_of(m.group(1))
-        data = assets.get(rel)
-        if data:
-            try:
-                para.add_run().add_picture(io.BytesIO(data), width=Cm(12))
-            except Exception:  # noqa: BLE001
-                para.add_run(f"[画像: {rel}]")
-        else:
-            para.add_run(f"[画像: {rel}]")
-        last = m.end()
-    tail = line[last:]
-    if tail:
-        para.add_run(tail)
-
-
 def _markdown_to_docx(
     name: str, sections: list[dict[str, Any]], assets: dict[str, bytes] | None = None
 ) -> bytes:
-    """章（Markdown 文字列）を連結し、簡易パースで .docx を作る（python-docx）。
-
-    spec-app（pandoc）と同等に、本文が参照する画像を assets（{相対パス: バイト列}）から
-    埋め込む。画像のみの行はブロック画像、テキスト混在はインライン画像として配置する。
-    Mermaid は合成前にクライアントが PNG 画像へ差し替える運用のため、ここでは通常画像として
-    埋め込まれる（未変換で届いた場合はコードブロックとして安全に出力する）。
-    """
-    from docx import Document
-    from docx.shared import Cm
-
-    assets = assets or {}
-    doc = Document()
-    apply_docx_theme(doc)
-    doc.add_heading(name, level=0)
-    for sec in sections:
-        content = str(sec.get("content") or "")
-        in_code = False
-        code_lang = ""
-        code_lines: list[str] = []
-        for raw_line in content.splitlines():
-            stripped = raw_line.strip()
-            if stripped.startswith("```"):
-                if in_code:
-                    _add_code_block(doc, code_lang, code_lines)
-                    in_code, code_lang, code_lines = False, "", []
-                else:
-                    in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
-                continue
-            if in_code:
-                code_lines.append(raw_line)
-                continue
-            line = raw_line.rstrip()
-            if not line.strip():
-                continue
-            m = _IMAGE_LINE_RE.match(line.strip())
-            if m:
-                rel = _rel_of(m.group(1))
-                data = assets.get(rel)
-                if data:
-                    try:
-                        doc.add_picture(io.BytesIO(data), width=Cm(15))
-                        continue
-                    except Exception:  # noqa: BLE001
-                        pass
-                doc.add_paragraph(f"[画像: {rel}]")
-                continue
-            if line.startswith("### "):
-                doc.add_heading(line[4:].strip(), level=3)
-            elif line.startswith("## "):
-                doc.add_heading(line[3:].strip(), level=2)
-            elif line.startswith("# "):
-                doc.add_heading(line[2:].strip(), level=1)
-            elif line.lstrip().startswith(("- ", "* ")):
-                doc.add_paragraph(line.lstrip()[2:].strip(), style="List Bullet")
-            else:
-                _add_line_with_inline_images(doc, line, assets)
-        if in_code and code_lines:  # フェンス閉じ忘れの保険
-            _add_code_block(doc, code_lang, code_lines)
-    out = io.BytesIO()
-    doc.save(out)
-    return out.getvalue()
+    """章 Markdown をプレビュー相当の表現で .docx にする。"""
+    return markdown_to_docx(name, sections, assets)
 
 
 def _decode_assets(raw: Any) -> dict[str, bytes]:

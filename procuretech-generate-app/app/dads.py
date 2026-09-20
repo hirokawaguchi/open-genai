@@ -89,7 +89,7 @@ def _set_style_font(
     r_fonts.set(qn("w:cs"), name)
 
 
-def _bottom_border(p_pr: Any, color: tuple[int, int, int], *, sz: str = "12", space: str = "4") -> None:
+def bottom_border(p_pr: Any, color: tuple[int, int, int], *, sz: str = "12", space: str = "4") -> None:
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
@@ -140,7 +140,7 @@ def apply_docx_theme(doc: Any) -> None:
 
     header = section.header.paragraphs[0]
     header.text = ""
-    _bottom_border(header._p.get_or_add_pPr(), ACCENT, sz="18", space="1")
+    bottom_border(header._p.get_or_add_pPr(), ACCENT, sz="18", space="1")
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -158,23 +158,29 @@ def apply_docx_theme(doc: Any) -> None:
     title.paragraph_format.space_after = Pt(18)
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.line_spacing = 1.5
-    _bottom_border(title.element.get_or_add_pPr(), ACCENT, sz="12", space="6")
+    bottom_border(title.element.get_or_add_pPr(), ACCENT, sz="12", space="6")
 
-    for style_name, size, before in (("Heading 1", 16, 20), ("Heading 2", 14, 16), ("Heading 3", 12, 14)):
+    for style_name, size, before in (
+        ("Heading 1", 16, 20),
+        ("Heading 2", 14, 16),
+        ("Heading 3", 12, 14),
+        ("Heading 4", 11, 12),
+    ):
         st = doc.styles[style_name]
         _set_style_font(st, name=FONT, size=Pt(size), color=INK, bold=True)
         st.paragraph_format.space_before = Pt(before)
         st.paragraph_format.space_after = Pt(8)
         st.paragraph_format.line_spacing = 1.5
-    _bottom_border(doc.styles["Heading 1"].element.get_or_add_pPr(), RULE, sz="6", space="4")
+    bottom_border(doc.styles["Heading 1"].element.get_or_add_pPr(), RULE, sz="6", space="4")
 
-    try:
-        bullet = doc.styles["List Bullet"]
-        _set_style_font(bullet, name=FONT, size=Pt(11), color=BODY)
-        bullet.paragraph_format.line_spacing = 1.7
-        bullet.paragraph_format.space_after = Pt(4)
-    except KeyError:
-        pass
+    for list_name in ("List Bullet", "List Number"):
+        try:
+            lst = doc.styles[list_name]
+            _set_style_font(lst, name=FONT, size=Pt(11), color=BODY)
+            lst.paragraph_format.line_spacing = 1.7
+            lst.paragraph_format.space_after = Pt(4)
+        except KeyError:
+            pass
 
 
 def shade_paragraph(paragraph: Any, fill: tuple[int, int, int] = SURFACE) -> None:
@@ -190,3 +196,88 @@ def shade_paragraph(paragraph: Any, fill: tuple[int, int, int] = SURFACE) -> Non
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"), hex_of(fill))
     p_pr.append(shd)
+
+
+def shade_run(run: Any, fill: tuple[int, int, int] = SURFACE) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    r_pr = run._element.get_or_add_rPr()
+    old = r_pr.find(qn("w:shd"))
+    if old is not None:
+        r_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_of(fill))
+    r_pr.append(shd)
+
+
+def left_border(paragraph: Any, color: tuple[int, int, int] = ACCENT, *, sz: str = "18") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    old = p_pr.find(qn("w:pBdr"))
+    if old is not None:
+        p_pr.remove(old)
+    border = OxmlElement("w:pBdr")
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single")
+    left.set(qn("w:sz"), sz)
+    left.set(qn("w:space"), "10")
+    left.set(qn("w:color"), hex_of(color))
+    border.append(left)
+    p_pr.append(border)
+
+
+def shade_cell(cell: Any, fill: tuple[int, int, int] = SURFACE) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    old = tc_pr.find(qn("w:shd"))
+    if old is not None:
+        tc_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_of(fill))
+    tc_pr.append(shd)
+
+
+def set_cell_borders(cell: Any, color: tuple[int, int, int] = RULE, *, sz: str = "4") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    old = tc_pr.find(qn("w:tcBorders"))
+    if old is not None:
+        tc_pr.remove(old)
+    borders = OxmlElement("w:tcBorders")
+    for edge in ("top", "left", "bottom", "right"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), sz)
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), hex_of(color))
+        borders.append(el)
+    tc_pr.append(borders)
+
+
+def set_table_full_width(table: Any) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tbl = table._tbl
+    tbl_pr = tbl.tblPr
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        tbl.insert(0, tbl_pr)
+    old = tbl_pr.find(qn("w:tblW"))
+    if old is not None:
+        tbl_pr.remove(old)
+    width = OxmlElement("w:tblW")
+    width.set(qn("w:type"), "pct")
+    width.set(qn("w:w"), "5000")
+    tbl_pr.append(width)
