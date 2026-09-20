@@ -8,6 +8,9 @@ import { useFilteredTeams } from '@/features/exapps/hooks/useFilteredTeams';
 import { ALL_APPS_NAV_ITEM, pinnedAppHref, useRecommendedNavItems } from '@/layout/navItems';
 import { partitionPinnedApps } from '@/open-genai/app-pins/partitionPinnedApps';
 import { useFetchAppPins } from '@/open-genai/app-pins/useFetchAppPins';
+import { TenantSwitcher } from '@/open-genai/tenants/TenantSwitcher';
+import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
+import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { MobileMenuItemButton, MobileMenuItemLink } from './MobileMenuItem';
 import { MobileMenuSection } from './MobileMenuSection';
 
@@ -28,6 +31,10 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
   const { filteredTeams } = useFilteredTeams(exAppOptions, []);
   const { pins } = useFetchAppPins();
   const { pinnedItems } = partitionPinnedApps(filteredTeams, pins);
+  const { isSystemAdminGroup } = useTeamAuth();
+  const { canManageTenants } = useMyTenants();
+  const showTenantManagement = isSystemAdminGroup || canManageTenants;
+  const showTeamManagement = isShowTeamManagementMenu || canManageTenants;
 
   return (
     <dialog
@@ -107,6 +114,9 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
               </ul>
             )}
             <Divider />
+            <div className='px-4'>
+              <TenantSwitcher />
+            </div>
             <div>
               <MobileMenuSection
                 label={accountLabel}
@@ -119,7 +129,17 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
                       <span className='font-bold text-solid-gray-800'>{userDisplayName}</span>
                     </li>
                   )}
-                  {isShowTeamManagementMenu && (
+                  {showTenantManagement && (
+                    <li>
+                      <MobileMenuItemLink label='棟の管理' to='/tenants' />
+                    </li>
+                  )}
+                  {isSystemAdminGroup && (
+                    <li>
+                      <MobileMenuItemLink label='おすすめアプリ' to='/admin/recommended' />
+                    </li>
+                  )}
+                  {showTeamManagement && (
                     <li>
                       <MobileMenuItemLink label='チーム管理' to='/teams' />
                     </li>

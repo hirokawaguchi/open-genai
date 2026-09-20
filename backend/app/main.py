@@ -746,6 +746,19 @@ def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     }
 
 
+def _is_knowledge_search_app(app: dict[str, Any]) -> bool:
+    if app.get("exAppId") == "rag":
+        return True
+    return _rag_role_of(app) == "search"
+
+
+def _feature_id_of(app: dict[str, Any]) -> str:
+    """棟の機能フラグ用 ID。チーム別ナレッジ検索は rag に寄せる。"""
+    if _is_knowledge_search_app(app):
+        return "rag"
+    return app.get("exAppId") or ""
+
+
 def _rag_role_of(app: dict[str, Any]) -> str | None:
     try:
         cfg = json.loads(app.get("config") or "{}")
@@ -1022,10 +1035,22 @@ def _member_teams(user_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _effective_team_ids(user_id: str) -> list[str]:
-    """読取用チームID。明示所属 + 主所属の子孫。"""
+def _active_tenant_id(user_id: str, claims: dict[str, Any] | None = None) -> str:
+    """活性棟。システム管理者は鍵が無くても保存した棟へ切替できる。"""
     try:
-        return teams_store.list_effective_team_ids_for_user(user_id)
+        return teams_store.get_active_tenant_id(
+            user_id, allow_any=_is_system_admin(claims or {})
+        )
+    except Exception:  # noqa: BLE001
+        return teams_store.DEFAULT_TENANT_ID
+
+
+def _effective_team_ids(user_id: str, claims: dict[str, Any] | None = None) -> list[str]:
+    """読取用チームID。明示所属 + 主所属の子孫。活性棟で絞る。"""
+    try:
+        ids = teams_store.list_effective_team_ids_for_user(user_id)
+        active = _active_tenant_id(user_id, claims)
+        return teams_store.filter_team_ids_for_tenant(ids, active)
     except Exception:  # noqa: BLE001
         return []
 
@@ -2309,19 +2334,36 @@ def _knowledge_authz(
     if not scope:
         return JSONResponse(status_code=400, content={"error": "scope（teamId）が必要です"})
     is_admin = _is_system_admin(claims)
+    tenant_admin = teams_store.is_tenant_admin_of_team(user_id, scope)
     if scope == COMMON_TEAM_ID:
-        # 共有ナレッジ: 読取は全認証ユーザー、書込・管理操作は管理者のみ
-        if (write or admin_only) and not is_admin:
+        # デフォルト棟の共通ナレッジ。書込はスーパー管理者またはその棟の管理者。
+        if (write or admin_only) and not is_admin and not tenant_admin:
             return _forbidden("共有ナレッジの管理には管理者権限が必要です")
+        if not is_admin:
+            active = _active_tenant_id(user_id, claims)
+            if not teams_store.team_visible_in_tenant(scope, active):
+                return _forbidden("この棟ではそのナレッジを扱えません")
         return None
-    # チームスコープ: 読取は配下継承、書込は明示メンバー（or システム管理者）
+    # チームスコープ: 読取は配下継承、書込は明示メンバー／棟管理者／スーパー管理者
     if write or admin_only:
-        if not is_admin and not teams_store.is_team_member(scope, user_id):
+        if (
+            not is_admin
+            and not tenant_admin
+            and not teams_store.is_team_member(scope, user_id)
+        ):
             return _forbidden("このチームのナレッジを操作する権限がありません")
-    elif not is_admin and not teams_store.can_read_team(scope, user_id):
+    elif (
+        not is_admin
+        and not tenant_admin
+        and not teams_store.can_read_team(scope, user_id)
+    ):
         return _forbidden("このチームのナレッジを操作する権限がありません")
-    if admin_only and not is_admin:
+    if admin_only and not is_admin and not tenant_admin:
         return _forbidden("この操作には管理者権限が必要です")
+    if not is_admin:
+        active = _active_tenant_id(user_id, claims)
+        if not teams_store.team_visible_in_tenant(scope, active):
+            return _forbidden("この棟ではそのナレッジを扱えません")
     return None
 
 
@@ -2375,42 +2417,11 @@ async def knowledge_scopes(request: Request) -> JSONResponse:
     if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     is_admin = _is_system_admin(claims)
-    scopes: list[dict[str, Any]] = [
-        {
-            "scope": COMMON_TEAM_ID,
-            "name": "共有ナレッジ（共通）",
-            "kind": "common",
-            "canManage": is_admin,
-        }
-    ]
-    seen: set[str] = set()
-    for t in _member_teams(user_id):
-        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
-            continue
-        seen.add(t["teamId"])
-        scopes.append(
-            {
-                "scope": t["teamId"],
-                "name": t.get("teamName") or t["teamId"],
-                "kind": "team",
-                "canManage": True,
-            }
-        )
+    active = _active_tenant_id(user_id, claims)
     try:
-        inherited = teams_store.list_inherited_teams_for_user(user_id)
+        scopes = teams_store.list_knowledge_scopes(user_id, is_admin, active)
     except Exception:  # noqa: BLE001
-        inherited = []
-    for t in inherited:
-        if t["teamId"] in seen or t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
-            continue
-        scopes.append(
-            {
-                "scope": t["teamId"],
-                "name": f"{t.get('teamName') or t['teamId']}（配下・閲覧）",
-                "kind": "team",
-                "canManage": False,
-            }
-        )
+        scopes = []
     return JSONResponse(content={"scopes": scopes, "isSystemAdmin": is_admin})
 
 
@@ -2773,13 +2784,55 @@ async def _is_app_up(endpoint: str) -> bool:
         return False
 
 
+def _as_invoke_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    return raw if raw.endswith("/invoke") else raw.rstrip("/") + "/invoke"
+
+
+def _official_service_endpoints() -> list[tuple[str, str]]:
+    """公式の任意起動アプリとヘルスチェック用 endpoint。"""
+    return [
+        ("whisper", _as_invoke_url(WHISPER_APP_URL)),
+        ("prompt", _as_invoke_url(PROMPT_APP_URL)),
+        ("rag", _as_invoke_url(RAG_APP_URL)),
+        ("chosei", _as_invoke_url(CHOSEI_APP_URL)),
+        ("doccheck", _as_invoke_url(DOCCHECK_APP_URL)),
+        ("patchform", _as_invoke_url(PATCHFORM_APP_URL)),
+        ("docmaker", _as_invoke_url(PATCHFORM_APP_URL)),
+        ("procuretech-navigator", _as_invoke_url(PROCURETECH_APP_URL)),
+        ("procuretech-editor", _as_invoke_url(PROCURETECH_EDITOR_APP_URL)),
+        ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
+        ("ssh", _as_invoke_url(SSH_APP_URL)),
+    ]
+
+
+async def _running_official_app_ids() -> list[str]:
+    """起動中の公式アプリ。棟の features は見ない。"""
+    services = [(app_id, ep) for app_id, ep in _official_service_endpoints() if ep]
+    image_ok, *service_oks = await asyncio.gather(
+        image_gen.is_sd_up(),
+        *[_is_app_up(ep) for _, ep in services],
+        return_exceptions=True,
+    )
+    return teams_store.select_running_official_exapp_ids(
+        image_up=image_ok is True,
+        service_up={
+            app_id: ok is True for (app_id, _), ok in zip(services, service_oks)
+        },
+    )
+
+
 @app.get("/exapps")
 async def list_exapps(request: Request) -> list[Any]:
     # ListExAppsResponse = Array<ExApp & { teamName }>
     # 起動していない(ヘルスチェック不通の) AI アプリは一覧から隠す。
     claims = _claims_from_request(request)
     is_admin = _is_system_admin(claims)
-    candidates = teams_store.list_visible_exapps(_user_id(claims), is_admin)
+    user_id = _user_id(claims)
+    active = _active_tenant_id(user_id, claims) if user_id else None
+    candidates = teams_store.list_visible_exapps(user_id, is_admin, active)
     # /knowledge へ集約済みの旧管理系は起動時削除するが、残存しても一覧に出さない
     candidates = [
         a for a in candidates if a.get("exAppId") not in RETIRED_SEED_EXAPP_IDS
@@ -2800,10 +2853,24 @@ async def list_exapps(request: Request) -> list[Any]:
             seen.add(key)
     service_apps = [a for a in candidates if not teams_store.is_builtin_exapp(a)]
     builtin_apps = [a for a in candidates if teams_store.is_builtin_exapp(a)]
+    # ナレッジ検索は既定スタック。ヘルス不通でも一覧から消さない。
+    core_search = [a for a in service_apps if _is_knowledge_search_app(a)]
+    health_apps = [a for a in service_apps if not _is_knowledge_search_app(a)]
     checks = await asyncio.gather(
-        *[_is_app_up(a["endpoint"]) for a in service_apps], return_exceptions=True
+        *[_is_app_up(a["endpoint"]) for a in health_apps], return_exceptions=True
     )
-    return [a for a, ok in zip(service_apps, checks) if ok is True] + builtin_apps
+    visible = (
+        [a for a, ok in zip(health_apps, checks) if ok is True]
+        + core_search
+        + builtin_apps
+    )
+    if not await image_gen.is_sd_up():
+        visible = [a for a in visible if a.get("exAppId") != "image"]
+    return [
+        a
+        for a in visible
+        if teams_store.builtin_feature_enabled(active, _feature_id_of(a))
+    ]
 
 
 @app.get("/my/app-pins")
@@ -7123,7 +7190,16 @@ async def apply_admin_users(request: Request) -> JSONResponse:
 async def get_my_teams(request: Request) -> JSONResponse:
     """ログインユーザー自身の所属チーム（共有先の選択肢に使う）。"""
     claims = _claims_from_request(request)
-    return JSONResponse(content={"teams": _member_teams(_user_id(claims))})
+    user_id = _user_id(claims)
+    teams = _member_teams(user_id)
+    if user_id:
+        active = _active_tenant_id(user_id, claims)
+        teams = [
+            t
+            for t in teams
+            if teams_store.team_visible_in_tenant(t["teamId"], active)
+        ]
+    return JSONResponse(content={"teams": teams})
 
 
 @app.get("/exapps/histories")
@@ -7233,44 +7309,320 @@ async def get_artifact_carrier(
 
 
 # ---------------------------------------------------------------------------
+# おすすめアプリ（システム全体）
+# ---------------------------------------------------------------------------
+@app.get("/official-apps/runtime")
+async def official_apps_runtime(request: Request) -> JSONResponse:
+    """起動中の公式アプリ。おすすめ設定・棟の機能一覧の候補に使う。"""
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    running = await _running_official_app_ids()
+    return JSONResponse(
+        content={
+            "catalog": list(teams_store.OFFICIAL_CATALOG_EXAPP_IDS),
+            "running": running,
+        }
+    )
+
+
+@app.get("/recommended-apps")
+async def get_recommended_apps(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return JSONResponse(
+        content={
+            "exAppIds": teams_store.get_recommended_exapp_ids(),
+            "availableIds": await _running_official_app_ids(),
+        }
+    )
+
+
+@app.put("/recommended-apps")
+async def put_recommended_apps(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("おすすめアプリの設定はシステム管理者のみ可能です")
+    body = await request.json()
+    raw = body.get("exAppIds")
+    if raw is not None and not isinstance(raw, list):
+        return JSONResponse(status_code=400, content={"error": "exAppIds は配列です"})
+    ids = teams_store.set_recommended_exapp_ids(
+        [str(x) for x in (raw or [])]
+    )
+    return JSONResponse(
+        content={
+            "exAppIds": ids,
+            "availableIds": await _running_official_app_ids(),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# テナント（棟）
+# ---------------------------------------------------------------------------
+def _can_admin_tenant(claims: dict[str, Any], tenant_id: str) -> bool:
+    if _is_system_admin(claims):
+        return True
+    return teams_store.is_tenant_admin(tenant_id, _user_id(claims))
+
+
+@app.get("/me/tenants")
+async def get_my_tenants(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    teams_store.ensure_user_home_tenant(user_id)
+    mine = {
+        t["tenantId"]: t for t in teams_store.list_tenants_for_user(user_id)
+    }
+    if _is_system_admin(claims):
+        tenants = []
+        for t in teams_store.list_tenants():
+            extra = mine.get(t["tenantId"], {})
+            tenants.append(
+                {
+                    **t,
+                    "role": extra.get("role") or "admin",
+                    "isAdmin": True,
+                }
+            )
+    else:
+        tenants = list(mine.values())
+    return JSONResponse(
+        content={
+            "tenants": tenants,
+            "activeTenantId": _active_tenant_id(user_id, claims),
+            "isSystemAdmin": _is_system_admin(claims),
+        }
+    )
+
+
+@app.put("/me/tenants/active")
+async def set_my_active_tenant(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    body = await request.json()
+    tenant_id = (body.get("tenantId") or "").strip()
+    if not tenant_id:
+        return JSONResponse(status_code=400, content={"error": "tenantId は必須です"})
+    err = teams_store.set_active_tenant_id(
+        user_id, tenant_id, allow_any=_is_system_admin(claims)
+    )
+    if err:
+        return JSONResponse(status_code=403, content={"error": err})
+    return JSONResponse(content={"activeTenantId": tenant_id})
+
+
+@app.get("/tenants")
+async def list_tenants(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    if _is_system_admin(claims):
+        tenants = teams_store.list_tenants()
+    else:
+        tenants = [
+            t for t in teams_store.list_tenants_for_user(user_id) if t.get("isAdmin")
+        ]
+    return JSONResponse(content={"tenants": tenants})
+
+
+@app.post("/tenants")
+async def create_tenant(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("棟の作成はシステム管理者のみ可能です")
+    body = await request.json()
+    name = (body.get("tenantName") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "tenantName は必須です"})
+    features = body.get("features")
+    if features is not None and not isinstance(features, dict):
+        return JSONResponse(status_code=400, content={"error": "features はオブジェクトです"})
+    tenant = teams_store.create_tenant(name, features=features)
+    return JSONResponse(content=tenant)
+
+
+@app.put("/tenants/{tenant_id}")
+async def update_tenant(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    body = await request.json()
+    name = body.get("tenantName")
+    features = body.get("features")
+    if features is not None and not isinstance(features, dict):
+        return JSONResponse(status_code=400, content={"error": "features はオブジェクトです"})
+    tenant = teams_store.update_tenant(
+        tenant_id, tenant_name=name, features=features
+    )
+    if not tenant:
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    return JSONResponse(content=tenant)
+
+
+@app.delete("/tenants/{tenant_id}")
+async def delete_tenant(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("棟の削除はシステム管理者のみ可能です")
+    err = teams_store.delete_tenant(tenant_id)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
+    return JSONResponse(content={})
+
+
+@app.get("/tenants/{tenant_id}/members")
+async def list_tenant_members(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    if not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    return JSONResponse(
+        content={"members": teams_store.list_tenant_memberships(tenant_id)}
+    )
+
+
+@app.post("/tenants/{tenant_id}/members")
+async def invite_tenant_member(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    if not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    body = await request.json()
+    email = teams_store.normalize_email(body.get("email") or body.get("userId"))
+    if not email:
+        return JSONResponse(status_code=400, content={"error": "email は必須です"})
+    tenant = teams_store.get_tenant(tenant_id)
+    default_role = (
+        teams_store.TENANT_ROLE_SHARED
+        if tenant and tenant["kind"] == teams_store.TENANT_KIND_SHARED
+        else teams_store.TENANT_ROLE_GUEST
+    )
+    role = (body.get("role") or default_role).strip()
+    member = teams_store.upsert_tenant_membership(
+        tenant_id,
+        email,
+        role=role,
+        is_admin=bool(body.get("isAdmin")),
+    )
+    return JSONResponse(content=member)
+
+
+@app.put("/tenants/{tenant_id}/members/{user_id}")
+async def update_tenant_member(
+    tenant_id: str, user_id: str, request: Request
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    body = await request.json()
+    current = teams_store.get_tenant_membership(tenant_id, user_id)
+    if not current:
+        return JSONResponse(status_code=404, content={"error": "メンバーが見つかりません"})
+    member = teams_store.upsert_tenant_membership(
+        tenant_id,
+        user_id,
+        role=body.get("role") or current["role"],
+        is_admin=bool(body.get("isAdmin", current["isAdmin"])),
+    )
+    return JSONResponse(content=member)
+
+
+@app.delete("/tenants/{tenant_id}/members/{user_id}")
+async def remove_tenant_member(
+    tenant_id: str, user_id: str, request: Request
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    teams_store.remove_tenant_membership(tenant_id, user_id)
+    return JSONResponse(content={})
+
+
+# ---------------------------------------------------------------------------
 # チーム管理 (Team Access Control API)
 # ---------------------------------------------------------------------------
 @app.get("/teams")
 async def list_teams(request: Request) -> dict[str, Any]:
     claims = _claims_from_request(request)
+    user_id = _user_id(claims)
     if _is_system_admin(claims):
         teams = teams_store.list_teams()
     else:
-        teams = teams_store.list_teams_for_admin(_user_id(claims))
-    # 管理者ツールは管理一覧から除外。共通アプリはシステム管理者が AI アプリを
-    # 登録できるよう、管理者にだけ一覧へ出す。
+        by_id: dict[str, dict[str, Any]] = {}
+        for t in teams_store.list_teams_for_admin(user_id):
+            by_id[t["teamId"]] = t
+        for t in teams_store.list_teams_for_tenant_admin(user_id):
+            by_id[t["teamId"]] = t
+        teams = list(by_id.values())
+    # 管理者ツールは管理一覧から除外。共通アプリはスーパー管理者と
+    # その棟の管理者だけが一覧へ出す。
+    active = _active_tenant_id(user_id, claims) if user_id else teams_store.DEFAULT_TENANT_ID
     if _is_system_admin(claims):
         teams = [t for t in teams if t["teamId"] != ADMIN_TEAM_ID]
         teams.sort(key=lambda t: (0 if t["teamId"] == COMMON_TEAM_ID else 1, t.get("teamName", "")))
     else:
+        keep_common = teams_store.is_tenant_admin_of_team(user_id, COMMON_TEAM_ID)
         teams = [
-            t for t in teams if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+            t
+            for t in teams
+            if t["teamId"] != ADMIN_TEAM_ID
+            and (t["teamId"] != COMMON_TEAM_ID or keep_common)
         ]
+    teams = [
+        t
+        for t in teams
+        if t["teamId"] == COMMON_TEAM_ID
+        or teams_store.team_visible_in_tenant(t["teamId"], active)
+    ]
     return {"teams": teams, "lastEvaluatedKey": None}
 
 
 @app.post("/teams")
 async def create_team(request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden("チーム作成はシステム管理者のみ可能です")
+    user_id = _user_id(claims)
     body = await request.json()
     team_name = body.get("teamName", "")
     admin_email = body.get("teamAdminEmail", "")
     parent_team_id = (body.get("parentTeamId") or "").strip() or None
+    tenant_id = (body.get("tenantId") or "").strip() or None
     if not team_name or not admin_email:
         return JSONResponse(
             status_code=400, content={"error": "teamName と teamAdminEmail は必須です"}
         )
-    parent_err = teams_store.validate_parent_team_id(None, parent_team_id)
+    if not tenant_id and parent_team_id:
+        parent = teams_store.get_team(parent_team_id)
+        tenant_id = (parent or {}).get("tenantId") or None
+    if not tenant_id:
+        tenant_id = (
+            _active_tenant_id(user_id, claims)
+            if user_id
+            else teams_store.DEFAULT_TENANT_ID
+        )
+    if not _is_system_admin(claims) and not (
+        user_id and teams_store.is_tenant_admin(tenant_id, user_id)
+    ):
+        return _forbidden("チーム作成はシステム管理者またはその棟の管理者のみ可能です")
+    if tenant_id and not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=400, content={"error": "棟が見つかりません"})
+    parent_err = teams_store.validate_parent_team_id(
+        None, parent_team_id, tenant_id=tenant_id
+    )
     if parent_err:
         return JSONResponse(status_code=400, content={"error": parent_err})
-    team = teams_store.create_team(team_name, admin_email, parent_team_id)
+    team = teams_store.create_team(
+        team_name, admin_email, parent_team_id, tenant_id=tenant_id
+    )
     # 新規チームには「ナレッジ検索」のみ自動登録。
     # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
     teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
@@ -7283,9 +7635,7 @@ async def get_team(team_id: str, request: Request) -> JSONResponse:
     team = teams_store.get_team(team_id)
     if not team:
         return JSONResponse(status_code=404, content={"error": "チームが見つかりません"})
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     return JSONResponse(content=team)
 
@@ -7293,9 +7643,7 @@ async def get_team(team_id: str, request: Request) -> JSONResponse:
 @app.get("/teams/{team_id}/raw")
 async def get_team_raw(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     team = teams_store.get_team(team_id)
     if not team:
@@ -7311,15 +7659,16 @@ async def update_team(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
     if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
         return _forbidden("固定チームの名称は変更できません")
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     body = await request.json()
     parent_team_id = body.get("parentTeamId") if "parentTeamId" in body else ...
     if parent_team_id is not ...:
+        current = teams_store.get_team(team_id)
         parent_err = teams_store.validate_parent_team_id(
-            team_id, (parent_team_id or "").strip() or None
+            team_id,
+            (parent_team_id or "").strip() or None,
+            tenant_id=(current or {}).get("tenantId"),
         )
         if parent_err:
             return JSONResponse(status_code=400, content={"error": parent_err})
@@ -7357,8 +7706,11 @@ async def delete_team(team_id: str, request: Request) -> JSONResponse:
 
 # ---- メンバー管理 ----
 def _can_manage_team(claims: dict[str, Any], team_id: str) -> bool:
-    return _is_system_admin(claims) or teams_store.is_team_admin(
-        team_id, _user_id(claims)
+    user_id = _user_id(claims)
+    return (
+        _is_system_admin(claims)
+        or teams_store.is_team_admin(team_id, user_id)
+        or teams_store.is_tenant_admin_of_team(user_id, team_id)
     )
 
 

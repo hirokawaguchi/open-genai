@@ -23,6 +23,20 @@ export const isBuiltinConfig = (config?: string): boolean => {
   }
 };
 
+export const isKnowledgeSearchApp = (app: {
+  config?: string;
+  exAppId?: string;
+}): boolean => {
+  if (app.exAppId === 'rag') {
+    return true;
+  }
+  try {
+    return (JSON.parse(app.config || '{}') as { rag_role?: string }).rag_role === 'search';
+  } catch {
+    return false;
+  }
+};
+
 export const isBuiltinExApp = (app: { config?: string; exAppId?: string }): boolean => {
   if (isBuiltinConfig(app.config)) {
     return true;
@@ -55,6 +69,6 @@ export const isCatalogListed = (
   if (app) {
     return app.status !== 'draft';
   }
-  // 未シードの組み込みはフォールバック表示。実 exApp が一覧に無い＝非公開または停止
-  return BUILTIN_EXAPP_IDS.has(id);
+  // カタログに無い＝非公開・停止・未シード。起動していないアプリは出さない。
+  return false;
 };
