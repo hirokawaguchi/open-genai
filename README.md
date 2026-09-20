@@ -835,7 +835,8 @@ SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 4. アプリを実行 → レスポンスに `200` と「生成されたファイル」欄が出ること
 5. 配信方式（`ARTIFACT_DELIVERY_MODE`）に応じて表示を確認
    - `open`: 「生成されたファイル」がダウンロードリンク／ボタンになり、SeaweedFS の署名付き URL（開発時は `localhost:8333`、本番は `S3_PUBLIC_ENDPOINT`）で取得できること
-   - `carrier`: URL は画面に出ず、ファイル名と LGWAN 向け案内＋「〇〇 のリンクファイル」ボタンが表示されること（後述の [LGWAN 端末での成果物取得](#lgwan-端末での成果物取得配信方式-open--carrier) で検証）
+   - `carrier`: URL は画面に出ず、ファイル名と LGWAN 向け案内＋「〇〇 のリンクファイル」ボタンが表示されること（後述の [LGWAN 端末での成果物取得](#lgwan-端末での成果物取得配信方式-open--carrier--auto) で検証）
+   - `auto`: アクセス Host が `*.lgwan.jp` なら `carrier`、それ以外は `open`
 
 **Dify API の疎通確認（任意）:**
 
@@ -1022,7 +1023,7 @@ Dify 等が返すファイル URL をそのまま利用者に渡さず、`backen
 | `S3_ARTIFACT_RETENTION_DAYS` | `30` | 成果物と実行履歴の保持日数（超過分を日次削除。`0` で無効） |
 | `S3_ARTIFACT_PURGE_INTERVAL` | `86400` | 上記パージの実行間隔（秒） |
 | `ARTIFACT_FETCH_ALLOWED_HOSTS` | （空） | 成果物取得を許可するホスト。クラウドは `files.dify.ai,upload.dify.ai`、ローカルは `host.docker.internal`、セルフホストは FILES_URL のホストを追加。allowlist ホストは private IP も可 |
-| `ARTIFACT_DELIVERY_MODE` | `open`（本番既定 `carrier`） | 配信方式。`open`=結果画面に直接リンク、`carrier`=リンクファイル持ち出し（下記 LGWAN） |
+| `ARTIFACT_DELIVERY_MODE` | `open`（本番既定 `carrier`） | 配信方式。`open`=常に直接リンク、`carrier`=常にリンクファイル、`auto`=Host が `*.lgwan.jp` なら carrier（下記 LGWAN） |
 | `ARTIFACT_CARRIER_FORMAT` | `txt` | `carrier` 時のリンクファイル形式（`txt` / `html` / `both`） |
 
 #### 署名付き URL について
@@ -1033,7 +1034,7 @@ Dify 等が返すファイル URL をそのまま利用者に渡さず、`backen
 - 利用履歴を UI から削除すると、紐づく SeaweedFS 上のファイルも削除されます
 - 保持日数を超えた成果物と実行履歴は、backend 起動時のバックグラウンド処理で自動削除されます
 
-#### LGWAN 端末での成果物取得（配信方式: `open` / `carrier`）
+#### LGWAN 端末での成果物取得（配信方式: `open` / `carrier` / `auto`）
 
 LGWAN 端末からは、SeaweedFS の署名付き URL も、後述のリバースプロキシの公開 URL も、
 **通常はそのままダウンロードできません**（インターネット側の宛先に届かないため）。そこで
@@ -1042,7 +1043,8 @@ LGWAN 端末からは、SeaweedFS の署名付き URL も、後述のリバー�
 | モード | 挙動 | 想定環境 |
 | --- | --- | --- |
 | `open` | 結果画面・履歴に署名付き URL を直接リンク表示（クリックで取得） | 開発、成果物へ直接到達できる環境 |
-| `carrier` | URL を画面に出さず、**URL を記載した「リンクファイル(.txt/.html)」**をダウンロードさせる | LGWAN 等、本体へ直接到達できない環境 |
+| `carrier` | URL を画面に出さず、**URL を記載した「リンクファイル(.txt/.html)」**をダウンロードさせる | LGWAN のみ、または常に持ち出し運用にしたい環境 |
+| `auto` | アクセス Host が `*.lgwan.jp`（または `lgwan.jp`）なら `carrier`、それ以外は `open` | インターネット面と LGWAN 面を同じ系統で併設する環境 |
 
 `carrier` の運用フロー:
 
