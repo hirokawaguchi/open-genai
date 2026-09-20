@@ -20,6 +20,12 @@ ACCENT = (0x00, 0x17, 0xC1)  # Blue 900
 ON_ACCENT = (0xFF, 0xFF, 0xFF)
 FONT = "Noto Sans JP"
 FONT_MONO = "Noto Sans Mono"
+# docx はフォント埋め込みをせず、受け手に元から入っている日本語フォントを指定して
+# 置換を避ける。游ゴシック(Yu Gothic)は Windows(Office)/macOS にプリインストールされ、
+# プレビューの Noto Sans JP（ヒューマニスト系ゴシック）に近い。等幅は Windows 標準の
+# ＭＳ ゴシック（和欧対応）を使う。HTML/PPTX 出力は従来どおり FONT/FONT_MONO を使う。
+DOCX_FONT = "游ゴシック"
+DOCX_FONT_MONO = "ＭＳ ゴシック"
 
 
 def hex_of(rgb: tuple[int, int, int]) -> str:
@@ -29,7 +35,7 @@ def hex_of(rgb: tuple[int, int, int]) -> str:
 def style_run(
     run: Any,
     *,
-    name: str = FONT,
+    name: str = DOCX_FONT,
     size: Any = None,
     color: tuple[int, int, int] | None = None,
     bold: bool | None = None,
@@ -112,7 +118,7 @@ def _add_page_field(paragraph: Any) -> None:
     from docx.shared import Pt
 
     run = paragraph.add_run()
-    style_run(run, name=FONT, size=Pt(9), color=MUTED)
+    style_run(run, name=DOCX_FONT, size=Pt(9), color=MUTED)
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
@@ -147,27 +153,30 @@ def apply_docx_theme(doc: Any) -> None:
     footer.text = ""
     _add_page_field(footer)
 
+    # 本文・見出しはエディタのプレビュー（prose-sm, px）を pt へ換算して合わせる。
+    # 画面 px → 印刷 pt は 96dpi 基準で pt = px * 0.75（本文 16px=12pt, h1 24px=18pt 等）。
     normal = doc.styles["Normal"]
-    _set_style_font(normal, name=FONT, size=Pt(11), color=BODY)
-    normal.paragraph_format.line_spacing = 1.7
-    normal.paragraph_format.space_after = Pt(10)
+    _set_style_font(normal, name=DOCX_FONT, size=Pt(12), color=BODY)
+    # プレビューは行間 170% だが、印刷 docx では広く見えるため本文は 1.4 に詰める。
+    normal.paragraph_format.line_spacing = 1.4
+    normal.paragraph_format.space_after = Pt(8)
     normal.paragraph_format.space_before = Pt(0)
 
     title = doc.styles["Title"]
-    _set_style_font(title, name=FONT, size=Pt(22), color=INK, bold=True)
+    _set_style_font(title, name=DOCX_FONT, size=Pt(22), color=INK, bold=True)
     title.paragraph_format.space_after = Pt(18)
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.line_spacing = 1.5
     bottom_border(title.element.get_or_add_pPr(), ACCENT, sz="12", space="6")
 
     for style_name, size, before in (
-        ("Heading 1", 16, 20),
-        ("Heading 2", 14, 16),
-        ("Heading 3", 12, 14),
-        ("Heading 4", 11, 12),
+        ("Heading 1", 18, 20),  # プレビュー h1 24px
+        ("Heading 2", 15, 16),  # プレビュー h2 20px
+        ("Heading 3", 13.5, 14),  # プレビュー h3 18px
+        ("Heading 4", 13, 12),  # プレビュー h4 17px
     ):
         st = doc.styles[style_name]
-        _set_style_font(st, name=FONT, size=Pt(size), color=INK, bold=True)
+        _set_style_font(st, name=DOCX_FONT, size=Pt(size), color=INK, bold=True)
         st.paragraph_format.space_before = Pt(before)
         st.paragraph_format.space_after = Pt(8)
         st.paragraph_format.line_spacing = 1.5
@@ -176,8 +185,8 @@ def apply_docx_theme(doc: Any) -> None:
     for list_name in ("List Bullet", "List Number"):
         try:
             lst = doc.styles[list_name]
-            _set_style_font(lst, name=FONT, size=Pt(11), color=BODY)
-            lst.paragraph_format.line_spacing = 1.7
+            _set_style_font(lst, name=DOCX_FONT, size=Pt(12), color=BODY)
+            lst.paragraph_format.line_spacing = 1.4
             lst.paragraph_format.space_after = Pt(4)
         except KeyError:
             pass
