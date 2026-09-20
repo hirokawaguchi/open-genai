@@ -10,13 +10,15 @@ import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { USERMGMT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
+import { UserCreateSection } from './UserCreateSection';
 import { UserCsvSection } from './UserCsvSection';
 import { useUsers } from './useUserMgmt';
 
-type Mode = 'list' | 'csv';
+type Mode = 'list' | 'create' | 'csv';
 
 const MODES: { id: Mode; label: string }[] = [
   { id: 'list', label: '利用者一覧' },
+  { id: 'create', label: '利用者登録' },
   { id: 'csv', label: 'CSV一括処理' },
 ];
 
@@ -90,7 +92,13 @@ export const UserMgmtPage = () => {
           })}
         </div>
 
-        {mode === 'list' ? <UserListSection /> : <UserCsvSection onApplied={() => setMode('list')} />}
+        {mode === 'list' ? (
+          <UserListSection />
+        ) : mode === 'create' ? (
+          <UserCreateSection onCreated={() => setMode('list')} />
+        ) : (
+          <UserCsvSection onApplied={() => setMode('list')} />
+        )}
       </div>
     </LayoutBody>
   );
@@ -179,6 +187,7 @@ const UserListSection = () => {
                     <th className='px-3 py-2 font-bold'>email</th>
                     <th className='px-3 py-2 font-bold'>氏名</th>
                     <th className='px-3 py-2 font-bold'>groups</th>
+                    <th className='whitespace-nowrap px-3 py-2 font-bold'>所属棟</th>
                     <th className='whitespace-nowrap px-3 py-2 font-bold'>状態</th>
                   </tr>
                 </thead>
@@ -189,6 +198,9 @@ const UserListSection = () => {
                       <td className='px-3 py-2'>{u.email || '-'}</td>
                       <td className='px-3 py-2'>{u.name || '-'}</td>
                       <td className='px-3 py-2'>{u.groups.length > 0 ? u.groups.join(', ') : '-'}</td>
+                      <td className='px-3 py-2'>
+                        {u.tenantName || <span className='text-solid-gray-500'>未所属</span>}
+                      </td>
                       <td className='whitespace-nowrap px-3 py-2'>
                         {u.enabled ? (
                           '有効'

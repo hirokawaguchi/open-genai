@@ -360,7 +360,14 @@ async def _apply_plans(plans: list[dict[str, Any]]) -> list[dict[str, str]]:
             action = p["action"]
             if p["error"]:
                 results.append(
-                    {"username": username, "action": action, "result": "スキップ", "note": p["error"]}
+                    {
+                        "username": username,
+                        "email": p.get("email", ""),
+                        "action": action,
+                        "result": "スキップ",
+                        "note": p["error"],
+                        "tenant": p.get("tenant", ""),
+                    }
                 )
                 continue
             try:
@@ -371,7 +378,14 @@ async def _apply_plans(plans: list[dict[str, Any]]) -> list[dict[str, str]]:
             except Exception as e:  # noqa: BLE001
                 result, note = "エラー", str(e)
             results.append(
-                {"username": username, "action": action, "result": result, "note": note}
+                {
+                    "username": username,
+                    "email": p.get("email", ""),
+                    "action": action,
+                    "result": result,
+                    "note": note,
+                    "tenant": p.get("tenant", ""),
+                }
             )
     return results
 
@@ -477,8 +491,10 @@ def _plan_public(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "username": p["username"],
+            "email": p.get("email", ""),
             "action": p["action"],
             "groups": p["groups"],
+            "tenant": p.get("tenant", ""),
             "error": p["error"],
         }
         for p in plans
