@@ -1,4 +1,4 @@
-"""Markdown 章を html / pptx / txt / md へ変換する（/compose の新形式）。"""
+"""Markdown 章を docx / html / pptx / txt / md へ変換する（/compose の新形式）。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,16 @@ from app.dads import (
     PAPER,
     RULE,
     SURFACE,
+    apply_docx_theme,
+    bottom_border,
     hex_of,
+    left_border,
+    set_cell_borders,
+    set_table_full_width,
+    shade_cell,
+    shade_paragraph,
+    shade_run,
+    style_run,
 )
 
 # 画像のみの行（ブロック画像）。
@@ -30,8 +39,21 @@ _BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
 _ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.*)$")
+_NUMBER_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.*)$")
+_QUOTE_RE = re.compile(r"^>\s?(.*)$")
+_HR_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})\s*$")
+_TASK_RE = re.compile(r"^\[([ xX])\]\s+(.*)$")
 _TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
 _TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
+_INLINE_RE = re.compile(
+    r"!\[(?P<img_alt>[^\]]*)\]\(\s*<?(?P<img_src>[^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)"
+    r"|`(?P<code>[^`]+)`"
+    r"|\*\*(?P<bold>.+?)\*\*"
+    r"|__(?P<bold2>.+?)__"
+    r"|~~(?P<strike>.+?)~~"
+    r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
+    r"|(?<!\*)\*(?P<italic>(?:(?!\*).)+?)\*(?!\*)"
+)
 
 SUPPORTED_FORMATS = ("docx", "html", "pptx", "txt", "md")
 
@@ -658,5 +680,294 @@ def markdown_to_pptx(
 
     out = io.BytesIO()
     prs.save(out)
+    return out.getvalue()
+
+
+def _table_alignments(block: list[str]) -> list[str]:
+    """区切り行から left / center / right を取る。無ければ left。"""
+    if len(block) < 2:
+        return []
+    seps = _table_cells(block[1])
+    if not _is_table_sep(seps):
+        return []
+    aligns: list[str] = []
+    for cell in seps:
+        s = cell.replace(" ", "")
+        left = s.startswith(":")
+        right = s.endswith(":")
+        if left and right:
+            aligns.append("center")
+        elif right:
+            aligns.append("right")
+        else:
+            aligns.append("left")
+    return aligns
+
+
+def _add_hyperlink(paragraph: Any, text: str, url: str, *, size: Any = None) -> None:
+    from docx.opc.constants import RELATIONSHIP_TYPE
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    part = paragraph.part
+    r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    run = paragraph.add_run(text)
+    style_run(run, size=size, color=ACCENT)
+    run.underline = True
+    r_el = run._r
+    r_el.getparent().remove(r_el)
+    hyperlink.append(r_el)
+    paragraph._p.append(hyperlink)
+
+
+def _add_inline_runs(
+    paragraph: Any,
+    text: str,
+    assets: dict[str, bytes],
+    *,
+    size: Any = None,
+    color: tuple[int, int, int] = BODY,
+) -> None:
+    """プレビュー相当のインライン装飾（太字・斜体・取消線・コード・リンク・画像）。"""
+    from docx.shared import Cm, Pt
+
+    last = 0
+    for m in _INLINE_RE.finditer(text):
+        if m.start() > last:
+            style_run(paragraph.add_run(text[last : m.start()]), size=size, color=color)
+        g = m.groupdict()
+        if g.get("img_src"):
+            rel = _rel_of(g["img_src"])
+            data = assets.get(rel)
+            if data:
+                try:
+                    paragraph.add_run().add_picture(io.BytesIO(data), width=Cm(12))
+                except Exception:  # noqa: BLE001
+                    style_run(paragraph.add_run(f"[画像: {rel}]"), size=Pt(10), color=MUTED, italic=True)
+            else:
+                style_run(paragraph.add_run(f"[画像: {rel}]"), size=Pt(10), color=MUTED, italic=True)
+        elif g.get("code"):
+            run = paragraph.add_run(g["code"])
+            style_run(run, name=FONT_MONO, size=Pt(10) if size is None else size, color=color)
+            shade_run(run)
+        elif g.get("bold") or g.get("bold2"):
+            style_run(
+                paragraph.add_run(g.get("bold") or g.get("bold2") or ""),
+                size=size,
+                color=color,
+                bold=True,
+            )
+        elif g.get("strike"):
+            run = paragraph.add_run(g["strike"])
+            style_run(run, size=size, color=color)
+            run.font.strike = True
+        elif g.get("link_text"):
+            href = (g.get("link_href") or "").strip()
+            if href:
+                _add_hyperlink(paragraph, g["link_text"], href, size=size)
+            else:
+                style_run(paragraph.add_run(g["link_text"]), size=size, color=ACCENT)
+        elif g.get("italic"):
+            style_run(paragraph.add_run(g["italic"]), size=size, color=color, italic=True)
+        last = m.end()
+    if last < len(text):
+        style_run(paragraph.add_run(text[last:]), size=size, color=color)
+
+
+def _add_code_block_docx(doc: Any, lang: str, lines: list[str]) -> None:
+    from docx.shared import Pt
+
+    if lang == "mermaid":
+        note = doc.add_paragraph()
+        style_run(
+            note.add_run("【Mermaid 図（画像未変換のためソースを表示）】"),
+            size=Pt(10),
+            color=MUTED,
+            italic=True,
+        )
+    para = doc.add_paragraph()
+    shade_paragraph(para)
+    para.paragraph_format.line_spacing = 1.45
+    para.paragraph_format.space_after = Pt(10)
+    style_run(para.add_run("\n".join(lines)), name=FONT_MONO, size=Pt(9), color=BODY)
+
+
+def _add_hr_docx(doc: Any) -> None:
+    from docx.shared import Pt
+
+    para = doc.add_paragraph()
+    para.paragraph_format.space_before = Pt(6)
+    para.paragraph_format.space_after = Pt(10)
+    bottom_border(para._p.get_or_add_pPr(), RULE, sz="8", space="1")
+
+
+def _add_gfm_table_docx(doc: Any, block: list[str], assets: dict[str, bytes]) -> None:
+    """GFM 表をネイティブ Word 表にする（罫線・見出し行はプレビューに合わせる）。"""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm, Pt
+
+    parsed = parse_gfm_table(block)
+    headers = list(parsed["headers"]) if parsed else _table_cells(block[0])
+    rows = [list(r) for r in parsed["rows"]] if parsed else []
+    if not headers:
+        return
+    width = len(headers)
+    aligns = _table_alignments(block)
+    table = doc.add_table(rows=1 + len(rows), cols=width)
+    table.autofit = True
+    set_table_full_width(table)
+    col_w = Cm(16.0 / max(width, 1))
+    align_map = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+
+    def fill(cell: Any, text: str, *, header: bool, col: int) -> None:
+        cell.text = ""
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing = 1.35
+        if col < len(aligns):
+            p.alignment = align_map.get(aligns[col], WD_ALIGN_PARAGRAPH.LEFT)
+        _add_inline_runs(p, text, assets, size=Pt(10))
+        if header:
+            for run in p.runs:
+                run.bold = True
+            shade_cell(cell, SURFACE)
+        set_cell_borders(cell)
+        cell.width = col_w
+
+    for c, text in enumerate(headers):
+        fill(table.cell(0, c), text, header=True, col=c)
+    for r, row in enumerate(rows, start=1):
+        padded = row + [""] * width
+        for c, text in enumerate(padded[:width]):
+            fill(table.cell(r, c), text, header=False, col=c)
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_after = Pt(8)
+
+
+def markdown_to_docx(
+    name: str, sections: list[dict[str, Any]], assets: dict[str, bytes] | None = None
+) -> bytes:
+    """章（Markdown）をプレビュー相当の表現で .docx にする（python-docx）。
+
+    GFM 表はネイティブ表。太字・斜体・取消線・インラインコード・リンク・番号付きリスト・
+    引用・水平線も反映する。画像は assets から埋め込む。
+    """
+    from docx import Document
+    from docx.shared import Cm, Pt
+
+    assets = assets or {}
+    doc = Document()
+    apply_docx_theme(doc)
+    doc.add_heading(name, level=0)
+
+    in_code = False
+    code_lang = ""
+    code_lines: list[str] = []
+    lines = _join_sections(sections).splitlines()
+    i = 0
+
+    def flush_code() -> None:
+        nonlocal in_code, code_lang, code_lines
+        _add_code_block_docx(doc, code_lang, code_lines)
+        in_code, code_lang, code_lines = False, "", []
+
+    while i < len(lines):
+        raw_line = lines[i]
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                flush_code()
+            else:
+                in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
+            i += 1
+            continue
+        if in_code:
+            code_lines.append(raw_line)
+            i += 1
+            continue
+        if _TABLE_LINE_RE.match(stripped):
+            block = [raw_line]
+            j = i + 1
+            while j < len(lines) and _TABLE_LINE_RE.match(lines[j].strip()):
+                block.append(lines[j])
+                j += 1
+            if len(block) >= 2 and _is_table_sep(_table_cells(block[1])):
+                _add_gfm_table_docx(doc, block, assets)
+                i = j
+                continue
+        if not stripped:
+            i += 1
+            continue
+        hm = _HEADING_RE.match(stripped)
+        if hm:
+            level = min(len(hm.group(1)), 4)
+            heading = doc.add_heading("", level=level)
+            heading.text = ""
+            _add_inline_runs(heading, hm.group(2).strip(), assets)
+            i += 1
+            continue
+        if _HR_RE.match(stripped):
+            _add_hr_docx(doc)
+            i += 1
+            continue
+        m = _IMAGE_LINE_RE.match(stripped)
+        if m:
+            rel = _rel_of(m.group(1))
+            data = assets.get(rel)
+            if data:
+                try:
+                    doc.add_picture(io.BytesIO(data), width=Cm(15))
+                    i += 1
+                    continue
+                except Exception:  # noqa: BLE001
+                    pass
+            para = doc.add_paragraph()
+            style_run(para.add_run(f"[画像: {rel}]"), size=Pt(10), color=MUTED, italic=True)
+            i += 1
+            continue
+        qm = _QUOTE_RE.match(stripped)
+        if qm:
+            para = doc.add_paragraph()
+            para.paragraph_format.left_indent = Cm(0.4)
+            left_border(para)
+            _add_inline_runs(para, qm.group(1), assets, size=Pt(11), color=MUTED)
+            for run in para.runs:
+                run.italic = True
+            i += 1
+            continue
+        bm = _BULLET_RE.match(raw_line)
+        if bm:
+            text = bm.group(2)
+            task = _TASK_RE.match(text)
+            if task:
+                mark = "☑" if task.group(1).lower() == "x" else "☐"
+                text = f"{mark} {task.group(2)}"
+            para = doc.add_paragraph(style="List Bullet")
+            para.text = ""
+            _add_inline_runs(para, text, assets, size=Pt(11))
+            i += 1
+            continue
+        nm = _NUMBER_RE.match(raw_line)
+        if nm:
+            para = doc.add_paragraph(style="List Number")
+            para.text = ""
+            _add_inline_runs(para, nm.group(3), assets, size=Pt(11))
+            i += 1
+            continue
+        para = doc.add_paragraph()
+        _add_inline_runs(para, stripped, assets, size=Pt(11))
+        i += 1
+
+    if in_code:
+        flush_code()
+    out = io.BytesIO()
+    doc.save(out)
     return out.getvalue()
 

@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from app.compose_formats import markdown_to_html, markdown_to_md, markdown_to_txt
+from app.compose_formats import markdown_to_docx, markdown_to_html, markdown_to_md, markdown_to_txt
 from app.main import app
 
 SECTIONS = [
@@ -158,13 +158,67 @@ def test_compose_pptx_without_llm_uses_deterministic_path():
 
 def test_markdown_to_docx_uses_dads():
     pytest.importorskip("docx")
-    from app.dads import FONT, hex_of, ACCENT
-    from app.main import _markdown_to_docx
+    from app.dads import ACCENT, FONT, hex_of
 
-    data = _markdown_to_docx("文書", SECTIONS, {})
+    data = markdown_to_docx("文書", SECTIONS, {})
     assert data[:2] == b"PK"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         styles = zf.read("word/styles.xml").decode("utf-8")
         header = zf.read("word/header1.xml").decode("utf-8")
     assert FONT in styles
     assert hex_of(ACCENT) in header
+
+
+def test_markdown_to_docx_renders_gfm_table():
+    pytest.importorskip("docx")
+    sections = [
+        {
+            "filename": "t.md",
+            "content": (
+                "# 概要\n\n"
+                "前文です。\n\n"
+                "| 記事 | 主張 |\n"
+                "|------|------|\n"
+                "| 20260904 | **離職＝卒業** |\n"
+                "| 20260701 | データ主権 |\n"
+            ),
+        }
+    ]
+    data = markdown_to_docx("文書", sections, {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8")
+    assert "<w:tbl>" in xml
+    assert "20260904" in xml
+    assert "離職＝卒業" in xml
+    assert "データ主権" in xml
+    assert "|------|" not in xml
+    assert "| 記事 |" not in xml
+    assert "| 20260904 |" not in xml
+
+
+def test_markdown_to_docx_inline_lists_and_quote():
+    pytest.importorskip("docx")
+    sections = [
+        {
+            "filename": "t.md",
+            "content": (
+                "これは **太字** と *斜体* と `code` です。\n\n"
+                "- 項目A\n"
+                "1. 番号付き\n\n"
+                "> 引用です\n\n"
+                "---\n"
+            ),
+        }
+    ]
+    data = markdown_to_docx("文書", sections, {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8")
+    assert "太字" in xml
+    assert "斜体" in xml
+    assert "code" in xml
+    assert "**太字**" not in xml
+    assert "*斜体*" not in xml
+    assert "`code`" not in xml
+    assert "項目A" in xml
+    assert "番号付き" in xml
+    assert "引用です" in xml
