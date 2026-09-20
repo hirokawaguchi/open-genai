@@ -131,6 +131,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 teamName TEXT NOT NULL DEFAULT '',
                 exAppName TEXT NOT NULL DEFAULT '',
                 userId TEXT NOT NULL DEFAULT '',
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 inputs TEXT NOT NULL DEFAULT '{}',
                 outputs TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'COMPLETED',
@@ -144,9 +145,10 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 userId TEXT NOT NULL,
                 teamId TEXT NOT NULL,
                 itemId TEXT NOT NULL,
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 displayOrder INTEGER NOT NULL,
                 pinnedDate TEXT NOT NULL,
-                PRIMARY KEY (userId, teamId, itemId)
+                PRIMARY KEY (userId, teamId, itemId, tenantId)
             );
             """
         )
@@ -168,6 +170,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 )
         _migrate_tenants(conn)
         _migrate_app_settings(conn)
+        _migrate_tenant_scoped_user_data(conn)
 
     # 共通チームに既定アプリ(RAG 等)をシード
     for app in seed_exapps or []:
@@ -244,6 +247,43 @@ def select_running_official_exapp_ids(
         ok.add("image")
     ok.update(app_id for app_id, up in service_up.items() if up)
     return [i for i in OFFICIAL_CATALOG_EXAPP_IDS if i in ok]
+
+
+def _migrate_tenant_scoped_user_data(conn: sqlite3.Connection) -> None:
+    """チャット以外の利用者データ（ピン・アプリ実行履歴）を棟で分ける。"""
+    if "tenantId" not in _table_columns(conn, "exapp_histories"):
+        conn.execute(
+            "ALTER TABLE exapp_histories ADD COLUMN tenantId TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "UPDATE exapp_histories SET tenantId = ? WHERE tenantId = '' OR tenantId IS NULL",
+        (DEFAULT_TENANT_ID,),
+    )
+    if "tenantId" not in _table_columns(conn, "user_app_pins"):
+        conn.executescript(
+            f"""
+            CREATE TABLE user_app_pins_v2 (
+                userId TEXT NOT NULL,
+                teamId TEXT NOT NULL,
+                itemId TEXT NOT NULL,
+                tenantId TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+                displayOrder INTEGER NOT NULL,
+                pinnedDate TEXT NOT NULL,
+                PRIMARY KEY (userId, teamId, itemId, tenantId)
+            );
+            INSERT INTO user_app_pins_v2
+                (userId, teamId, itemId, tenantId, displayOrder, pinnedDate)
+            SELECT userId, teamId, itemId, '{DEFAULT_TENANT_ID}', displayOrder, pinnedDate
+            FROM user_app_pins;
+            DROP TABLE user_app_pins;
+            ALTER TABLE user_app_pins_v2 RENAME TO user_app_pins;
+            """
+        )
+
+
+def _scope_tenant_id(tenant_id: str | None) -> str:
+    tid = (tenant_id or "").strip()
+    return tid or DEFAULT_TENANT_ID
 
 
 def _migrate_app_settings(conn: sqlite3.Connection) -> None:
@@ -1734,14 +1774,17 @@ def list_visible_exapps(
 # ---------------------------------------------------------------------------
 # 利用者ごとの AI アプリ ピン留め（カテゴリ横断・本人のみ）
 # ---------------------------------------------------------------------------
-def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
-    """本人のピン留め一覧（displayOrder 昇順）。"""
+def list_user_app_pins(
+    user_id: str, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """本人のピン留め一覧（displayOrder 昇順）。活性棟だけ返す。"""
     user_id = normalize_email(user_id)
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT teamId, itemId, displayOrder FROM user_app_pins"
-            " WHERE userId = ? ORDER BY displayOrder ASC",
-            (user_id,),
+            " WHERE userId = ? AND tenantId = ? ORDER BY displayOrder ASC",
+            (user_id, tenant_id),
         ).fetchall()
     return [
         {"teamId": r["teamId"], "itemId": r["itemId"], "displayOrder": r["displayOrder"]}
@@ -1749,70 +1792,96 @@ def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _is_pinnable_app(user_id: str, team_id: str, item_id: str, is_system_admin: bool) -> bool:
-    """ピン留め可能か（本人が見える公開 exApp、または共通チームの GenU 機能）。"""
-    if team_id == COMMON_TEAM_ID and item_id in GENU_APP_IDS:
+def _is_pinnable_app(
+    user_id: str,
+    team_id: str,
+    item_id: str,
+    is_system_admin: bool,
+    tenant_id: str | None = None,
+) -> bool:
+    """ピン留め可能か（本人が見える公開 exApp、または共通チームの公式機能）。"""
+    tenant_id = _scope_tenant_id(tenant_id)
+    if team_id == COMMON_TEAM_ID and (
+        item_id in GENU_APP_IDS or item_id in OFFICIAL_CATALOG_EXAPP_IDS
+    ):
+        if not builtin_feature_enabled(tenant_id, item_id):
+            return False
         app = get_exapp(COMMON_TEAM_ID, item_id)
         # 未シード環境の後方互換。登録済みなら公開中だけピン留め可。
         if app is None:
             return True
         return app.get("status") == "published"
-    visible = list_visible_exapps(user_id, is_system_admin)
+    visible = list_visible_exapps(user_id, is_system_admin, tenant_id)
     return any(a["teamId"] == team_id and a["exAppId"] == item_id for a in visible)
 
 
 def add_user_app_pin(
-    user_id: str, team_id: str, item_id: str, is_system_admin: bool
+    user_id: str,
+    team_id: str,
+    item_id: str,
+    is_system_admin: bool,
+    tenant_id: str | None = None,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """ピンを追加する。成功時は最新一覧、失敗時はエラーメッセージを返す。"""
     user_id = normalize_email(user_id)
-    if not _is_pinnable_app(user_id, team_id, item_id, is_system_admin):
+    tenant_id = _scope_tenant_id(tenant_id)
+    if not _is_pinnable_app(user_id, team_id, item_id, is_system_admin, tenant_id):
         return None, "ピン留めできないアプリです"
     with _lock, _connect() as conn:
         existing = conn.execute(
-            "SELECT 1 FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
-            (user_id, team_id, item_id),
+            "SELECT 1 FROM user_app_pins"
+            " WHERE userId = ? AND teamId = ? AND itemId = ? AND tenantId = ?",
+            (user_id, team_id, item_id, tenant_id),
         ).fetchone()
         if not existing:
             count_row = conn.execute(
-                "SELECT COUNT(*) AS c FROM user_app_pins WHERE userId = ?", (user_id,)
+                "SELECT COUNT(*) AS c FROM user_app_pins"
+                " WHERE userId = ? AND tenantId = ?",
+                (user_id, tenant_id),
             ).fetchone()
             if int(count_row["c"]) >= MAX_APP_PINS:
                 return None, f"ピン留めは{MAX_APP_PINS}件までです"
             max_row = conn.execute(
                 "SELECT COALESCE(MAX(displayOrder), -1) AS m FROM user_app_pins"
-                " WHERE userId = ?",
-                (user_id,),
+                " WHERE userId = ? AND tenantId = ?",
+                (user_id, tenant_id),
             ).fetchone()
             next_order = int(max_row["m"]) + 1
             conn.execute(
-                "INSERT INTO user_app_pins (userId, teamId, itemId, displayOrder, pinnedDate)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (user_id, team_id, item_id, next_order, _now()),
+                "INSERT INTO user_app_pins"
+                " (userId, teamId, itemId, tenantId, displayOrder, pinnedDate)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, team_id, item_id, tenant_id, next_order, _now()),
             )
-    return list_user_app_pins(user_id), None
+    return list_user_app_pins(user_id, tenant_id), None
 
 
-def remove_user_app_pin(user_id: str, team_id: str, item_id: str) -> list[dict[str, Any]]:
+def remove_user_app_pin(
+    user_id: str, team_id: str, item_id: str, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
     user_id = normalize_email(user_id)
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         conn.execute(
-            "DELETE FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
-            (user_id, team_id, item_id),
+            "DELETE FROM user_app_pins"
+            " WHERE userId = ? AND teamId = ? AND itemId = ? AND tenantId = ?",
+            (user_id, team_id, item_id, tenant_id),
         )
-    return list_user_app_pins(user_id)
+    return list_user_app_pins(user_id, tenant_id)
 
 
 # ---------------------------------------------------------------------------
 # exApp 実行履歴（会話継続/履歴表示のためにローカルでも保持する）
 # ---------------------------------------------------------------------------
 def _row_to_history(r: sqlite3.Row) -> dict[str, Any]:
+    keys = r.keys()
     return {
         "teamId": r["teamId"],
         "teamName": r["teamName"],
         "exAppId": r["exAppId"],
         "exAppName": r["exAppName"],
         "userId": r["userId"],
+        "tenantId": r["tenantId"] if "tenantId" in keys else DEFAULT_TENANT_ID,
         "inputs": json.loads(r["inputs"] or "{}"),
         "outputs": r["outputs"],
         "createdDate": r["createdDate"],
@@ -1830,6 +1899,7 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
     """
     team_id = data.get("teamId", "")
     ex_app_id = data.get("exAppId", "")
+    tenant_id = _scope_tenant_id(data.get("tenantId"))
     created = data.get("createdDate") or _now()
     with _lock, _connect() as conn:
         # 同一ミリ秒の衝突を避ける
@@ -1840,8 +1910,9 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
             created = str(int(created) + 1)
         conn.execute(
             "INSERT INTO exapp_histories (teamId, exAppId, createdDate, teamName,"
-            " exAppName, userId, inputs, outputs, status, progress, artifacts, sessionId)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " exAppName, userId, tenantId, inputs, outputs, status, progress,"
+            " artifacts, sessionId)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 team_id,
                 ex_app_id,
@@ -1849,6 +1920,7 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
                 data.get("teamName", ""),
                 data.get("exAppName", ""),
                 data.get("userId", ""),
+                tenant_id,
                 json.dumps(data.get("inputs") or {}, ensure_ascii=False),
                 data.get("outputs", ""),
                 data.get("status", "COMPLETED"),
@@ -1867,34 +1939,44 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_exapp_histories(
-    team_id: str, ex_app_id: str, user_id: str
+    team_id: str,
+    ex_app_id: str,
+    user_id: str,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """指定ユーザーの、特定 AI アプリの実行履歴を新しい順で返す。"""
+    """指定ユーザーの、特定 AI アプリの実行履歴を新しい順で返す。活性棟だけ。"""
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM exapp_histories"
-            " WHERE teamId = ? AND exAppId = ? AND userId = ?"
+            " WHERE teamId = ? AND exAppId = ? AND userId = ? AND tenantId = ?"
             " ORDER BY createdDate DESC",
-            (team_id, ex_app_id, user_id),
+            (team_id, ex_app_id, user_id, tenant_id),
         ).fetchall()
     return [_row_to_history(r) for r in rows]
 
 
 def get_exapp_history(
-    team_id: str, ex_app_id: str, created_date: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             r = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND userId = ?",
-                (team_id, ex_app_id, created_date, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, user_id, tenant_id),
             ).fetchone()
         else:
             r = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
-                (team_id, ex_app_id, created_date),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, tenant_id),
             ).fetchone()
     return _row_to_history(r) if r else None
 
@@ -1920,65 +2002,83 @@ def delete_histories_older_than(cutoff_created: str) -> int:
 
 
 def delete_exapp_history(
-    team_id: str, ex_app_id: str, created_date: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> bool:
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND userId = ?",
-                (team_id, ex_app_id, created_date, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, user_id, tenant_id),
             )
         else:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
-                (team_id, ex_app_id, created_date),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, tenant_id),
             )
         return cur.rowcount > 0
 
 
 def list_exapp_histories_by_session(
-    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    session_id: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """同一 sessionId の実行履歴を古い順で返す（会話単位の削除用）。"""
     if not session_id:
         return []
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             rows = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " AND userId = ? AND tenantId = ?"
                 " ORDER BY createdDate ASC",
-                (team_id, ex_app_id, session_id, user_id),
+                (team_id, ex_app_id, session_id, user_id, tenant_id),
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND tenantId = ?"
                 " ORDER BY createdDate ASC",
-                (team_id, ex_app_id, session_id),
+                (team_id, ex_app_id, session_id, tenant_id),
             ).fetchall()
     return [_row_to_history(r) for r in rows]
 
 
 def delete_exapp_histories_by_session(
-    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    session_id: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> int:
     """同一 sessionId の実行履歴をまとめて削除する。削除件数を返す。"""
     if not session_id:
         return 0
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?",
-                (team_id, ex_app_id, session_id, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, session_id, user_id, tenant_id),
             )
         else:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?",
-                (team_id, ex_app_id, session_id),
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND tenantId = ?",
+                (team_id, ex_app_id, session_id, tenant_id),
             )
         return cur.rowcount

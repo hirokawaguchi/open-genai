@@ -1045,6 +1045,13 @@ def _active_tenant_id(user_id: str, claims: dict[str, Any] | None = None) -> str
         return teams_store.DEFAULT_TENANT_ID
 
 
+def _request_scope(request: Request) -> tuple[str, str, dict[str, Any]]:
+    """(user_id, active_tenant_id, claims)。履歴など棟で分ける操作の共通入口。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    return user_id, _active_tenant_id(user_id, claims), claims
+
+
 def _effective_team_ids(user_id: str, claims: dict[str, Any] | None = None) -> list[str]:
     """読取用チームID。明示所属 + 主所属の子孫。活性棟で絞る。"""
     try:
@@ -1801,26 +1808,26 @@ async def health_details() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 @app.post("/chats")
 async def create_chat(request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 - body 省略時はデフォルト usecase
         body = {}
     usecase = body.get("usecase") or "/chat"
-    return {"chat": storage.create_chat(user_id, usecase)}
+    return {"chat": storage.create_chat(user_id, usecase, tenant_id)}
 
 
 @app.get("/chats")
 async def list_chats(request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
-    return {"data": storage.list_chats(user_id), "lastEvaluatedKey": None}
+    user_id, tenant_id, _ = _request_scope(request)
+    return {"data": storage.list_chats(user_id, tenant_id), "lastEvaluatedKey": None}
 
 
 @app.get("/chats/{chat_id}")
 async def find_chat(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
-    chat = storage.find_chat(chat_id, user_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    chat = storage.find_chat(chat_id, user_id, tenant_id)
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
@@ -1828,8 +1835,8 @@ async def find_chat(chat_id: str, request: Request) -> JSONResponse:
 
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
-    ok = storage.delete_chat(chat_id, user_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    ok = storage.delete_chat(chat_id, user_id, tenant_id)
     if not ok:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={})
@@ -1837,9 +1844,9 @@ async def delete_chat(chat_id: str, request: Request) -> JSONResponse:
 
 @app.put("/chats/{chat_id}/title")
 async def update_title(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
-    chat = storage.update_title(chat_id, user_id, body.get("title", ""))
+    chat = storage.update_title(chat_id, user_id, body.get("title", ""), tenant_id)
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
@@ -1847,16 +1854,16 @@ async def update_title(chat_id: str, request: Request) -> JSONResponse:
 
 @app.get("/chats/{chat_id}/messages")
 async def list_messages(chat_id: str, request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
-    return {"messages": storage.list_messages(chat_id, user_id)}
+    user_id, tenant_id, _ = _request_scope(request)
+    return {"messages": storage.list_messages(chat_id, user_id, tenant_id)}
 
 
 @app.post("/chats/{chat_id}/messages")
 async def create_messages(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     messages = body.get("messages", [])
-    recorded = storage.create_messages(chat_id, user_id, messages)
+    recorded = storage.create_messages(chat_id, user_id, messages, tenant_id)
     if recorded is None:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     # 監査ログ（内容ログ）: 確定メッセージを証跡として記録（messages テーブルとは独立）
@@ -1881,7 +1888,7 @@ async def save_image_result(
     chat_id: str, message_id: str, request: Request
 ) -> JSONResponse:
     """画像生成結果を assistant メッセージの extraData に永続化する。"""
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     images_b64 = body.get("images") or []
     meta = body.get("meta") or {}
@@ -1920,7 +1927,7 @@ async def save_image_result(
         }
     ]
     updated = storage.update_message_extra_data(
-        chat_id, user_id, message_id, extra_data
+        chat_id, user_id, message_id, extra_data, tenant_id
     )
     if not updated:
         return JSONResponse(status_code=404, content={"message": "message not found"})
@@ -1969,8 +1976,7 @@ async def predict(request: Request) -> Response:
 
 @app.post("/predict/title")
 async def predict_title(request: Request) -> str:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
     prompt = body.get("prompt", "")
 
@@ -1994,7 +2000,7 @@ async def predict_title(request: Request) -> str:
     chat_id_raw = chat.get("chatId", "")
     chat_id = chat_id_raw.split("#")[1] if "#" in chat_id_raw else chat_id_raw
     if chat_id and title:
-        storage.update_title(chat_id, user_id, title)
+        storage.update_title(chat_id, user_id, title, tenant_id)
 
     return title
 
@@ -2004,16 +2010,16 @@ async def predict_title(request: Request) -> str:
 # ---------------------------------------------------------------------------
 @app.get("/systemcontexts")
 async def list_system_contexts(request: Request) -> list[Any]:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     # 本人 ＋ 全体公開 ＋ 所属/配下チーム共有（読取は effective tags）
-    return storage.list_system_contexts(user_id, _effective_team_ids(user_id))
+    return storage.list_system_contexts(
+        user_id, _effective_team_ids(user_id, claims), tenant_id
+    )
 
 
 @app.post("/systemcontexts")
 async def create_system_context(request: Request) -> JSONResponse:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
     shared_teams, is_public = _resolve_share_teams(user_id, claims, body)
     sc = storage.create_system_context(
@@ -2022,6 +2028,7 @@ async def create_system_context(request: Request) -> JSONResponse:
         body.get("systemContext", ""),
         shared_tags=shared_teams,
         is_public=is_public,
+        tenant_id=tenant_id,
     )
     return JSONResponse(content={"systemContext": sc})
 
@@ -2049,10 +2056,10 @@ def _resolve_share_teams(
 
 @app.put("/systemcontexts/{sc_id}/title")
 async def update_system_context_title(sc_id: str, request: Request) -> JSONResponse:
-    claims = _claims_from_request(request)
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     sc = storage.update_system_context_title(
-        _user_id(claims), sc_id, body.get("title", "")
+        user_id, sc_id, body.get("title", ""), tenant_id
     )
     if not sc:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -2062,8 +2069,7 @@ async def update_system_context_title(sc_id: str, request: Request) -> JSONRespo
 @app.put("/systemcontexts/{sc_id}")
 async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
     """保存プロンプトの本文・タイトル・共有設定を更新する（所有者のみ）。"""
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
     shared_teams = None
     is_public = None
@@ -2076,6 +2082,7 @@ async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
         system_context=body.get("systemContext"),
         shared_tags=shared_teams,
         is_public=is_public,
+        tenant_id=tenant_id,
     )
     if not sc:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -2084,8 +2091,8 @@ async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
 
 @app.delete("/systemcontexts/{sc_id}")
 async def delete_system_context(sc_id: str, request: Request) -> dict[str, Any]:
-    claims = _claims_from_request(request)
-    storage.delete_system_context(_user_id(claims), sc_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    storage.delete_system_context(user_id, sc_id, tenant_id)
     return {}
 
 
@@ -2876,17 +2883,19 @@ async def list_exapps(request: Request) -> list[Any]:
 @app.get("/my/app-pins")
 async def list_my_app_pins(request: Request) -> JSONResponse:
     """本人の AI アプリ ピン留め一覧。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, _ = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    return JSONResponse(content={"pins": teams_store.list_user_app_pins(_user_id(claims))})
+    return JSONResponse(
+        content={"pins": teams_store.list_user_app_pins(user_id, tenant_id)}
+    )
 
 
 @app.post("/my/app-pins")
 async def add_my_app_pin(request: Request) -> JSONResponse:
     """AI アプリをピン留めする（本人のみ・上限あり）。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, claims = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     body = await request.json()
     team_id = body.get("teamId", "")
@@ -2896,7 +2905,7 @@ async def add_my_app_pin(request: Request) -> JSONResponse:
             status_code=400, content={"error": "teamId と itemId は必須です"}
         )
     pins, error = teams_store.add_user_app_pin(
-        _user_id(claims), team_id, item_id, _is_system_admin(claims)
+        user_id, team_id, item_id, _is_system_admin(claims), tenant_id
     )
     if error:
         return JSONResponse(status_code=400, content={"error": error})
@@ -2906,10 +2915,10 @@ async def add_my_app_pin(request: Request) -> JSONResponse:
 @app.delete("/my/app-pins/{team_id}/{item_id}")
 async def remove_my_app_pin(team_id: str, item_id: str, request: Request) -> JSONResponse:
     """ピン留めを解除する（本人のみ）。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, _ = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    pins = teams_store.remove_user_app_pin(_user_id(claims), team_id, item_id)
+    pins = teams_store.remove_user_app_pin(user_id, team_id, item_id, tenant_id)
     return JSONResponse(content={"pins": pins})
 
 
@@ -3042,6 +3051,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
+                    "tenantId": _active_tenant_id(user_id, claims),
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -3258,6 +3268,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
+                    "tenantId": _active_tenant_id(user_id, claims),
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -7213,7 +7224,8 @@ async def list_exapp_histories(
     user_id = _user_id(claims)
     if not teamId or not exAppId:
         return {"history": [], "lastEvaluatedKey": None}
-    history = teams_store.list_exapp_histories(teamId, exAppId, user_id)
+    tenant_id = _active_tenant_id(user_id, claims)
+    history = teams_store.list_exapp_histories(teamId, exAppId, user_id, tenant_id)
     return {"history": history, "lastEvaluatedKey": None}
 
 
@@ -7235,7 +7247,13 @@ async def get_exapp_history(
         and not teams_store.can_read_team(teamId, user_id)
     ):
         return {"history": None}
-    hist = teams_store.get_exapp_history(teamId, exAppId, createdDate, user_id)
+    hist = teams_store.get_exapp_history(
+        teamId,
+        exAppId,
+        createdDate,
+        user_id,
+        _active_tenant_id(user_id, claims),
+    )
     return {"history": hist}
 
 
@@ -7928,22 +7946,23 @@ async def delete_exapp_history(
     ):
         return _forbidden()
     owner_id = None if _is_system_admin(claims) else user_id
+    tenant_id = _active_tenant_id(user_id, claims)
     if sessionId:
         hists = teams_store.list_exapp_histories_by_session(
-            team_id, ex_app_id, sessionId, owner_id
+            team_id, ex_app_id, sessionId, owner_id, tenant_id
         )
         _delete_exapp_history_artifacts(hists)
         teams_store.delete_exapp_histories_by_session(
-            team_id, ex_app_id, sessionId, owner_id
+            team_id, ex_app_id, sessionId, owner_id, tenant_id
         )
         return JSONResponse(content={})
     if createdDate:
         hist = teams_store.get_exapp_history(
-            team_id, ex_app_id, createdDate, owner_id
+            team_id, ex_app_id, createdDate, owner_id, tenant_id
         )
         if hist:
             _delete_exapp_history_artifacts([hist])
         teams_store.delete_exapp_history(
-            team_id, ex_app_id, createdDate, owner_id
+            team_id, ex_app_id, createdDate, owner_id, tenant_id
         )
     return JSONResponse(content={})

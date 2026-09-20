@@ -1,9 +1,14 @@
+import { useLocation, useNavigate } from 'react-router';
 import { Select } from '@/components/ui/dads/Select';
 import { useMyTenants, useTenantActions } from './useTenants';
+
+const CHAT_ID_PATH = /^(\/(?:chat|generate|translate|image|diagram))\/[^/]+$/;
 
 export const TenantSwitcher = () => {
   const { switchableTenants, activeTenantId, canSwitchTenants, isLoading } = useMyTenants();
   const { setActive } = useTenantActions();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   if (isLoading || !canSwitchTenants) {
     return null;
@@ -22,7 +27,12 @@ export const TenantSwitcher = () => {
         onChange={(e) => {
           const next = e.target.value;
           if (next && next !== activeTenantId) {
-            void setActive(next);
+            void setActive(next).then(() => {
+              const match = location.pathname.match(CHAT_ID_PATH);
+              if (match) {
+                navigate(match[1]);
+              }
+            });
           }
         }}
       >

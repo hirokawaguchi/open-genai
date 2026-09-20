@@ -44,6 +44,10 @@ export const useTenantActions = () => {
         return (
           key === MY_TENANTS_KEY ||
           key === 'tenants' ||
+          key === 'chats' ||
+          key.startsWith('chats') ||
+          key.startsWith('systemcontexts') ||
+          key.startsWith('/systemcontexts') ||
           key.startsWith('teams') ||
           key.startsWith('knowledge') ||
           key.includes('exapps') ||
