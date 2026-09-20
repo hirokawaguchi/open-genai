@@ -7,6 +7,7 @@ export const teamCreateSchema = z.object({
     .max(100, { message: 'チーム名は100文字以内で入力してください' }),
   email: z.email({ message: 'メールアドレスの形式が正しくありません。' }),
   parentTeamId: z.string().optional(),
+  tenantId: z.string().optional(),
 });
 
 export type TeamCreateSchema = z.infer<typeof teamCreateSchema>;
