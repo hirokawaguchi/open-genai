@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -24,6 +25,19 @@ from . import excel, intauth, llm, sections, store
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 RETENTION_DAYS = int(os.environ.get("PROCURETECH_RETENTION_DAYS", "30"))
 MAX_UPLOAD_BYTES = int(os.environ.get("PROCURETECH_MAX_UPLOAD_BYTES", "10485760"))
+
+# 読み込み画面から配る様式（記入サンプル付き）。キーは B1 マーカーと一致させる。
+MATERIALS_DIR = Path(__file__).resolve().parent.parent / "materials"
+TEMPLATES: dict[str, dict[str, str]] = {
+    "systemplan": {
+        "label": "情報化企画書（systemplan.xlsx）",
+        "filename": "systemplan.xlsx",
+    },
+    "global": {
+        "label": "全般的事項（global.xlsx）",
+        "filename": "global.xlsx",
+    },
+}
 
 app = FastAPI(title="Open GENAI ProcureTech Navigator App", version="0.1.0")
 
@@ -108,7 +122,41 @@ def get_config(
             "max_upload_bytes": MAX_UPLOAD_BYTES,
             "marker_value": excel.SHEET_MARKER_VALUE,
             "llm": {"model": llm.PROCURETECH_MODEL, "base_url": llm.OPENAI_BASE_URL},
+            "templates": [
+                {"key": key, **meta}
+                for key, meta in TEMPLATES.items()
+                if (MATERIALS_DIR / meta["filename"]).is_file()
+            ],
         }
+    )
+
+
+@app.get("/templates/{key}")
+def download_template(
+    key: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, _uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    meta = TEMPLATES.get(key)
+    if not meta:
+        return JSONResponse(status_code=404, content={"error": "様式が見つかりません"})
+    path = MATERIALS_DIR / meta["filename"]
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"error": "様式ファイルがありません"})
+    return Response(
+        content=path.read_bytes(),
+        media_type=excel.XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{meta["filename"]}"'},
     )
 
 
