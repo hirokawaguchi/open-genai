@@ -45,6 +45,8 @@ import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/Procurete
 import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
+import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
+import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -170,6 +172,8 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'history', element: <ChatHistoryPage /> },
     // 本人のアカウント設定（表示名・パスワード変更）。
     { path: 'settings', element: <SettingsPage /> },
+    { path: 'tenants', element: <TenantsPage /> },
+    { path: 'admin/recommended', element: <RecommendedAppsPage /> },
     ...optionalUseCaseRoutes.flatMap((routes) => routes ?? []),
     // 源内 /transcribe は Amazon Transcribe 前提。Open GENAI は Whisper exApp へ誘導する。
     { path: 'transcribe', element: <Navigate to={WHISPER_EXAPP_PATH} replace /> },
