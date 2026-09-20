@@ -11,6 +11,7 @@ from typing import Any
 from app.dads import (
     ACCENT,
     BODY,
+    DOCX_FONT_MONO,
     FONT,
     FONT_MONO,
     INK,
@@ -750,7 +751,7 @@ def _add_inline_runs(
                 style_run(paragraph.add_run(f"[画像: {rel}]"), size=Pt(10), color=MUTED, italic=True)
         elif g.get("code"):
             run = paragraph.add_run(g["code"])
-            style_run(run, name=FONT_MONO, size=Pt(10) if size is None else size, color=color)
+            style_run(run, name=DOCX_FONT_MONO, size=Pt(10) if size is None else size, color=color)
             shade_run(run)
         elif g.get("bold") or g.get("bold2"):
             style_run(
@@ -791,7 +792,7 @@ def _add_code_block_docx(doc: Any, lang: str, lines: list[str]) -> None:
     shade_paragraph(para)
     para.paragraph_format.line_spacing = 1.45
     para.paragraph_format.space_after = Pt(10)
-    style_run(para.add_run("\n".join(lines)), name=FONT_MONO, size=Pt(9), color=BODY)
+    style_run(para.add_run("\n".join(lines)), name=DOCX_FONT_MONO, size=Pt(10), color=BODY)
 
 
 def _add_hr_docx(doc: Any) -> None:
@@ -833,7 +834,7 @@ def _add_gfm_table_docx(doc: Any, block: list[str], assets: dict[str, bytes]) ->
         p.paragraph_format.line_spacing = 1.35
         if col < len(aligns):
             p.alignment = align_map.get(aligns[col], WD_ALIGN_PARAGRAPH.LEFT)
-        _add_inline_runs(p, text, assets, size=Pt(10))
+        _add_inline_runs(p, text, assets, size=Pt(11))
         if header:
             for run in p.runs:
                 run.bold = True
@@ -937,7 +938,7 @@ def markdown_to_docx(
             para = doc.add_paragraph()
             para.paragraph_format.left_indent = Cm(0.4)
             left_border(para)
-            _add_inline_runs(para, qm.group(1), assets, size=Pt(11), color=MUTED)
+            _add_inline_runs(para, qm.group(1), assets, size=Pt(12), color=MUTED)
             for run in para.runs:
                 run.italic = True
             i += 1
@@ -951,18 +952,18 @@ def markdown_to_docx(
                 text = f"{mark} {task.group(2)}"
             para = doc.add_paragraph(style="List Bullet")
             para.text = ""
-            _add_inline_runs(para, text, assets, size=Pt(11))
+            _add_inline_runs(para, text, assets, size=Pt(12))
             i += 1
             continue
         nm = _NUMBER_RE.match(raw_line)
         if nm:
             para = doc.add_paragraph(style="List Number")
             para.text = ""
-            _add_inline_runs(para, nm.group(3), assets, size=Pt(11))
+            _add_inline_runs(para, nm.group(3), assets, size=Pt(12))
             i += 1
             continue
         para = doc.add_paragraph()
-        _add_inline_runs(para, stripped, assets, size=Pt(11))
+        _add_inline_runs(para, stripped, assets, size=Pt(12))
         i += 1
 
     if in_code:
