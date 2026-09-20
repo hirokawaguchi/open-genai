@@ -178,6 +178,15 @@ export const TenantsPage = () => {
 
         {selected && (
           <>
+            <RenameEditor
+              tenant={selected}
+              busy={busy}
+              onSave={(tenantName) =>
+                run(async () => {
+                  await actions.updateTenant(selected.tenantId, { tenantName });
+                })
+              }
+            />
             <FeatureEditor
               tenant={selected}
               busy={busy}
@@ -261,6 +270,52 @@ export const TenantsPage = () => {
         )}
       </div>
     </LayoutBody>
+  );
+};
+
+const RenameEditor = ({
+  tenant,
+  busy,
+  onSave,
+}: {
+  tenant: Tenant;
+  busy: boolean;
+  onSave: (tenantName: string) => void;
+}) => {
+  const [name, setName] = useState(tenant.tenantName);
+  useEffect(() => {
+    setName(tenant.tenantName);
+  }, [tenant.tenantId, tenant.tenantName]);
+
+  const trimmed = name.trim();
+  const unchanged = trimmed === tenant.tenantName;
+
+  return (
+    <section className='flex flex-col gap-3'>
+      <h2 className='text-std-20B-150'>棟の名前</h2>
+      <SupportText>
+        棟の表示名を変えます。所属や履歴、鍵はそのままで、名前だけ変わります。
+      </SupportText>
+      <div className='flex flex-wrap items-end gap-3'>
+        <div className='flex flex-col gap-1'>
+          <Label htmlFor='rename-tenant'>棟の名前</Label>
+          <Input
+            id='rename-tenant'
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <Button
+          type='button'
+          variant='solid-fill'
+          size='md'
+          aria-disabled={busy || !trimmed || unchanged || undefined}
+          onClick={() => onSave(trimmed)}
+        >
+          名前を保存
+        </Button>
+      </div>
+    </section>
   );
 };
 
