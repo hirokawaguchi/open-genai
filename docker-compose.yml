@@ -143,6 +143,19 @@ services:
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
     volumes:
       - backend_data:/data
+      # 開発時はホストの backend を即反映（web と同様）。本番 compose では使わない。
+      - ./backend/app:/app/app
+      - ./shared:/app/shared
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

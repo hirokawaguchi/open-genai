@@ -12,10 +12,17 @@ import {
   useNotebookAvailable,
   useSshAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
+import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
+import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
+import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
 /** Open GENAI の文字起こしは Amazon Transcribe ではなく Whisper exApp */
 export const WHISPER_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/whisper`;
+
+/** 共通チームのナレッジ検索 exApp */
+export const RAG_EXAPP_ID = 'rag';
+export const RAG_EXAPP_PATH = `/apps/${COMMON_EXAPPS_TEAM_ID}/rag`;
 
 /** ナレッジ管理 専用ページ。タグ/登録/管理の各 exApp を集約する。 */
 export const KNOWLEDGE_PATH = '/knowledge';
@@ -127,6 +134,8 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
+  const { running, loaded: runtimeLoaded } = useOfficialAppRuntime();
+  const { allows, exAppIds, isLoading: recommendedLoading } = useRecommendedApps();
 
   return useMemo(() => {
     const metaById = new Map<string, { name: string; description: string }>();
@@ -140,7 +149,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     }
     const nameOf = (id: string, fallback: string) => metaById.get(id)?.name || fallback;
     const descOf = (id: string, fallback: string) => metaById.get(id)?.description || fallback;
-    const listed = (id: string) => isCatalogListed(id, registryApps, catalogLoaded);
+    const listed = (id: string) =>
+      (ALWAYS_ON_OFFICIAL_APP_IDS.has(id) ||
+        !runtimeLoaded ||
+        (running?.includes(id) ?? false)) &&
+      allows(id) &&
+      isCatalogListed(id, registryApps, catalogLoaded);
 
     const items: NavLinkItem[] = [];
 
@@ -286,6 +300,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (listed(RAG_EXAPP_ID)) {
+      items.push({
+        label: nameOf(RAG_EXAPP_ID, 'ナレッジ検索'),
+        to: RAG_EXAPP_PATH,
+        description: descOf(
+          RAG_EXAPP_ID,
+          '共有ナレッジを検索し、根拠となるドキュメントとともに回答します',
+        ),
+      });
+    }
+
     return items;
   }, [
     imageAvailable,
@@ -297,6 +322,10 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     sshAvailable,
     registryApps,
     catalogLoaded,
+    running,
+    runtimeLoaded,
+    exAppIds,
+    recommendedLoading,
   ]);
 };
 
