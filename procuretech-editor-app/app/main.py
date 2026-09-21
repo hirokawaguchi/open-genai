@@ -302,6 +302,34 @@ async def create_project(
     return JSONResponse(content={"project": project})
 
 
+@app.patch("/projects/{project_id}")
+async def rename_project(
+    project_id: str,
+    payload: dict[str, Any],
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "プロジェクト名を入力してください。"})
+    if len(name) > 200:
+        return JSONResponse(status_code=400, content={"error": "プロジェクト名が長すぎます。"})
+    project = store.rename_project(project_id, uid, name)
+    if project is None:
+        return JSONResponse(status_code=404, content={"error": "プロジェクトが見つかりません。"})
+    return JSONResponse(content={"project": project})
+
+
 @app.get("/projects/{project_id}")
 async def get_project(
     project_id: str,
@@ -1500,6 +1528,19 @@ async def _run_compose_job(
         async def _run_compose(batch: list[dict[str, Any]], *, url: str, key: str) -> bool:
             names = " / ".join(o["name"] for o in batch)
             step(work_progress(), f"文書を合成しています（{names}）")
+            # このバッチが占める進捗帯 [lo, hi]（work_progress の 1 単位分）。
+            lo = work_progress()
+            hi = 10 + int(80 * (done + 1) / max(1, work_n))
+
+            def _on_progress(pct: int, sub: str) -> None:
+                mapped = lo + int((hi - lo) * max(0, min(100, pct)) / 100)
+                label = f"文書を合成しています（{names}）"
+                if sub:
+                    label += f"／{sub}"
+                store.update_compose_job(
+                    request_id, uid, progress=mapped, current_step=label
+                )
+
             try:
                 compose_zips.append(
                     await generate.compose(
@@ -1508,6 +1549,7 @@ async def _run_compose_job(
                         api_key=key,
                         reference=str(theme_def.get("doc_type") or ""),
                         assets=assets or None,
+                        on_progress=_on_progress,
                     )
                 )
             except generate.GenerateError as e:

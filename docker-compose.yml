@@ -134,10 +134,28 @@ services:
       - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
       - OPERATOR_SAML_SOURCE_IPS=${OPERATOR_SAML_SOURCE_IPS:-}
       - OPERATOR_USERS=${OPERATOR_USERS:-}
+      - PORTAL_LOGIN_HOSTS=${PORTAL_LOGIN_HOSTS:-}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/kc}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_PASSWORD_VERIFY_CLIENT=${KEYCLOAK_PASSWORD_VERIFY_CLIENT:-admin-cli}
       # backend(コンテナ内)から IdP メタデータを取得する URL（Keycloak relative /kc）
       - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-http://keycloak:8080/kc/realms/open-genai/protocol/saml/descriptor}
     volumes:
       - backend_data:/data
+      # 開発時はホストの backend を即反映（web と同様）。本番 compose では使わない。
+      - ./backend/app:/app/app
+      - ./shared:/app/shared
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -658,6 +676,12 @@ services:
       - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
       - GENERATE_PPTX_REVIEW=${GENERATE_PPTX_REVIEW:-1}
       - GENERATE_LLM=${GENERATE_LLM:-1}
+      # PPTX フェーズ B（フリーフォーム自由配置）。既定オフ。オンにするとコンポーザ用
+      # モデル（PROCURETECH_COMPOSE_MODEL、無ければ PROCURETECH_MODEL）で配置を生成する。
+      # 高性能モデル例（Ollama Cloud）: OPENAI_BASE_URL=https://ollama.com/v1 /
+      # OPENAI_API_KEY=<cloud key> / PROCURETECH_COMPOSE_MODEL=deepseek-v3.1
+      - GENERATE_PPTX_FREEFORM=${GENERATE_PPTX_FREEFORM:-0}
+      - PROCURETECH_COMPOSE_MODEL=${PROCURETECH_COMPOSE_MODEL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -687,12 +711,16 @@ services:
       - HEARING_RETENTION_DAYS=${HEARING_RETENTION_DAYS:-30}
       - MAX_DOC_BYTES=${MAX_DOC_BYTES:-20971520}
       - HEARING_LLM=${HEARING_LLM:-1}
+      - HEARING_LLM_MAX_TOKENS=${HEARING_LLM_MAX_TOKENS:-8192}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+      - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
+      - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
+      - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
     volumes:
       # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）
       - procuretech_hearing_app_data:/data

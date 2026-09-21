@@ -21,6 +21,9 @@ DB_PATH = os.environ.get("DB_PATH", "/data/open-genai.db")
 # 不可視になる（開発データのため許容）。本番移行時にメール/sub を設定する。
 LEGACY_CHAT_OWNER = os.environ.get("LEGACY_CHAT_OWNER", "")
 
+# teams_store.DEFAULT_TENANT_ID と同じ。棟カラム追加前の行の移管先。
+DEFAULT_TENANT_ID = "00000000-0000-0000-0000-0000000000t1"
+
 _lock = threading.Lock()
 
 
@@ -46,6 +49,7 @@ def init_db() -> None:
                 usecase TEXT NOT NULL DEFAULT '/chat',
                 title TEXT NOT NULL DEFAULT '',
                 userId TEXT NOT NULL DEFAULT '',
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
@@ -69,6 +73,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS system_contexts (
                 systemContextId TEXT PRIMARY KEY,
                 userId TEXT NOT NULL,
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 systemContextTitle TEXT NOT NULL DEFAULT '',
                 systemContext TEXT NOT NULL DEFAULT '',
                 sharedTags TEXT NOT NULL DEFAULT '[]',
@@ -83,6 +88,8 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_chats_user
                 ON chats(userId, updatedDate DESC);
+            CREATE INDEX IF NOT EXISTS idx_chats_user_tenant
+                ON chats(userId, tenantId, updatedDate DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_chat
                 ON messages(chatId, seq);
             """
@@ -114,6 +121,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE system_contexts ADD COLUMN isPublic INTEGER NOT NULL DEFAULT 0"
         )
+    if "tenantId" not in cols:
+        conn.execute(
+            "ALTER TABLE chats ADD COLUMN tenantId TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "UPDATE chats SET tenantId = ? WHERE tenantId = '' OR tenantId IS NULL",
+        (DEFAULT_TENANT_ID,),
+    )
+    if "tenantId" not in sc_cols:
+        conn.execute(
+            "ALTER TABLE system_contexts ADD COLUMN tenantId TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "UPDATE system_contexts SET tenantId = ?"
+        " WHERE tenantId = '' OR tenantId IS NULL",
+        (DEFAULT_TENANT_ID,),
+    )
+
+
+def _normalize_tenant_id(tenant_id: str | None) -> str:
+    tid = (tenant_id or "").strip()
+    return tid or DEFAULT_TENANT_ID
 
 
 def _normalize_usecase(usecase: str) -> str:
@@ -141,15 +170,28 @@ def _resolve_chat_usecase(
     return "/chat"
 
 
-def create_chat(user_id: str, usecase: str = "/chat") -> dict[str, Any]:
+def create_chat(
+    user_id: str, usecase: str = "/chat", tenant_id: str | None = None
+) -> dict[str, Any]:
     chat_id = str(uuid.uuid4())
     now = _now()
     normalized_usecase = _normalize_usecase(usecase)
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         conn.execute(
-            "INSERT INTO chats (chatId, id, usecase, title, userId, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (chat_id, f"chat#{chat_id}", normalized_usecase, "", user_id, now, now),
+            "INSERT INTO chats"
+            " (chatId, id, usecase, title, userId, tenantId, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                chat_id,
+                f"chat#{chat_id}",
+                normalized_usecase,
+                "",
+                user_id,
+                tenant_id,
+                now,
+                now,
+            ),
         )
         row = conn.execute(
             "SELECT * FROM chats WHERE chatId = ?", (chat_id,)
@@ -165,6 +207,19 @@ def _chat_owner(conn: sqlite3.Connection, chat_id: str) -> str | None:
     return row["userId"] if row else None
 
 
+def _chat_belongs(
+    conn: sqlite3.Connection, chat_id: str, user_id: str, tenant_id: str | None
+) -> bool:
+    """所有者かつ活性棟のチャットだけ操作できる。"""
+    row = conn.execute(
+        "SELECT userId, tenantId FROM chats WHERE chatId = ?", (chat_id,)
+    ).fetchone()
+    if not row or row["userId"] != user_id:
+        return False
+    stored = row["tenantId"] if "tenantId" in row.keys() else DEFAULT_TENANT_ID
+    return (stored or DEFAULT_TENANT_ID) == _normalize_tenant_id(tenant_id)
+
+
 def _row_to_chat(row: sqlite3.Row) -> dict[str, Any]:
     # フロントは chatId を `chat#<uuid>` 形式で扱い decomposeId で uuid を取り出す。
     # ストレージは uuid をキーに保持し、応答時に `chat#` を付与する。
@@ -178,11 +233,13 @@ def _row_to_chat(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def list_chats(user_id: str) -> list[dict[str, Any]]:
+def list_chats(user_id: str, tenant_id: str | None = None) -> list[dict[str, Any]]:
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM chats WHERE userId = ? ORDER BY updatedDate DESC",
-            (user_id,),
+            "SELECT * FROM chats WHERE userId = ? AND tenantId = ?"
+            " ORDER BY updatedDate DESC",
+            (user_id, tenant_id),
         ).fetchall()
         chats: list[dict[str, Any]] = []
         for row in rows:
@@ -198,11 +255,14 @@ def list_chats(user_id: str) -> list[dict[str, Any]]:
     return chats
 
 
-def find_chat(chat_id: str, user_id: str) -> dict[str, Any] | None:
+def find_chat(
+    chat_id: str, user_id: str, tenant_id: str | None = None
+) -> dict[str, Any] | None:
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM chats WHERE chatId = ? AND userId = ?",
-            (chat_id, user_id),
+            "SELECT * FROM chats WHERE chatId = ? AND userId = ? AND tenantId = ?",
+            (chat_id, user_id, tenant_id),
         ).fetchone()
         if not row:
             return None
@@ -217,24 +277,28 @@ def find_chat(chat_id: str, user_id: str) -> dict[str, Any] | None:
         return chat
 
 
-def update_title(chat_id: str, user_id: str, title: str) -> dict[str, Any] | None:
+def update_title(
+    chat_id: str, user_id: str, title: str, tenant_id: str | None = None
+) -> dict[str, Any] | None:
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
-        # 所有者のチャットのみ更新（不一致は更新されず None を返す）
+        # 所有者かつ活性棟のチャットのみ更新
         conn.execute(
-            "UPDATE chats SET title = ?, updatedDate = ? WHERE chatId = ? AND userId = ?",
-            (title, _now(), chat_id, user_id),
+            "UPDATE chats SET title = ?, updatedDate = ?"
+            " WHERE chatId = ? AND userId = ? AND tenantId = ?",
+            (title, _now(), chat_id, user_id, tenant_id),
         )
         row = conn.execute(
-            "SELECT * FROM chats WHERE chatId = ? AND userId = ?",
-            (chat_id, user_id),
+            "SELECT * FROM chats WHERE chatId = ? AND userId = ? AND tenantId = ?",
+            (chat_id, user_id, tenant_id),
         ).fetchone()
     return _row_to_chat(row) if row else None
 
 
-def delete_chat(chat_id: str, user_id: str) -> bool:
-    """所有者一致時のみ削除する。削除したら True。"""
+def delete_chat(chat_id: str, user_id: str, tenant_id: str | None = None) -> bool:
+    """所有者かつ活性棟のチャットだけ削除する。削除したら True。"""
     with _lock, _connect() as conn:
-        if _chat_owner(conn, chat_id) != user_id:
+        if not _chat_belongs(conn, chat_id, user_id, tenant_id):
             return False
         conn.execute("DELETE FROM messages WHERE chatId = ?", (chat_id,))
         conn.execute("DELETE FROM chats WHERE chatId = ?", (chat_id,))
@@ -264,10 +328,12 @@ def _row_to_message(row: sqlite3.Row) -> dict[str, Any]:
     return msg
 
 
-def list_messages(chat_id: str, user_id: str) -> list[dict[str, Any]]:
+def list_messages(
+    chat_id: str, user_id: str, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
     with _lock, _connect() as conn:
-        # 所有者でないチャットのメッセージは返さない
-        if _chat_owner(conn, chat_id) != user_id:
+        # 所有者でない／他棟のチャットのメッセージは返さない
+        if not _chat_belongs(conn, chat_id, user_id, tenant_id):
             return []
         rows = conn.execute(
             "SELECT * FROM messages WHERE chatId = ? ORDER BY seq ASC",
@@ -277,11 +343,15 @@ def list_messages(chat_id: str, user_id: str) -> list[dict[str, Any]]:
 
 
 def update_message_extra_data(
-    chat_id: str, user_id: str, message_id: str, extra_data: list[dict[str, Any]]
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    extra_data: list[dict[str, Any]],
+    tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """メッセージの extraData を更新する（所有者・存在チェック付き）。"""
+    """メッセージの extraData を更新する（所有者・棟・存在チェック付き）。"""
     with _lock, _connect() as conn:
-        if _chat_owner(conn, chat_id) != user_id:
+        if not _chat_belongs(conn, chat_id, user_id, tenant_id):
             return None
         row = conn.execute(
             "SELECT messageId FROM messages WHERE chatId = ? AND messageId = ?",
@@ -326,18 +396,28 @@ def _row_to_system_context(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def list_system_contexts(user_id: str, tags: list[str] | None = None) -> list[dict[str, Any]]:
-    """本人所有 ＋ 全体公開 ＋ 共有タグ一致（tags）の保存プロンプトを返す。"""
+def list_system_contexts(
+    user_id: str,
+    tags: list[str] | None = None,
+    tenant_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """本人所有 ＋ 全体公開 ＋ 共有タグ一致（tags）の保存プロンプトを返す。
+
+    本人所有と全体公開は活性棟だけ。チーム共有は tags（活性棟の所属）で絞る。
+    """
     ut = set(tags or [])
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM system_contexts ORDER BY createdDate DESC",
         ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
+        stored = r["tenantId"] if "tenantId" in r.keys() else DEFAULT_TENANT_ID
+        same_tenant = (stored or DEFAULT_TENANT_ID) == tenant_id
         visible = (
-            r["userId"] == user_id
-            or bool(r["isPublic"])
+            (r["userId"] == user_id and same_tenant)
+            or (bool(r["isPublic"]) and same_tenant)
             or bool(ut.intersection(_sc_shared_tags(r)))
         )
         if visible:
@@ -351,17 +431,29 @@ def create_system_context(
     system_context: str,
     shared_tags: list[str] | None = None,
     is_public: bool = False,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     sc_id = str(uuid.uuid4())
     now = _now()
+    tenant_id = _normalize_tenant_id(tenant_id)
     tags_json = json.dumps(sorted({t.strip() for t in (shared_tags or []) if t.strip()}))
     with _lock, _connect() as conn:
         conn.execute(
             "INSERT INTO system_contexts"
-            " (systemContextId, userId, systemContextTitle, systemContext,"
+            " (systemContextId, userId, tenantId, systemContextTitle, systemContext,"
             "  sharedTags, isPublic, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (sc_id, user_id, title, system_context, tags_json, 1 if is_public else 0, now, now),
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                sc_id,
+                user_id,
+                tenant_id,
+                title,
+                system_context,
+                tags_json,
+                1 if is_public else 0,
+                now,
+                now,
+            ),
         )
         row = conn.execute(
             "SELECT * FROM system_contexts WHERE systemContextId = ?", (sc_id,)
@@ -370,17 +462,19 @@ def create_system_context(
 
 
 def update_system_context_title(
-    user_id: str, sc_id: str, title: str
+    user_id: str, sc_id: str, title: str, tenant_id: str | None = None
 ) -> dict[str, Any] | None:
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         conn.execute(
             "UPDATE system_contexts SET systemContextTitle = ?, updatedDate = ?"
-            " WHERE systemContextId = ? AND userId = ?",
-            (title, _now(), sc_id, user_id),
+            " WHERE systemContextId = ? AND userId = ? AND tenantId = ?",
+            (title, _now(), sc_id, user_id, tenant_id),
         )
         row = conn.execute(
-            "SELECT * FROM system_contexts WHERE systemContextId = ? AND userId = ?",
-            (sc_id, user_id),
+            "SELECT * FROM system_contexts"
+            " WHERE systemContextId = ? AND userId = ? AND tenantId = ?",
+            (sc_id, user_id, tenant_id),
         ).fetchone()
     return _row_to_system_context(row) if row else None
 
@@ -393,8 +487,10 @@ def update_system_context(
     system_context: str | None = None,
     shared_tags: list[str] | None = None,
     is_public: bool | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
     """所有者のみ更新可。指定された項目のみ変更する（本文・タイトル・共有設定）。"""
+    tenant_id = _normalize_tenant_id(tenant_id)
     sets: list[str] = []
     params: list[Any] = []
     if title is not None:
@@ -413,39 +509,46 @@ def update_system_context(
         return None
     sets.append("updatedDate = ?")
     params.append(_now())
-    params.extend([sc_id, user_id])
+    params.extend([sc_id, user_id, tenant_id])
     with _lock, _connect() as conn:
         conn.execute(
             f"UPDATE system_contexts SET {', '.join(sets)}"
-            " WHERE systemContextId = ? AND userId = ?",
+            " WHERE systemContextId = ? AND userId = ? AND tenantId = ?",
             tuple(params),
         )
         row = conn.execute(
-            "SELECT * FROM system_contexts WHERE systemContextId = ? AND userId = ?",
-            (sc_id, user_id),
+            "SELECT * FROM system_contexts"
+            " WHERE systemContextId = ? AND userId = ? AND tenantId = ?",
+            (sc_id, user_id, tenant_id),
         ).fetchone()
     return _row_to_system_context(row) if row else None
 
 
-def delete_system_context(user_id: str, sc_id: str) -> None:
+def delete_system_context(
+    user_id: str, sc_id: str, tenant_id: str | None = None
+) -> None:
+    tenant_id = _normalize_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         conn.execute(
-            "DELETE FROM system_contexts WHERE systemContextId = ? AND userId = ?",
-            (sc_id, user_id),
+            "DELETE FROM system_contexts"
+            " WHERE systemContextId = ? AND userId = ? AND tenantId = ?",
+            (sc_id, user_id, tenant_id),
         )
 
 
 def create_messages(
-    chat_id: str, user_id: str, messages: list[dict[str, Any]]
+    chat_id: str,
+    user_id: str,
+    messages: list[dict[str, Any]],
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]] | None:
     """ToBeRecordedMessage[] を保存し RecordedMessage[] を返す。
 
-    所有者でないチャットへの書き込みは拒否し None を返す。
+    所有者でない／他棟のチャットへの書き込みは拒否し None を返す。
     """
     recorded: list[dict[str, Any]] = []
     with _lock, _connect() as conn:
-        # 所有者のチャットにのみ書き込む
-        if _chat_owner(conn, chat_id) != user_id:
+        if not _chat_belongs(conn, chat_id, user_id, tenant_id):
             return None
         row = conn.execute(
             "SELECT COALESCE(MAX(seq), 0) AS m FROM messages WHERE chatId = ?",

@@ -127,7 +127,7 @@ services:
       - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
       - S3_ARTIFACT_RETENTION_DAYS=${S3_ARTIFACT_RETENTION_DAYS:-30}
       - S3_ARTIFACT_PURGE_INTERVAL=${S3_ARTIFACT_PURGE_INTERVAL:-86400}
-      # 成果物の配信方式（LGWAN 等では carrier 推奨。open は署名付きURLを直接提示）
+      # 成果物の配信方式（open / carrier / auto。auto は Host が *.lgwan.jp なら carrier）
       - ARTIFACT_DELIVERY_MODE=${ARTIFACT_DELIVERY_MODE:-carrier}
       - ARTIFACT_CARRIER_FORMAT=${ARTIFACT_CARRIER_FORMAT:-txt}
       # Markdown エディタ書き出し zip の接頭辞（carrier の所有者判定対象）
@@ -147,8 +147,11 @@ services:
       - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
       # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
+      - PUBLIC_URL=${PUBLIC_URL}
+      - LGWAN_PUBLIC_URL=${LGWAN_PUBLIC_URL:-${PUBLIC_URL}}
       - PUBLIC_BASE_URL=${PUBLIC_URL}/api
-      - FRONTEND_URL=${PUBLIC_URL}
+      - FRONTEND_URL=${FRONTEND_URL:-${PUBLIC_URL}}
+      - PORTAL_PUBLIC_URL=${PORTAL_PUBLIC_URL:-}
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
       # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
       - APP_JWT_TTL=${APP_JWT_TTL:-43200}
@@ -164,6 +167,11 @@ services:
       - OPERATOR_LOGIN_HOSTS=${OPERATOR_LOGIN_HOSTS:-}
       - OPERATOR_SAML_SOURCE_IPS=${OPERATOR_SAML_SOURCE_IPS:-}
       - OPERATOR_USERS=${OPERATOR_USERS:-}
+      - PORTAL_LOGIN_HOSTS=${PORTAL_LOGIN_HOSTS:-}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/kc}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-open-genai}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_PASSWORD_VERIFY_CLIENT=${KEYCLOAK_PASSWORD_VERIFY_CLIENT:-admin-cli}
     volumes:
       - backend_data:/data
     extra_hosts:
@@ -234,6 +242,9 @@ services:
         VITE_APP_IMAGE_DEFAULT_CFG: ${VITE_APP_IMAGE_DEFAULT_CFG:-7}
         # 単引用符必須。二重なしだと YAML が JSON 配列と解釈し引用符が落ちる
         VITE_APP_MODEL_IDS: '${VITE_APP_MODEL_IDS:-}'
+        VITE_APP_HIDDEN_USE_CASES: '${VITE_APP_HIDDEN_USE_CASES:-{}}'
+        VITE_PORTAL_PUBLIC_URL: ${PORTAL_PUBLIC_URL:-}
+        VITE_INTERNET_APP_HOST: ${VITE_INTERNET_APP_HOST:-}
     container_name: open-genai-web
     expose:
       - "80"
@@ -650,12 +661,16 @@ services:
       - HEARING_RETENTION_DAYS=${HEARING_RETENTION_DAYS:-30}
       - MAX_DOC_BYTES=${MAX_DOC_BYTES:-20971520}
       - HEARING_LLM=${HEARING_LLM:-1}
+      - HEARING_LLM_MAX_TOKENS=${HEARING_LLM_MAX_TOKENS:-8192}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
+      - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
+      - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
+      - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
     volumes:
       # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）
       - procuretech_hearing_app_data:/data

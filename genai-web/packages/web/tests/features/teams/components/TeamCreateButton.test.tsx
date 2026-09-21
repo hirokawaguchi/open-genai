@@ -3,9 +3,25 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamCreateButton } from '../../../../src/features/teams/components/TeamCreateButton';
 import { useTeamAuth } from '../../../../src/features/teams/hooks/useTeamAuth';
+import { useMyTenants } from '../../../../src/open-genai/tenants/useTenants';
 
 // Mock dependencies
 vi.mock('@/features/teams/hooks/useTeamAuth');
+vi.mock('@/open-genai/tenants/useTenants');
+
+const emptyTenants = {
+  tenants: [],
+  orgTenants: [],
+  grantedShared: [],
+  switchableTenants: [],
+  activeTenantId: undefined,
+  isSystemAdmin: false,
+  canSwitchTenants: false,
+  canManageTenants: false,
+  isLoading: false,
+  error: undefined,
+  mutate: vi.fn(),
+};
 
 describe('TeamCreateButton', () => {
   const renderWithRouter = () => {
@@ -25,6 +41,22 @@ describe('TeamCreateButton', () => {
       vi.mocked(useTeamAuth).mockReturnValue({
         isSystemAdminGroup: true,
       });
+      vi.mocked(useMyTenants).mockReturnValue(emptyTenants);
+
+      renderWithRouter();
+
+      const link = screen.getByRole('link', { name: 'チームを作成' });
+      expect(link).toBeDefined();
+    });
+
+    it('renders button when user is a tenant admin', () => {
+      vi.mocked(useTeamAuth).mockReturnValue({
+        isSystemAdminGroup: false,
+      });
+      vi.mocked(useMyTenants).mockReturnValue({
+        ...emptyTenants,
+        canManageTenants: true,
+      });
 
       renderWithRouter();
 
@@ -36,6 +68,7 @@ describe('TeamCreateButton', () => {
       vi.mocked(useTeamAuth).mockReturnValue({
         isSystemAdminGroup: false,
       });
+      vi.mocked(useMyTenants).mockReturnValue(emptyTenants);
 
       renderWithRouter();
 
@@ -47,6 +80,7 @@ describe('TeamCreateButton', () => {
       vi.mocked(useTeamAuth).mockReturnValue({
         isSystemAdminGroup: true,
       });
+      vi.mocked(useMyTenants).mockReturnValue(emptyTenants);
 
       renderWithRouter();
 
@@ -58,6 +92,7 @@ describe('TeamCreateButton', () => {
       vi.mocked(useTeamAuth).mockReturnValue({
         isSystemAdminGroup: true,
       });
+      vi.mocked(useMyTenants).mockReturnValue(emptyTenants);
 
       renderWithRouter();
 

@@ -20,6 +20,23 @@ ACCENT = (0x00, 0x17, 0xC1)  # Blue 900
 ON_ACCENT = (0xFF, 0xFF, 0xFF)
 FONT = "Noto Sans JP"
 FONT_MONO = "Noto Sans Mono"
+# docx はフォント埋め込みをせず、受け手に元から入っている日本語フォントを指定して
+# 置換を避ける。游ゴシック(Yu Gothic)は Windows(Office)/macOS にプリインストールされ、
+# プレビューの Noto Sans JP（ヒューマニスト系ゴシック）に近い。等幅は Windows 標準の
+# ＭＳ ゴシック（和欧対応）を使う。HTML/PPTX 出力は従来どおり FONT/FONT_MONO を使う。
+DOCX_FONT = "游ゴシック"
+DOCX_FONT_MONO = "ＭＳ ゴシック"
+
+# PPTX 型スケール（pt, 16:9）。DADS のタイポグラフィに合わせ、可読性重視で一段大きく。
+# 役割: title=スライド見出し / section=章扉 / card_head=カード見出し /
+#       body=本文 / caption=出典・ページ番号。
+PPTX_TYPE = {
+    "title": 28,
+    "section": 32,
+    "card_head": 18,
+    "body": 15,
+    "caption": 11,
+}
 
 
 def hex_of(rgb: tuple[int, int, int]) -> str:
@@ -29,7 +46,7 @@ def hex_of(rgb: tuple[int, int, int]) -> str:
 def style_run(
     run: Any,
     *,
-    name: str = FONT,
+    name: str = DOCX_FONT,
     size: Any = None,
     color: tuple[int, int, int] | None = None,
     bold: bool | None = None,
@@ -89,7 +106,7 @@ def _set_style_font(
     r_fonts.set(qn("w:cs"), name)
 
 
-def _bottom_border(p_pr: Any, color: tuple[int, int, int], *, sz: str = "12", space: str = "4") -> None:
+def bottom_border(p_pr: Any, color: tuple[int, int, int], *, sz: str = "12", space: str = "4") -> None:
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
@@ -112,7 +129,7 @@ def _add_page_field(paragraph: Any) -> None:
     from docx.shared import Pt
 
     run = paragraph.add_run()
-    style_run(run, name=FONT, size=Pt(9), color=MUTED)
+    style_run(run, name=DOCX_FONT, size=Pt(9), color=MUTED)
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
@@ -140,41 +157,50 @@ def apply_docx_theme(doc: Any) -> None:
 
     header = section.header.paragraphs[0]
     header.text = ""
-    _bottom_border(header._p.get_or_add_pPr(), ACCENT, sz="18", space="1")
+    bottom_border(header._p.get_or_add_pPr(), ACCENT, sz="18", space="1")
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     footer.text = ""
     _add_page_field(footer)
 
+    # 本文・見出しはエディタのプレビュー（prose-sm, px）を pt へ換算して合わせる。
+    # 画面 px → 印刷 pt は 96dpi 基準で pt = px * 0.75（本文 16px=12pt, h1 24px=18pt 等）。
     normal = doc.styles["Normal"]
-    _set_style_font(normal, name=FONT, size=Pt(11), color=BODY)
-    normal.paragraph_format.line_spacing = 1.7
-    normal.paragraph_format.space_after = Pt(10)
+    _set_style_font(normal, name=DOCX_FONT, size=Pt(12), color=BODY)
+    # プレビューは行間 170% だが、印刷 docx では広く見えるため本文は 1.4 に詰める。
+    normal.paragraph_format.line_spacing = 1.4
+    normal.paragraph_format.space_after = Pt(8)
     normal.paragraph_format.space_before = Pt(0)
 
     title = doc.styles["Title"]
-    _set_style_font(title, name=FONT, size=Pt(22), color=INK, bold=True)
+    _set_style_font(title, name=DOCX_FONT, size=Pt(22), color=INK, bold=True)
     title.paragraph_format.space_after = Pt(18)
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.line_spacing = 1.5
-    _bottom_border(title.element.get_or_add_pPr(), ACCENT, sz="12", space="6")
+    bottom_border(title.element.get_or_add_pPr(), ACCENT, sz="12", space="6")
 
-    for style_name, size, before in (("Heading 1", 16, 20), ("Heading 2", 14, 16), ("Heading 3", 12, 14)):
+    for style_name, size, before in (
+        ("Heading 1", 18, 20),  # プレビュー h1 24px
+        ("Heading 2", 15, 16),  # プレビュー h2 20px
+        ("Heading 3", 13.5, 14),  # プレビュー h3 18px
+        ("Heading 4", 13, 12),  # プレビュー h4 17px
+    ):
         st = doc.styles[style_name]
-        _set_style_font(st, name=FONT, size=Pt(size), color=INK, bold=True)
+        _set_style_font(st, name=DOCX_FONT, size=Pt(size), color=INK, bold=True)
         st.paragraph_format.space_before = Pt(before)
         st.paragraph_format.space_after = Pt(8)
         st.paragraph_format.line_spacing = 1.5
-    _bottom_border(doc.styles["Heading 1"].element.get_or_add_pPr(), RULE, sz="6", space="4")
+    bottom_border(doc.styles["Heading 1"].element.get_or_add_pPr(), RULE, sz="6", space="4")
 
-    try:
-        bullet = doc.styles["List Bullet"]
-        _set_style_font(bullet, name=FONT, size=Pt(11), color=BODY)
-        bullet.paragraph_format.line_spacing = 1.7
-        bullet.paragraph_format.space_after = Pt(4)
-    except KeyError:
-        pass
+    for list_name in ("List Bullet", "List Number"):
+        try:
+            lst = doc.styles[list_name]
+            _set_style_font(lst, name=DOCX_FONT, size=Pt(12), color=BODY)
+            lst.paragraph_format.line_spacing = 1.4
+            lst.paragraph_format.space_after = Pt(4)
+        except KeyError:
+            pass
 
 
 def shade_paragraph(paragraph: Any, fill: tuple[int, int, int] = SURFACE) -> None:
@@ -190,3 +216,88 @@ def shade_paragraph(paragraph: Any, fill: tuple[int, int, int] = SURFACE) -> Non
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"), hex_of(fill))
     p_pr.append(shd)
+
+
+def shade_run(run: Any, fill: tuple[int, int, int] = SURFACE) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    r_pr = run._element.get_or_add_rPr()
+    old = r_pr.find(qn("w:shd"))
+    if old is not None:
+        r_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_of(fill))
+    r_pr.append(shd)
+
+
+def left_border(paragraph: Any, color: tuple[int, int, int] = ACCENT, *, sz: str = "18") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    old = p_pr.find(qn("w:pBdr"))
+    if old is not None:
+        p_pr.remove(old)
+    border = OxmlElement("w:pBdr")
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single")
+    left.set(qn("w:sz"), sz)
+    left.set(qn("w:space"), "10")
+    left.set(qn("w:color"), hex_of(color))
+    border.append(left)
+    p_pr.append(border)
+
+
+def shade_cell(cell: Any, fill: tuple[int, int, int] = SURFACE) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    old = tc_pr.find(qn("w:shd"))
+    if old is not None:
+        tc_pr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_of(fill))
+    tc_pr.append(shd)
+
+
+def set_cell_borders(cell: Any, color: tuple[int, int, int] = RULE, *, sz: str = "4") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    old = tc_pr.find(qn("w:tcBorders"))
+    if old is not None:
+        tc_pr.remove(old)
+    borders = OxmlElement("w:tcBorders")
+    for edge in ("top", "left", "bottom", "right"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), sz)
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), hex_of(color))
+        borders.append(el)
+    tc_pr.append(borders)
+
+
+def set_table_full_width(table: Any) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tbl = table._tbl
+    tbl_pr = tbl.tblPr
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        tbl.insert(0, tbl_pr)
+    old = tbl_pr.find(qn("w:tblW"))
+    if old is not None:
+        tbl_pr.remove(old)
+    width = OxmlElement("w:tblW")
+    width.set(qn("w:type"), "pct")
+    width.set(qn("w:w"), "5000")
+    tbl_pr.append(width)

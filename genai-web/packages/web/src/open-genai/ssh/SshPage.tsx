@@ -182,7 +182,8 @@ export const SshPage = () => {
     };
     term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(encodePty(data));
+        // TextEncoder の Uint8Array と DOM の BufferSource で lib 世代が食い違うため明示する。
+        ws.send(encodePty(data) as unknown as ArrayBuffer);
       }
     });
   };

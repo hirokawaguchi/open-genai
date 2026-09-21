@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import extract, ground, intauth, llm, retrieve, store, structure
+from . import extract, ground, harness, intauth, llm, mcp_catalog, mcp_knowledge, ocr, retrieve, store, structure, tools
 
 for parent in Path(__file__).resolve().parents:
     if (parent / "shared" / "navsheet.py").exists():
@@ -27,6 +30,19 @@ RETENTION_DAYS = int(os.environ.get("HEARING_RETENTION_DAYS", "30"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_DOC_BYTES", str(20 * 1024 * 1024)))
 
 app = FastAPI(title="Open GENAI Notebook", version="0.2.0")
+
+
+def _hearing_xlsx_name(title: str) -> tuple[str, str]:
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", (title or "").strip()) or "無題"
+    safe = safe.strip(" .")[:80]
+    name = f"ヒアリングシート_{safe}_{stamp}.xlsx"
+    ascii_name = f"hearing-sheet_{stamp}.xlsx"
+    return name, ascii_name
+
+
+def _xlsx_disposition(name: str, ascii_name: str) -> str:
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(name)}'
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -115,6 +131,27 @@ def get_config(request: Request) -> JSONResponse:
                 "model": llm.PROCURETECH_MODEL,
                 "base_url": llm.OPENAI_BASE_URL,
             },
+            "ocr": ocr.status(),
+            "tools": list(tools.ALL_TOOL_NAMES),
+            "mcp": {
+                "knowledge": {
+                    "enabled": mcp_knowledge.enabled(),
+                    "shared": True,
+                    "tools": [
+                        "knowledge_list_tags",
+                        "knowledge_list_docs",
+                        "knowledge_search",
+                    ],
+                },
+                "catalog": [
+                    {
+                        "catalog_id": spec["catalog_id"],
+                        "name": spec["name"],
+                        "description": spec["description"],
+                    }
+                    for spec in mcp_catalog.CATALOG
+                ],
+            },
         }
     )
 
@@ -169,11 +206,21 @@ async def put_session(session_id: str, request: Request) -> JSONResponse:
     if err:
         return err
     body = await request.json()
+    mcp_enabled: dict[str, bool] | None = None
+    raw_mcps = body.get("mcps") if "mcps" in body else body.get("mcp_enabled")
+    if isinstance(raw_mcps, dict):
+        mcp_enabled = {str(k): bool(v) for k, v in raw_mcps.items()}
+    elif isinstance(raw_mcps, list):
+        mcp_enabled = {}
+        for item in raw_mcps:
+            if isinstance(item, dict) and item.get("id"):
+                mcp_enabled[str(item["id"])] = bool(item.get("enabled", True))
     detail = store.update_session(
         session_id,
         uid,
         title=body.get("title") if "title" in body else None,
         instruction=body.get("instruction") if "instruction" in body else None,
+        mcp_enabled=mcp_enabled,
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -266,7 +313,9 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
         for n in nodes:
             n["source"] = filename
         briefing = structure.briefing_from_nodes(filename, nodes)
-        sample = "\n".join(str(n.get("text") or "") for n in nodes[:6])
+        if any(p.get("ocr") for p in pages):
+            briefing["ocr"] = True
+        sample = "\n".join(str(n.get("text") or "") for n in structure.sample_nodes(nodes, 6))
         briefing = await ground.enrich_briefing(filename, briefing, sample)
     except extract.DocExtractError as e:
         error = str(e)
@@ -370,6 +419,141 @@ def remove_knowledge_ref(session_id: str, ref_id: str, request: Request) -> JSON
     return JSONResponse(content=detail)
 
 
+@app.get("/skills")
+def list_skills(request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    return JSONResponse(content={"skills": store.list_skills(uid), "tools": list(tools.ALL_TOOL_NAMES)})
+
+
+@app.post("/skills")
+async def create_skill(request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    body = await request.json()
+    names = body.get("tools")
+    tool_names = [str(t) for t in names] if isinstance(names, list) else None
+    skill = store.create_skill(
+        uid,
+        name=str(body.get("name") or ""),
+        personality=str(body.get("personality") or ""),
+        instructions=str(body.get("instructions") or ""),
+        tool_names=tool_names,
+    )
+    return JSONResponse(content=skill)
+
+
+@app.put("/skills/{skill_id}")
+async def put_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    body = await request.json()
+    names = body.get("tools") if "tools" in body else None
+    tool_names = [str(t) for t in names] if isinstance(names, list) else None
+    skill = store.update_skill(
+        skill_id,
+        uid,
+        name=str(body["name"]) if "name" in body else None,
+        personality=str(body["personality"]) if "personality" in body else None,
+        instructions=str(body["instructions"]) if "instructions" in body else None,
+        tool_names=tool_names,
+    )
+    if not skill:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=skill)
+
+
+@app.get("/mcps")
+def list_mcps(request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    return JSONResponse(content={"mcps": store.list_mcps(uid)})
+
+
+@app.post("/mcps")
+async def create_mcp(request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    body = await request.json()
+    url = str(body.get("url") or "").strip()
+    if not url:
+        return JSONResponse(status_code=400, content={"error": "MCP の URL を入力してください"})
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return JSONResponse(status_code=400, content={"error": "URL は http(s) で指定してください"})
+    tools_found: list[dict[str, Any]] = []
+    try:
+        tools_found = await mcp_knowledge.list_tools(url)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"MCP に接続できません: {e}"},
+        )
+    if not tools_found:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "この MCP からツール一覧を取得できませんでした"},
+        )
+    mcp = store.create_mcp(
+        uid,
+        name=str(body.get("name") or ""),
+        url=url,
+        prompt=str(body.get("prompt") or ""),
+        description=str(body.get("description") or ""),
+        tools=tools_found,
+    )
+    return JSONResponse(content=mcp)
+
+
+@app.put("/mcps/{mcp_id}")
+async def put_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    body = await request.json()
+    reset_prompt = bool(body.get("reset_prompt"))
+    mcp = store.update_mcp(
+        mcp_id,
+        uid,
+        connected=body.get("connected") if "connected" in body else None,
+        prompt=str(body["prompt"]) if "prompt" in body and not reset_prompt else None,
+        url=str(body["url"]) if "url" in body else None,
+        name=str(body["name"]) if "name" in body else None,
+        description=str(body["description"]) if "description" in body else None,
+        reset_prompt=reset_prompt,
+    )
+    if not mcp:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=mcp)
+
+
+@app.delete("/mcps/{mcp_id}")
+def remove_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not store.delete_mcp(mcp_id, uid):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "組み込みの MCP は削除できません。切り離してください。"},
+        )
+    return JSONResponse(content={"ok": True})
+
+
+@app.delete("/skills/{skill_id}")
+def remove_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not store.delete_skill(skill_id, uid):
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/sessions/{session_id}/chat")
 async def chat(session_id: str, request: Request) -> JSONResponse:
     err, uid = _auth(request)
@@ -384,13 +568,24 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     detail = store.get_session(session_id, uid)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    skill = None
+    skill_id = str(body.get("skill_id") or "").strip()
+    if skill_id:
+        skill = store.get_skill(skill_id, uid)
+        if not skill:
+            return JSONResponse(status_code=404, content={"error": "スキルが見つかりません"})
+    history = list(detail.get("messages") or [])
     store.add_message(session_id, uid, role="user", content=question)
+    scope = (request.headers.get("x-scope") or "").strip()
     try:
-        answer, cites = await ground.answer_from_sources(
-            session_id,
-            uid,
-            question,
+        answer, cites, traces = await harness.run(
+            session_id=session_id,
+            user_id=uid,
+            scope=scope,
+            question=question,
+            history=history,
             instruction=str(detail.get("instruction") or ""),
+            skill=skill,
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -399,7 +594,12 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
             status_code=502, content={"error": f"生成に失敗しました: {e}"}
         )
     detail = store.add_message(
-        session_id, uid, role="assistant", content=answer, citations=cites
+        session_id,
+        uid,
+        role="assistant",
+        content=answer,
+        citations=cites,
+        tool_trace=traces,
     )
     return JSONResponse(content=detail)
 
@@ -423,8 +623,9 @@ def download(session_id: str, request: Request) -> Response:
         instruction=detail.get("instruction") or "",
     )
     raw = write_workbook(sheet)
+    name, ascii_name = _hearing_xlsx_name(str(detail.get("title") or ""))
     return Response(
         content=raw,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="hearing-sheet.xlsx"'},
+        headers={"Content-Disposition": _xlsx_disposition(name, ascii_name)},
     )

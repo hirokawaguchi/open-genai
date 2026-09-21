@@ -54,7 +54,9 @@ export const useSetDefaultValues = (systemContextList: SystemContext[]) => {
 
     if (search === '' && !state) {
       setContent('');
-      setModelId(defaultModelId);
+      if (defaultModelId) {
+        setModelId(defaultModelId);
+      }
       setShouldAutoSubmit(false);
       setHasSent(false);
       hasProcessedStateRef.current = false;
@@ -83,7 +85,12 @@ export const useSetDefaultValues = (systemContextList: SystemContext[]) => {
     }
 
     setContent(content);
-    setModelId(availableModels.includes(params.modelId ?? '') ? params.modelId! : defaultModelId);
+    const nextModelId = availableModels.includes(params.modelId ?? '')
+      ? params.modelId!
+      : defaultModelId;
+    if (nextModelId) {
+      setModelId(nextModelId);
+    }
     const shouldSubmit = autoSubmit && !!content.trim();
     setShouldAutoSubmit(shouldSubmit);
     setHasSent(shouldSubmit);

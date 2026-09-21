@@ -8,8 +8,56 @@ export type Team = {
   teamId: string;
   teamName: string;
   parentTeamId?: string | null;
+  tenantId?: string | null;
   createdDate: string;
   updatedDate: string;
+};
+
+export type TenantKind = 'org' | 'shared';
+export type TenantRole = 'primary' | 'guest' | 'shared';
+
+export type Tenant = {
+  tenantId: string;
+  tenantName: string;
+  kind: TenantKind;
+  features: Record<string, boolean>;
+  role?: TenantRole | 'admin';
+  isAdmin?: boolean;
+  createdDate: string;
+  updatedDate: string;
+};
+
+export type TenantMembership = {
+  tenantId: string;
+  userId: string;
+  role: TenantRole;
+  isAdmin: boolean;
+  createdDate: string;
+  updatedDate: string;
+};
+
+export type ListMyTenantsResponse = {
+  tenants: Tenant[];
+  activeTenantId: string;
+  isSystemAdmin?: boolean;
+};
+
+export type ListTenantsResponse = {
+  tenants: Tenant[];
+};
+
+export type ListTenantMembersResponse = {
+  members: TenantMembership[];
+};
+
+export type RecommendedAppsResponse = {
+  exAppIds: string[];
+  availableIds?: string[];
+};
+
+export type OfficialAppsRuntimeResponse = {
+  catalog: string[];
+  running: string[];
 };
 
 export type UpdateTeamRequest = {
@@ -19,6 +67,7 @@ export type UpdateTeamRequest = {
 
 export type CreateTeamRequest = UpdateTeamRequest & {
   teamAdminEmail: string;
+  tenantId?: string;
 };
 
 export type CreateTeamResponse = Team & {

@@ -23,8 +23,13 @@ export const useSetDefaultValues = () => {
       setSentence(params.sentence ?? '');
       setAdditionalContext(params.additionalContext ?? '');
       setLanguage(params.language || LANGUAGES[0]);
-      setModelId(availableModels.includes(params.modelId ?? '') ? params.modelId! : defaultModelId);
-    } else {
+      const nextModelId = availableModels.includes(params.modelId ?? '')
+        ? params.modelId!
+        : defaultModelId;
+      if (nextModelId) {
+        setModelId(nextModelId);
+      }
+    } else if (defaultModelId) {
       setModelId(defaultModelId);
     }
   }, [search]);

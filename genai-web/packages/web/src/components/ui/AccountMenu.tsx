@@ -1,6 +1,8 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { Link } from 'react-router';
 import { ArrowDownIcon } from '@/components/ui/icons/ArrowDownIcon';
+import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
+import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { AccountIcon } from './icons/AccountIcon';
 
 type Props = {
@@ -13,6 +15,10 @@ type Props = {
 
 export const AccountMenu = (props: Props) => {
   const { className, isShowTeamManagementMenu, onClickSignout, userDisplayName } = props;
+  const { isSystemAdminGroup } = useTeamAuth();
+  const { canManageTenants } = useMyTenants();
+  const showTenantManagement = isSystemAdminGroup || canManageTenants;
+  const showTeamManagement = isShowTeamManagementMenu || canManageTenants;
   const label = userDisplayName?.trim() || 'アカウント';
 
   return (
@@ -45,7 +51,31 @@ export const AccountMenu = (props: Props) => {
               </p>
             </div>
           )}
-          {isShowTeamManagementMenu && (
+          {showTenantManagement && (
+            <MenuItem>
+              {({ focus }) => (
+                <Link
+                  to='/tenants'
+                  className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-4 text-oln-16N-100 text-nowrap text-solid-gray-800 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
+                >
+                  棟の管理
+                </Link>
+              )}
+            </MenuItem>
+          )}
+          {isSystemAdminGroup && (
+            <MenuItem>
+              {({ focus }) => (
+                <Link
+                  to='/admin/recommended'
+                  className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-4 text-oln-16N-100 text-nowrap text-solid-gray-800 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
+                >
+                  おすすめアプリ
+                </Link>
+              )}
+            </MenuItem>
+          )}
+          {showTeamManagement && (
             <MenuItem>
               {({ focus }) => (
                 <Link
