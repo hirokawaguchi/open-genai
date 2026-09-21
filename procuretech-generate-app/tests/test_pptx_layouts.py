@@ -122,14 +122,28 @@ def test_plan_deck_disabled_returns_none():
     assert plan_deck("文書", [{"filename": "a.md", "content": "# 背景\n本文\n"}]) is None
 
 
-def test_plan_deck_invalid_json_returns_none(monkeypatch):
+def test_plan_deck_invalid_json_still_builds_notes(monkeypatch):
+    """要点 JSON が壊れても見出し骨格＋機械整理ノートでデッキを組む。"""
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://example.invalid")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
 
     def fake_complete(messages, **kwargs):
         return "これは JSON ではありません"
 
-    assert plan_deck("文書", [{"filename": "a.md", "content": "# 背景\n本文\n"}], complete=fake_complete) is None
+    deck = plan_deck(
+        "文書",
+        [{"filename": "a.md", "content": "# 背景\n現行システムの検索は遅い。\n- 重複登録\n"}],
+        complete=fake_complete,
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    notes = content.get("notes") or ""
+    assert "整理ノート" in notes
+    assert "元の本文" in notes
+    shown = json.dumps(content["content"], ensure_ascii=False)
+    assert "重複登録" in shown
+    assert "現行システムの検索は遅い。" not in shown or content["layout"] == "fullwidth-points"
 
 
 def test_plan_deck_fills_from_source_and_notes(monkeypatch):
@@ -145,13 +159,11 @@ def test_plan_deck_fills_from_source_and_notes(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "文書"},
                     {
-                        "type": "content",
-                        "title": "背景",
-                        "layout": "parallel-items",
                         "source": {"filename": "a.md", "heading": "背景"},
-                    },
+                        "role": "explanation",
+                        "points": ["検索が遅い", "重複登録"],
+                    }
                 ]
             },
             ensure_ascii=False,
@@ -161,7 +173,7 @@ def test_plan_deck_fills_from_source_and_notes(monkeypatch):
     assert deck is not None
     contents = [s for s in deck["slides"] if s["type"] == "content"]
     assert contents
-    assert contents[0]["layout"] == "parallel-items"
+    assert contents[0]["layout"] == "fullwidth-points"
     assert contents[0]["content"]
     assert "元の本文" in (contents[0].get("notes") or "")
     assert "現行システム" in (contents[0].get("notes") or "")
@@ -183,13 +195,11 @@ def test_plan_deck_prefers_image_over_diagram(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "文書"},
                     {
-                        "type": "content",
-                        "title": "構成",
-                        "layout": "venn-diagram",
                         "source": {"filename": "a.md", "heading": "構成"},
-                    },
+                        "role": "explanation",
+                        "points": ["関係を示す"],
+                    }
                 ]
             }
         )
@@ -220,13 +230,11 @@ def test_notes_strip_markdown_and_skip_waiting_images(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "文書"},
                     {
-                        "type": "content",
-                        "title": "業務の手順",
-                        "layout": "fullscreen-photo",
                         "source": {"filename": "section2.md", "heading": "業務の手順"},
-                    },
+                        "role": "procedure",
+                        "points": ["催事申込みは次の手順で行う"],
+                    }
                 ]
             }
         )
@@ -258,13 +266,15 @@ def test_plan_ignores_llm_body_and_covers_all_headings(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "文書"},
                     {
-                        "type": "content",
-                        "title": "背景",
-                        "layout": "parallel-items",
                         "source": {"filename": "a.md", "heading": "背景"},
-                        "content": {"items": [{"heading": long_a, "description": long_a}]},
+                        "role": "explanation",
+                        "points": ["検索が遅く同一案件が複数登録される"],
+                    },
+                    {
+                        "source": {"filename": "a.md", "heading": "手順"},
+                        "role": "procedure",
+                        "points": ["催事申込みはWebフォームから受け付ける"],
                     },
                 ]
             },
@@ -413,19 +423,18 @@ def test_plan_deck_reports_progress(monkeypatch):
         s = messages[0]["content"]
         if "要点整理係" in s:
             return json.dumps(
-                {"slides": [{"source": {"filename": "a.md", "heading": "背景"}, "points": ["本文A"]}]},
+                {
+                    "slides": [
+                        {
+                            "source": {"filename": "a.md", "heading": "背景"},
+                            "role": "explanation",
+                            "points": ["本文A"],
+                        }
+                    ]
+                },
                 ensure_ascii=False,
             )
-        return json.dumps(
-            {
-                "slides": [
-                    {"type": "cover", "title": "文書"},
-                    {"type": "content", "title": "背景", "layout": "parallel-items", "source": {"filename": "a.md", "heading": "背景"}},
-                    {"type": "content", "title": "手順", "layout": "parallel-items", "source": {"filename": "a.md", "heading": "手順"}},
-                ]
-            },
-            ensure_ascii=False,
-        )
+        return "{}"
 
     seen: list[float] = []
     labels: list[str] = []
@@ -462,26 +471,14 @@ def test_notes_first_points_drive_slide_and_notes(monkeypatch):
                     "slides": [
                         {
                             "source": {"filename": "a.md", "heading": "背景"},
+                            "role": "explanation",
                             "points": ["検索が遅い", "同一案件が複数登録される", "ドローンで解決する"],
                         }
                     ]
                 },
                 ensure_ascii=False,
             )
-        return json.dumps(
-            {
-                "slides": [
-                    {"type": "cover", "title": "文書"},
-                    {
-                        "type": "content",
-                        "title": "背景",
-                        "layout": "parallel-items",
-                        "source": {"filename": "a.md", "heading": "背景"},
-                    },
-                ]
-            },
-            ensure_ascii=False,
-        )
+        return "{}"
 
     deck = plan_deck("文書", sections, complete=fake_complete)
     assert deck is not None
@@ -509,45 +506,30 @@ def test_code_blocks_are_kept_and_shown(monkeypatch):
     block = parse_source_blocks("文書", sections)[0]
     assert any("netsh winhttp show proxy" in c for c in block.code_blocks)
     # 前置き文があってもコードが要点として併記される
-    content = _fill_content("parallel-items", block)
-    assert "netsh winhttp show proxy" in json.dumps(content, ensure_ascii=False)
-    # ノートにもコマンドが残る
+    content = _fill_content("fullwidth-points", block)
+    shown = json.dumps(content, ensure_ascii=False)
+    assert "netsh winhttp show proxy" not in shown
+    # ノートにはコマンドが残る
     slide: dict = {}
     _attach_notes(slide, block)
     assert "netsh winhttp show proxy" in slide["notes"]
 
 
-def test_empty_section_gets_placeholder_notice(monkeypatch):
-    """本文を抽出できない節は空にせず、ノート参照のプレースホルダを出す。"""
+def test_empty_section_is_omitted(monkeypatch):
+    """見出しだけの空節はスライドにしない。"""
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
     monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
-    # 見出しだけで本文が無い節（抽出できるものが無い）。
     sections = [
         {"filename": "a.md", "content": "# はじめに\n\n概要を述べる。\n\n## 空節\n"}
     ]
 
     def fake_complete(messages, **kwargs):
-        if "要点整理係" in messages[0]["content"]:
-            return json.dumps({"slides": []}, ensure_ascii=False)
-        return json.dumps(
-            {
-                "slides": [
-                    {"type": "cover", "title": "文書"},
-                    {
-                        "type": "content",
-                        "title": "空節",
-                        "layout": "parallel-items",
-                        "source": {"filename": "a.md", "heading": "空節"},
-                    },
-                ]
-            },
-            ensure_ascii=False,
-        )
+        return json.dumps({"slides": []}, ensure_ascii=False)
 
     deck = plan_deck("文書", sections, complete=fake_complete)
     assert deck is not None
-    content = next(s for s in deck["slides"] if s.get("title") == "空節")
-    assert "ノート" in json.dumps(content["content"], ensure_ascii=False)
+    assert all(s.get("title") != "空節" for s in deck["slides"])
+    assert any(s.get("title") == "はじめに" for s in deck["slides"])
 
 
 def test_axis_table_no_empty_second_column(monkeypatch):
@@ -583,7 +565,7 @@ def test_markdown_to_pptx_fallback_has_notes():
     assert "現行システムは遅い" in notes_xml
 
 
-def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
+def test_plan_notes_and_review_applies_adopted_title_only(monkeypatch):
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
     monkeypatch.setenv("GENERATE_PPTX_REVIEW", "1")
     calls: list[str] = []
@@ -591,20 +573,6 @@ def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
     def fake_complete(messages, **kwargs):
         blob = messages[-1]["content"]
         calls.append(blob[:40])
-        if "layout だけ" in messages[0]["content"]:
-            return json.dumps(
-                {
-                    "slides": [
-                        {
-                            "type": "content",
-                            "title": "検索が遅く重複がある",
-                            "layout": "axis-table",
-                            "source": {"filename": "a.md", "heading": "背景"},
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            )
         if "作り方は知らない" in messages[0]["content"]:
             return json.dumps(
                 {
@@ -618,12 +586,12 @@ def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "更改の論点"},
                     {
-                        "type": "content",
-                        "title": "検索が遅く重複がある",
                         "source": {"filename": "a.md", "heading": "背景"},
-                    },
+                        "role": "explanation",
+                        "title": "検索が遅く重複がある",
+                        "points": ["検索が遅い", "重複登録"],
+                    }
                 ]
             },
             ensure_ascii=False,
@@ -635,8 +603,8 @@ def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
         complete=fake_complete,
     )
     assert deck is not None
-    # notes-first: story / layout / notes / review の 4 パス。
-    assert len(calls) == 4
+    # 節ごと {role, points} と伏せたレビューの 2 パス。
+    assert len(calls) == 2
     content = next(s for s in deck["slides"] if s["type"] == "content")
     assert content["title"] == "検索遅延と重複登録が業務を止めている"
     assert "AcmeCloud" not in json.dumps(deck, ensure_ascii=False)
@@ -683,13 +651,11 @@ def test_plan_deck_forces_axis_table_for_gfm(monkeypatch):
         return json.dumps(
             {
                 "slides": [
-                    {"type": "cover", "title": "文書"},
                     {
-                        "type": "content",
-                        "title": "スタンス",
-                        "layout": "parallel-items",
                         "source": {"filename": "a.md", "heading": "スタンス"},
-                    },
+                        "role": "definition",
+                        "points": ["表（1行）: 記事 / 主張"],
+                    }
                 ]
             },
             ensure_ascii=False,
@@ -731,3 +697,250 @@ def test_apply_review_drops_novel_katakana():
         {"changes": [{"index": 1, "adopt": True, "title": "ネオシステムが遅い"}]},
     )
     assert out["slides"][1]["title"] == "検索が遅い"
+
+
+def test_slide_tokens_meet_contrast():
+    from app.dads import (
+        ACCENT,
+        BODY,
+        ERROR,
+        ERROR_SURFACE,
+        INK,
+        PAPER,
+        PPTX_MUTED,
+        PRIMARY_SURFACE,
+        SUCCESS,
+        SUCCESS_SURFACE,
+        SURFACE,
+        WARNING,
+        WARNING_SURFACE,
+        contrast_ok,
+        contrast_ratio,
+    )
+
+    assert contrast_ok(INK, PAPER)
+    assert contrast_ok(BODY, PAPER)
+    assert contrast_ok(PPTX_MUTED, PAPER)
+    assert contrast_ok(ACCENT, PAPER)
+    assert contrast_ok(INK, SURFACE)
+    assert contrast_ok(INK, PRIMARY_SURFACE)
+    assert contrast_ok(SUCCESS, SUCCESS_SURFACE)
+    assert contrast_ok(ERROR, ERROR_SURFACE)
+    assert contrast_ok(WARNING, WARNING_SURFACE)
+    assert contrast_ratio(INK, PAPER) >= 4.5
+
+
+def test_default_layout_is_fullwidth():
+    from app.pptx_catalog import DEFAULT_LAYOUT, normalize_layout
+
+    assert DEFAULT_LAYOUT == "fullwidth-points"
+    assert normalize_layout("does-not-exist") == "fullwidth-points"
+
+
+def test_suggest_layout_prefers_fullwidth_for_prose():
+    from app.pptx_plan import SourceBlock, _suggest_layout
+
+    block = SourceBlock(filename="a.md", heading="背景", text="検索が遅い。重複がある。", bullets=["検索が遅い"])
+    assert _suggest_layout(block, "") == "fullwidth-points"
+    assert _suggest_layout(block, "fullwidth-points") == "fullwidth-points"
+
+
+def test_plan_uses_llm_role_for_layout(monkeypatch):
+    """見出しが説明でも、LLM が procedure なら手順レイアウトにする。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [{"filename": "a.md", "content": "# 背景\n- 端末を開く\n- 分類を作る\n"}]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "背景"},
+                        "role": "procedure",
+                        "title": "分類を先に作る",
+                        "points": ["端末を開く", "分類を作る"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "chevron-steps"
+    assert content["title"] == "分類を先に作る"
+
+
+def test_section_role_selects_layout():
+    from app.pptx_plan import SourceBlock, _guess_role, _role_to_layout
+
+    steps = SourceBlock(filename="a.md", heading="6.1 手順", text="", bullets=["開く", "作る"])
+    assert _guess_role(steps) == "procedure"
+    assert _role_to_layout("procedure", steps, "") == "chevron-steps"
+
+    table = SourceBlock(
+        filename="a.md",
+        heading="用語",
+        text="",
+        tables=[{"headers": ["語", "意味"], "rows": [["検索", "遅い"]]}],
+    )
+    assert _guess_role(table) == "definition"
+    assert _role_to_layout("definition", table, "") == "axis-table"
+
+    compare = SourceBlock(filename="a.md", heading="更改前後の比較", text="現状と更改後", bullets=["遅い", "速い"])
+    assert _guess_role(compare) == "comparison"
+    assert _role_to_layout("comparison", compare, "") == "before-after-split"
+
+    photo = SourceBlock(filename="a.md", heading="構成", text="関係を示す", images=["images/flow.png"])
+    assert _role_to_layout("explanation", photo, "") == "fullscreen-photo"
+
+
+def test_split_dense_breaks_long_points_and_tables():
+    from app.pptx_plan import _split_dense
+
+    points = [f"要点{i}" for i in range(14)]
+    parts = _split_dense("fullwidth-points", {"points": points}, "背景")
+    assert len(parts) == 3
+    assert parts[0][2] == "背景"
+    assert parts[1][2] == "背景（続き）"
+    assert parts[0][1]["points"] == points[:6]
+
+    rows = [[f"行{i}"] for i in range(20)]
+    tables = _split_dense("axis-table", {"headers": ["列"], "rows": rows}, "表")
+    assert len(tables) == 3
+    assert tables[0][1]["headers"] == ["列"]
+    assert len(tables[0][1]["rows"]) == 8
+
+
+def test_autofit_only_when_text_overflows():
+    from pptx.util import Inches, Pt
+    from app.pptx_layouts import _needs_autofit
+
+    assert not _needs_autofit("短い", Inches(10), Inches(2), Pt(18))
+    assert _needs_autofit("あ" * 800, Inches(2), Inches(0.4), Pt(18))
+
+
+def test_default_freeform_puts_kpi_top_left():
+    from app.pptx_plan import SourceBlock, _default_freeform
+
+    block = SourceBlock(
+        filename="a.md",
+        heading="規模",
+        text="応答は3秒。件数は120。",
+        bullets=["応答は3秒"],
+    )
+    out = _default_freeform(block, ["応答は3秒"])
+    kinds = [e["kind"] for e in out["elements"]]
+    assert "kpi" in kinds
+    kpi = next(e for e in out["elements"] if e["kind"] == "kpi")
+    assert kpi["col"] == 0 and kpi["row"] == 0
+    assert "3" in kpi["value"]
+
+
+def test_cover_has_no_banner_label():
+    data = render_deck({"slides": [{"type": "cover", "title": "更改の論点", "subtitle": "情報政策課"}]}, {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = "\n".join(
+            zf.read(name).decode("utf-8", errors="replace")
+            for name in zf.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert "更改の論点" in xml
+    assert ">資料<" not in xml
+    assert "ご清聴" not in xml
+
+
+def test_numbered_steps_become_bullets_and_mechanical_notes():
+    from app.pptx_plan import _mechanical_notes, parse_source_blocks
+
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 6.1 ナレッジを2つ作る\n\n"
+                "**目的**: 規則を混ぜずに検索できるようにする\n\n"
+                "**手順**:\n\n"
+                "1. ナレッジを開く\n"
+                "2. 知識ベースを作成する\n"
+                "3. PDFをアップロードする\n\n"
+                "| 順番 | ノード |\n"
+                "|------|--------|\n"
+                "| 1 | 開始 |\n\n"
+                "```text\n長いプロンプト本文\n```\n"
+            ),
+        }
+    ]
+    block = parse_source_blocks("手順書", sections)[0]
+    assert "ナレッジを開く" in block.bullets
+    assert block.tables
+    assert block.code_blocks
+    points = _mechanical_notes(block)
+    blob = "\n".join(points)
+    assert "規則を混ぜずに" in blob or "目的" in blob
+    assert "ナレッジを開く" in blob
+    assert "表（" in blob
+    assert "ノートの原文" in blob
+    assert "長いプロンプト本文" not in blob
+
+
+def test_procedure_doc_uses_notes_not_raw_prompt(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [
+        {
+            "filename": "手順.md",
+            "content": (
+                "# 6.3 質問分類を設定する\n\n"
+                "**目的**: 質問を3つの経路に分ける\n\n"
+                "1. 職員区分の判定を開く\n"
+                "2. 分類クラスを3つ作る\n\n"
+                "```text\n"
+                "ユーザーの質問を、次の基準で1つだけに分類してください。\n"
+                "【正規職員の勤務時間・休暇】\n"
+                "```\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return "not-json"
+
+    deck = plan_deck("手順書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    notes = content.get("notes") or ""
+    assert "整理ノート" in notes
+    assert "元の本文" in notes
+    shown = json.dumps(content["content"], ensure_ascii=False)
+    assert "ユーザーの質問を、次の基準で1つだけに分類してください" not in shown
+    assert "職員区分の判定を開く" in shown or "3つの経路" in shown
+
+
+def test_plan_splits_long_points(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    bullets = "\n".join(f"- 要点{i}です" for i in range(13))
+    sections = [{"filename": "a.md", "content": f"# 背景\n{bullets}\n"}]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "背景"},
+                        "role": "explanation",
+                        "points": [f"要点{i}です" for i in range(13)],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    contents = [s for s in deck["slides"] if s["type"] == "content"]
+    assert len(contents) >= 2
+    assert contents[0]["layout"] == "fullwidth-points"
+    assert "続き" in contents[1]["title"]

@@ -5,7 +5,24 @@ from __future__ import annotations
 import io
 from typing import Any, Callable
 
-from app.dads import ACCENT, BODY, FONT, INK, MUTED, ON_ACCENT, PAPER, PPTX_TYPE, RULE, SURFACE
+from app.dads import (
+    ACCENT,
+    BODY,
+    FONT,
+    INK,
+    ON_ACCENT,
+    PAPER,
+    PPTX_FRAME,
+    PPTX_MUTED,
+    PPTX_TYPE,
+    PRIMARY_SURFACE,
+    RULE,
+    RULE_MEANINGFUL,
+    SERIES,
+    SURFACE,
+    pptx_content_height,
+    pptx_content_width,
+)
 from app.pptx_catalog import DEFAULT_LAYOUT, LAYOUT_ID_SET, content_nonempty, normalize_layout
 
 RenderFn = Callable[[Any, Any, dict[str, Any], dict[str, bytes]], None]
@@ -102,6 +119,33 @@ def _style_p(
         _set_run_font(run, size=size, color=color, bold=bold)
 
 
+def _inches_of(value: Any) -> float:
+    if hasattr(value, "inches"):
+        return float(value.inches)
+    if hasattr(value, "pt"):
+        return float(value.pt) / 72.0
+    return float(value)
+
+
+def _pt_of(value: Any) -> float:
+    if hasattr(value, "pt"):
+        return float(value.pt)
+    return float(value)
+
+
+def _char_capacity(width: Any, height: Any, size: Any, *, line_height: float = 1.5) -> int:
+    """箱に収まるおおよその全角字数。溢れたときだけ自動縮小する判定に使う。"""
+    pt = max(_pt_of(size), 8.0)
+    chars = max(int(_inches_of(width) * 72 / pt), 4)
+    lines = max(int(_inches_of(height) * 72 / (pt * line_height)), 1)
+    return chars * lines
+
+
+def _needs_autofit(text: str, width: Any, height: Any, size: Any) -> bool:
+    compact = (text or "").replace("\n", "")
+    return len(compact) > _char_capacity(width, height, size)
+
+
 def _textbox(
     slide: Any,
     left: Any,
@@ -119,8 +163,12 @@ def _textbox(
 
     box = slide.shapes.add_textbox(left, top, width, height)
     box.text_frame.word_wrap = True
-    # はみ出しは自動縮小で防ぐ（PowerPoint/LibreOffice が開いたとき縮尺を計算）。
-    box.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    # 収まるなら固定 pt。溢れた箱だけ TEXT_TO_FIT（本文を先に小さくしない）。
+    box.text_frame.auto_size = (
+        MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        if _needs_autofit(text, width, height, size)
+        else MSO_AUTO_SIZE.NONE
+    )
     _style_p(box.text_frame.paragraphs[0], text, size=size, color=color, bold=bold, align=align)
     return box
 
@@ -143,7 +191,12 @@ def _lines(
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
     tf.word_wrap = True
-    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    blob = "\n".join(f"•  {line}" if bullet else line for line in lines)
+    tf.auto_size = (
+        MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        if _needs_autofit(blob, width, height, size)
+        else MSO_AUTO_SIZE.NONE
+    )
     for i, line in enumerate(lines):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         text = f"•  {line}" if bullet else line
@@ -210,19 +263,28 @@ def _add_notes(slide: Any, notes: str) -> None:
 
 
 def _add_title_slide(prs: Any, title: str, subtitle: str = "") -> Any:
-    from pptx.util import Emu, Inches, Pt
+    from pptx.util import Inches, Pt
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _fill_slide(slide)
-    _rect(slide, Inches(0), Inches(0), prs.slide_width, Inches(1.05), ACCENT)
-    _textbox(slide, Inches(0.7), Inches(0.32), Inches(12.0), Inches(0.45), "資料", size=Pt(14), color=ON_ACCENT, bold=True)
-    box = slide.shapes.add_textbox(Inches(0.7), Inches(2.35), Inches(12.0), Inches(2.2))
+    left = Inches(PPTX_FRAME["left"])
+    width = Inches(pptx_content_width())
+    # Web ヘッダー帯は置かない。大きな題名＋短い副題＋短い強調罫。
+    box = slide.shapes.add_textbox(left, Inches(2.1), width, Inches(2.2))
     box.text_frame.word_wrap = True
-    _style_p(box.text_frame.paragraphs[0], title, size=Pt(36), color=INK, bold=True)
+    _style_p(box.text_frame.paragraphs[0], title, size=Pt(PPTX_TYPE["cover"]), color=INK, bold=True)
     if subtitle:
-        _textbox(slide, Inches(0.7), Inches(4.6), Inches(12.0), Inches(0.8), subtitle, size=Pt(16), color=MUTED)
-    _rect(slide, Inches(0.7), Inches(5.5), Inches(3.2), Inches(0.04), ACCENT)
-    _rect(slide, Inches(0), Emu(prs.slide_height - Inches(0.28)), prs.slide_width, Inches(0.28), SURFACE)
+        _textbox(
+            slide,
+            left,
+            Inches(4.5),
+            width,
+            Inches(0.8),
+            subtitle,
+            size=Pt(PPTX_TYPE["subhead"]),
+            color=PPTX_MUTED,
+        )
+    _rect(slide, left, Inches(5.5), Inches(PPTX_FRAME["rule_width"]), Inches(PPTX_FRAME["rule_height"]), ACCENT)
     return slide
 
 
@@ -242,9 +304,28 @@ def _add_ending_slide(prs: Any, title: str, subtitle: str = "") -> Any:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _fill_slide(slide)
     _rect(slide, Inches(0), Inches(0), prs.slide_width, Inches(0.16), ACCENT)
-    _textbox(slide, Inches(0.7), Inches(2.6), Inches(12.0), Inches(1.4), title or "ご清聴ありがとうございました", size=Pt(28), color=INK, bold=True)
+    _textbox(
+        slide,
+        Inches(PPTX_FRAME["left"]),
+        Inches(2.6),
+        Inches(pptx_content_width()),
+        Inches(1.4),
+        title or "まとめ",
+        size=Pt(PPTX_TYPE["title"]),
+        color=INK,
+        bold=True,
+    )
     if subtitle:
-        _textbox(slide, Inches(0.7), Inches(4.2), Inches(12.0), Inches(0.7), subtitle, size=Pt(16), color=MUTED)
+        _textbox(
+            slide,
+            Inches(PPTX_FRAME["left"]),
+            Inches(4.2),
+            Inches(pptx_content_width()),
+            Inches(0.7),
+            subtitle,
+            size=Pt(PPTX_TYPE["subhead"]),
+            color=PPTX_MUTED,
+        )
     return slide
 
 
@@ -252,53 +333,66 @@ def _add_content_chrome(slide: Any, prs: Any, title: str) -> None:
     from pptx.util import Inches, Pt
 
     _fill_slide(slide)
-    _rect(slide, Inches(0), Inches(0), prs.slide_width, Inches(0.08), ACCENT)
-    _textbox(slide, Inches(0.7), Inches(0.22), Inches(12.0), Inches(0.9), title, size=Pt(PPTX_TYPE["title"]), color=INK, bold=True)
-    _rect(slide, Inches(0.7), Inches(1.18), Inches(11.9), Inches(0.012), RULE)
+    left = Inches(PPTX_FRAME["left"])
+    width = Inches(pptx_content_width())
+    _textbox(
+        slide,
+        left,
+        Inches(PPTX_FRAME["top"]),
+        width,
+        Inches(1.15),
+        title,
+        size=Pt(PPTX_TYPE["title"]),
+        color=INK,
+        bold=True,
+    )
+    rule_top = PPTX_FRAME["content_top"] - 0.28
+    _rect(slide, left, Inches(rule_top), Inches(PPTX_FRAME["rule_width"]), Inches(PPTX_FRAME["rule_height"]), ACCENT)
 
 
 def _add_source(slide: Any, prs: Any, source: str) -> None:
-    from pptx.util import Emu, Inches, Pt
+    from pptx.util import Inches, Pt
 
     text = (source or "").strip()
     if not text:
         return
     _textbox(
         slide,
-        Inches(0.7),
-        Emu(prs.slide_height - Inches(0.38)),
-        Inches(9.5),
+        Inches(PPTX_FRAME["left"]),
+        Inches(PPTX_FRAME["footer_top"]),
+        Inches(pptx_content_width() - 1.6),
         Inches(0.28),
         text,
         size=Pt(PPTX_TYPE["caption"]),
-        color=MUTED,
+        color=PPTX_MUTED,
     )
 
 
 def _add_footers(prs: Any) -> None:
     from pptx.enum.text import PP_ALIGN
-    from pptx.util import Emu, Inches, Pt
+    from pptx.util import Inches, Pt
 
     total = len(prs.slides)
+    page_left = PPTX_FRAME["left"] + pptx_content_width() - 1.3
     for i, slide in enumerate(prs.slides, start=1):
         if i == 1:
             continue
         _rect(
             slide,
-            Inches(0.7),
-            Emu(prs.slide_height - Inches(0.42)),
-            Inches(11.9),
+            Inches(PPTX_FRAME["left"]),
+            Inches(PPTX_FRAME["footer_top"] - 0.08),
+            Inches(pptx_content_width()),
             Inches(0.01),
             RULE,
         )
         box = slide.shapes.add_textbox(
-            Inches(11.4), Emu(prs.slide_height - Inches(0.38)), Inches(1.3), Inches(0.3)
+            Inches(page_left), Inches(PPTX_FRAME["footer_top"]), Inches(1.3), Inches(0.3)
         )
         p = box.text_frame.paragraphs[0]
         p.alignment = PP_ALIGN.RIGHT
         run = p.add_run()
         run.text = f"{i} / {total}"
-        _set_run_font(run, size=Pt(PPTX_TYPE["caption"]), color=MUTED)
+        _set_run_font(run, size=Pt(PPTX_TYPE["footer"]), color=PPTX_MUTED)
 
 
 def _picture(slide: Any, rel: str, assets: dict[str, bytes], left: Any, top: Any, width: Any) -> bool:
@@ -316,7 +410,7 @@ def _placeholder(slide: Any, left: Any, top: Any, width: Any, height: Any, label
     from pptx.util import Pt
 
     _rect(slide, left, top, width, height, SURFACE)
-    _textbox(slide, left, top + height / 3, width, height / 3, label or "画像", size=Pt(12), color=MUTED)
+    _textbox(slide, left, top + height / 3, width, height / 3, label or "画像", size=Pt(PPTX_TYPE["caption"]), color=PPTX_MUTED)
 
 
 def _set_cell_border(cell: Any, *, bottom: tuple[int, int, int] | None, width_pt: float) -> None:
@@ -352,22 +446,22 @@ def _add_table(slide: Any, left: Any, top: Any, width: Any, height: Any, rows: l
             cell.text = row[c_i] if c_i < len(row) else ""
             header = r_i == 0
             axis = c_i == 0
-            size = Pt(13) if header else (Pt(15) if axis else Pt(12))
+            size = Pt(PPTX_TYPE["table"])
             for p in cell.text_frame.paragraphs:
                 for run in p.runs:
                     _set_run_font(
                         run,
                         size=size,
-                        color=ACCENT if header else INK,
+                        color=INK,
                         bold=header or axis,
                     )
             fill = cell.fill
             fill.solid()
-            fill.fore_color.rgb = _rgb(PAPER)
+            fill.fore_color.rgb = _rgb(PRIMARY_SURFACE if header else PAPER)
             if header:
-                _set_cell_border(cell, bottom=ACCENT, width_pt=1.8)
+                _set_cell_border(cell, bottom=ACCENT, width_pt=1.5)
             elif r_i < last:
-                _set_cell_border(cell, bottom=RULE, width_pt=0.75)
+                _set_cell_border(cell, bottom=RULE_MEANINGFUL, width_pt=0.75)
             else:
                 _set_cell_border(cell, bottom=None, width_pt=0)
 
@@ -400,7 +494,7 @@ def _chart(
         "doughnut": XL_CHART_TYPE.DOUGHNUT,
     }.get(kind, XL_CHART_TYPE.BAR_CLUSTERED)
     frame = slide.shapes.add_chart(chart_type, left, top, width, height, data)
-    palette = (ACCENT, MUTED, BODY, RULE)
+    palette = SERIES
     try:
         chart = frame.chart
         for i, ser in enumerate(chart.series):
@@ -460,28 +554,72 @@ def _items_from(content: dict[str, Any]) -> list[dict[str, str]]:
 # --- layouts ---
 
 
+@register("fullwidth-points")
+def _render_fullwidth(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    from pptx.util import Inches, Pt
+
+    points = [str(p) for p in _as_list(content.get("points")) if str(p).strip()]
+    if not points:
+        points = [x["heading"] or x["body"] for x in _items_from(content) if x["heading"] or x["body"]]
+    if not points:
+        narrative = str(content.get("narrative") or content.get("text") or "").strip()
+        if narrative:
+            points = [narrative]
+    if not points:
+        return
+    _lines(
+        slide,
+        Inches(PPTX_FRAME["left"]),
+        Inches(PPTX_FRAME["content_top"]),
+        Inches(pptx_content_width()),
+        Inches(pptx_content_height()),
+        points[:8],
+        size=Pt(PPTX_TYPE["body"]),
+        bullet=len(points) > 1,
+    )
+
+
 @register("parallel-items")
 @register("numbered-feature-cards")
 @register("three-column")
 @register("three-step-column")
 @register("awards-parallel")
 def _render_cards(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
-    from pptx.util import Inches
+    from pptx.util import Inches, Pt
 
     items = _items_from(content)[:4]
     if not items:
         return
+    left0 = Inches(PPTX_FRAME["left"])
+    top = Inches(PPTX_FRAME["content_top"])
+    height = Inches(pptx_content_height())
+    width = Inches(pptx_content_width())
+    # 1件は全幅、2件は2列。囲みカードは並列が3件以上のときだけ。
+    if len(items) == 1:
+        heading = items[0]["heading"]
+        body = items[0]["body"]
+        lines = [x for x in (heading, body) if x]
+        _lines(slide, left0, top, width, height, lines, size=Pt(PPTX_TYPE["body"]), bullet=len(lines) > 1)
+        return
+    if len(items) == 2:
+        gap = Inches(PPTX_FRAME["column_gap"])
+        col_w = (width - gap) / 2
+        for i, item in enumerate(items):
+            left = left0 + (col_w + gap) * i
+            heading = item["heading"] or item["body"]
+            body = item["body"] if item["heading"] else ""
+            _textbox(slide, left, top, col_w, Inches(0.5), heading, size=Pt(PPTX_TYPE["subhead"]), color=INK, bold=True)
+            if body:
+                _textbox(slide, left, top + Inches(0.55), col_w, height - Inches(0.55), body, size=Pt(PPTX_TYPE["body"]))
+        return
     n = max(len(items), 1)
     gap = Inches(0.2)
-    total_w = Inches(11.9)
-    w = (total_w - gap * (n - 1)) / n
-    top = Inches(1.4)
-    h = Inches(5.0)
+    w = (width - gap * (n - 1)) / n
     for i, item in enumerate(items):
-        left = Inches(0.7) + (w + gap) * i
+        left = left0 + (w + gap) * i
         heading = item["heading"] or item["body"]
         body = item["body"] if item["heading"] else ""
-        _card(slide, left, top, w, h, heading, body, index=i + 1)
+        _card(slide, left, top, w, height, heading, body, index=i + 1)
 
 
 @register("step-flow")
@@ -506,7 +644,7 @@ def _render_quote(slide: Any, prs: Any, content: dict[str, Any], assets: dict[st
     _textbox(slide, Inches(1.1), Inches(1.7), Inches(11.2), Inches(3.2), str(content.get("text") or ""), size=Pt(20), color=INK)
     who = " / ".join(x for x in (content.get("author"), content.get("role"), content.get("company")) if x)
     if who:
-        _textbox(slide, Inches(1.1), Inches(5.2), Inches(11.2), Inches(0.5), who, size=Pt(14), color=MUTED)
+        _textbox(slide, Inches(1.1), Inches(5.2), Inches(11.2), Inches(0.5), who, size=Pt(14), color=PPTX_MUTED)
 
 
 @register("chat-dialogue")
@@ -523,7 +661,7 @@ def _render_chat(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str
             speaker, text = "", str(msg)
         left = 0.7 if i % 2 == 0 else 4.0
         _rect(slide, Inches(left), Inches(top), Inches(8.4), Inches(1.15), SURFACE)
-        _textbox(slide, Inches(left + 0.2), Inches(top + 0.08), Inches(8.0), Inches(0.3), speaker, size=Pt(11), color=MUTED, bold=True)
+        _textbox(slide, Inches(left + 0.2), Inches(top + 0.08), Inches(8.0), Inches(0.3), speaker, size=Pt(11), color=PPTX_MUTED, bold=True)
         _textbox(slide, Inches(left + 0.2), Inches(top + 0.4), Inches(8.0), Inches(0.65), text, size=Pt(14), color=BODY)
         top += 1.3
 
@@ -714,7 +852,7 @@ def _render_diagram_fallback(slide: Any, prs: Any, content: dict[str, Any], asse
         return
     from pptx.util import Inches, Pt
 
-    _textbox(slide, Inches(0.7), Inches(2.4), Inches(11.9), Inches(2.0), "図は本文の画像または Mermaid を参照", size=Pt(16), color=MUTED)
+    _textbox(slide, Inches(0.7), Inches(2.4), Inches(11.9), Inches(2.0), "図は本文の画像または Mermaid を参照", size=Pt(16), color=PPTX_MUTED)
 
 
 @register("doughnut-three-col")
@@ -781,7 +919,7 @@ def _render_ceo(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str,
     if not _picture(slide, photo, assets, Inches(0.7), Inches(1.5), Inches(3.4)):
         _placeholder(slide, Inches(0.7), Inches(1.5), Inches(3.4), Inches(4.6), str(content.get("name") or ""))
     _textbox(slide, Inches(4.4), Inches(1.5), Inches(8.1), Inches(0.45), str(content.get("name") or ""), size=Pt(20), color=INK, bold=True)
-    _textbox(slide, Inches(4.4), Inches(2.0), Inches(8.1), Inches(0.35), str(content.get("role") or ""), size=Pt(13), color=MUTED)
+    _textbox(slide, Inches(4.4), Inches(2.0), Inches(8.1), Inches(0.35), str(content.get("role") or ""), size=Pt(13), color=PPTX_MUTED)
     _textbox(slide, Inches(4.4), Inches(2.5), Inches(8.1), Inches(3.6), str(content.get("message") or content.get("bio") or ""), size=Pt(16), color=BODY)
 
 
@@ -943,7 +1081,7 @@ def _render_chart_insight(slide: Any, prs: Any, content: dict[str, Any], assets:
                     values.append(0)
     unit = str(content.get("unit") or "")
     if unit:
-        _textbox(slide, Inches(0.7), Inches(1.25), Inches(6.3), Inches(0.3), unit, size=Pt(11), color=MUTED)
+        _textbox(slide, Inches(0.7), Inches(1.25), Inches(6.3), Inches(0.3), unit, size=Pt(11), color=PPTX_MUTED)
     _chart(slide, Inches(0.7), Inches(1.55), Inches(6.4), Inches(4.9), labels, [("値", values)], str(content.get("kind") or "bar"))
     insight = content.get("insight") if isinstance(content.get("insight"), dict) else {}
     header = str(insight.get("header") or content.get("insightHeader") or "意味合い")
@@ -987,10 +1125,10 @@ def validate_deck(deck: Any) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 _GRID_COLS = 12
 _GRID_ROWS = 6
-_GRID_LEFT = 0.7
-_GRID_TOP = 1.4
-_GRID_WIDTH = 11.9
-_GRID_HEIGHT = 5.5
+_GRID_LEFT = PPTX_FRAME["left"]
+_GRID_TOP = PPTX_FRAME["content_top"]
+_GRID_WIDTH = pptx_content_width()
+_GRID_HEIGHT = pptx_content_height()
 _GRID_PAD = 0.08
 
 
@@ -1026,7 +1164,7 @@ def _grid_rect(prs: Any, col: int, row: int, colspan: int, rowspan: int) -> tupl
     return left, top, width, height
 
 
-_TONE = {"ink": INK, "body": BODY, "muted": MUTED, "accent": ACCENT}
+_TONE = {"ink": INK, "body": BODY, "muted": PPTX_MUTED, "accent": ACCENT}
 
 
 def _tone_color(tone: Any, default: tuple[int, int, int] = BODY) -> tuple[int, int, int]:
@@ -1042,6 +1180,7 @@ def _size_pt(size: Any, default_key: str) -> Any:
         "body": PPTX_TYPE["body"],
         "head": PPTX_TYPE["card_head"],
         "title": PPTX_TYPE["title"],
+        "metric": PPTX_TYPE["metric"],
     }
     key = str(size or "").strip().lower()
     return Pt(table.get(key) or table.get(default_key, PPTX_TYPE["body"]))
@@ -1101,11 +1240,11 @@ def _render_freeform(slide: Any, prs: Any, content: dict[str, Any], assets: dict
         elif kind == "kpi":
             value = str(el.get("value") or el.get("text") or "")
             label = str(el.get("label") or "")
-            _textbox(slide, left, top, width, height, value, size=_size_pt(style.get("size"), "title"), color=ACCENT if fill != "accent" else ON_ACCENT, bold=True, align=align)
+            _textbox(slide, left, top, width, height, value, size=_size_pt(style.get("size"), "metric"), color=ACCENT if fill != "accent" else ON_ACCENT, bold=True, align=align)
             if label:
                 from pptx.util import Emu, Inches
 
-                _textbox(slide, left, Emu(top + Inches(0.7)), width, height, label, size=_size_pt("body", "body"), color=MUTED if fill != "accent" else ON_ACCENT, align=align)
+                _textbox(slide, left, Emu(top + Inches(0.7)), width, height, label, size=_size_pt("body", "body"), color=PPTX_MUTED if fill != "accent" else ON_ACCENT, align=align)
         elif kind == "heading":
             _textbox(slide, left, top, width, height, str(el.get("text") or ""), size=_size_pt(style.get("size"), "head"), color=(INK if fill != "accent" else ON_ACCENT), bold=True, align=align)
         elif kind == "box":

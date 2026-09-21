@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 SLIDE_TYPES = frozenset({"cover", "section", "content", "case-study", "ending"})
-DEFAULT_LAYOUT = "parallel-items"
+DEFAULT_LAYOUT = "fullwidth-points"
 
 PRIMARY_LAYOUTS: tuple[str, ...] = (
+    "fullwidth-points",
     "axis-table",
     "premise-conclusion",
     "before-after-split",
@@ -16,6 +17,7 @@ PRIMARY_LAYOUTS: tuple[str, ...] = (
 )
 
 LAYOUT_IDS: tuple[str, ...] = (
+    "fullwidth-points",
     "axis-table",
     "premise-conclusion",
     "chart-insight",
@@ -107,17 +109,19 @@ NUMERIC_LAYOUTS = frozenset(
 )
 
 SELECTION_GUIDE = """\
-先に基本形を当てる（合わなければ他）
+先に基本形を当てる（カードの羅列は最後）
+- 説明・定義・要点: fullwidth-points（全幅。囲みを置かない）
 - 行＝項目・列＝観点の整理: axis-table
 - 左に前提・事実、右に意味合い: premise-conclusion
 - 左右対比: before-after-split
 - 数値の図＋意味合い: chart-insight（本文に数値があるときだけ）
 - 手順・プロセス: chevron-steps
 その他
-- 数値KPIカード: kpi-three-col / text-data-emphasis
+- 数値KPI: kpi-three-col / text-data-emphasis（左上に全体指標）
 - 要件・チェック: checklist-table
 - 時系列: timeline / schedule-list
 - 画像または Mermaid PNG: fullscreen-photo
+- 並列の機能説明だけ numbered-feature-cards / parallel-items
 - venn-diagram / funnel 等の関係図名は画像が無いときカードになるので選ばない
 - 数値が本文に無いときはチャート系を選ばない
 """
@@ -145,6 +149,9 @@ def normalize_layout(raw: Any) -> str:
 def minimal_fixture(layout: str) -> dict[str, Any]:
     """テスト・未知 content の最低限サンプル。"""
     fixtures: dict[str, dict[str, Any]] = {
+        "fullwidth-points": {
+            "points": ["検索が遅い", "同一案件が複数登録される", "担当者が手作業で突合している"],
+        },
         "axis-table": {
             "headers": ["項目", "現状", "更改後"],
             "rows": [["検索", "遅い", "索引化"], ["登録", "重複", "一意制約"]],
