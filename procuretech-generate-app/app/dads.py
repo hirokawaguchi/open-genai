@@ -27,6 +27,17 @@ FONT_MONO = "Noto Sans Mono"
 DOCX_FONT = "游ゴシック"
 DOCX_FONT_MONO = "ＭＳ ゴシック"
 
+# PPTX 型スケール（pt, 16:9）。DADS のタイポグラフィに合わせ、可読性重視で一段大きく。
+# 役割: title=スライド見出し / section=章扉 / card_head=カード見出し /
+#       body=本文 / caption=出典・ページ番号。
+PPTX_TYPE = {
+    "title": 28,
+    "section": 32,
+    "card_head": 18,
+    "body": 15,
+    "caption": 11,
+}
+
 
 def hex_of(rgb: tuple[int, int, int]) -> str:
     return f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"

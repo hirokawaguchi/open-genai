@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.llm import chat, llm_enabled, review_enabled
@@ -44,6 +44,8 @@ class SourceBlock:
     images: list[str] = field(default_factory=list)
     bullets: list[str] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
+    # フェンスコード（コマンド等）。従来は捨てていたが、手順書ではこれが本文の主役なので保持する。
+    code_blocks: list[str] = field(default_factory=list)
 
 
 def _rel_of(path: str) -> str:
@@ -95,12 +97,22 @@ def parse_source_blocks(name: str, sections: list[dict[str, Any]]) -> list[Sourc
         paragraphs: list[str] = []
         table_buf: list[str] = []
         in_code = False
+        code_lang = ""
+        code_lines: list[str] = []
         for raw in content.splitlines():
             stripped = raw.strip()
             if stripped.startswith("```"):
-                in_code = not in_code
+                if in_code:
+                    code_text = "\n".join(code_lines).strip()
+                    # mermaid は画像化して別扱い。コマンド等のコードだけ保持。
+                    if code_text and code_lang != "mermaid":
+                        current.code_blocks.append(code_text)
+                    in_code, code_lang, code_lines = False, "", []
+                else:
+                    in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
                 continue
             if in_code:
+                code_lines.append(raw)
                 continue
             hm = _HEADING_RE.match(stripped)
             if hm:
@@ -170,6 +182,18 @@ def _clip(text: str, limit: int) -> str:
     return s[: max(limit - 1, 1)] + "…"
 
 
+_KV_SEP_RE = re.compile(r"[：:]\s*|\s*[—―–]\s*|\s*→\s*")
+
+
+def _split_kv(text: str) -> tuple[str, str]:
+    """「項目：内容」形式を (項目, 内容) に分ける。区切りが無ければ (全文, "")。"""
+    s = _plain_source(text).replace("\n", "").strip()
+    m = _KV_SEP_RE.search(s)
+    if not m or m.start() == 0:
+        return s, ""
+    return s[: m.start()].strip(), s[m.end():].strip()
+
+
 def _block_key(block: SourceBlock) -> tuple[str, str]:
     return (block.filename, block.heading)
 
@@ -210,6 +234,18 @@ def _fill_content(layout: str, block: SourceBlock) -> dict[str, Any]:
     bullets = [_plain_source(b) for b in block.bullets if _plain_source(b)]
     if not bullets:
         bullets = [s for s in _sentences(_plain_source(block.text))[:6] if s]
+    # コマンド/コードは字面が重要。前置き文があっても要点として併記し、スライドに載せる。
+    if block.code_blocks:
+        code_lines = [
+            line.strip()
+            for cb in block.code_blocks
+            for line in cb.splitlines()
+            if line.strip()
+        ]
+        for line in code_lines:
+            if line not in bullets:
+                bullets.append(line)
+        bullets = bullets[:10]
     images = _content_images(block.images)
     numbers = _NUMBER_RE.findall(block.text + "\n" + "\n".join(block.bullets))
 
@@ -220,17 +256,23 @@ def _fill_content(layout: str, block: SourceBlock) -> dict[str, Any]:
                 "headers": [_plain_source(str(h)) for h in table.get("headers") or []],
                 "rows": [[_plain_source(str(c)) for c in row] for row in (table.get("rows") or [])[:12]],
             }
-        headers = ["項目", "内容"]
-        rows = [[_clip(b, 28), ""] for b in bullets[:8]]
-        if not rows and block.text:
-            rows = [[_clip(s, 28), ""] for s in _sentences(_plain_source(block.text))[:6]]
-        return {"headers": headers, "rows": rows}
+        src_bullets = bullets or _sentences(_plain_source(block.text))
+        kv = [_split_kv(b) for b in src_bullets[:10]]
+        if any(v for _, v in kv):
+            # 「項目：内容」で書けるものは 2 列に。空列を作らない。
+            return {
+                "headers": ["項目", "内容"],
+                "rows": [[_clip(k, 24), _clip(v, 44)] for k, v in kv if k],
+            }
+        # 分割できないときは単列にして空欄を出さない。
+        return {"headers": ["ポイント"], "rows": [[_clip(b, 60)] for b in src_bullets[:10]]}
     if layout == "premise-conclusion":
         mid = max(len(bullets) // 2, 1)
         left_pts, right_pts = bullets[:mid], bullets[mid:] or bullets[:1]
         return {
-            "left": {"header": "前提", "rows": [[_clip(p, 20), ""] for p in left_pts[:5]]},
-            "right": {"header": "意味合い", "bullets": [_clip(p, 40) for p in right_pts[:4]]},
+            # 左は単列（空の 2 列目を作らない）。
+            "left": {"header": "前提", "rows": [[_clip(p, 30)] for p in left_pts[:6]]},
+            "right": {"header": "意味合い", "bullets": [_clip(p, 48) for p in right_pts[:5]]},
         }
     if layout == "chevron-steps":
         steps = []
@@ -392,17 +434,20 @@ def _fill_content(layout: str, block: SourceBlock) -> dict[str, Any]:
         return {"image": images[0], "headline": block.heading, "subMessages": bullets[:2]}
 
     items = []
-    for b in bullets[:4]:
-        items.append({"heading": _clip(b, 22), "description": _clip(b, 56) if len(b) > 22 else "", "title": _clip(b, 22)})
+    for b in bullets[:6]:
+        items.append({"heading": _clip(b, 24), "description": _clip(b, 90) if len(b) > 24 else "", "title": _clip(b, 24)})
     if not items and block.text:
-        for s in _sentences(_plain_source(block.text))[:4]:
-            items.append({"heading": _clip(s, 22), "description": _clip(s, 56)})
+        for s in _sentences(_plain_source(block.text))[:6]:
+            items.append({"heading": _clip(s, 24), "description": _clip(s, 90)})
     if images and not items:
         return {"image": images[0], "headline": _clip(block.heading, 28)}
     return {"items": items}
 
 
-def _attach_notes(slide: dict[str, Any], block: SourceBlock | None) -> None:
+def _attach_notes(
+    slide: dict[str, Any], block: SourceBlock | None, points: list[str] | None = None
+) -> None:
+    """ノート＝整理ノート（要点）＋原文。閾値は設けず、内容があれば常に付ける。"""
     if not block:
         return
     table_txt = ""
@@ -415,12 +460,77 @@ def _attach_notes(slide: dict[str, Any], block: SourceBlock | None) -> None:
     original = _plain_source(
         "\n".join(x for x in (block.text, "\n".join(f"・ {b}" for b in block.bullets), table_txt) if x)
     )
-    if not original:
-        return
-    if len(original) < 20:
-        return
+    # コマンド等は字面が重要なので _plain_source を通さずそのまま残す。
+    if block.code_blocks:
+        original = "\n".join(x for x in (original, *block.code_blocks) if x)
     heading = block.heading or "本文"
-    slide["notes"] = f"元の本文（{heading}）\n{original}"
+    parts: list[str] = []
+    if points:
+        parts.append("整理ノート\n" + "\n".join(f"・ {p}" for p in points))
+    if original:
+        parts.append(f"元の本文（{heading}）\n{original}")
+    if not parts:
+        return
+    slide["notes"] = "\n\n".join(parts)
+
+
+def _plan_notes(
+    complete: Any, name: str, blocks: list[SourceBlock]
+) -> dict[tuple[str, str], list[str]]:
+    """notes-first の中核。各節の整理ノート（構造化要点）を原文グラウンディングで作る。
+
+    失敗・空・LLM 無効時は空 dict を返し、呼び出し側は従来の機械充填へフォールバックする。
+    """
+    outline = _outline_for_prompt(name, blocks)
+    try:
+        data = _call_json(
+            complete,
+            "あなたは日本語の要点整理係。原文にある事実だけを使い、各節の要点を短い箇条書きにする。"
+            "新しい数値・固有名を作らない。JSON のみ。",
+            (
+                f"{outline}\n\n"
+                "各節について、その節を人に伝えるための要点を整理する。次の JSON だけを返す。\n"
+                '{"slides":[{"source":{"filename":"...","heading":"..."},'
+                '"points":["要点1","要点2"]}]}\n'
+                "- 各節 3〜6 点。1 点は一文で簡潔に。\n"
+                "- 原文に無い数値・固有名を作らない。原文の言い回しを保つ。\n"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("notes plan failed: %s", exc)
+        return {}
+    if not data or not isinstance(data.get("slides"), list):
+        return {}
+    organized: dict[tuple[str, str], list[str]] = {}
+    for s in data["slides"]:
+        if not isinstance(s, dict):
+            continue
+        block = _find_block(blocks, s.get("source"))
+        if not block:
+            continue
+        raw_points = s.get("points")
+        if not isinstance(raw_points, list):
+            continue
+        table_txt = " ".join(
+            " ".join(str(c) for c in (t.get("headers") or [])) for t in block.tables
+        )
+        allowed = _allowed_text(
+            name,
+            block.heading,
+            block.text,
+            "\n".join(block.bullets),
+            table_txt,
+            "\n".join(block.code_blocks),
+        )
+        points: list[str] = []
+        for p in raw_points:
+            text = _plain_source(str(p or "")).replace("\n", "").strip()
+            if not text or _introduces_novel_facts(text, allowed):
+                continue
+            points.append(text)
+        if points:
+            organized[_block_key(block)] = points
+    return organized
 
 
 def _outline_for_prompt(name: str, blocks: list[SourceBlock]) -> str:
@@ -454,9 +564,37 @@ def _parse_llm_json(text: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _fill_block(block: SourceBlock, points: list[str] | None) -> SourceBlock:
+    """整理ノートがあれば、それを bullets にした複製で充填する（原文は温存）。"""
+    if not points:
+        return block
+    return replace(block, bullets=list(points))
+
+
+def _placeholder_content(heading: str) -> tuple[str, dict[str, Any]]:
+    """本文を抽出できないときの代替。空スライドにせず、ノート参照の断りを出す。"""
+    log.info("pptx: 本文を抽出できずプレースホルダ表示: %s", heading)
+    return (
+        "parallel-items",
+        {
+            "items": [
+                {
+                    "heading": heading or "詳細",
+                    "description": "この節の詳細はノート（原文）を参照してください。",
+                    "title": heading or "詳細",
+                }
+            ]
+        },
+    )
+
+
 def _complete_slides(
-    name: str, planned: list[dict[str, Any]], blocks: list[SourceBlock]
+    name: str,
+    planned: list[dict[str, Any]],
+    blocks: list[SourceBlock],
+    organized: dict[tuple[str, str], list[str]] | None = None,
 ) -> dict[str, Any] | None:
+    organized = organized or {}
     slides: list[dict[str, Any]] = []
     covered: set[tuple[str, str]] = set()
     previous_layout = ""
@@ -495,36 +633,49 @@ def _complete_slides(
             layout = "axis-table"
         if not block:
             continue
-        # LLM が本文を返しても使わない。要点は機械充填、全文はノート。
-        content = _fill_content(layout, block)
+        # 実画像の無い図レイアウトはプレースホルダになりがち。カード等へ振り替える。
+        if layout in DIAGRAM_LAYOUTS and not _content_images(block.images):
+            layout = _suggest_layout(block, previous_layout)
+        # notes-first: 整理ノートの要点をスライド本体の材料にする（全文はノート）。
+        points = organized.get(_block_key(block))
+        content = _fill_content(layout, _fill_block(block, points))
         if not content_nonempty(content):
-            continue
+            # 本文を抽出できなかった（例: 図のみ等）。空スライドにせず、ノート参照の
+            # プレースホルダを出して「入らなかった」ことを知らせる。
+            layout, content = _placeholder_content(block.heading or name)
         slide = {
             "type": "content" if kind != "case-study" else "case-study",
             "title": str(raw.get("title") or block.heading or name),
             "layout": layout,
             "content": content,
         }
-        _attach_notes(slide, block)
+        _attach_notes(slide, block, points)
         slides.append(slide)
         covered.add(_block_key(block))
         previous_layout = layout
     for block in blocks:
         if _block_key(block) in covered:
             continue
-        if not (block.text or block.bullets or block.tables or _content_images(block.images)):
+        if not (
+            block.text
+            or block.bullets
+            or block.tables
+            or block.code_blocks
+            or _content_images(block.images)
+        ):
             continue
         layout = _suggest_layout(block, previous_layout)
-        content = _fill_content(layout, block)
+        points = organized.get(_block_key(block))
+        content = _fill_content(layout, _fill_block(block, points))
         if not content_nonempty(content):
-            continue
+            layout, content = _placeholder_content(block.heading or name)
         slide = {
             "type": "content",
             "title": block.heading or name,
             "layout": layout,
             "content": content,
         }
-        _attach_notes(slide, block)
+        _attach_notes(slide, block, points)
         slides.append(slide)
         previous_layout = layout
     return validate_deck({"slides": slides})
@@ -711,7 +862,9 @@ def plan_deck(
                 planned = _merge_layouts(planned, laid["slides"], blocks)
         except Exception as exc:  # noqa: BLE001
             log.warning("pptx plan: layout パス失敗（機械選択へ）: %s", exc)
-        deck = _complete_slides(name, planned, blocks)
+        # notes-first: 整理ノート（要点）を作り、スライド本体とノートの材料にする。
+        organized = _plan_notes(complete, name, blocks)
+        deck = _complete_slides(name, planned, blocks, organized)
         if not deck:
             log.warning("pptx plan: 検証後の deck が空です")
             return None
