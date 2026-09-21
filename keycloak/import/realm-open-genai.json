@@ -8,9 +8,15 @@
   "ssoSessionIdleTimeout": 43200,
   "ssoSessionMaxLifespan": 43200,
   "groups": [
-    { "name": "SystemAdminGroup" },
-    { "name": "TeamAdminGroup" },
-    { "name": "UserGroup" }
+    {
+      "name": "SystemAdminGroup"
+    },
+    {
+      "name": "TeamAdminGroup"
+    },
+    {
+      "name": "UserGroup"
+    }
   ],
   "users": [
     {
@@ -21,9 +27,15 @@
       "firstName": "者",
       "lastName": "管理",
       "credentials": [
-        { "type": "password", "value": "password", "temporary": false }
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
       ],
-      "groups": ["/SystemAdminGroup"]
+      "groups": [
+        "/SystemAdminGroup"
+      ]
     },
     {
       "username": "user",
@@ -33,9 +45,15 @@
       "firstName": "ユーザー",
       "lastName": "一般",
       "credentials": [
-        { "type": "password", "value": "password", "temporary": false }
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
       ],
-      "groups": ["/UserGroup"]
+      "groups": [
+        "/UserGroup"
+      ]
     }
   ],
   "clients": [
@@ -103,5 +121,18 @@
         }
       ]
     }
-  ]
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false, \"required\": {\"roles\": [\"user\"]}}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false, \"required\": {\"roles\": [\"user\"]}}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  }
 }
