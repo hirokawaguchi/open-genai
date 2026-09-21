@@ -117,11 +117,11 @@
   - **docx**: テーマ固有サービス（例: spec-app / pandoc）またはリファレンス実装（python-docx）。
   - **html / pptx / txt / md**: 公開リファレンス実装 `procuretech-generate-app` が担う。
     エディタは docx をテーマの `/compose` へ、それ以外を `EDITOR_COMPOSE_URL` へ振り分ける。
-    html / pptx は既定で LLM（`OPENAI_BASE_URL`、空なら Ollama）が 3 パス
-    （主張タイトル → layout → 伏せた内容レビュー）で deck JSON を組み、
-    決定論レンダラ（デジタル庁デザインシステム・16:9）で描く。html は 1 ページ = 1 枚。
-    根拠原文はスピーカーノート（pptx）に残す。`GENERATE_PPTX_LLM=0` または計画失敗時は
-    html を長文変換、pptx を見出し分割へ落とす。`GENERATE_PPTX_REVIEW=0` で 3 パス目だけ省略。
+    html は縦スクロールの庁内文書。pptx は既定で LLM（`OPENAI_BASE_URL`、空なら Ollama）が
+    見出し骨格のうえに節ごとの役割と要点を載せ、伏せた内容レビューで deck JSON を組み、決定論レンダラ
+    （DADS パワポ応用・16:9）で描く。根拠原文はスピーカーノート（pptx）に残す。
+    `GENERATE_PPTX_LLM=0` または計画失敗時は html を長文変換、pptx を見出し分割へ落とす。
+    `GENERATE_PPTX_REVIEW=0` でレビューだけ省略。
 - `reference` は任意（Word のスタイル参照ドキュメントの種別など）。docx 以外では無視してよい。
 - `assets` は任意。本文が参照する**画像を `{相対パス: base64}`** で渡す。視覚形式（docx / html / pptx）では
   画像を埋め込む。html は data URI で単一ファイルにする。md / txt は画像を埋め込まない。
