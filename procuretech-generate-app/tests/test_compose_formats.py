@@ -63,6 +63,72 @@ def test_markdown_to_html_renders_gfm_table():
     assert "<p>| 記事" not in body
 
 
+def test_markdown_to_html_is_vertical_document():
+    """庁内文書向けの縦スクロール文書（スライドではない）で自己完結する。"""
+    html = markdown_to_html("報告書", SECTIONS, {"images/z.png": b"PNG"}).decode("utf-8")
+    assert 'class="slide"' not in html
+    assert '<main class="doc">' in html
+    assert '<header class="doc-header">' in html
+    assert "<h1>報告書</h1>" in html
+    assert 'name="viewport"' in html
+    assert "@media print" in html
+
+
+def test_markdown_to_html_renders_inline_and_blocks():
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 概要\n\n"
+                "本文に *斜体* と ~~取消~~ と [公式](https://example.com) を含む。\n\n"
+                "1. 最初\n2. 次\n\n"
+                "---\n\n"
+                "## 詳細\n\n"
+                "本文。\n\n"
+                "# まとめ\n\n"
+                "```mermaid\ngraph TD\nA-->B\n```\n"
+            ),
+        }
+    ]
+    html = markdown_to_html("文書", sections, {}).decode("utf-8")
+    assert "<em>斜体</em>" in html
+    assert "<s>取消</s>" in html
+    assert '<a href="https://example.com" rel="noopener noreferrer">公式</a>' in html
+    assert "<ol>" in html and "<li>最初</li>" in html
+    assert "<hr>" in html
+    assert 'id="sec-1"' in html
+    assert 'class="toc"' in html  # 見出しが3以上で目次が出る
+    assert "Mermaid 図" in html  # 画像未変換のソース表示注記
+
+
+def test_markdown_to_html_sanitizes_javascript_links():
+    sections = [{"filename": "a.md", "content": "[危険](javascript:alert(1))\n"}]
+    html = markdown_to_html("文書", sections, {}).decode("utf-8")
+    assert "javascript:" not in html
+    assert "危険" in html
+
+
+def test_markdown_to_html_skips_toc_when_few_headings():
+    sections = [{"filename": "a.md", "content": "## 唯一\n\n本文。\n"}]
+    html = markdown_to_html("文書", sections, {}).decode("utf-8")
+    assert 'class="toc"' not in html
+
+
+def test_compose_html_never_uses_slides_even_with_llm(monkeypatch):
+    """html は LLM デッキを通さないので、GENERATE_PPTX_LLM=1 でもスライドにならない。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    client = TestClient(app)
+    res = client.post(
+        "/compose",
+        json={"outputs": [{"name": "文書", "format": "html", "sections": SECTIONS}]},
+    )
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        body = zf.read("文書.html").decode("utf-8")
+    assert 'class="slide"' not in body
+    assert '<main class="doc">' in body
+
+
 def test_compose_zip_respects_format():
     client = TestClient(app)
     res = client.post(
@@ -158,14 +224,15 @@ def test_compose_pptx_without_llm_uses_deterministic_path():
 
 def test_markdown_to_docx_uses_dads():
     pytest.importorskip("docx")
-    from app.dads import ACCENT, FONT, hex_of
+    from app.dads import ACCENT, DOCX_FONT, hex_of
 
     data = markdown_to_docx("文書", SECTIONS, {})
     assert data[:2] == b"PK"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         styles = zf.read("word/styles.xml").decode("utf-8")
         header = zf.read("word/header1.xml").decode("utf-8")
-    assert FONT in styles
+    # docx は置換回避のためプリインストールの游ゴシックを使う（HTML/PPTX は Noto）。
+    assert DOCX_FONT in styles
     assert hex_of(ACCENT) in header
 
 

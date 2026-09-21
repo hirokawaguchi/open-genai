@@ -67,7 +67,6 @@ from app.compose_formats import (
     normalize_format,
 )
 from app.pptx_check import check_deck, check_html_bytes, check_pptx_bytes, format_issues
-from app.pptx_html import render_deck_html
 from app.pptx_layouts import render_deck
 from app.pptx_plan import plan_deck
 from app.waiting import make_fallback_waiting_png
@@ -465,15 +464,19 @@ def _log_deck_check(fmt: str, deck: dict[str, Any], data: bytes) -> None:
 def _render_output(
     fmt: str, name: str, sections: list[dict[str, Any]], assets: dict[str, bytes]
 ) -> bytes:
-    if fmt in {"html", "pptx"}:
+    # HTML はブラウザでの庁内情報伝達を目的とし、常に縦スクロールの単一文書にする。
+    # スライド（LLM デッキ）は PPTX 専用に残す。
+    if fmt == "html":
+        return markdown_to_html(name, sections, assets)
+    if fmt == "pptx":
         deck = plan_deck(name, sections, assets)
         if deck:
-            print(f"[generate] {fmt}: LLM deck ({len(deck.get('slides') or [])} slides)")
-            data = render_deck_html(deck, assets) if fmt == "html" else render_deck(deck, assets)
-            _log_deck_check(fmt, deck, data)
+            print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
+            data = render_deck(deck, assets)
+            _log_deck_check("pptx", deck, data)
             return data
-        print(f"[generate] {fmt}: fallback ({'article html' if fmt == 'html' else 'heading split'})")
-        return markdown_to_html(name, sections, assets) if fmt == "html" else markdown_to_pptx(name, sections, assets)
+        print("[generate] pptx: fallback (heading split)")
+        return markdown_to_pptx(name, sections, assets)
     if fmt == "txt":
         return markdown_to_txt(sections)
     if fmt == "md":
