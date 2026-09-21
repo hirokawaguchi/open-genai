@@ -1528,6 +1528,19 @@ async def _run_compose_job(
         async def _run_compose(batch: list[dict[str, Any]], *, url: str, key: str) -> bool:
             names = " / ".join(o["name"] for o in batch)
             step(work_progress(), f"文書を合成しています（{names}）")
+            # このバッチが占める進捗帯 [lo, hi]（work_progress の 1 単位分）。
+            lo = work_progress()
+            hi = 10 + int(80 * (done + 1) / max(1, work_n))
+
+            def _on_progress(pct: int, sub: str) -> None:
+                mapped = lo + int((hi - lo) * max(0, min(100, pct)) / 100)
+                label = f"文書を合成しています（{names}）"
+                if sub:
+                    label += f"／{sub}"
+                store.update_compose_job(
+                    request_id, uid, progress=mapped, current_step=label
+                )
+
             try:
                 compose_zips.append(
                     await generate.compose(
@@ -1536,6 +1549,7 @@ async def _run_compose_job(
                         api_key=key,
                         reference=str(theme_def.get("doc_type") or ""),
                         assets=assets or None,
+                        on_progress=_on_progress,
                     )
                 )
             except generate.GenerateError as e:

@@ -148,6 +148,43 @@ def test_compose_zip_respects_format():
         assert "```mermaid" in zf.read("文書.md").decode("utf-8")
 
 
+def test_compose_job_lifecycle_and_progress():
+    import time as _t
+
+    client = TestClient(app)
+    started = client.post(
+        "/compose/jobs",
+        json={"outputs": [{"name": "文書", "format": "md", "sections": SECTIONS}]},
+    )
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    progresses = []
+    status = ""
+    for _ in range(100):
+        st = client.get(f"/compose/jobs/{job_id}")
+        assert st.status_code == 200
+        body = st.json()
+        progresses.append(int(body.get("progress") or 0))
+        status = body.get("status")
+        if status in ("success", "error"):
+            break
+        _t.sleep(0.05)
+    assert status == "success"
+    # 進捗は単調非減少で最後は 100
+    assert progresses == sorted(progresses)
+    assert progresses[-1] == 100
+    res = client.get(f"/compose/jobs/{job_id}/result")
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert "文書.md" in zf.namelist()
+
+
+def test_compose_job_result_not_ready_is_409():
+    client = TestClient(app)
+    st = client.get("/compose/jobs/does-not-exist")
+    assert st.status_code == 404
+
+
 def test_compose_unknown_format_is_422():
     client = TestClient(app)
     res = client.post(

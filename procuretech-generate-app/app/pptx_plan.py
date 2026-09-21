@@ -8,7 +8,13 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.llm import chat, llm_enabled, review_enabled
+from app.llm import (
+    chat,
+    compose_model,
+    llm_enabled,
+    pptx_freeform_enabled,
+    review_enabled,
+)
 from app.pptx_catalog import (
     DEFAULT_LAYOUT,
     DIAGRAM_LAYOUTS,
@@ -474,14 +480,26 @@ def _attach_notes(
     slide["notes"] = "\n\n".join(parts)
 
 
-def _plan_notes(
-    complete: Any, name: str, blocks: list[SourceBlock]
-) -> dict[tuple[str, str], list[str]]:
-    """notes-first の中核。各節の整理ノート（構造化要点）を原文グラウンディングで作る。
+# 1 回の JSON で全節をまとめると、節数が多い/長い実文書ではモデル出力が破綻して
+# 全滅しやすい。小さなバッチに分けて各回を確実にする（1 バッチ失敗は他に波及しない）。
+_NOTES_BATCH = 4
 
-    失敗・空・LLM 無効時は空 dict を返し、呼び出し側は従来の機械充填へフォールバックする。
-    """
-    outline = _outline_for_prompt(name, blocks)
+
+def _mk_sub(on_progress: Any, lo: float, hi: float) -> Any:
+    """全体 0-1 のうち [lo,hi] 区間へ写像するサブ進捗コールバックを作る。"""
+    if not on_progress:
+        return None
+
+    def sub(frac: float, label: str) -> None:
+        on_progress(lo + (hi - lo) * max(0.0, min(1.0, frac)), label)
+
+    return sub
+
+
+def _notes_for_batch(
+    complete: Any, name: str, subset: list[SourceBlock]
+) -> dict[tuple[str, str], list[str]]:
+    outline = _outline_for_prompt(name, subset)
     try:
         data = _call_json(
             complete,
@@ -497,7 +515,7 @@ def _plan_notes(
             ),
         )
     except Exception as exc:  # noqa: BLE001
-        log.warning("notes plan failed: %s", exc)
+        log.warning("notes batch failed: %s", exc)
         return {}
     if not data or not isinstance(data.get("slides"), list):
         return {}
@@ -505,7 +523,7 @@ def _plan_notes(
     for s in data["slides"]:
         if not isinstance(s, dict):
             continue
-        block = _find_block(blocks, s.get("source"))
+        block = _find_block(subset, s.get("source"))
         if not block:
             continue
         raw_points = s.get("points")
@@ -530,6 +548,28 @@ def _plan_notes(
             points.append(text)
         if points:
             organized[_block_key(block)] = points
+    return organized
+
+
+def _plan_notes(
+    complete: Any,
+    name: str,
+    blocks: list[SourceBlock],
+    on_progress: Any = None,
+) -> dict[tuple[str, str], list[str]]:
+    """notes-first の中核。各節の整理ノート（構造化要点）を原文グラウンディングで作る。
+
+    節を小さなバッチに分けて確実に生成する。失敗・空・LLM 無効時は該当分だけ空になり、
+    呼び出し側は従来の機械充填へフォールバックする。
+    """
+    organized: dict[tuple[str, str], list[str]] = {}
+    total = max(len(blocks), 1)
+    for i in range(0, len(blocks), _NOTES_BATCH):
+        subset = blocks[i : i + _NOTES_BATCH]
+        organized.update(_notes_for_batch(complete, name, subset))
+        if on_progress:
+            done = min(i + _NOTES_BATCH, len(blocks))
+            on_progress(done / total, f"要点を整理 ({done}/{len(blocks)})")
     return organized
 
 
@@ -564,6 +604,136 @@ def _parse_llm_json(text: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+_FREEFORM_GUIDE = (
+    "スライドのコンテンツ領域は 12 列 × 6 行のグリッド。各要素に "
+    "col(0-11), row(0-5), colspan(1-12), rowspan(1-6) を付け、重ならないように置く。\n"
+    "kind: heading(見出し, text) / text(本文, text) / bullets(箇条書き, bullets[]) / "
+    "box(面パネル+任意text) / kpi(大きな数値, value,label) / table(headers[],rows[][]) / "
+    "image(assets の相対パス, image)。\n"
+    "style: tone∈{ink,body,muted,accent}, size∈{small,body,head,title}, bold(bool), "
+    "align∈{left,center,right}, fill∈{none,surface,accent}。\n"
+    "配色は DADS のトークンのみ（任意色・角丸は使わない）。原文にある事実だけを使い、"
+    "新しい数値・固有名を作らない。"
+)
+
+
+def _ground_strings(values: list[str], allowed: str) -> list[str]:
+    out: list[str] = []
+    for v in values:
+        text = _plain_source(str(v or "")).replace("\n", "").strip()
+        if not text or _introduces_novel_facts(text, allowed):
+            continue
+        out.append(text)
+    return out
+
+
+def _ground_element(el: dict[str, Any], allowed: str) -> dict[str, Any] | None:
+    """要素内テキストを原文グラウンディングし、空なら None。座標/スタイルは温存。"""
+    kind = str(el.get("kind") or "text").strip().lower()
+    keep: dict[str, Any] = {
+        k: el.get(k)
+        for k in ("kind", "col", "row", "colspan", "rowspan", "style")
+        if el.get(k) is not None
+    }
+    keep["kind"] = kind
+    if kind in ("heading", "text", "box"):
+        vals = _ground_strings([el.get("text") or ""], allowed)
+        if not vals:
+            return None
+        keep["text"] = vals[0]
+    elif kind == "bullets":
+        vals = _ground_strings([str(b) for b in (el.get("bullets") or [])], allowed)
+        if not vals:
+            return None
+        keep["bullets"] = vals
+    elif kind == "kpi":
+        value = _ground_strings([el.get("value") or el.get("text") or ""], allowed)
+        if not value:
+            return None
+        keep["value"] = value[0]
+        lbl = _ground_strings([el.get("label") or ""], allowed)
+        keep["label"] = lbl[0] if lbl else ""
+    elif kind == "table":
+        headers = _ground_strings([str(h) for h in (el.get("headers") or [])], allowed)
+        rows = []
+        for r in el.get("rows") or []:
+            cells = _ground_strings(
+                [str(c) for c in (r if isinstance(r, list) else [r])], allowed
+            )
+            if cells:
+                rows.append(cells)
+        if not headers and not rows:
+            return None
+        keep["headers"] = headers
+        keep["rows"] = rows
+    elif kind == "image":
+        rel = str(el.get("image") or el.get("src") or "").strip()
+        if not rel:
+            return None
+        keep["image"] = rel
+    else:
+        return None
+    return keep
+
+
+def _compose_freeform(
+    complete: Any,
+    name: str,
+    block: SourceBlock,
+    points: list[str] | None,
+    title: str,
+) -> dict[str, Any] | None:
+    """LLM にスライドの要素配置（グリッド）を作らせる。原文グラウンディング＋失敗で None。"""
+    pts = points or list(block.bullets) or _sentences(_plain_source(block.text))[:6]
+    excerpt = _plain_source(block.text)[:600]
+    code = "\n".join(block.code_blocks)[:600]
+    user = (
+        f"{_FREEFORM_GUIDE}\n\n"
+        f"スライドのタイトル: {title}\n"
+        "要点:\n" + "\n".join(f"- {p}" for p in pts[:8]) + "\n"
+        + (f"原文抜粋:\n{excerpt}\n" if excerpt else "")
+        + (f"コマンド等:\n{code}\n" if code else "")
+        + "\n次の JSON だけを返す。\n"
+        '{"elements":[{"kind":"heading","col":0,"row":0,"colspan":12,"rowspan":1,"text":"..."}]}\n'
+    )
+    try:
+        text = complete(
+            [
+                {"role": "system", "content": "あなたはスライド構成係。JSON のみを返す。"},
+                {"role": "user", "content": user},
+            ],
+            model=compose_model(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("freeform compose failed: %s", exc)
+        return None
+    data = _parse_llm_json(text)
+    if not data or not isinstance(data.get("elements"), list):
+        return None
+    table_txt = " ".join(
+        " ".join(str(c) for c in (t.get("headers") or [])) for t in block.tables
+    )
+    allowed = _allowed_text(
+        name,
+        block.heading,
+        block.text,
+        "\n".join(block.bullets),
+        "\n".join(points or []),
+        table_txt,
+        "\n".join(block.code_blocks),
+    )
+    kept: list[dict[str, Any]] = []
+    for el in data["elements"]:
+        if not isinstance(el, dict):
+            continue
+        grounded = _ground_element(el, allowed)
+        if grounded:
+            kept.append(grounded)
+        if len(kept) >= 14:
+            break
+    return {"elements": kept} if kept else None
+
+
 def _fill_block(block: SourceBlock, points: list[str] | None) -> SourceBlock:
     """整理ノートがあれば、それを bullets にした複製で充填する（原文は温存）。"""
     if not points:
@@ -588,16 +758,50 @@ def _placeholder_content(heading: str) -> tuple[str, dict[str, Any]]:
     )
 
 
+def _maybe_freeform(
+    complete: Any,
+    name: str,
+    block: SourceBlock,
+    points: list[str] | None,
+    title: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """フェーズ B が有効なら freeform 配置を試す。無効/失敗は None（従来レイアウト）。"""
+    if not (complete and pptx_freeform_enabled()):
+        return None
+    try:
+        elements = _compose_freeform(complete, name, block, points, title)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("freeform skipped: %s", exc)
+        return None
+    if elements:
+        return "freeform", elements
+    return None
+
+
 def _complete_slides(
     name: str,
     planned: list[dict[str, Any]],
     blocks: list[SourceBlock],
     organized: dict[tuple[str, str], list[str]] | None = None,
+    complete: Any = None,
+    on_progress: Any = None,
 ) -> dict[str, Any] | None:
     organized = organized or {}
     slides: list[dict[str, Any]] = []
     covered: set[tuple[str, str]] = set()
     previous_layout = ""
+    # 進捗用に、本文スライドの総数（planned の content + 未カバー節）を見積もる。
+    planned_content = sum(
+        1 for r in planned if isinstance(r, dict) and str(r.get("type") or "content") == "content"
+    )
+    total_content = max(planned_content + len(blocks), 1)
+    built = 0
+
+    def _tick(block: SourceBlock) -> None:
+        nonlocal built
+        built += 1
+        if on_progress:
+            on_progress(built / total_content, f"スライドを構成 ({built}/{total_content})")
     if not planned or planned[0].get("type") != "cover":
         slides.append({"type": "cover", "title": name, "subtitle": ""})
     for raw in planned:
@@ -638,14 +842,19 @@ def _complete_slides(
             layout = _suggest_layout(block, previous_layout)
         # notes-first: 整理ノートの要点をスライド本体の材料にする（全文はノート）。
         points = organized.get(_block_key(block))
-        content = _fill_content(layout, _fill_block(block, points))
-        if not content_nonempty(content):
-            # 本文を抽出できなかった（例: 図のみ等）。空スライドにせず、ノート参照の
-            # プレースホルダを出して「入らなかった」ことを知らせる。
-            layout, content = _placeholder_content(block.heading or name)
+        title = str(raw.get("title") or block.heading or name)
+        free = _maybe_freeform(complete, name, block, points, title)
+        if free:
+            layout, content = free
+        else:
+            content = _fill_content(layout, _fill_block(block, points))
+            if not content_nonempty(content):
+                # 本文を抽出できなかった（例: 図のみ等）。空スライドにせず、ノート参照の
+                # プレースホルダを出して「入らなかった」ことを知らせる。
+                layout, content = _placeholder_content(block.heading or name)
         slide = {
             "type": "content" if kind != "case-study" else "case-study",
-            "title": str(raw.get("title") or block.heading or name),
+            "title": title,
             "layout": layout,
             "content": content,
         }
@@ -653,6 +862,7 @@ def _complete_slides(
         slides.append(slide)
         covered.add(_block_key(block))
         previous_layout = layout
+        _tick(block)
     for block in blocks:
         if _block_key(block) in covered:
             continue
@@ -666,18 +876,24 @@ def _complete_slides(
             continue
         layout = _suggest_layout(block, previous_layout)
         points = organized.get(_block_key(block))
-        content = _fill_content(layout, _fill_block(block, points))
-        if not content_nonempty(content):
-            layout, content = _placeholder_content(block.heading or name)
+        title = block.heading or name
+        free = _maybe_freeform(complete, name, block, points, title)
+        if free:
+            layout, content = free
+        else:
+            content = _fill_content(layout, _fill_block(block, points))
+            if not content_nonempty(content):
+                layout, content = _placeholder_content(block.heading or name)
         slide = {
             "type": "content",
-            "title": block.heading or name,
+            "title": title,
             "layout": layout,
             "content": content,
         }
         _attach_notes(slide, block, points)
         slides.append(slide)
         previous_layout = layout
+        _tick(block)
     return validate_deck({"slides": slides})
 
 
@@ -814,16 +1030,25 @@ def plan_deck(
     assets: dict[str, bytes] | None = None,
     *,
     complete: Any = chat,
+    on_progress: Any = None,
 ) -> dict[str, Any] | None:
-    """3 パス（ストーリーライン → layout → 伏せたレビュー）。失敗時は None。"""
+    """3〜4 パス（ストーリー → layout → 整理ノート → 配置 → 推敲）。失敗時は None。
+
+    on_progress(frac 0-1, label) があれば各段階で実進捗を通知する。
+    """
     if not llm_enabled():
         log.info("pptx plan skipped (GENERATE_PPTX_LLM=0)")
         return None
+
+    def op(frac: float, label: str) -> None:
+        if on_progress:
+            on_progress(frac, label)
     blocks = parse_source_blocks(name, sections)
     image_paths = sorted({img for b in blocks for img in b.images} | set((assets or {}).keys()))
     outline = _outline_for_prompt(name, blocks)
     rules = rules_excerpt()
     try:
+        op(0.05, "構成を準備")
         story = _call_json(
             complete,
             "あなたはタイトル列だけを返す。本文は書かない。JSON のみ。",
@@ -843,6 +1068,7 @@ def plan_deck(
             log.warning("pptx plan: ストーリーラインを JSON として読めませんでした")
             return None
         planned = [s for s in story["slides"] if isinstance(s, dict)]
+        op(0.15, "ストーリーを整理")
         try:
             laid = _call_json(
                 complete,
@@ -862,12 +1088,23 @@ def plan_deck(
                 planned = _merge_layouts(planned, laid["slides"], blocks)
         except Exception as exc:  # noqa: BLE001
             log.warning("pptx plan: layout パス失敗（機械選択へ）: %s", exc)
+        op(0.25, "レイアウトを選定")
         # notes-first: 整理ノート（要点）を作り、スライド本体とノートの材料にする。
-        organized = _plan_notes(complete, name, blocks)
-        deck = _complete_slides(name, planned, blocks, organized)
+        organized = _plan_notes(
+            complete, name, blocks, on_progress=_mk_sub(on_progress, 0.25, 0.55)
+        )
+        deck = _complete_slides(
+            name,
+            planned,
+            blocks,
+            organized,
+            complete=complete,
+            on_progress=_mk_sub(on_progress, 0.55, 0.9),
+        )
         if not deck:
             log.warning("pptx plan: 検証後の deck が空です")
             return None
+        op(0.9, "推敲")
         if review_enabled():
             try:
                 review = _call_json(
