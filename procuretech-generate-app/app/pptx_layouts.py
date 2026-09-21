@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from typing import Any, Callable
 
-from app.dads import ACCENT, BODY, FONT, INK, MUTED, ON_ACCENT, PAPER, RULE, SURFACE
+from app.dads import ACCENT, BODY, FONT, INK, MUTED, ON_ACCENT, PAPER, PPTX_TYPE, RULE, SURFACE
 from app.pptx_catalog import DEFAULT_LAYOUT, LAYOUT_ID_SET, content_nonempty, normalize_layout
 
 RenderFn = Callable[[Any, Any, dict[str, Any], dict[str, bytes]], None]
@@ -115,8 +115,12 @@ def _textbox(
     bold: bool = False,
     align: Any = None,
 ) -> Any:
+    from pptx.enum.text import MSO_AUTO_SIZE
+
     box = slide.shapes.add_textbox(left, top, width, height)
     box.text_frame.word_wrap = True
+    # はみ出しは自動縮小で防ぐ（PowerPoint/LibreOffice が開いたとき縮尺を計算）。
+    box.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     _style_p(box.text_frame.paragraphs[0], text, size=size, color=color, bold=bold, align=align)
     return box
 
@@ -133,11 +137,13 @@ def _lines(
     color: tuple[int, int, int] = BODY,
     bullet: bool = False,
 ) -> None:
+    from pptx.enum.text import MSO_AUTO_SIZE
     from pptx.util import Pt
 
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     for i, line in enumerate(lines):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         text = f"•  {line}" if bullet else line
@@ -178,16 +184,16 @@ def _card(
         )
         title_left = left + Inches(0.58)
         title_width = width - Inches(0.72)
-    _textbox(slide, title_left, top + Inches(0.14), title_width, Inches(0.4), heading, size=Pt(14), color=INK, bold=True)
+    _textbox(slide, title_left, top + Inches(0.14), title_width, Inches(0.44), heading, size=Pt(PPTX_TYPE["card_head"]), color=INK, bold=True)
     if body:
         _textbox(
             slide,
             title_left,
-            top + Inches(0.52),
+            top + Inches(0.56),
             title_width,
-            height - Inches(0.65),
+            height - Inches(0.7),
             body,
-            size=Pt(12),
+            size=Pt(PPTX_TYPE["body"]),
             color=BODY,
         )
 
@@ -247,8 +253,8 @@ def _add_content_chrome(slide: Any, prs: Any, title: str) -> None:
 
     _fill_slide(slide)
     _rect(slide, Inches(0), Inches(0), prs.slide_width, Inches(0.08), ACCENT)
-    _textbox(slide, Inches(0.7), Inches(0.22), Inches(12.0), Inches(0.88), title, size=Pt(20), color=INK, bold=True)
-    _rect(slide, Inches(0.7), Inches(1.12), Inches(11.9), Inches(0.012), RULE)
+    _textbox(slide, Inches(0.7), Inches(0.22), Inches(12.0), Inches(0.9), title, size=Pt(PPTX_TYPE["title"]), color=INK, bold=True)
+    _rect(slide, Inches(0.7), Inches(1.18), Inches(11.9), Inches(0.012), RULE)
 
 
 def _add_source(slide: Any, prs: Any, source: str) -> None:
@@ -264,7 +270,7 @@ def _add_source(slide: Any, prs: Any, source: str) -> None:
         Inches(9.5),
         Inches(0.28),
         text,
-        size=Pt(10),
+        size=Pt(PPTX_TYPE["caption"]),
         color=MUTED,
     )
 
@@ -292,7 +298,7 @@ def _add_footers(prs: Any) -> None:
         p.alignment = PP_ALIGN.RIGHT
         run = p.add_run()
         run.text = f"{i} / {total}"
-        _set_run_font(run, size=Pt(10), color=MUTED)
+        _set_run_font(run, size=Pt(PPTX_TYPE["caption"]), color=MUTED)
 
 
 def _picture(slide: Any, rel: str, assets: dict[str, bytes], left: Any, top: Any, width: Any) -> bool:

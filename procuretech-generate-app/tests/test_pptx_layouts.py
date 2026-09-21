@@ -325,6 +325,146 @@ def test_same_deck_titles_match_in_pptx_notes_and_html():
     assert data[:2] == b"PK"
 
 
+def test_notes_first_points_drive_slide_and_notes(monkeypatch):
+    """整理ノート（要点）がスライド本体の材料になり、ノートに要点＋原文が入る。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 背景\n現行システムの検索は遅く、同一案件が複数登録される。\n",
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        sys = messages[0]["content"]
+        if "要点整理係" in sys:  # notes パス
+            return json.dumps(
+                {
+                    "slides": [
+                        {
+                            "source": {"filename": "a.md", "heading": "背景"},
+                            "points": ["検索が遅い", "同一案件が複数登録される", "ドローンで解決する"],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "slides": [
+                    {"type": "cover", "title": "文書"},
+                    {
+                        "type": "content",
+                        "title": "背景",
+                        "layout": "parallel-items",
+                        "source": {"filename": "a.md", "heading": "背景"},
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    shown = json.dumps(content["content"], ensure_ascii=False)
+    assert "検索が遅い" in shown  # 整理ノートの要点が本体に反映
+    notes = content.get("notes") or ""
+    assert "整理ノート" in notes and "検索が遅い" in notes
+    assert "元の本文" in notes and "現行システム" in notes
+    # 原文グラウンディング: 原文に無い固有名（カタカナ「ドローン」）は要点から除去
+    assert "ドローン" not in shown
+    assert "ドローン" not in notes.split("元の本文")[0]
+
+
+def test_code_blocks_are_kept_and_shown(monkeypatch):
+    """コマンド等のフェンスコードを取り込み、スライド本体とノートに出す。"""
+    from app.pptx_plan import parse_source_blocks, _fill_content, _attach_notes
+
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 手順\n\n次を実行します。\n\n```\nnetsh winhttp show proxy\n```\n",
+        }
+    ]
+    block = parse_source_blocks("文書", sections)[0]
+    assert any("netsh winhttp show proxy" in c for c in block.code_blocks)
+    # 前置き文があってもコードが要点として併記される
+    content = _fill_content("parallel-items", block)
+    assert "netsh winhttp show proxy" in json.dumps(content, ensure_ascii=False)
+    # ノートにもコマンドが残る
+    slide: dict = {}
+    _attach_notes(slide, block)
+    assert "netsh winhttp show proxy" in slide["notes"]
+
+
+def test_empty_section_gets_placeholder_notice(monkeypatch):
+    """本文を抽出できない節は空にせず、ノート参照のプレースホルダを出す。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    # 見出しだけで本文が無い節（抽出できるものが無い）。
+    sections = [
+        {"filename": "a.md", "content": "# はじめに\n\n概要を述べる。\n\n## 空節\n"}
+    ]
+
+    def fake_complete(messages, **kwargs):
+        if "要点整理係" in messages[0]["content"]:
+            return json.dumps({"slides": []}, ensure_ascii=False)
+        return json.dumps(
+            {
+                "slides": [
+                    {"type": "cover", "title": "文書"},
+                    {
+                        "type": "content",
+                        "title": "空節",
+                        "layout": "parallel-items",
+                        "source": {"filename": "a.md", "heading": "空節"},
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s.get("title") == "空節")
+    assert "ノート" in json.dumps(content["content"], ensure_ascii=False)
+
+
+def test_axis_table_no_empty_second_column(monkeypatch):
+    from app.pptx_plan import SourceBlock, _fill_content
+
+    block = SourceBlock(filename="a.md", heading="項目", text="", bullets=["検索が遅い", "重複が多い"])
+    content = _fill_content("axis-table", block)
+    assert content["headers"] == ["ポイント"]  # 分割不能なら単列（空列を作らない）
+    assert all(len(r) == 1 for r in content["rows"])
+
+    block2 = SourceBlock(filename="a.md", heading="項目", text="", bullets=["応答：3秒", "件数：120"])
+    content2 = _fill_content("axis-table", block2)
+    assert content2["headers"] == ["項目", "内容"]
+    assert ["応答", "3秒"] in content2["rows"]
+
+
+def test_markdown_to_pptx_fallback_has_notes():
+    pytest.importorskip("pptx")
+    import io
+    import zipfile
+
+    from app.compose_formats import markdown_to_pptx
+
+    sections = [{"filename": "a.md", "content": "# 背景\n\n現行システムは遅い。\n- 検索が遅い\n"}]
+    data = markdown_to_pptx("文書", sections, {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        notes_xml = "\n".join(
+            zf.read(n).decode("utf-8", errors="replace")
+            for n in zf.namelist()
+            if "notesSlide" in n
+        )
+    assert "元の本文" in notes_xml
+    assert "現行システムは遅い" in notes_xml
+
+
 def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
     monkeypatch.setenv("GENERATE_PPTX_REVIEW", "1")
@@ -377,7 +517,8 @@ def test_plan_three_pass_applies_adopted_title_only(monkeypatch):
         complete=fake_complete,
     )
     assert deck is not None
-    assert len(calls) == 3
+    # notes-first: story / layout / notes / review の 4 パス。
+    assert len(calls) == 4
     content = next(s for s in deck["slides"] if s["type"] == "content")
     assert content["title"] == "検索遅延と重複登録が業務を止めている"
     assert "AcmeCloud" not in json.dumps(deck, ensure_ascii=False)
