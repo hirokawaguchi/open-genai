@@ -54,6 +54,8 @@ EDITOR_GENERATE_API_KEY = os.environ.get("EDITOR_GENERATE_API_KEY", "")
 TIMEOUT = float(os.environ.get("EDITOR_GENERATE_TIMEOUT", "180"))
 # 一次審査表は章ごとに Dify を呼ぶため、生成より長く待つ。
 EXCEL_TIMEOUT = float(os.environ.get("EDITOR_EXCEL_TIMEOUT", "900"))
+# pptx の LLM 多段（notes バッチ・スライド配置）で長くなるため余裕を持たせる。
+COMPOSE_TIMEOUT = float(os.environ.get("EDITOR_COMPOSE_TIMEOUT", "900"))
 DEFAULT_DOC_TYPE = os.environ.get("EDITOR_GENERATE_DOC_TYPE", "specification")
 
 # 素の文書（テーマ無し）および html / pptx / txt / md の合成先。テーマ固有の生成 API
@@ -496,11 +498,13 @@ async def compose(
     api_key: str = "",
     reference: str | None = None,
     assets: dict[str, bytes] | None = None,
+    on_progress: "ExcelProgress | None" = None,
 ) -> bytes:
     """順序付き Markdown（出力ファイル毎）を生成サービスへ送り合成 zip を得る。
 
     outputs = [{"name": str, "format"?: str, "sections": [{"filename": str, "content": str}, ...]}, ...]
     assets  = {相対パス: バイト列}（本文が参照する画像。視覚形式では同じ相対パスで埋め込む）。
+    `/compose/jobs` があれば進捗を on_progress(0-100, step) で返す。未実装なら同期 /compose。
     """
     if not base_url:
         raise GenerateError("文書生成 API が未設定です（このテーマの合成先が未設定）。")
@@ -513,20 +517,84 @@ async def compose(
         body["assets"] = {
             path: base64.b64encode(data).decode("ascii") for path, data in assets.items()
         }
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    headers = _headers(api_key)
+    async with httpx.AsyncClient(timeout=COMPOSE_TIMEOUT) as client:
         try:
-            res = await client.post(
-                f"{base_url}/compose", json=body, headers=_headers(api_key)
-            )
+            started = await client.post(f"{base_url}/compose/jobs", json=body, headers=headers)
         except httpx.HTTPError as e:
             raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
-    if res.status_code != 200:
+        if started.status_code == 404:
+            return await _compose_sync(client, base_url, body, headers)
+        if started.status_code not in (200, 202):
+            raise GenerateError(_compose_error(started, "文書の合成に失敗しました。"))
         try:
-            msg = res.json().get("error") or "文書の合成に失敗しました。"
+            job = started.json()
         except Exception:  # noqa: BLE001
-            msg = "文書の合成に失敗しました。"
-        raise GenerateError(msg)
+            job = {}
+        job_id = str((job or {}).get("job_id") or "")
+        if not job_id:
+            return await _compose_sync(client, base_url, body, headers)
+        return await _poll_compose_job(client, base_url, job_id, headers, on_progress)
+
+
+def _compose_error(res: "httpx.Response", fallback: str) -> str:
+    try:
+        return str(res.json().get("error") or fallback)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+async def _compose_sync(
+    client: httpx.AsyncClient,
+    base_url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+) -> bytes:
+    try:
+        res = await client.post(f"{base_url}/compose", json=body, headers=headers)
+    except httpx.HTTPError as e:
+        raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
+    if res.status_code != 200:
+        raise GenerateError(_compose_error(res, "文書の合成に失敗しました。"))
     return res.content
+
+
+async def _poll_compose_job(
+    client: httpx.AsyncClient,
+    base_url: str,
+    job_id: str,
+    headers: dict[str, str],
+    on_progress: "ExcelProgress | None",
+) -> bytes:
+    deadline = asyncio.get_event_loop().time() + COMPOSE_TIMEOUT
+    while True:
+        try:
+            st = await client.get(f"{base_url}/compose/jobs/{job_id}", headers=headers)
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
+        if st.status_code != 200:
+            raise GenerateError(_compose_error(st, "合成の進捗取得に失敗しました。"))
+        payload = st.json() if st.content else {}
+        status = str(payload.get("status") or "").lower()
+        if on_progress:
+            on_progress(int(payload.get("progress") or 0), str(payload.get("step") or ""))
+        if status == "success":
+            try:
+                res = await client.get(
+                    f"{base_url}/compose/jobs/{job_id}/result", headers=headers
+                )
+            except httpx.HTTPError as e:
+                raise GenerateError(
+                    f"外部サービスとの通信に失敗しました: {_httpx_message(e)}"
+                ) from e
+            if res.status_code != 200:
+                raise GenerateError(_compose_error(res, "合成結果の取得に失敗しました。"))
+            return res.content
+        if status == "error":
+            raise GenerateError(str(payload.get("error") or "文書の合成に失敗しました。"))
+        if asyncio.get_event_loop().time() >= deadline:
+            raise GenerateError("文書の合成が時間内に終わりませんでした。")
+        await asyncio.sleep(1.0)
 
 
 class ExcelSkip(Exception):

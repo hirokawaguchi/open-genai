@@ -676,6 +676,12 @@ services:
       - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
       - GENERATE_PPTX_REVIEW=${GENERATE_PPTX_REVIEW:-1}
       - GENERATE_LLM=${GENERATE_LLM:-1}
+      # PPTX フェーズ B（フリーフォーム自由配置）。既定オフ。オンにするとコンポーザ用
+      # モデル（PROCURETECH_COMPOSE_MODEL、無ければ PROCURETECH_MODEL）で配置を生成する。
+      # 高性能モデル例（Ollama Cloud）: OPENAI_BASE_URL=https://ollama.com/v1 /
+      # OPENAI_API_KEY=<cloud key> / PROCURETECH_COMPOSE_MODEL=deepseek-v3.1
+      - GENERATE_PPTX_FREEFORM=${GENERATE_PPTX_FREEFORM:-0}
+      - PROCURETECH_COMPOSE_MODEL=${PROCURETECH_COMPOSE_MODEL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

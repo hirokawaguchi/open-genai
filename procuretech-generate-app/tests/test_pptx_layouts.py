@@ -325,6 +325,124 @@ def test_same_deck_titles_match_in_pptx_notes_and_html():
     assert data[:2] == b"PK"
 
 
+def test_freeform_grid_rect_clamps(monkeypatch):
+    from pptx import Presentation
+    from pptx.util import Inches
+    from app.pptx_layouts import _grid_rect, _grid_span
+
+    # 範囲外の指定でも領域内に収まる（col+colspan<=12, row+rowspan<=6）。
+    col, row, cs, rs = _grid_span({"col": 20, "row": 9, "colspan": 99, "rowspan": 99})
+    assert 0 <= col <= 11 and 0 <= row <= 5
+    assert col + cs <= 12 and row + rs <= 6
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    left, top, width, height = _grid_rect(prs, 0, 0, 12, 6)
+    assert left >= 0 and top >= Inches(1.4) - 1
+    assert width <= Inches(12)
+
+
+def test_render_freeform_places_elements_and_handles_bad_input():
+    from app.pptx_layouts import render_deck
+
+    content = {
+        "elements": [
+            {"kind": "heading", "col": 0, "row": 0, "colspan": 12, "rowspan": 1, "text": "要点"},
+            {"kind": "bullets", "col": 0, "row": 1, "colspan": 7, "rowspan": 4, "bullets": ["A", "B"]},
+            {"kind": "kpi", "col": 8, "row": 1, "colspan": 4, "rowspan": 2, "value": "3秒", "label": "応答"},
+            {"kind": "table", "col": 0, "row": 5, "colspan": 12, "rowspan": 1, "headers": ["列"], "rows": [["値"]]},
+            {"kind": "image", "col": 8, "row": 3, "colspan": 4, "rowspan": 3, "image": "images/x.png"},
+            {"kind": "unknown-kind", "col": 0, "row": 0, "text": "無視される"},
+            "not-a-dict",
+            {"kind": "text", "col": 99, "row": 99, "colspan": 99, "rowspan": 99, "text": "範囲外でも収まる"},
+        ]
+    }
+    deck = {"slides": [{"type": "content", "title": "自由配置", "layout": "freeform", "content": content}]}
+    data = render_deck(deck, {})  # 画像は欠落 → プレースホルダ、未知 kind は無視
+    assert data[:2] == b"PK"
+
+
+def test_freeform_layout_is_registered():
+    from app.pptx_catalog import LAYOUT_ID_SET
+    from app.pptx_layouts import registered_layouts
+
+    assert "freeform" in LAYOUT_ID_SET
+    assert "freeform" in registered_layouts()
+
+
+def test_compose_freeform_grounds_and_falls_back(monkeypatch):
+    from app.pptx_plan import SourceBlock, _compose_freeform
+
+    block = SourceBlock(
+        filename="a.md",
+        heading="背景",
+        text="現行システムの検索は遅い。応答は3秒かかる。",
+        bullets=["検索が遅い"],
+    )
+
+    def fake(messages, **kwargs):
+        return json.dumps(
+            {
+                "elements": [
+                    {"kind": "heading", "col": 0, "row": 0, "colspan": 12, "rowspan": 1, "text": "検索が遅い"},
+                    {"kind": "kpi", "col": 0, "row": 1, "colspan": 4, "rowspan": 2, "value": "3秒", "label": "応答"},
+                    {"kind": "text", "col": 4, "row": 1, "colspan": 8, "rowspan": 2, "text": "ドローンで解決する"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    out = _compose_freeform(fake, "文書", block, ["検索が遅い"], "背景")
+    blob = json.dumps(out, ensure_ascii=False)
+    assert "検索が遅い" in blob and "3秒" in blob
+    assert "ドローン" not in blob  # 原文に無いカタカナは除去
+
+    # 不正 JSON はフォールバック（None）
+    assert _compose_freeform(lambda *a, **k: "not json", "文書", block, [], "背景") is None
+
+
+def test_plan_deck_reports_progress(monkeypatch):
+    """plan_deck が on_progress で単調非減少の実進捗を通知する。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [
+        {"filename": "a.md", "content": "# 背景\n本文A。\n\n## 手順\n本文B。\n"}
+    ]
+
+    def fake(messages, **kwargs):
+        s = messages[0]["content"]
+        if "要点整理係" in s:
+            return json.dumps(
+                {"slides": [{"source": {"filename": "a.md", "heading": "背景"}, "points": ["本文A"]}]},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "slides": [
+                    {"type": "cover", "title": "文書"},
+                    {"type": "content", "title": "背景", "layout": "parallel-items", "source": {"filename": "a.md", "heading": "背景"}},
+                    {"type": "content", "title": "手順", "layout": "parallel-items", "source": {"filename": "a.md", "heading": "手順"}},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    seen: list[float] = []
+    labels: list[str] = []
+
+    def on_progress(frac, label):
+        seen.append(round(float(frac), 4))
+        labels.append(label)
+
+    deck = plan_deck("文書", sections, complete=fake, on_progress=on_progress)
+    assert deck is not None
+    assert seen  # 通知された
+    assert seen == sorted(seen)  # 単調非減少
+    assert seen[-1] >= 0.9
+    joined = " ".join(labels)
+    assert "要点を整理" in joined and "スライドを構成" in joined
+
+
 def test_notes_first_points_drive_slide_and_notes(monkeypatch):
     """整理ノート（要点）がスライド本体の材料になり、ノートに要点＋原文が入る。"""
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")

@@ -719,7 +719,7 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
 
     captured = {}
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         captured["outputs"] = outputs
         captured["reference"] = reference
         captured["assets"] = assets
@@ -780,7 +780,7 @@ def test_compose_overrides_and_embeds_image(client, monkeypatch):
 
     captured = {}
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         captured["outputs"] = outputs
         captured["assets"] = assets
         buf = io.BytesIO()
@@ -957,7 +957,7 @@ def test_compose_skips_excel_when_no_source(client, monkeypatch, _mem_objstore):
 
     monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for o in outputs:
@@ -1005,7 +1005,7 @@ def test_compose_skips_excel_when_generate_fails(client, monkeypatch, _mem_objst
 
     monkeypatch.setattr(generate, "build_excel", fake_build_excel)
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for o in outputs:
@@ -1076,7 +1076,7 @@ def test_compose_routes_html_to_generic_url(client, monkeypatch, _mem_objstore):
 
     captured: list[dict] = []
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         captured.append({"base_url": base_url, "outputs": outputs})
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
@@ -1147,7 +1147,7 @@ def test_compose_md_skips_mermaid_overrides(client, monkeypatch):
 
     captured = {}
 
-    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None):
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
         captured["outputs"] = outputs
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:

@@ -68,6 +68,8 @@ LAYOUT_IDS: tuple[str, ...] = (
     "location-map",
     "case-two-col",
     "qa-grid",
+    # フェーズ B: LLM がグリッド座標で自由配置する（レイアウト選択ガイドには出さない）。
+    "freeform",
 )
 
 LAYOUT_ID_SET = frozenset(LAYOUT_IDS)
@@ -391,6 +393,13 @@ def minimal_fixture(layout: str) -> dict[str, Any]:
             "items": [
                 {"q": "質問1", "a": "回答1"},
                 {"q": "質問2", "a": "回答2"},
+            ]
+        },
+        "freeform": {
+            "elements": [
+                {"kind": "heading", "col": 0, "row": 0, "colspan": 12, "rowspan": 1, "text": "要点"},
+                {"kind": "bullets", "col": 0, "row": 1, "colspan": 7, "rowspan": 5, "bullets": ["論点1", "論点2"]},
+                {"kind": "kpi", "col": 8, "row": 1, "colspan": 4, "rowspan": 2, "value": "3秒", "label": "応答"},
             ]
         },
     }
