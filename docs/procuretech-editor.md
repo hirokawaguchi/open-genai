@@ -238,8 +238,10 @@ section key／file_id を解決して本文を順に集約し、形式に応じ�
 （`EDITOR_COMPOSE_URL=http://procuretech-generate-app:8016`）。
 入力シートは `notebook-app`（`/notebook`、旧 `/hearing-sheet`）で作れます。
 視覚形式（docx / html / pptx）の見た目はデジタル庁デザインシステム（DADS）に揃える
-（Blue 900・Solid Gray・Noto Sans JP）。html / pptx は同じデッキ計画（主張タイトル → layout →
-伏せたレビュー）で 16:9 スライドにする。根拠原文は pptx のスピーカーノートに残す。
+（Blue 900・Solid Gray）。html は縦スクロールの庁内文書。pptx は 16:9 の LLM デッキ
+（見出し骨格＋節ごとの役割と要点 → 伏せたレビュー）。スライドは DADS のパワポ応用（余白・型スケール・
+セマンティック色）と、数値ページではダッシュボードガイドの左上→右下を使う。
+根拠原文は pptx のスピーカーノートに残す。
 `GENERATE_PPTX_LLM=0` または計画失敗時は html を長文、pptx を見出し分割へ落とす。
 調達仕様書テーマの docx は従来どおり spec-app / pandoc（`custom-reference.docx`）側のスタイル。
 

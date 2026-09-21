@@ -12,14 +12,34 @@ from typing import Any
 # Solid Gray / Blue（ダッシュボード資料のカラーコードに合わせる）
 INK = (0x1A, 0x1A, 0x1A)  # Solid Gray 900
 BODY = (0x33, 0x33, 0x33)  # Solid Gray 800
-MUTED = (0x76, 0x76, 0x76)  # Solid Gray 536（白地で本文 4.5:1）
-RULE = (0xCC, 0xCC, 0xCC)  # Solid Gray 200
+MUTED = (0x76, 0x76, 0x76)  # Solid Gray 536（HTML/docx。白地で本文 4.5:1）
+RULE = (0xCC, 0xCC, 0xCC)  # Solid Gray 200（装飾罫）
 PAPER = (0xFF, 0xFF, 0xFF)  # White
 SURFACE = (0xF2, 0xF2, 0xF2)  # Solid Gray 50
 ACCENT = (0x00, 0x17, 0xC1)  # Blue 900
 ON_ACCENT = (0xFF, 0xFF, 0xFF)
 FONT = "Noto Sans JP"
 FONT_MONO = "Noto Sans Mono"
+
+# スライド用の役割色（DADS PowerPoint 応用＋公式 design-tokens v2.0.1）。
+# HTML/docx の MUTED/RULE は変えない。PPTX だけ Gray-600 を補助文字・意味のある罫に使う。
+PPTX_MUTED = (0x66, 0x66, 0x66)  # Solid Gray 600
+RULE_MEANINGFUL = (0x66, 0x66, 0x66)  # 読解に必要な境界
+PRIMARY_SURFACE = (0xE8, 0xF1, 0xFE)  # Blue 50（表見出し行）
+SUCCESS = (0x19, 0x7A, 0x4B)  # Green 800
+SUCCESS_SURFACE = (0xE6, 0xF5, 0xEC)
+ERROR = (0xCE, 0x00, 0x00)  # Red 900
+ERROR_SURFACE = (0xFD, 0xEE, 0xEE)
+WARNING = (0x80, 0x63, 0x00)  # Yellow 1000（Yellow-50 上で 4.5:1）
+WARNING_SURFACE = (0xFB, 0xF5, 0xE0)
+SERIES = (
+    ACCENT,  # Blue 900
+    (0x11, 0x5A, 0x36),  # Green 900
+    (0x5C, 0x10, 0xBE),  # Purple 800
+    (0xAC, 0x3E, 0x00),  # Orange 900
+)
+CONTRAST_TEXT_MIN = 4.5
+CONTRAST_GRAPHIC_MIN = 3.0
 # docx はフォント埋め込みをせず、受け手に元から入っている日本語フォントを指定して
 # 置換を避ける。游ゴシック(Yu Gothic)は Windows(Office)/macOS にプリインストールされ、
 # プレビューの Noto Sans JP（ヒューマニスト系ゴシック）に近い。等幅は Windows 標準の
@@ -27,20 +47,70 @@ FONT_MONO = "Noto Sans Mono"
 DOCX_FONT = "游ゴシック"
 DOCX_FONT_MONO = "ＭＳ ゴシック"
 
-# PPTX 型スケール（pt, 16:9）。DADS のタイポグラフィに合わせ、可読性重視で一段大きく。
-# 役割: title=スライド見出し / section=章扉 / card_head=カード見出し /
-#       body=本文 / caption=出典・ページ番号。
+# PPTX 型スケール（pt, 16:9）。DADS パワポ応用（投影 22pt）と机上閲覧の中間。
+# 縮める前に整理・分割する。自動縮小は溢れた箱だけ。
 PPTX_TYPE = {
-    "title": 28,
-    "section": 32,
-    "card_head": 18,
-    "body": 15,
-    "caption": 11,
+    "cover": 40,
+    "title": 32,
+    "section": 36,
+    "subhead": 22,
+    "card_head": 20,
+    "body": 18,
+    "table": 16,
+    "caption": 14,
+    "footer": 12,
+    "metric": 40,
+}
+
+# 16:9 = 1280×720 px（96dpi）。zip の framePx を inch に換算（px / 96）。
+PPTX_SLIDE = {"width": 13.333, "height": 7.5}
+PPTX_FRAME = {
+    "left": 64 / 96,
+    "right": 64 / 96,
+    "top": 48 / 96,
+    "content_top": 184 / 96,
+    "content_bottom": 624 / 96,
+    "footer_top": 664 / 96,
+    "bottom": 32 / 96,
+    "column_gap": 64 / 96,
+    "rule_width": 64 / 96,
+    "rule_height": 4 / 96,
 }
 
 
 def hex_of(rgb: tuple[int, int, int]) -> str:
     return f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+
+
+def contrast_ratio(fg: tuple[int, int, int], bg: tuple[int, int, int]) -> float:
+    """WCAG 2 の相対輝度比。不透明 RGB 同士。"""
+
+    def _lin(channel: int) -> float:
+        x = channel / 255.0
+        return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+
+    def _lum(rgb: tuple[int, int, int]) -> float:
+        r, g, b = rgb
+        return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+    a, b = _lum(fg), _lum(bg)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def contrast_ok(
+    fg: tuple[int, int, int],
+    bg: tuple[int, int, int],
+    minimum: float = CONTRAST_TEXT_MIN,
+) -> bool:
+    return contrast_ratio(fg, bg) + 0.001 >= minimum
+
+
+def pptx_content_width() -> float:
+    return PPTX_SLIDE["width"] - PPTX_FRAME["left"] - PPTX_FRAME["right"]
+
+
+def pptx_content_height() -> float:
+    return PPTX_FRAME["content_bottom"] - PPTX_FRAME["content_top"]
 
 
 def style_run(
