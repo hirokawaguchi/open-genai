@@ -980,6 +980,147 @@ def validate_deck(deck: Any) -> dict[str, Any] | None:
     return {"slides": out}
 
 
+# ---------------------------------------------------------------------------
+# freeform（フェーズ B）: LLM がグリッド座標で要素を自由配置する。
+# 座標はコンテンツ領域（タイトル帯の下）を 12 列 × 6 行に割ったグリッド。
+# 重なり/はみ出しはサーバ側で必ずクランプする。配色・フォントは DADS のみ。
+# ---------------------------------------------------------------------------
+_GRID_COLS = 12
+_GRID_ROWS = 6
+_GRID_LEFT = 0.7
+_GRID_TOP = 1.4
+_GRID_WIDTH = 11.9
+_GRID_HEIGHT = 5.5
+_GRID_PAD = 0.08
+
+
+def _clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _grid_span(el: dict[str, Any]) -> tuple[int, int, int, int]:
+    """要素のグリッド指定を安全な (col,row,colspan,rowspan) に丸める。"""
+    col = _clamp_int(el.get("col"), 0, _GRID_COLS - 1, 0)
+    row = _clamp_int(el.get("row"), 0, _GRID_ROWS - 1, 0)
+    colspan = _clamp_int(el.get("colspan"), 1, _GRID_COLS, 6)
+    rowspan = _clamp_int(el.get("rowspan"), 1, _GRID_ROWS, 2)
+    colspan = min(colspan, _GRID_COLS - col)
+    rowspan = min(rowspan, _GRID_ROWS - row)
+    return col, row, colspan, rowspan
+
+
+def _grid_rect(prs: Any, col: int, row: int, colspan: int, rowspan: int) -> tuple[Any, Any, Any, Any]:
+    """グリッドセルを EMU の (left, top, width, height) に変換する（内側パディング付き）。"""
+    from pptx.util import Inches
+
+    cell_w = _GRID_WIDTH / _GRID_COLS
+    cell_h = _GRID_HEIGHT / _GRID_ROWS
+    left = Inches(_GRID_LEFT + col * cell_w + _GRID_PAD)
+    top = Inches(_GRID_TOP + row * cell_h + _GRID_PAD)
+    width = Inches(max(colspan * cell_w - 2 * _GRID_PAD, 0.5))
+    height = Inches(max(rowspan * cell_h - 2 * _GRID_PAD, 0.3))
+    return left, top, width, height
+
+
+_TONE = {"ink": INK, "body": BODY, "muted": MUTED, "accent": ACCENT}
+
+
+def _tone_color(tone: Any, default: tuple[int, int, int] = BODY) -> tuple[int, int, int]:
+    return _TONE.get(str(tone or "").strip().lower(), default)
+
+
+def _size_pt(size: Any, default_key: str) -> Any:
+    from pptx.util import Pt
+
+    # style.size と default_key はどちらもトークン（small/body/head/title）。
+    table = {
+        "small": PPTX_TYPE["caption"],
+        "body": PPTX_TYPE["body"],
+        "head": PPTX_TYPE["card_head"],
+        "title": PPTX_TYPE["title"],
+    }
+    key = str(size or "").strip().lower()
+    return Pt(table.get(key) or table.get(default_key, PPTX_TYPE["body"]))
+
+
+def _align_of(value: Any) -> Any:
+    from pptx.enum.text import PP_ALIGN
+
+    return {
+        "center": PP_ALIGN.CENTER,
+        "right": PP_ALIGN.RIGHT,
+        "left": PP_ALIGN.LEFT,
+    }.get(str(value or "").strip().lower(), PP_ALIGN.LEFT)
+
+
+@register("freeform")
+def _render_freeform(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    """LLM が指定したグリッド配置で要素を描く。未知/無効は無視し、必ず領域内に収める。"""
+    elements = _as_list(content.get("elements"))
+    seen: set[tuple[int, int, int, int, str]] = set()
+    drawn = 0
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        if drawn >= 14:
+            break
+        col, row, colspan, rowspan = _grid_span(el)
+        kind = str(el.get("kind") or "text").strip().lower()
+        key = (col, row, colspan, rowspan, kind)
+        if key in seen:  # 完全に同じ矩形・種別の重複は後勝ちで間引く
+            continue
+        seen.add(key)
+        left, top, width, height = _grid_rect(prs, col, row, colspan, rowspan)
+        style = el.get("style") if isinstance(el.get("style"), dict) else {}
+        fill = str(style.get("fill") or "none").strip().lower()
+        if fill == "surface":
+            _rect(slide, left, top, width, height, SURFACE)
+        elif fill == "accent":
+            _rect(slide, left, top, width, height, ACCENT)
+        default_tone = "accent" if fill == "accent" else None
+        color = ON_ACCENT if fill == "accent" else _tone_color(style.get("tone") or default_tone)
+        align = _align_of(style.get("align"))
+        bold = bool(style.get("bold"))
+        if kind == "image":
+            rel = str(el.get("image") or el.get("src") or "").replace("\\", "/").lstrip("/")
+            if not _picture(slide, rel, assets, left, top, width):
+                _placeholder(slide, left, top, width, height, "図")
+        elif kind == "table":
+            headers = [str(h) for h in _as_list(el.get("headers"))]
+            rows = [[str(c) for c in _as_list(r)] for r in _as_list(el.get("rows"))]
+            table_rows = ([headers] if headers else []) + rows
+            if table_rows:
+                _add_table(slide, left, top, width, height, table_rows)
+        elif kind == "bullets":
+            bullets = [str(b) for b in _as_list(el.get("bullets") or el.get("text")) if str(b).strip()]
+            _lines(slide, left, top, width, height, bullets, size=_size_pt(style.get("size"), "body"), color=color, bullet=True)
+        elif kind == "kpi":
+            value = str(el.get("value") or el.get("text") or "")
+            label = str(el.get("label") or "")
+            _textbox(slide, left, top, width, height, value, size=_size_pt(style.get("size"), "title"), color=ACCENT if fill != "accent" else ON_ACCENT, bold=True, align=align)
+            if label:
+                from pptx.util import Emu, Inches
+
+                _textbox(slide, left, Emu(top + Inches(0.7)), width, height, label, size=_size_pt("body", "body"), color=MUTED if fill != "accent" else ON_ACCENT, align=align)
+        elif kind == "heading":
+            _textbox(slide, left, top, width, height, str(el.get("text") or ""), size=_size_pt(style.get("size"), "head"), color=(INK if fill != "accent" else ON_ACCENT), bold=True, align=align)
+        elif kind == "box":
+            text = str(el.get("text") or "")
+            if text and fill == "none":
+                _rect(slide, left, top, width, height, SURFACE)
+            if text:
+                _textbox(slide, left, top, width, height, text, size=_size_pt(style.get("size"), "body"), color=color, bold=bold, align=align)
+        else:  # text
+            text = str(el.get("text") or "")
+            if text:
+                _textbox(slide, left, top, width, height, text, size=_size_pt(style.get("size"), "body"), color=color, bold=bold, align=align)
+        drawn += 1
+
+
 def render_deck(deck: dict[str, Any], assets: dict[str, bytes] | None = None) -> bytes:
     """検証済み deck を PPTX バイト列にする。"""
     from pptx import Presentation
