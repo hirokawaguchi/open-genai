@@ -1,7 +1,7 @@
 """文書生成・合成サービス（公開の汎用リファレンス実装 / 既定の合成バックエンド）。
 
 Open GENAI の `procuretech-editor` から呼ばれる pluggable な生成/合成 API の
-「そのまま動く」実装。`/generate` はナビゲーションシート（Markdown 表＋生成指示）
+「そのまま動く」実装。`/generate` はヒアリングシート（設問と回答の別セル＋生成指示）
 を読み、設問ごとの材料ファイルと、生成指示に基づく成果物 Markdown を作る。
 成果物は LLM（未設定・失敗時はスキップして README に注記）で書く。
 `/compose` の html / pptx は任意で OpenAI 互換 LLM がタイトル列と layout を決め、
@@ -34,6 +34,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import uuid
 import zipfile
@@ -59,15 +60,14 @@ from shared.navsheet import NavSheet, empty_workbook, parse_workbook, slug_for  
 
 from app.compose_formats import (
     SUPPORTED_FORMATS,
+    markdown_to_docx,
     markdown_to_html,
     markdown_to_md,
     markdown_to_pptx,
     markdown_to_txt,
     normalize_format,
 )
-from app.dads import BODY, FONT_MONO, MUTED, apply_docx_theme, shade_paragraph, style_run
 from app.pptx_check import check_deck, check_html_bytes, check_pptx_bytes, format_issues
-from app.pptx_html import render_deck_html
 from app.pptx_layouts import render_deck
 from app.pptx_plan import plan_deck
 from app.waiting import make_fallback_waiting_png
@@ -87,6 +87,11 @@ app = FastAPI(title="ProcureTech Generate", version="1.0.0")
 
 # request_id -> {"created": float, "zip": bytes, "doc_type": str}
 _JOBS: dict[str, dict[str, Any]] = {}
+
+# 非同期 compose ジョブ（重い pptx 生成の実進捗を返すため）。
+#   job_id -> {"status", "progress"(0-100), "step", "zip"?, "error"?, "created"}
+_COMPOSE_JOBS: dict[str, dict[str, Any]] = {}
+_COMPOSE_LOCK = threading.Lock()
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -112,12 +117,24 @@ _RESERVED_KEYS = {README_SECTION_KEY, GENERATED_SECTION_KEY}
 _UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
+_MD_LINE = re.compile(r"^(#{1,6}\s|```|\||[-*+] |\d+\.\s|> )")
+
+
+def _looks_like_markdown(value: str) -> bool:
+    return any(_MD_LINE.match(ln.lstrip()) for ln in (value or "").splitlines())
+
+
 def _bullets_or_paragraph(value: str) -> str:
-    """複数行の値は箇条書き、単一行はそのまま段落にする。"""
-    lines = [ln.strip() for ln in value.splitlines() if ln.strip()]
+    """プレーンな複数行だけ箇条書きにする。表・見出しなど Markdown はそのまま転記する。"""
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return "（未記入）"
+    if _looks_like_markdown(text):
+        return text
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if len(lines) > 1:
         return "\n".join(f"- {ln}" for ln in lines)
-    return value or "（未記入）"
+    return text
 
 
 def _safe_stem(label: str, index: int) -> str:
@@ -315,136 +332,11 @@ def _build_zip(
     return buf.getvalue()
 
 
-# 画像のみの行（ブロック画像として大きく埋め込む）。
-_IMAGE_LINE_RE = re.compile(r"^!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)$")
-# 行内（インライン）画像。テキストと混在していても抽出できる。
-_INLINE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-
-
-def _rel_of(match_group: str) -> str:
-    return match_group.replace("\\", "/").lstrip("/")
-
-
-def _add_code_block(doc: Any, lang: str, lines: list[str]) -> None:
-    """フェンス付きコードブロックを等幅段落で出力する。
-
-    Mermaid はサーバ側では描画できない（本来はクライアントが合成前に PNG 化して画像へ差し替える）。
-    未変換のまま届いた場合の保険として、注記＋ソースを崩さず出力する。
-    """
-    from docx.shared import Pt
-
-    if lang == "mermaid":
-        note = doc.add_paragraph()
-        style_run(
-            note.add_run("【Mermaid 図（画像未変換のためソースを表示）】"),
-            size=Pt(10),
-            color=MUTED,
-            italic=True,
-        )
-    para = doc.add_paragraph()
-    shade_paragraph(para)
-    para.paragraph_format.line_spacing = 1.45
-    style_run(
-        para.add_run("\n".join(lines)),
-        name=FONT_MONO,
-        size=Pt(9),
-        color=BODY,
-    )
-
-
-def _add_line_with_inline_images(doc: Any, line: str, assets: dict[str, bytes]) -> None:
-    """テキストと行内画像が混在する行を、画像を埋め込みつつ 1 段落で出力する。"""
-    from docx.shared import Cm
-
-    matches = list(_INLINE_IMAGE_RE.finditer(line))
-    if not matches:
-        doc.add_paragraph(line)
-        return
-    para = doc.add_paragraph()
-    last = 0
-    for m in matches:
-        pre = line[last : m.start()]
-        if pre:
-            para.add_run(pre)
-        rel = _rel_of(m.group(1))
-        data = assets.get(rel)
-        if data:
-            try:
-                para.add_run().add_picture(io.BytesIO(data), width=Cm(12))
-            except Exception:  # noqa: BLE001
-                para.add_run(f"[画像: {rel}]")
-        else:
-            para.add_run(f"[画像: {rel}]")
-        last = m.end()
-    tail = line[last:]
-    if tail:
-        para.add_run(tail)
-
-
 def _markdown_to_docx(
     name: str, sections: list[dict[str, Any]], assets: dict[str, bytes] | None = None
 ) -> bytes:
-    """章（Markdown 文字列）を連結し、簡易パースで .docx を作る（python-docx）。
-
-    spec-app（pandoc）と同等に、本文が参照する画像を assets（{相対パス: バイト列}）から
-    埋め込む。画像のみの行はブロック画像、テキスト混在はインライン画像として配置する。
-    Mermaid は合成前にクライアントが PNG 画像へ差し替える運用のため、ここでは通常画像として
-    埋め込まれる（未変換で届いた場合はコードブロックとして安全に出力する）。
-    """
-    from docx import Document
-    from docx.shared import Cm
-
-    assets = assets or {}
-    doc = Document()
-    apply_docx_theme(doc)
-    doc.add_heading(name, level=0)
-    for sec in sections:
-        content = str(sec.get("content") or "")
-        in_code = False
-        code_lang = ""
-        code_lines: list[str] = []
-        for raw_line in content.splitlines():
-            stripped = raw_line.strip()
-            if stripped.startswith("```"):
-                if in_code:
-                    _add_code_block(doc, code_lang, code_lines)
-                    in_code, code_lang, code_lines = False, "", []
-                else:
-                    in_code, code_lang, code_lines = True, stripped[3:].strip().lower(), []
-                continue
-            if in_code:
-                code_lines.append(raw_line)
-                continue
-            line = raw_line.rstrip()
-            if not line.strip():
-                continue
-            m = _IMAGE_LINE_RE.match(line.strip())
-            if m:
-                rel = _rel_of(m.group(1))
-                data = assets.get(rel)
-                if data:
-                    try:
-                        doc.add_picture(io.BytesIO(data), width=Cm(15))
-                        continue
-                    except Exception:  # noqa: BLE001
-                        pass
-                doc.add_paragraph(f"[画像: {rel}]")
-                continue
-            if line.startswith("### "):
-                doc.add_heading(line[4:].strip(), level=3)
-            elif line.startswith("## "):
-                doc.add_heading(line[3:].strip(), level=2)
-            elif line.startswith("# "):
-                doc.add_heading(line[2:].strip(), level=1)
-            elif line.lstrip().startswith(("- ", "* ")):
-                doc.add_paragraph(line.lstrip()[2:].strip(), style="List Bullet")
-            else:
-                _add_line_with_inline_images(doc, line, assets)
-        if in_code and code_lines:  # フェンス閉じ忘れの保険
-            _add_code_block(doc, code_lang, code_lines)
-    out = io.BytesIO()
-    doc.save(out)
-    return out.getvalue()
+    """章 Markdown をプレビュー相当の表現で .docx にする。"""
+    return markdown_to_docx(name, sections, assets)
 
 
 def _decode_assets(raw: Any) -> dict[str, bytes]:
@@ -576,22 +468,96 @@ def _log_deck_check(fmt: str, deck: dict[str, Any], data: bytes) -> None:
 
 
 def _render_output(
-    fmt: str, name: str, sections: list[dict[str, Any]], assets: dict[str, bytes]
+    fmt: str,
+    name: str,
+    sections: list[dict[str, Any]],
+    assets: dict[str, bytes],
+    on_progress: Any = None,
 ) -> bytes:
-    if fmt in {"html", "pptx"}:
-        deck = plan_deck(name, sections, assets)
+    # HTML はブラウザでの庁内情報伝達を目的とし、常に縦スクロールの単一文書にする。
+    # スライド（LLM デッキ）は PPTX 専用に残す。
+    if fmt == "html":
+        data = markdown_to_html(name, sections, assets)
+        if on_progress:
+            on_progress(1.0, "書き出し")
+        return data
+    if fmt == "pptx":
+        deck = plan_deck(name, sections, assets, on_progress=on_progress)
         if deck:
-            print(f"[generate] {fmt}: LLM deck ({len(deck.get('slides') or [])} slides)")
-            data = render_deck_html(deck, assets) if fmt == "html" else render_deck(deck, assets)
-            _log_deck_check(fmt, deck, data)
+            print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
+            if on_progress:
+                on_progress(0.95, "スライドを書き出し")
+            data = render_deck(deck, assets)
+            _log_deck_check("pptx", deck, data)
+            if on_progress:
+                on_progress(1.0, "書き出し")
             return data
-        print(f"[generate] {fmt}: fallback ({'article html' if fmt == 'html' else 'heading split'})")
-        return markdown_to_html(name, sections, assets) if fmt == "html" else markdown_to_pptx(name, sections, assets)
+        print("[generate] pptx: fallback (heading split)")
+        data = markdown_to_pptx(name, sections, assets)
+        if on_progress:
+            on_progress(1.0, "書き出し")
+        return data
     if fmt == "txt":
         return markdown_to_txt(sections)
     if fmt == "md":
         return markdown_to_md(sections)
     return _markdown_to_docx(name, sections, assets)
+
+
+def _render_all(
+    outputs: list[Any],
+    assets: dict[str, bytes],
+    progress_cb: Any = None,
+) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """outputs をレンダリングして (rendered[(arcname,bytes)], unknown_formats) を返す。
+
+    progress_cb(pct:int, step:str) があれば、出力ごとの帯（0-95%）で実進捗を通知する。
+    """
+    valid = [o for o in outputs if isinstance(o, dict)]
+    total = max(len(valid), 1)
+    rendered: list[tuple[str, bytes]] = []
+    unknown: list[str] = []
+    used: set[str] = set()
+    idx = 0
+    for i, o in enumerate(outputs, 1):
+        if not isinstance(o, dict):
+            continue
+        name = str(o.get("name") or f"output{i}")
+        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
+        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
+            unknown.append(raw_fmt)
+            idx += 1
+            continue
+        fmt = normalize_format(raw_fmt)
+        sections = o.get("sections") or []
+        if not isinstance(sections, list):
+            sections = []
+        lo = 95.0 * idx / total
+        hi = 95.0 * (idx + 1) / total
+
+        def _op(frac: float, label: str, _lo=lo, _hi=hi, _name=name) -> None:
+            if progress_cb:
+                pct = int(_lo + (_hi - _lo) * max(0.0, min(1.0, frac)))
+                progress_cb(pct, f"{_name}: {label}")
+
+        data = _render_output(fmt, name, sections, assets, on_progress=_op if progress_cb else None)
+        arc = f"{name}.{fmt}"
+        n = 2
+        while arc in used:
+            arc = f"{name}({n}).{fmt}"
+            n += 1
+        used.add(arc)
+        rendered.append((arc, data))
+        idx += 1
+    return rendered, unknown
+
+
+def _zip_rendered(rendered: list[tuple[str, bytes]]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for arc, data in rendered:
+            zf.writestr(arc, data)
+    return buf.getvalue()
 
 
 @app.post("/compose")
@@ -617,30 +583,7 @@ async def compose(
         return JSONResponse(status_code=400, content={"error": "outputs がありません"})
     assets = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
 
-    unknown: list[str] = []
-    rendered: list[tuple[str, bytes]] = []
-    used: set[str] = set()
-    for i, o in enumerate(outputs, 1):
-        if not isinstance(o, dict):
-            continue
-        name = str(o.get("name") or f"output{i}")
-        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
-        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
-            unknown.append(raw_fmt)
-            continue
-        fmt = normalize_format(raw_fmt)
-        sections = o.get("sections") or []
-        if not isinstance(sections, list):
-            sections = []
-        data = _render_output(fmt, name, sections, assets)
-        arc = f"{name}.{fmt}"
-        n = 2
-        while arc in used:
-            arc = f"{name}({n}).{fmt}"
-            n += 1
-        used.add(arc)
-        rendered.append((arc, data))
-
+    rendered, unknown = _render_all(outputs, assets)
     if unknown and not rendered:
         return JSONResponse(
             status_code=422,
@@ -649,12 +592,107 @@ async def compose(
     if not rendered:
         return JSONResponse(status_code=400, content={"error": "合成対象の内容がありません"})
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for arc, data in rendered:
-            zf.writestr(arc, data)
     return Response(
-        content=buf.getvalue(),
+        content=_zip_rendered(rendered),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="compose.zip"'},
+    )
+
+
+def _run_compose_job(job_id: str, outputs: list[Any], assets: dict[str, bytes]) -> None:
+    """バックグラウンドで合成し、実進捗を _COMPOSE_JOBS に書く。"""
+
+    def progress_cb(pct: int, step: str) -> None:
+        with _COMPOSE_LOCK:
+            job = _COMPOSE_JOBS.get(job_id)
+            if job is not None:
+                job["progress"] = max(0, min(99, int(pct)))
+                job["step"] = step
+
+    try:
+        rendered, unknown = _render_all(outputs, assets, progress_cb=progress_cb)
+        if not rendered:
+            msg = (
+                f"未対応の出力形式です: {', '.join(sorted(set(unknown)))}"
+                if unknown
+                else "合成対象の内容がありません"
+            )
+            with _COMPOSE_LOCK:
+                _COMPOSE_JOBS[job_id].update(status="error", error=msg, step="エラー")
+            return
+        data = _zip_rendered(rendered)
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(
+                status="success", progress=100, step="完了", zip=data
+            )
+    except Exception as exc:  # noqa: BLE001
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(status="error", error=str(exc), step="エラー")
+
+
+@app.post("/compose/jobs")
+async def compose_job_start(
+    request: Request, x_api_key: str | None = Header(default=None)
+) -> JSONResponse:
+    """非同期で合成を開始し、job_id を返す。進捗は GET /compose/jobs/{id}。"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    outputs = body.get("outputs") if isinstance(body, dict) else None
+    if not isinstance(outputs, list) or not outputs:
+        return JSONResponse(status_code=400, content={"error": "outputs がありません"})
+    assets = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
+    job_id = uuid.uuid4().hex
+    with _COMPOSE_LOCK:
+        _COMPOSE_JOBS[job_id] = {
+            "status": "processing",
+            "progress": 0,
+            "step": "準備中",
+            "created": time.time(),
+        }
+    threading.Thread(
+        target=_run_compose_job, args=(job_id, outputs, assets), daemon=True
+    ).start()
+    return JSONResponse(status_code=202, content={"job_id": job_id})
+
+
+@app.get("/compose/jobs/{job_id}")
+def compose_job_status(job_id: str, x_api_key: str | None = Header(default=None)) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    with _COMPOSE_LOCK:
+        job = _COMPOSE_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        payload = {
+            "status": job.get("status"),
+            "progress": job.get("progress", 0),
+            "step": job.get("step", ""),
+        }
+        if job.get("error"):
+            payload["error"] = job["error"]
+    return JSONResponse(content=payload)
+
+
+@app.get("/compose/jobs/{job_id}/result")
+def compose_job_result(job_id: str, x_api_key: str | None = Header(default=None)) -> Response:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    with _COMPOSE_LOCK:
+        job = _COMPOSE_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        if job.get("status") != "success" or not job.get("zip"):
+            return JSONResponse(status_code=409, content={"error": "not ready"})
+        data = job["zip"]
+    return Response(
+        content=data,
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="compose.zip"'},
     )

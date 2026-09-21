@@ -44,6 +44,26 @@ def review_enabled() -> bool:
     return _flag_on("GENERATE_PPTX_REVIEW")
 
 
+def pptx_freeform_enabled() -> bool:
+    """フェーズ B（フリーフォーム自由配置）。未指定時は OFF（既存の固定レイアウト）。
+
+    有効化すると、コンポーザ用の高性能モデル（compose_model）でスライド上の要素配置を
+    生成する。失敗時は従来レイアウトへフォールバックする。
+    """
+    return llm_enabled() and _flag_on("GENERATE_PPTX_FREEFORM", "0")
+
+
+def compose_model() -> str:
+    """フリーフォーム配置に使うモデル。未指定なら通常モデル。
+
+    高性能モデルを別に割り当てられるようにする（例: Ollama Cloud の deepseek）。
+      OPENAI_BASE_URL=https://ollama.com/v1
+      OPENAI_API_KEY=<cloud key>
+      PROCURETECH_COMPOSE_MODEL=deepseek-v3.1
+    """
+    return (os.environ.get("PROCURETECH_COMPOSE_MODEL") or "").strip() or PROCURETECH_MODEL
+
+
 def instruction_llm_enabled() -> bool:
     """生成指示から成果物 Markdown を書くとき。未指定時は ON。GENERATE_LLM=0 で無効。"""
     return _flag_on("GENERATE_LLM")

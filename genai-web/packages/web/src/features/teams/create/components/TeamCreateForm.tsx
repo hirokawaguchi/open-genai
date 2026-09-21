@@ -14,6 +14,7 @@ import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { isApiError, teamApiFetcher } from '@/lib/fetcher';
 import { focus } from '@/utils/focus';
+import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { useCreateTeam } from '../hooks/useCreateTeam';
 import { TeamCreateSchema, teamCreateSchema } from '../schema';
 
@@ -26,6 +27,10 @@ export const TeamCreateForm = () => {
   const { data: teamsData } = useSWR<ListTeamsResponse>('teams', teamApiFetcher, {
     revalidateOnFocus: false,
   });
+  const { tenants, activeTenantId, isSystemAdmin } = useMyTenants();
+  const orgTenants = tenants.filter(
+    (t) => t.kind !== 'shared' && (isSystemAdmin || t.isAdmin),
+  );
   const parentCandidates = (teamsData?.teams ?? []).filter(
     (t) => t.teamId !== COMMON_EXAPPS_TEAM_ID,
   );
@@ -37,7 +42,7 @@ export const TeamCreateForm = () => {
   } = useForm<TeamCreateSchema>({
     mode: 'onSubmit',
     resolver: zodResolver(teamCreateSchema),
-    defaultValues: { parentTeamId: '' },
+    defaultValues: { parentTeamId: '', tenantId: activeTenantId ?? '' },
   });
 
   const onSubmit = handleSubmit(async (data) => {
@@ -48,6 +53,7 @@ export const TeamCreateForm = () => {
         teamName: data.name,
         teamAdminEmail: data.email,
         ...(data.parentTeamId ? { parentTeamId: data.parentTeamId } : {}),
+        ...(data.tenantId ? { tenantId: data.tenantId } : {}),
       });
       await mutateTeams();
       navigate(`/teams/${newTeam.teamId}/apps`);
@@ -103,6 +109,29 @@ export const TeamCreateForm = () => {
         />
         {errors.email && <ErrorText id={`team-email-error`}>＊{errors.email.message}</ErrorText>}
       </div>
+
+      {orgTenants.length > 1 && (
+        <div className='flex flex-col gap-1.5'>
+          <Label htmlFor={`team-tenant-input`} size='lg'>
+            棟
+          </Label>
+          <SupportText id={`team-tenant-input-support`}>
+            チームを置く棟です。親チームを指定した場合は、その棟に合わせます。
+          </SupportText>
+          <Select
+            id={`team-tenant-input`}
+            blockSize='md'
+            aria-describedby='team-tenant-input-support'
+            {...register('tenantId')}
+          >
+            {orgTenants.map((t) => (
+              <option key={t.tenantId} value={t.tenantId}>
+                {t.tenantName}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
 
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor={`team-parent-input`} size='lg'>

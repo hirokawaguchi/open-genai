@@ -34,6 +34,7 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
+import { Input } from '@/components/ui/dads/Input';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
@@ -1103,6 +1104,7 @@ export const ProcuretechEditorPage = () => {
   const [savedNotice, setSavedNotice] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [listNames, setListNames] = useState<Record<string, string>>({});
   const [pageError, setPageError] = useState<string | null>(null);
 
   // 画像挿入・AI 図生成の挿入先（ツールバーコマンド実行時の TextArea API を保持）。
@@ -1328,6 +1330,17 @@ export const ProcuretechEditorPage = () => {
       setNewProjectName('');
       mutateProjects();
       openProject(created.id);
+    }
+  };
+
+  const onSaveProjectName = async (id: string) => {
+    const nextName = (listNames[id] ?? '').trim();
+    const current = projects.find((p) => p.id === id);
+    if (!current || !nextName || nextName === current.name) return;
+    const updated = await actions.renameProject(id, nextName);
+    if (updated) {
+      await mutateProjects();
+      if (projectId === id) await mutateProject();
     }
   };
 
@@ -1920,10 +1933,10 @@ export const ProcuretechEditorPage = () => {
               </div>
             </div>
             <div className='overflow-x-auto rounded-8 border border-solid-gray-300'>
-              <table className='w-full min-w-[560px] border-collapse text-dns-14N-130'>
+              <table className='w-full min-w-[56rem] border-collapse text-dns-14N-130'>
                 <thead>
                   <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-solid-gray-600'>
-                    <th className='px-3 py-2'>プロジェクト名</th>
+                    <th className='w-3/5 min-w-[32rem] px-3 py-2'>プロジェクト名</th>
                     <th className='px-3 py-2'>作成日時</th>
                     <th className='px-3 py-2'>ファイル数</th>
                     <th className='px-3 py-2 text-right'>操作</th>
@@ -1939,19 +1952,25 @@ export const ProcuretechEditorPage = () => {
                   ) : (
                     projects.map((p) => (
                       <tr key={p.id} className='border-b border-solid-gray-200 last:border-b-0'>
-                        <td className='px-3 py-2'>
-                          <button
-                            type='button'
-                            onClick={() => openProject(p.id)}
-                            className='text-left text-std-16N-170 text-blue-900 underline-offset-2 hover:underline'
-                          >
-                            {p.name}
-                          </button>
-                          {p.id === projectId && (
-                            <span className='ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-dns-14N-130 text-blue-900'>
-                              選択中
-                            </span>
-                          )}
+                        <td className='w-3/5 min-w-[32rem] px-3 py-2'>
+                          <div className='flex items-center gap-2'>
+                            <Input
+                              id={`editor-project-name-${p.id}`}
+                              blockSize='sm'
+                              className='w-full min-w-0'
+                              aria-label='プロジェクト名'
+                              value={listNames[p.id] ?? p.name}
+                              onChange={(e) =>
+                                setListNames((prev) => ({ ...prev, [p.id]: e.target.value }))
+                              }
+                              onBlur={() => void onSaveProjectName(p.id)}
+                            />
+                            {p.id === projectId && (
+                              <span className='shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-dns-14N-130 text-blue-900'>
+                                選択中
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className='px-3 py-2 text-solid-gray-600'>
                           {new Date(p.created_at).toLocaleString('ja-JP')}

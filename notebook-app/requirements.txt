@@ -7,3 +7,7 @@ python-docx==1.1.2
 python-pptx==1.0.2
 xlrd==2.0.2
 olefile==0.47
+numpy==2.2.3
+Pillow==12.3.0
+pypdfium2==4.30.0
+rapidocr-onnxruntime==1.4.4

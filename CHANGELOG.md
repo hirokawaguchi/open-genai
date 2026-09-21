@@ -17,6 +17,7 @@
 | [v0.7.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.7.0) | `d7ae61e` | 提案実装：書類読取とチェック・日程調整（chosei）・様式 Excel 文書生成（自治体の「あったらいいな」を AI で実現） |
 | [v0.8.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.8.0) | `b1943d1` 以降 | 提案実装（第2弾）：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP |
 | [v0.9.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.9.0) | `d48cb96` 以降 | 提案実装（第3弾）：Markdown エディタ＋オプションの各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で作成。生成 API はプラガブル＝契約は OSS 公開・生成ロジックは非公開アプリに閉じ込め可能） |
+| [v0.10.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.10.0) | `1a135f0` 以降 | ノートブック（調べて項目に整理・スキル/MCP/OCR）・Web SSH・アプリ表示の編集・ヒアリングシート |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -33,6 +34,43 @@
 
 ## [Unreleased]
 
+- テナント（棟）を追加。既存組織はデフォルト棟。共有棟は明示した人だけ。ナレッジ・アプリ・カタログを活性棟で限定する。スーパー管理者は全棟、棟の管理者はその棟のナレッジ/アプリだけを扱う
+- チャット履歴・保存プロンプト・ピン留め・AI アプリ実行履歴を活性棟ごとに分ける。既存データはデフォルト棟。棟切替時は他棟の会話画面から離れる
+- 利用者登録で棟を必須にする。ログインだけでは棟を自動付与せず、どの棟の鍵も無い利用者はカタログ・履歴が空になり案内を出す。利用者一括管理に `tenant` 列と 1 名登録フォームを追加し、Keycloak 反映後に backend が主鍵として棟を付ける（共有棟は招待のみ）。デフォルト棟は既存データの移行寄せとして残す
+- おすすめアプリをシステム管理者が設定できる（トップ／サイド共通。AIアプリ一覧は対象外）
+- 起動していない公式アプリは利用者向けのおすすめ・AIアプリ一覧から隠す。管理画面では存在する公式アプリをすべて出し、起動中／未起動を表示する
+- ナレッジ管理はおすすめ、ナレッジ検索はおすすめ設定でも出し分け（既定はオン）。検索は AI アプリ一覧にも出す。ヘルス不通でも一覧から消さない
+- Markdown エディタの docx 書き出しで、GFM 表・太字／斜体／コード／リンク／番号付きリスト／引用をプレビュー相当に反映する
+- Markdown エディタの HTML 書き出しをスライド（LLM デッキ）から切り離し、常に自己完結・縦スクロールの庁内文書 HTML にする。見出しから目次を自動生成し、リンク／斜体／取消／番号付き・タスクリスト／水平線／Mermaid 画像をカバー。system フォント＋レスポンシブ＋print 対応。PPTX は従来の LLM デッキのまま
+- Markdown エディタの PPTX を notes-first に転換。まず LLM が原文を根拠に「整理ノート（構造化要点）」を作り、それをスライド本体の材料にする。ノートには整理ノート＋原文を常に併記（フォールバック経路にも原文ノートを付与、20字閾値は撤廃）。空列やプレースホルダを解消し、DADS の型スケール（見出し/本文/キャプション）と自動縮小で密度と可読性を上げる。原文グラウンディング（新規の数値・カタカナ・英字を除去）は維持
+- 書き出し（compose）の実進捗を表示する。generate-app に非同期ジョブ（`POST /compose/jobs` → `GET /compose/jobs/{id}` / `/result`）を追加し、pptx 生成の段階（構成→要点整理 n/N→スライド構成 m/M→書き出し）で実際の進捗を返す。editor は Excel と同様にポーリングして `compose_jobs` の progress/step に反映（未実装環境へは同期 `/compose` にフォールバック）。フロントの進捗バー・文言が処理中に更新されるようになる
+- PPTX にフリーフォーム自由配置（フェーズ B）を追加。`GENERATE_PPTX_FREEFORM=1` のとき、コンポーザ用モデル（`PROCURETECH_COMPOSE_MODEL`。例: Ollama Cloud の deepseek）が 12×6 グリッド上に見出し/本文/箇条書き/KPI/表/画像/面パネルを配置する `freeform` レイアウトを生成する。座標はサーバ側でクランプ、配色・フォントは DADS のみ・角丸なし、テキストは自動縮小。原文グラウンディングを通し、失敗・無効時は従来の固定レイアウトへフォールバック
+- 成果物配信 `ARTIFACT_DELIVERY_MODE` に `auto` を追加。`open`（常に直接DL）/`carrier`（常にリンクファイル）に加え、Host が `*.lgwan.jp` のときだけリンクファイルにする
+- インターネット入口ホスト（`PORTAL_LOGIN_HOSTS`）では Keycloak の ID/PW でログインし、成功後は `FRONTEND_URL` へ戻す。庁内公開面（`PUBLIC_URL`）は SAML のまま。前面プロキシ出口 IP（`OPERATOR_SAML_SOURCE_IPS`）がインターネット本体へ来た場合は庁内 URL へ返す
+- 本番 web ビルドが TypeScript の `Array.at` / `Uint8Array` 型で落ちるのを直す（ノートブック・Web SSH）
+
+## [0.10.0] - 2026-09-15
+
+このリリースの主役は **ノートブック** です。参考資料を集めて調べ、項目として整理し、
+必要ならヒアリングシート Excel を Markdown エディタへ渡せます。対話にはスキルと短い
+ハーネスが入り、ノート単位で MCP（共有ナレッジ・時刻・天気・Wikipedia）を使えます。
+スキャン PDF は RapidOCR で読み、条文見出しで節分けして設問に効く箇所だけを材料にします。
+
+あわせて庁内運用を厚くしました。**Web SSH**（カタログ上の接続先だけ）、
+共通アプリの表示名・紹介の編集、認証のサイレント再発行、文字起こしの大容量添付、
+Markdown エディタ／ヒアリングシートの書き出しを整えています。
+
+仕様の詳細は [`docs/notebook.md`](docs/notebook.md) / [`docs/ssh.md`](docs/ssh.md) を参照してください。
+
+---
+
+- ヒアリングシートを Markdown エディタへ読み込むとき、表・見出しなどの Markdown 回答を箇条書きで包まず転記する
+- ノートブックの対話で、長い回答が `max_tokens` で途中切れしないよう上限を広げ、切れたときは続きを足す。調べ中の文言を「このノートで有効にしているMCPを使っています」に揃える
+- ノートブックの参考資料取込で、第○条・様式などの行見出しで節分けし、設問に無い節は検索から外す。スキャン PDF は RapidOCR で読む（`NOTEBOOK_OCR`）
+- ノートブックの MCP を、管理画面での接続／切り離し・プロンプト編集と、参考資料タブでのノート単位 On/Off に分けた。ナレッジ MCP は共有ナレッジ（共通チーム）のライブ参照だと明記し、参考資料へのナレッジ取り込みと役割を分けた。時刻・天気・Wikipedia のサンプル MCP を既定接続し、対話で先に呼ぶよう促す
+- ノートブックの対話にスキルと短いエージェントハーネスを足した。人がスキルを選んで下書きし、項目へ採用する。チーム KB は Dify を挟まず knowledge-mcp を直接呼ぶ（scope はサーバ固定）。項目の手入力・行ごと生成・シート書き出しは維持
+- ノートブックの記入済みヒアリングシートを、設問と回答の別セルで書き出す。回答の改行はセル内改行。ダウンロード名は `ヒアリングシート_<ノート名>_YYYYMMDDHHMMSS.xlsx`。Markdown エディタは従来の Markdown 表形式も読む
+- Markdown エディタのプロジェクト名を一覧から編集できるようにした
 - `ssh-app` の `asyncssh` を 2.23.1 へ更新し、pip-audit 検出の PYSEC-2026-3808（SCP パストラバーサル）を解消する
 - Web SSH 端末を追加した。Compose profile `ssh` でオプション起動し、専用ページは `/ssh`。システム管理者が登録した接続先カタログだけに、認証済みユーザーがブラウザ（xterm）からパスワード認証で入れる。パスワードは保存せず、接続開始／切断だけを監査する。`/ssh/ws` の握手は JWT ミドルウェア対象外（トークンは最初の JSON）。nginx は `/api/ssh/ws` を rewrite せず Upgrade する。同じマシンの `localhost` は `host.docker.internal` に読み替える。画面は 80×25、PTY 出力の二重読みをやめ、入力は UTF-8。詳細は [`docs/ssh.md`](docs/ssh.md)
 - ヒアリングシートをノートブックへ回収した。表示名・`exAppId`・画面 URL は `notebook` / `/notebook`（旧 ID と `/hearing-sheet` は付け替え・リダイレクト）。実装は `notebook-app` / `open-genai-notebook-app`、フロントは `genai-web/.../notebook/`（`NotebookPage`）。取込時に全文を構造化し、項目生成と対話が同じソースを根拠にする。ヒアリングシート Excel と editor の「ヒアリングシートから生成」は維持
@@ -560,7 +598,8 @@ Dify エラー分類の改善に加え、公式リポジトリとしてのガバ
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.6.0...v0.7.0

@@ -48,7 +48,10 @@ from . import (
     llm,
     ngwords,
     objstore,
+    access_split,
+    artifact_delivery,
     ops_login,
+    portal_login,
     policy,
     security_warn,
     storage,
@@ -684,7 +687,7 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
     "placeholder": "",
     "description": (
         "参考資料を集めて調べ、項目として整理します。"
-        "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
+        "Markdown エディタに読み込ませるヒアリングシートも作成できます。"
     ),
     "howToUse": (
         "## 使い方\n\n"
@@ -741,6 +744,19 @@ def _team_rag_search_app(team_name: str) -> dict[str, Any]:
         "copyable": False,
         "status": "published",
     }
+
+
+def _is_knowledge_search_app(app: dict[str, Any]) -> bool:
+    if app.get("exAppId") == "rag":
+        return True
+    return _rag_role_of(app) == "search"
+
+
+def _feature_id_of(app: dict[str, Any]) -> str:
+    """棟の機能フラグ用 ID。チーム別ナレッジ検索は rag に寄せる。"""
+    if _is_knowledge_search_app(app):
+        return "rag"
+    return app.get("exAppId") or ""
 
 
 def _rag_role_of(app: dict[str, Any]) -> str | None:
@@ -863,6 +879,15 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "複数の参考資料から項目と値を整理し、文書生成用のヒアリングシート（Excel）を作ります。"
         ),
         "old_howto_markers": ("専用ページ「ヒアリングシート」",),
+    },
+    {
+        "seed": PROCURETECH_HEARING_SEED,
+        "old_name": "ノートブック",
+        "old_description": (
+            "参考資料を集めて調べ、項目として整理します。"
+            "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
+        ),
+        "old_howto_markers": (),
     },
 ]
 
@@ -1010,10 +1035,37 @@ def _member_teams(user_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _effective_team_ids(user_id: str) -> list[str]:
-    """読取用チームID。明示所属 + 主所属の子孫。"""
+def _active_tenant_id(user_id: str, claims: dict[str, Any] | None = None) -> str:
+    """活性棟。システム管理者は鍵が無くても保存した棟へ切替できる。"""
     try:
-        return teams_store.list_effective_team_ids_for_user(user_id)
+        return teams_store.get_active_tenant_id(
+            user_id, allow_any=_is_system_admin(claims or {})
+        )
+    except Exception:  # noqa: BLE001
+        return teams_store.NO_TENANT_ID
+
+
+def _request_scope(request: Request) -> tuple[str, str, dict[str, Any]]:
+    """(user_id, active_tenant_id, claims)。履歴など棟で分ける操作の共通入口。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    return user_id, _active_tenant_id(user_id, claims), claims
+
+
+def _has_no_tenant(tenant_id: str) -> bool:
+    """活性棟が無い（どの棟にも所属していない）か。"""
+    return not tenant_id or tenant_id == teams_store.NO_TENANT_ID
+
+
+_NO_TENANT_MESSAGE = "所属する棟がありません。管理者に連絡してください。"
+
+
+def _effective_team_ids(user_id: str, claims: dict[str, Any] | None = None) -> list[str]:
+    """読取用チームID。明示所属 + 主所属の子孫。活性棟で絞る。"""
+    try:
+        ids = teams_store.list_effective_team_ids_for_user(user_id)
+        active = _active_tenant_id(user_id, claims)
+        return teams_store.filter_team_ids_for_tenant(ids, active)
     except Exception:  # noqa: BLE001
         return []
 
@@ -1179,12 +1231,12 @@ _ARTIFACT_ALLOWED_HOSTS = {
 _ARTIFACT_MAX_BYTES = int(os.environ.get("ARTIFACT_MAX_BYTES", str(50 * 1024 * 1024)))
 
 # 成果物の配信方式（LGWAN 対応）。
-# - "open"    : 署名付き URL を outputs に直接リンクとして提示（開発・直接 DL 可能な環境向け）。
-# - "carrier" : 署名付き URL を UI に出さず、別途「リンクファイル(.txt/.html)」として
-#               持ち出させる（LGWAN 端末から成果物本体へ直接アクセスできない環境向け）。
-ARTIFACT_DELIVERY_MODE = (os.environ.get("ARTIFACT_DELIVERY_MODE", "open").strip().lower())
-if ARTIFACT_DELIVERY_MODE not in ("open", "carrier"):
-    ARTIFACT_DELIVERY_MODE = "open"
+# - "open"    : 常に署名付き URL を直接リンク（開発・直接 DL 可能な環境向け）。
+# - "carrier" : 常に「リンクファイル(.txt/.html)」で持ち出させる。
+# - "auto"    : Host が *.lgwan.jp なら carrier、それ以外は open。
+ARTIFACT_DELIVERY_MODE = artifact_delivery.normalize_mode(
+    os.environ.get("ARTIFACT_DELIVERY_MODE", "open")
+)
 # キャリアファイルの既定形式（"txt" / "html" / "both"）。"both" は UI からの format 指定で切替。
 ARTIFACT_CARRIER_FORMAT = (os.environ.get("ARTIFACT_CARRIER_FORMAT", "txt").strip().lower())
 if ARTIFACT_CARRIER_FORMAT not in ("txt", "html", "both"):
@@ -1291,9 +1343,11 @@ async def _rehost_artifacts(
         final_url = presigned or (file_url if _is_http_url(file_url) else "")
         # http(s) 以外(javascript:/data:/相対 等)はリンク化・成果物化しない（注入防止）
         safe_url = final_url if _is_http_url(final_url) else ""
-        # carrier モードでは自前ストレージに保存できた成果物の署名 URL を UI から隠し、
+        # carrier では自前ストレージに保存できた成果物の署名 URL を UI から隠し、
         # object_key 経由で別途「リンクファイル」を発行させる（LGWAN 端末は本体へ直接届かない）。
-        carrier = ARTIFACT_DELIVERY_MODE == "carrier" and bool(object_key)
+        carrier = artifact_delivery.use_carrier(
+            ARTIFACT_DELIVERY_MODE, request
+        ) and bool(object_key)
         art_out = {
             **a,
             "file_url": "" if carrier else safe_url,
@@ -1537,9 +1591,16 @@ def _saml_script_name(request: Request) -> str:
 
 @app.get("/auth/login")
 async def auth_login(request: Request) -> Response:
+    dest = access_split.login_destination(request)
+    if dest.kind == "portal":
+        return HTMLResponse(content=portal_login.login_form(request))
+    if dest.kind == "redirect" and dest.url:
+        return RedirectResponse(dest.url, status_code=302)
+    if dest.kind == "blank":
+        return HTMLResponse(content="", status_code=200)
     if ops_login.enabled(request):
         return HTMLResponse(content=ops_login.login_form(request))
-    relay = request.query_params.get("redirect") or FRONTEND_URL
+    relay = request.query_params.get("redirect") or dest.relay or access_split.lgwan_public() or FRONTEND_URL
     try:
         req = await _prepare_saml_request(request)
         saml_auth = auth.build_saml_auth(req)
@@ -1562,8 +1623,9 @@ async def auth_login(request: Request) -> Response:
 async def auth_acs(request: Request) -> Response:
     req = await _prepare_saml_request(request)
     saml_auth = auth.build_saml_auth(req)
-    relay = req["post_data"].get("RelayState") or FRONTEND_URL
-    target = relay if str(relay).startswith("http") else FRONTEND_URL
+    saml_home = access_split.lgwan_public() or FRONTEND_URL
+    relay = req["post_data"].get("RelayState") or saml_home
+    target = relay if str(relay).startswith("http") else saml_home
 
     try:
         saml_auth.process_response()
@@ -1575,7 +1637,7 @@ async def auth_acs(request: Request) -> Response:
         )
         # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
         auth.reset_settings_cache()
-        return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
+        return RedirectResponse(f"{saml_home}/auth-error", status_code=303)
 
     errors = saml_auth.get_errors()
     if errors or not saml_auth.is_authenticated():
@@ -1586,7 +1648,7 @@ async def auth_acs(request: Request) -> Response:
         )
         # Keycloak 再構成後の古い IdP メタデータ/証明書キャッシュを次回で刷新する
         auth.reset_settings_cache()
-        return RedirectResponse(f"{FRONTEND_URL}/auth-error", status_code=303)
+        return RedirectResponse(f"{saml_home}/auth-error", status_code=303)
 
     attrs = saml_auth.get_attributes()
     # 識別子(メール)は表記ゆれで別人物扱いにならないよう正規化して用いる
@@ -1706,6 +1768,22 @@ async def auth_ops(request: Request) -> Response:
     return RedirectResponse(location, status_code=303)
 
 
+@app.post("/auth/portal")
+async def auth_portal(request: Request) -> Response:
+    """インターネット入口専用ログイン。Host 不一致は 404。権限は Keycloak の所属グループ。"""
+    if not portal_login.enabled(request):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    error, location, _user, ident = await portal_login.handle_post(
+        request, mint_token=auth.mint_token, audit=audit
+    )
+    if error or not location:
+        body = portal_login.login_form(
+            request, error=error or "ログインに失敗しました。", ident=ident
+        )
+        return HTMLResponse(status_code=401, content=body)
+    return RedirectResponse(location, status_code=303)
+
+
 @app.get("/auth/saml/sls")
 async def auth_sls(request: Request) -> Response:
     """IdP からの SLO 応答/要求を処理し、サインアウト完了画面へ戻す。"""
@@ -1736,28 +1814,30 @@ async def health_details() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # チャット履歴 (genU API)
 # ---------------------------------------------------------------------------
-@app.post("/chats")
-async def create_chat(request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
+@app.post("/chats", response_model=None)
+async def create_chat(request: Request) -> dict[str, Any] | JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 - body 省略時はデフォルト usecase
         body = {}
     usecase = body.get("usecase") or "/chat"
-    return {"chat": storage.create_chat(user_id, usecase)}
+    return {"chat": storage.create_chat(user_id, usecase, tenant_id)}
 
 
 @app.get("/chats")
 async def list_chats(request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
-    return {"data": storage.list_chats(user_id), "lastEvaluatedKey": None}
+    user_id, tenant_id, _ = _request_scope(request)
+    return {"data": storage.list_chats(user_id, tenant_id), "lastEvaluatedKey": None}
 
 
 @app.get("/chats/{chat_id}")
 async def find_chat(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
-    chat = storage.find_chat(chat_id, user_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    chat = storage.find_chat(chat_id, user_id, tenant_id)
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
@@ -1765,8 +1845,8 @@ async def find_chat(chat_id: str, request: Request) -> JSONResponse:
 
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
-    ok = storage.delete_chat(chat_id, user_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    ok = storage.delete_chat(chat_id, user_id, tenant_id)
     if not ok:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={})
@@ -1774,9 +1854,9 @@ async def delete_chat(chat_id: str, request: Request) -> JSONResponse:
 
 @app.put("/chats/{chat_id}/title")
 async def update_title(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
-    chat = storage.update_title(chat_id, user_id, body.get("title", ""))
+    chat = storage.update_title(chat_id, user_id, body.get("title", ""), tenant_id)
     if not chat:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     return JSONResponse(content={"chat": chat})
@@ -1784,16 +1864,18 @@ async def update_title(chat_id: str, request: Request) -> JSONResponse:
 
 @app.get("/chats/{chat_id}/messages")
 async def list_messages(chat_id: str, request: Request) -> dict[str, Any]:
-    user_id = _user_id(_claims_from_request(request))
-    return {"messages": storage.list_messages(chat_id, user_id)}
+    user_id, tenant_id, _ = _request_scope(request)
+    return {"messages": storage.list_messages(chat_id, user_id, tenant_id)}
 
 
 @app.post("/chats/{chat_id}/messages")
 async def create_messages(chat_id: str, request: Request) -> JSONResponse:
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     body = await request.json()
     messages = body.get("messages", [])
-    recorded = storage.create_messages(chat_id, user_id, messages)
+    recorded = storage.create_messages(chat_id, user_id, messages, tenant_id)
     if recorded is None:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
     # 監査ログ（内容ログ）: 確定メッセージを証跡として記録（messages テーブルとは独立）
@@ -1818,7 +1900,7 @@ async def save_image_result(
     chat_id: str, message_id: str, request: Request
 ) -> JSONResponse:
     """画像生成結果を assistant メッセージの extraData に永続化する。"""
-    user_id = _user_id(_claims_from_request(request))
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     images_b64 = body.get("images") or []
     meta = body.get("meta") or {}
@@ -1857,7 +1939,7 @@ async def save_image_result(
         }
     ]
     updated = storage.update_message_extra_data(
-        chat_id, user_id, message_id, extra_data
+        chat_id, user_id, message_id, extra_data, tenant_id
     )
     if not updated:
         return JSONResponse(status_code=404, content={"message": "message not found"})
@@ -1906,8 +1988,7 @@ async def predict(request: Request) -> Response:
 
 @app.post("/predict/title")
 async def predict_title(request: Request) -> str:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
     prompt = body.get("prompt", "")
 
@@ -1931,7 +2012,7 @@ async def predict_title(request: Request) -> str:
     chat_id_raw = chat.get("chatId", "")
     chat_id = chat_id_raw.split("#")[1] if "#" in chat_id_raw else chat_id_raw
     if chat_id and title:
-        storage.update_title(chat_id, user_id, title)
+        storage.update_title(chat_id, user_id, title, tenant_id)
 
     return title
 
@@ -1941,16 +2022,18 @@ async def predict_title(request: Request) -> str:
 # ---------------------------------------------------------------------------
 @app.get("/systemcontexts")
 async def list_system_contexts(request: Request) -> list[Any]:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     # 本人 ＋ 全体公開 ＋ 所属/配下チーム共有（読取は effective tags）
-    return storage.list_system_contexts(user_id, _effective_team_ids(user_id))
+    return storage.list_system_contexts(
+        user_id, _effective_team_ids(user_id, claims), tenant_id
+    )
 
 
 @app.post("/systemcontexts")
 async def create_system_context(request: Request) -> JSONResponse:
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     body = await request.json()
     shared_teams, is_public = _resolve_share_teams(user_id, claims, body)
     sc = storage.create_system_context(
@@ -1959,6 +2042,7 @@ async def create_system_context(request: Request) -> JSONResponse:
         body.get("systemContext", ""),
         shared_tags=shared_teams,
         is_public=is_public,
+        tenant_id=tenant_id,
     )
     return JSONResponse(content={"systemContext": sc})
 
@@ -1986,10 +2070,10 @@ def _resolve_share_teams(
 
 @app.put("/systemcontexts/{sc_id}/title")
 async def update_system_context_title(sc_id: str, request: Request) -> JSONResponse:
-    claims = _claims_from_request(request)
+    user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     sc = storage.update_system_context_title(
-        _user_id(claims), sc_id, body.get("title", "")
+        user_id, sc_id, body.get("title", ""), tenant_id
     )
     if not sc:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -1999,8 +2083,7 @@ async def update_system_context_title(sc_id: str, request: Request) -> JSONRespo
 @app.put("/systemcontexts/{sc_id}")
 async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
     """保存プロンプトの本文・タイトル・共有設定を更新する（所有者のみ）。"""
-    claims = _claims_from_request(request)
-    user_id = _user_id(claims)
+    user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
     shared_teams = None
     is_public = None
@@ -2013,6 +2096,7 @@ async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
         system_context=body.get("systemContext"),
         shared_tags=shared_teams,
         is_public=is_public,
+        tenant_id=tenant_id,
     )
     if not sc:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -2021,8 +2105,8 @@ async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
 
 @app.delete("/systemcontexts/{sc_id}")
 async def delete_system_context(sc_id: str, request: Request) -> dict[str, Any]:
-    claims = _claims_from_request(request)
-    storage.delete_system_context(_user_id(claims), sc_id)
+    user_id, tenant_id, _ = _request_scope(request)
+    storage.delete_system_context(user_id, sc_id, tenant_id)
     return {}
 
 
@@ -2271,19 +2355,36 @@ def _knowledge_authz(
     if not scope:
         return JSONResponse(status_code=400, content={"error": "scope（teamId）が必要です"})
     is_admin = _is_system_admin(claims)
+    tenant_admin = teams_store.is_tenant_admin_of_team(user_id, scope)
     if scope == COMMON_TEAM_ID:
-        # 共有ナレッジ: 読取は全認証ユーザー、書込・管理操作は管理者のみ
-        if (write or admin_only) and not is_admin:
+        # デフォルト棟の共通ナレッジ。書込はスーパー管理者またはその棟の管理者。
+        if (write or admin_only) and not is_admin and not tenant_admin:
             return _forbidden("共有ナレッジの管理には管理者権限が必要です")
+        if not is_admin:
+            active = _active_tenant_id(user_id, claims)
+            if not teams_store.team_visible_in_tenant(scope, active):
+                return _forbidden("この棟ではそのナレッジを扱えません")
         return None
-    # チームスコープ: 読取は配下継承、書込は明示メンバー（or システム管理者）
+    # チームスコープ: 読取は配下継承、書込は明示メンバー／棟管理者／スーパー管理者
     if write or admin_only:
-        if not is_admin and not teams_store.is_team_member(scope, user_id):
+        if (
+            not is_admin
+            and not tenant_admin
+            and not teams_store.is_team_member(scope, user_id)
+        ):
             return _forbidden("このチームのナレッジを操作する権限がありません")
-    elif not is_admin and not teams_store.can_read_team(scope, user_id):
+    elif (
+        not is_admin
+        and not tenant_admin
+        and not teams_store.can_read_team(scope, user_id)
+    ):
         return _forbidden("このチームのナレッジを操作する権限がありません")
-    if admin_only and not is_admin:
+    if admin_only and not is_admin and not tenant_admin:
         return _forbidden("この操作には管理者権限が必要です")
+    if not is_admin:
+        active = _active_tenant_id(user_id, claims)
+        if not teams_store.team_visible_in_tenant(scope, active):
+            return _forbidden("この棟ではそのナレッジを扱えません")
     return None
 
 
@@ -2337,42 +2438,11 @@ async def knowledge_scopes(request: Request) -> JSONResponse:
     if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     is_admin = _is_system_admin(claims)
-    scopes: list[dict[str, Any]] = [
-        {
-            "scope": COMMON_TEAM_ID,
-            "name": "共有ナレッジ（共通）",
-            "kind": "common",
-            "canManage": is_admin,
-        }
-    ]
-    seen: set[str] = set()
-    for t in _member_teams(user_id):
-        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
-            continue
-        seen.add(t["teamId"])
-        scopes.append(
-            {
-                "scope": t["teamId"],
-                "name": t.get("teamName") or t["teamId"],
-                "kind": "team",
-                "canManage": True,
-            }
-        )
+    active = _active_tenant_id(user_id, claims)
     try:
-        inherited = teams_store.list_inherited_teams_for_user(user_id)
+        scopes = teams_store.list_knowledge_scopes(user_id, is_admin, active)
     except Exception:  # noqa: BLE001
-        inherited = []
-    for t in inherited:
-        if t["teamId"] in seen or t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
-            continue
-        scopes.append(
-            {
-                "scope": t["teamId"],
-                "name": f"{t.get('teamName') or t['teamId']}（配下・閲覧）",
-                "kind": "team",
-                "canManage": False,
-            }
-        )
+        scopes = []
     return JSONResponse(content={"scopes": scopes, "isSystemAdmin": is_admin})
 
 
@@ -2735,13 +2805,58 @@ async def _is_app_up(endpoint: str) -> bool:
         return False
 
 
+def _as_invoke_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    return raw if raw.endswith("/invoke") else raw.rstrip("/") + "/invoke"
+
+
+def _official_service_endpoints() -> list[tuple[str, str]]:
+    """公式の任意起動アプリとヘルスチェック用 endpoint。"""
+    return [
+        ("whisper", _as_invoke_url(WHISPER_APP_URL)),
+        ("prompt", _as_invoke_url(PROMPT_APP_URL)),
+        ("rag", _as_invoke_url(RAG_APP_URL)),
+        ("chosei", _as_invoke_url(CHOSEI_APP_URL)),
+        ("doccheck", _as_invoke_url(DOCCHECK_APP_URL)),
+        ("patchform", _as_invoke_url(PATCHFORM_APP_URL)),
+        ("docmaker", _as_invoke_url(PATCHFORM_APP_URL)),
+        ("procuretech-navigator", _as_invoke_url(PROCURETECH_APP_URL)),
+        ("procuretech-editor", _as_invoke_url(PROCURETECH_EDITOR_APP_URL)),
+        ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
+        ("ssh", _as_invoke_url(SSH_APP_URL)),
+    ]
+
+
+async def _running_official_app_ids() -> list[str]:
+    """起動中の公式アプリ。棟の features は見ない。"""
+    services = [(app_id, ep) for app_id, ep in _official_service_endpoints() if ep]
+    image_ok, *service_oks = await asyncio.gather(
+        image_gen.is_sd_up(),
+        *[_is_app_up(ep) for _, ep in services],
+        return_exceptions=True,
+    )
+    return teams_store.select_running_official_exapp_ids(
+        image_up=image_ok is True,
+        service_up={
+            app_id: ok is True for (app_id, _), ok in zip(services, service_oks)
+        },
+    )
+
+
 @app.get("/exapps")
 async def list_exapps(request: Request) -> list[Any]:
     # ListExAppsResponse = Array<ExApp & { teamName }>
     # 起動していない(ヘルスチェック不通の) AI アプリは一覧から隠す。
     claims = _claims_from_request(request)
     is_admin = _is_system_admin(claims)
-    candidates = teams_store.list_visible_exapps(_user_id(claims), is_admin)
+    user_id = _user_id(claims)
+    active = _active_tenant_id(user_id, claims) if user_id else None
+    # 棟に所属していない一般利用者にはカタログを出さない（棟の指定が先）。
+    if not is_admin and _has_no_tenant(active or ""):
+        return []
+    candidates = teams_store.list_visible_exapps(user_id, is_admin, active)
     # /knowledge へ集約済みの旧管理系は起動時削除するが、残存しても一覧に出さない
     candidates = [
         a for a in candidates if a.get("exAppId") not in RETIRED_SEED_EXAPP_IDS
@@ -2762,27 +2877,45 @@ async def list_exapps(request: Request) -> list[Any]:
             seen.add(key)
     service_apps = [a for a in candidates if not teams_store.is_builtin_exapp(a)]
     builtin_apps = [a for a in candidates if teams_store.is_builtin_exapp(a)]
+    # ナレッジ検索は既定スタック。ヘルス不通でも一覧から消さない。
+    core_search = [a for a in service_apps if _is_knowledge_search_app(a)]
+    health_apps = [a for a in service_apps if not _is_knowledge_search_app(a)]
     checks = await asyncio.gather(
-        *[_is_app_up(a["endpoint"]) for a in service_apps], return_exceptions=True
+        *[_is_app_up(a["endpoint"]) for a in health_apps], return_exceptions=True
     )
-    return [a for a, ok in zip(service_apps, checks) if ok is True] + builtin_apps
+    visible = (
+        [a for a, ok in zip(health_apps, checks) if ok is True]
+        + core_search
+        + builtin_apps
+    )
+    if not await image_gen.is_sd_up():
+        visible = [a for a in visible if a.get("exAppId") != "image"]
+    return [
+        a
+        for a in visible
+        if teams_store.builtin_feature_enabled(active, _feature_id_of(a))
+    ]
 
 
 @app.get("/my/app-pins")
 async def list_my_app_pins(request: Request) -> JSONResponse:
     """本人の AI アプリ ピン留め一覧。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, _ = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    return JSONResponse(content={"pins": teams_store.list_user_app_pins(_user_id(claims))})
+    return JSONResponse(
+        content={"pins": teams_store.list_user_app_pins(user_id, tenant_id)}
+    )
 
 
 @app.post("/my/app-pins")
 async def add_my_app_pin(request: Request) -> JSONResponse:
     """AI アプリをピン留めする（本人のみ・上限あり）。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, claims = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     body = await request.json()
     team_id = body.get("teamId", "")
     item_id = body.get("itemId", "")
@@ -2791,7 +2924,7 @@ async def add_my_app_pin(request: Request) -> JSONResponse:
             status_code=400, content={"error": "teamId と itemId は必須です"}
         )
     pins, error = teams_store.add_user_app_pin(
-        _user_id(claims), team_id, item_id, _is_system_admin(claims)
+        user_id, team_id, item_id, _is_system_admin(claims), tenant_id
     )
     if error:
         return JSONResponse(status_code=400, content={"error": error})
@@ -2801,10 +2934,10 @@ async def add_my_app_pin(request: Request) -> JSONResponse:
 @app.delete("/my/app-pins/{team_id}/{item_id}")
 async def remove_my_app_pin(team_id: str, item_id: str, request: Request) -> JSONResponse:
     """ピン留めを解除する（本人のみ）。"""
-    claims = _claims_from_request(request)
-    if not _user_id(claims):
+    user_id, tenant_id, _ = _request_scope(request)
+    if not user_id:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    pins = teams_store.remove_user_app_pin(_user_id(claims), team_id, item_id)
+    pins = teams_store.remove_user_app_pin(user_id, team_id, item_id, tenant_id)
     return JSONResponse(content={"pins": pins})
 
 
@@ -2937,6 +3070,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
+                    "tenantId": _active_tenant_id(user_id, claims),
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -3153,6 +3287,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
+                    "tenantId": _active_tenant_id(user_id, claims),
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -4109,6 +4244,49 @@ async def _proxy_procuretech(
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
+async def _proxy_procuretech_bytes(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    *,
+    timeout: float = 60,
+) -> Response:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "情報化企画書ナビに接続できませんでした。"
+                    "有効化するには `docker compose --profile procuretech-navigator up -d` "
+                    "または `COMPOSE_PROFILES=procuretech-navigator` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    ctype = (res.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype.startswith("application/vnd.openxmlformats") or ctype in (
+        "application/octet-stream",
+        "application/zip",
+    ):
+        disposition = res.headers.get("content-disposition") or "attachment"
+        return Response(
+            content=res.content,
+            media_type=ctype
+            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": disposition},
+            status_code=res.status_code,
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "情報化企画書ナビから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
 def _procuretech_stream(
     method: str,
     url: str,
@@ -4169,6 +4347,17 @@ async def procuretech_config(request: Request) -> JSONResponse:
     if err:
         return err
     return await _proxy_procuretech("GET", _procuretech_app_url("/config"), headers)
+
+
+@app.get("/procuretech-navigator/templates/{key}")
+@app.get("/procuretech/templates/{key}")
+async def procuretech_template(key: str, request: Request) -> Response:
+    err, headers = _procuretech_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_bytes(
+        "GET", _procuretech_app_url(f"/templates/{key}"), headers
+    )
 
 
 @app.get("/procuretech-navigator/sessions")
@@ -4434,6 +4623,19 @@ async def procuretech_editor_create_project(request: Request) -> JSONResponse:
     body = await request.json()
     return await _proxy_procuretech_editor(
         "POST", _procuretech_editor_app_url("/projects"), headers, body
+    )
+
+
+@app.patch("/procuretech-editor/projects/{project_id}")
+async def procuretech_editor_rename_project(
+    project_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "PATCH", _procuretech_editor_app_url(f"/projects/{project_id}"), headers, body
     )
 
 
@@ -4708,12 +4910,18 @@ async def procuretech_editor_put_composition(
     )
 
 
-def _apply_editor_delivery(payload: dict[str, Any]) -> dict[str, Any]:
-    """成功した書き出し結果に ARTIFACT_DELIVERY_MODE を載せる。"""
+def _apply_editor_delivery(
+    payload: dict[str, Any], request: Request
+) -> dict[str, Any]:
+    """成功した書き出し結果に、このリクエストの配信方式を載せる。"""
     if str(payload.get("status") or "") != "success":
         return payload
     key = str(payload.get("object_key") or "").strip()
-    if ARTIFACT_DELIVERY_MODE == "carrier" and key and objstore.is_managed_key(key):
+    if (
+        artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request)
+        and key
+        and objstore.is_managed_key(key)
+    ):
         payload["download_url"] = ""
         payload["delivery"] = "carrier"
     else:
@@ -4743,7 +4951,9 @@ async def procuretech_editor_compose(
         return proxied
     if not isinstance(payload, dict):
         return proxied
-    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+    return JSONResponse(
+        status_code=200, content=_apply_editor_delivery(payload, request)
+    )
 
 
 @app.get("/procuretech-editor/projects/{project_id}/composes/{request_id}")
@@ -4766,7 +4976,9 @@ async def procuretech_editor_compose_status(
         return proxied
     if not isinstance(payload, dict):
         return proxied
-    return JSONResponse(status_code=200, content=_apply_editor_delivery(payload))
+    return JSONResponse(
+        status_code=200, content=_apply_editor_delivery(payload, request)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -5186,6 +5398,120 @@ async def procuretech_hearing_delete_knowledge_ref(
     return await _proxy_procuretech_hearing(
         "DELETE",
         _procuretech_hearing_app_url(f"/sessions/{session_id}/knowledge-refs/{ref_id}"),
+        headers,
+    )
+
+
+@app.get("/notebook/skills")
+@app.get("/procuretech-hearing/skills")
+async def notebook_list_skills(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/skills"), headers
+    )
+
+
+@app.post("/notebook/skills")
+@app.post("/procuretech-hearing/skills")
+async def notebook_create_skill(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST", _procuretech_hearing_app_url("/skills"), headers, body
+    )
+
+
+@app.put("/notebook/skills/{skill_id}")
+@app.put("/procuretech-hearing/skills/{skill_id}")
+async def notebook_put_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "PUT",
+        _procuretech_hearing_app_url(f"/skills/{skill_id}"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/notebook/skills/{skill_id}")
+@app.delete("/procuretech-hearing/skills/{skill_id}")
+async def notebook_delete_skill(skill_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/skills/{skill_id}"),
+        headers,
+    )
+
+
+@app.get("/notebook/mcps")
+@app.get("/procuretech-hearing/mcps")
+async def notebook_list_mcps(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET", _procuretech_hearing_app_url("/mcps"), headers
+    )
+
+
+@app.post("/notebook/mcps")
+@app.post("/procuretech-hearing/mcps")
+async def notebook_create_mcp(request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "POST", _procuretech_hearing_app_url("/mcps"), headers, body
+    )
+
+
+@app.put("/notebook/mcps/{mcp_id}")
+@app.put("/procuretech-hearing/mcps/{mcp_id}")
+async def notebook_put_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return await _proxy_procuretech_hearing(
+        "PUT",
+        _procuretech_hearing_app_url(f"/mcps/{mcp_id}"),
+        headers,
+        body,
+    )
+
+
+@app.delete("/notebook/mcps/{mcp_id}")
+@app.delete("/procuretech-hearing/mcps/{mcp_id}")
+async def notebook_delete_mcp(mcp_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "DELETE",
+        _procuretech_hearing_app_url(f"/mcps/{mcp_id}"),
         headers,
     )
 
@@ -6476,7 +6802,7 @@ async def patchform_download_item_file(
                 or f'attachment; filename="{fallback_name}"'
             },
         )
-    carrier = ARTIFACT_DELIVERY_MODE == "carrier"
+    carrier = artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request)
     return JSONResponse(
         content={
             "rehosted": True,
@@ -6799,6 +7125,29 @@ def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[
     return None, headers
 
 
+async def _request_usermgmt(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    params: dict[str, Any] | None = None,
+) -> tuple[int, Any]:
+    """utilmgmt-app へ転送し (status_code, payload) を返す（棟の後処理用）。"""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            res = await client.request(
+                method, url, headers=headers, json=json_body, params=params
+            )
+    except httpx.HTTPError as e:
+        return 502, {"error": f"利用者管理サービスに接続できませんでした: {e}"}
+    try:
+        return res.status_code, res.json()
+    except ValueError:
+        return res.status_code, {
+            "error": "利用者管理サービスから不正な応答を受け取りました"
+        }
+
+
 async def _proxy_usermgmt(
     method: str,
     url: str,
@@ -6853,6 +7202,42 @@ async def change_my_password(request: Request) -> JSONResponse:
     return await _proxy_usermgmt("POST", _usermgmt_app_url("/me/password"), headers, body)
 
 
+# 棟の解決結果を CSV 行へ付ける（登録時に棟を必須にするための共通処理）。
+def _resolve_row_tenant(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """CSV 行の棟トークンを組織棟に解決する。(tenant, error) を返す。
+
+    - delete: 棟は不要（None, None）
+    - 記入あり: 組織棟へ解決（共有棟・不明はエラー）
+    - 記入なし: create/新規は必須エラー、update は任意（None, None）
+    """
+    action = (row.get("action") or "upsert").strip().lower()
+    if action == "delete":
+        return None, None
+    token = (row.get("tenant") or "").strip()
+    if not token:
+        if action in ("create", "upsert"):
+            return None, "棟（tenant）が未指定です。組織棟の名前か ID を指定してください"
+        return None, None
+    tenant = teams_store.find_org_tenant(token)
+    if not tenant:
+        return None, f"棟が見つかりません: {token}（共有棟は登録時に指定できません）"
+    return tenant, None
+
+
+def _enrich_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """ドライラン結果に棟の解決結果／エラーを足す。"""
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        tenant, terr = _resolve_row_tenant(row)
+        item = {**row}
+        item["tenantName"] = tenant["tenantName"] if tenant else ""
+        item["tenantError"] = terr
+        if terr and not item.get("error"):
+            item["error"] = terr
+        enriched.append(item)
+    return enriched
+
+
 @app.get("/admin/users")
 async def list_admin_users(request: Request) -> JSONResponse:
     err, headers = _usermgmt_headers(request)
@@ -6863,9 +7248,18 @@ async def list_admin_users(request: Request) -> JSONResponse:
         "search": qp.get("search") or "",
         "limit": qp.get("limit") or "200",
     }
-    return await _proxy_usermgmt(
+    status, payload = await _request_usermgmt(
         "GET", _usermgmt_app_url("/users"), headers, params=params
     )
+    # 一覧に所属棟（主鍵の棟名）を添える。Keycloak にだけいる人は空。
+    if status == 200 and isinstance(payload, dict):
+        for u in payload.get("users") or []:
+            email = u.get("email") or u.get("username") or ""
+            try:
+                u["tenantName"] = teams_store.get_primary_tenant_name(email) or ""
+            except Exception:  # noqa: BLE001
+                u["tenantName"] = ""
+    return JSONResponse(status_code=status, content=payload)
 
 
 @app.post("/admin/users/plan")
@@ -6874,9 +7268,12 @@ async def plan_admin_users(request: Request) -> JSONResponse:
     if err:
         return err
     body = await request.json()
-    return await _proxy_usermgmt(
+    status, payload = await _request_usermgmt(
         "POST", _usermgmt_app_url("/users/plan"), headers, body
     )
+    if status == 200 and isinstance(payload, dict):
+        payload["rows"] = _enrich_plan_rows(payload.get("rows") or [])
+    return JSONResponse(status_code=status, content=payload)
 
 
 @app.post("/admin/users/apply")
@@ -6885,16 +7282,51 @@ async def apply_admin_users(request: Request) -> JSONResponse:
     if err:
         return err
     body = await request.json()
-    return await _proxy_usermgmt(
+    status, payload = await _request_usermgmt(
         "POST", _usermgmt_app_url("/users/apply"), headers, body
     )
+    # Keycloak 反映が成功した行に、棟の主鍵を付ける（usermgmt-app は Keycloak 専用）。
+    if status == 200 and isinstance(payload, dict):
+        for r in payload.get("results") or []:
+            result = r.get("result") or ""
+            if result not in ("作成", "更新"):
+                continue
+            tenant, terr = _resolve_row_tenant(r)
+            if terr:
+                r["note"] = f"{r.get('note', '')}／棟未設定: {terr}".strip("／")
+                continue
+            if not tenant:
+                continue
+            target = r.get("email") or r.get("username") or ""
+            if not target:
+                continue
+            try:
+                teams_store.upsert_tenant_membership(
+                    tenant["tenantId"],
+                    target,
+                    role=teams_store.TENANT_ROLE_PRIMARY,
+                )
+                r["tenantName"] = tenant["tenantName"]
+                r["note"] = f"{r.get('note', '')}／棟={tenant['tenantName']}".strip("／")
+            except Exception as e:  # noqa: BLE001
+                r["note"] = f"{r.get('note', '')}／棟付与に失敗: {e}".strip("／")
+    return JSONResponse(status_code=status, content=payload)
 
 
 @app.get("/me/teams")
 async def get_my_teams(request: Request) -> JSONResponse:
     """ログインユーザー自身の所属チーム（共有先の選択肢に使う）。"""
     claims = _claims_from_request(request)
-    return JSONResponse(content={"teams": _member_teams(_user_id(claims))})
+    user_id = _user_id(claims)
+    teams = _member_teams(user_id)
+    if user_id:
+        active = _active_tenant_id(user_id, claims)
+        teams = [
+            t
+            for t in teams
+            if teams_store.team_visible_in_tenant(t["teamId"], active)
+        ]
+    return JSONResponse(content={"teams": teams})
 
 
 @app.get("/exapps/histories")
@@ -6908,7 +7340,8 @@ async def list_exapp_histories(
     user_id = _user_id(claims)
     if not teamId or not exAppId:
         return {"history": [], "lastEvaluatedKey": None}
-    history = teams_store.list_exapp_histories(teamId, exAppId, user_id)
+    tenant_id = _active_tenant_id(user_id, claims)
+    history = teams_store.list_exapp_histories(teamId, exAppId, user_id, tenant_id)
     return {"history": history, "lastEvaluatedKey": None}
 
 
@@ -6930,7 +7363,13 @@ async def get_exapp_history(
         and not teams_store.can_read_team(teamId, user_id)
     ):
         return {"history": None}
-    hist = teams_store.get_exapp_history(teamId, exAppId, createdDate, user_id)
+    hist = teams_store.get_exapp_history(
+        teamId,
+        exAppId,
+        createdDate,
+        user_id,
+        _active_tenant_id(user_id, claims),
+    )
     return {"history": hist}
 
 
@@ -7004,44 +7443,321 @@ async def get_artifact_carrier(
 
 
 # ---------------------------------------------------------------------------
+# おすすめアプリ（システム全体）
+# ---------------------------------------------------------------------------
+@app.get("/official-apps/runtime")
+async def official_apps_runtime(request: Request) -> JSONResponse:
+    """起動中の公式アプリ。おすすめ設定・棟の機能一覧の候補に使う。"""
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    running = await _running_official_app_ids()
+    return JSONResponse(
+        content={
+            "catalog": list(teams_store.OFFICIAL_CATALOG_EXAPP_IDS),
+            "running": running,
+        }
+    )
+
+
+@app.get("/recommended-apps")
+async def get_recommended_apps(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _user_id(claims):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return JSONResponse(
+        content={
+            "exAppIds": teams_store.get_recommended_exapp_ids(),
+            "availableIds": await _running_official_app_ids(),
+        }
+    )
+
+
+@app.put("/recommended-apps")
+async def put_recommended_apps(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("おすすめアプリの設定はシステム管理者のみ可能です")
+    body = await request.json()
+    raw = body.get("exAppIds")
+    if raw is not None and not isinstance(raw, list):
+        return JSONResponse(status_code=400, content={"error": "exAppIds は配列です"})
+    ids = teams_store.set_recommended_exapp_ids(
+        [str(x) for x in (raw or [])]
+    )
+    return JSONResponse(
+        content={
+            "exAppIds": ids,
+            "availableIds": await _running_official_app_ids(),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# テナント（棟）
+# ---------------------------------------------------------------------------
+def _can_admin_tenant(claims: dict[str, Any], tenant_id: str) -> bool:
+    if _is_system_admin(claims):
+        return True
+    return teams_store.is_tenant_admin(tenant_id, _user_id(claims))
+
+
+@app.get("/me/tenants")
+async def get_my_tenants(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    # 真のマルチテナント運用では、ログインだけで棟を自動付与しない。
+    # 棟は利用者登録時に指定するか、後から招待で付ける。
+    mine = {
+        t["tenantId"]: t for t in teams_store.list_tenants_for_user(user_id)
+    }
+    if _is_system_admin(claims):
+        tenants = []
+        for t in teams_store.list_tenants():
+            extra = mine.get(t["tenantId"], {})
+            tenants.append(
+                {
+                    **t,
+                    "role": extra.get("role") or "admin",
+                    "isAdmin": True,
+                }
+            )
+    else:
+        tenants = list(mine.values())
+    return JSONResponse(
+        content={
+            "tenants": tenants,
+            "activeTenantId": _active_tenant_id(user_id, claims),
+            "isSystemAdmin": _is_system_admin(claims),
+        }
+    )
+
+
+@app.put("/me/tenants/active")
+async def set_my_active_tenant(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    body = await request.json()
+    tenant_id = (body.get("tenantId") or "").strip()
+    if not tenant_id:
+        return JSONResponse(status_code=400, content={"error": "tenantId は必須です"})
+    err = teams_store.set_active_tenant_id(
+        user_id, tenant_id, allow_any=_is_system_admin(claims)
+    )
+    if err:
+        return JSONResponse(status_code=403, content={"error": err})
+    return JSONResponse(content={"activeTenantId": tenant_id})
+
+
+@app.get("/tenants")
+async def list_tenants(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    if _is_system_admin(claims):
+        tenants = teams_store.list_tenants()
+    else:
+        tenants = [
+            t for t in teams_store.list_tenants_for_user(user_id) if t.get("isAdmin")
+        ]
+    return JSONResponse(content={"tenants": tenants})
+
+
+@app.post("/tenants")
+async def create_tenant(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("棟の作成はシステム管理者のみ可能です")
+    body = await request.json()
+    name = (body.get("tenantName") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "tenantName は必須です"})
+    features = body.get("features")
+    if features is not None and not isinstance(features, dict):
+        return JSONResponse(status_code=400, content={"error": "features はオブジェクトです"})
+    tenant = teams_store.create_tenant(name, features=features)
+    return JSONResponse(content=tenant)
+
+
+@app.put("/tenants/{tenant_id}")
+async def update_tenant(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    body = await request.json()
+    name = body.get("tenantName")
+    features = body.get("features")
+    if features is not None and not isinstance(features, dict):
+        return JSONResponse(status_code=400, content={"error": "features はオブジェクトです"})
+    tenant = teams_store.update_tenant(
+        tenant_id, tenant_name=name, features=features
+    )
+    if not tenant:
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    return JSONResponse(content=tenant)
+
+
+@app.delete("/tenants/{tenant_id}")
+async def delete_tenant(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("棟の削除はシステム管理者のみ可能です")
+    err = teams_store.delete_tenant(tenant_id)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
+    return JSONResponse(content={})
+
+
+@app.get("/tenants/{tenant_id}/members")
+async def list_tenant_members(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    if not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    return JSONResponse(
+        content={"members": teams_store.list_tenant_memberships(tenant_id)}
+    )
+
+
+@app.post("/tenants/{tenant_id}/members")
+async def invite_tenant_member(tenant_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    if not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=404, content={"error": "棟が見つかりません"})
+    body = await request.json()
+    email = teams_store.normalize_email(body.get("email") or body.get("userId"))
+    if not email:
+        return JSONResponse(status_code=400, content={"error": "email は必須です"})
+    tenant = teams_store.get_tenant(tenant_id)
+    default_role = (
+        teams_store.TENANT_ROLE_SHARED
+        if tenant and tenant["kind"] == teams_store.TENANT_KIND_SHARED
+        else teams_store.TENANT_ROLE_GUEST
+    )
+    role = (body.get("role") or default_role).strip()
+    member = teams_store.upsert_tenant_membership(
+        tenant_id,
+        email,
+        role=role,
+        is_admin=bool(body.get("isAdmin")),
+    )
+    return JSONResponse(content=member)
+
+
+@app.put("/tenants/{tenant_id}/members/{user_id}")
+async def update_tenant_member(
+    tenant_id: str, user_id: str, request: Request
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    body = await request.json()
+    current = teams_store.get_tenant_membership(tenant_id, user_id)
+    if not current:
+        return JSONResponse(status_code=404, content={"error": "メンバーが見つかりません"})
+    member = teams_store.upsert_tenant_membership(
+        tenant_id,
+        user_id,
+        role=body.get("role") or current["role"],
+        is_admin=bool(body.get("isAdmin", current["isAdmin"])),
+    )
+    return JSONResponse(content=member)
+
+
+@app.delete("/tenants/{tenant_id}/members/{user_id}")
+async def remove_tenant_member(
+    tenant_id: str, user_id: str, request: Request
+) -> JSONResponse:
+    claims = _claims_from_request(request)
+    if not _can_admin_tenant(claims, tenant_id):
+        return _forbidden()
+    teams_store.remove_tenant_membership(tenant_id, user_id)
+    return JSONResponse(content={})
+
+
+# ---------------------------------------------------------------------------
 # チーム管理 (Team Access Control API)
 # ---------------------------------------------------------------------------
 @app.get("/teams")
 async def list_teams(request: Request) -> dict[str, Any]:
     claims = _claims_from_request(request)
+    user_id = _user_id(claims)
     if _is_system_admin(claims):
         teams = teams_store.list_teams()
     else:
-        teams = teams_store.list_teams_for_admin(_user_id(claims))
-    # 管理者ツールは管理一覧から除外。共通アプリはシステム管理者が AI アプリを
-    # 登録できるよう、管理者にだけ一覧へ出す。
+        by_id: dict[str, dict[str, Any]] = {}
+        for t in teams_store.list_teams_for_admin(user_id):
+            by_id[t["teamId"]] = t
+        for t in teams_store.list_teams_for_tenant_admin(user_id):
+            by_id[t["teamId"]] = t
+        teams = list(by_id.values())
+    # 管理者ツールは管理一覧から除外。共通アプリはスーパー管理者と
+    # その棟の管理者だけが一覧へ出す。
+    active = _active_tenant_id(user_id, claims) if user_id else teams_store.DEFAULT_TENANT_ID
     if _is_system_admin(claims):
         teams = [t for t in teams if t["teamId"] != ADMIN_TEAM_ID]
         teams.sort(key=lambda t: (0 if t["teamId"] == COMMON_TEAM_ID else 1, t.get("teamName", "")))
     else:
+        keep_common = teams_store.is_tenant_admin_of_team(user_id, COMMON_TEAM_ID)
         teams = [
-            t for t in teams if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+            t
+            for t in teams
+            if t["teamId"] != ADMIN_TEAM_ID
+            and (t["teamId"] != COMMON_TEAM_ID or keep_common)
         ]
+    teams = [
+        t
+        for t in teams
+        if t["teamId"] == COMMON_TEAM_ID
+        or teams_store.team_visible_in_tenant(t["teamId"], active)
+    ]
     return {"teams": teams, "lastEvaluatedKey": None}
 
 
 @app.post("/teams")
 async def create_team(request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden("チーム作成はシステム管理者のみ可能です")
+    user_id = _user_id(claims)
     body = await request.json()
     team_name = body.get("teamName", "")
     admin_email = body.get("teamAdminEmail", "")
     parent_team_id = (body.get("parentTeamId") or "").strip() or None
+    tenant_id = (body.get("tenantId") or "").strip() or None
     if not team_name or not admin_email:
         return JSONResponse(
             status_code=400, content={"error": "teamName と teamAdminEmail は必須です"}
         )
-    parent_err = teams_store.validate_parent_team_id(None, parent_team_id)
+    if not tenant_id and parent_team_id:
+        parent = teams_store.get_team(parent_team_id)
+        tenant_id = (parent or {}).get("tenantId") or None
+    if not tenant_id:
+        tenant_id = (
+            _active_tenant_id(user_id, claims)
+            if user_id
+            else teams_store.DEFAULT_TENANT_ID
+        )
+    if not _is_system_admin(claims) and not (
+        user_id and teams_store.is_tenant_admin(tenant_id, user_id)
+    ):
+        return _forbidden("チーム作成はシステム管理者またはその棟の管理者のみ可能です")
+    if tenant_id and not teams_store.get_tenant(tenant_id):
+        return JSONResponse(status_code=400, content={"error": "棟が見つかりません"})
+    parent_err = teams_store.validate_parent_team_id(
+        None, parent_team_id, tenant_id=tenant_id
+    )
     if parent_err:
         return JSONResponse(status_code=400, content={"error": parent_err})
-    team = teams_store.create_team(team_name, admin_email, parent_team_id)
+    team = teams_store.create_team(
+        team_name, admin_email, parent_team_id, tenant_id=tenant_id
+    )
     # 新規チームには「ナレッジ検索」のみ自動登録。
     # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
     teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
@@ -7054,9 +7770,7 @@ async def get_team(team_id: str, request: Request) -> JSONResponse:
     team = teams_store.get_team(team_id)
     if not team:
         return JSONResponse(status_code=404, content={"error": "チームが見つかりません"})
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     return JSONResponse(content=team)
 
@@ -7064,9 +7778,7 @@ async def get_team(team_id: str, request: Request) -> JSONResponse:
 @app.get("/teams/{team_id}/raw")
 async def get_team_raw(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     team = teams_store.get_team(team_id)
     if not team:
@@ -7082,15 +7794,16 @@ async def update_team(team_id: str, request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
     if team_id in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
         return _forbidden("固定チームの名称は変更できません")
-    if not _is_system_admin(claims) and not teams_store.is_team_admin(
-        team_id, _user_id(claims)
-    ):
+    if not _can_manage_team(claims, team_id):
         return _forbidden()
     body = await request.json()
     parent_team_id = body.get("parentTeamId") if "parentTeamId" in body else ...
     if parent_team_id is not ...:
+        current = teams_store.get_team(team_id)
         parent_err = teams_store.validate_parent_team_id(
-            team_id, (parent_team_id or "").strip() or None
+            team_id,
+            (parent_team_id or "").strip() or None,
+            tenant_id=(current or {}).get("tenantId"),
         )
         if parent_err:
             return JSONResponse(status_code=400, content={"error": parent_err})
@@ -7128,8 +7841,11 @@ async def delete_team(team_id: str, request: Request) -> JSONResponse:
 
 # ---- メンバー管理 ----
 def _can_manage_team(claims: dict[str, Any], team_id: str) -> bool:
-    return _is_system_admin(claims) or teams_store.is_team_admin(
-        team_id, _user_id(claims)
+    user_id = _user_id(claims)
+    return (
+        _is_system_admin(claims)
+        or teams_store.is_team_admin(team_id, user_id)
+        or teams_store.is_tenant_admin_of_team(user_id, team_id)
     )
 
 
@@ -7347,22 +8063,23 @@ async def delete_exapp_history(
     ):
         return _forbidden()
     owner_id = None if _is_system_admin(claims) else user_id
+    tenant_id = _active_tenant_id(user_id, claims)
     if sessionId:
         hists = teams_store.list_exapp_histories_by_session(
-            team_id, ex_app_id, sessionId, owner_id
+            team_id, ex_app_id, sessionId, owner_id, tenant_id
         )
         _delete_exapp_history_artifacts(hists)
         teams_store.delete_exapp_histories_by_session(
-            team_id, ex_app_id, sessionId, owner_id
+            team_id, ex_app_id, sessionId, owner_id, tenant_id
         )
         return JSONResponse(content={})
     if createdDate:
         hist = teams_store.get_exapp_history(
-            team_id, ex_app_id, createdDate, owner_id
+            team_id, ex_app_id, createdDate, owner_id, tenant_id
         )
         if hist:
             _delete_exapp_history_artifacts([hist])
         teams_store.delete_exapp_history(
-            team_id, ex_app_id, createdDate, owner_id
+            team_id, ex_app_id, createdDate, owner_id, tenant_id
         )
     return JSONResponse(content={})

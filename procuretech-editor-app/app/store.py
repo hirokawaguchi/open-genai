@@ -194,6 +194,21 @@ def get_project(project_id: str, user_id: str) -> dict[str, Any] | None:
     return _project_dict(row, file_count=cnt)
 
 
+def rename_project(project_id: str, user_id: str, name: str) -> dict[str, Any] | None:
+    """プロジェクト名を変更する。存在しなければ None。"""
+    name = (name or "").strip()
+    if not name or get_project(project_id, user_id) is None:
+        return None
+    db = connect()
+    with _lock:
+        db.execute(
+            "UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (name, _now_iso(), project_id, user_id),
+        )
+        db.commit()
+    return get_project(project_id, user_id)
+
+
 def touch_project(project_id: str) -> None:
     db = connect()
     with _lock:

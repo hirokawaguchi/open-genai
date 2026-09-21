@@ -1,11 +1,12 @@
-"""チーム / メンバー / AI アプリ(exApp) の永続化レイヤ (SQLite)。
+"""チーム / テナント / メンバー / AI アプリ(exApp) の永続化レイヤ (SQLite)。
 
 クラウド版 源内 は DynamoDB + Cognito グループで管理するが、
 Open GENAI ではマネージドサービスに依存せず SQLite で完結させる。
 
 - 権限グループ(SystemAdminGroup 等) は Keycloak(SAML) 由来
+- テナント（棟）がチームより上位。主鍵 / 招待鍵 / 共有棟の共通鍵で区切る
 - チーム単位の管理権限は team_users.isAdmin で表現
-- 共通チーム(COMMON_TEAM_ID) のアプリは全認証済みユーザーが利用可能
+- 共通チーム(COMMON_TEAM_ID) はデフォルト棟の部屋（従来の共有ナレッジ）。共有棟の鍵は自動では付与しない
 """
 
 from __future__ import annotations
@@ -26,6 +27,21 @@ COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
 # 共通アプリから分離して表示するための専用チーム。システム管理者のみに見える。
 ADMIN_TEAM_ID = "00000000-0000-0000-0000-0000000000a1"
 ADMIN_TEAM_NAME = "管理者ツール"
+
+# テナント（棟）。DEFAULT は既存組織の移行先。SHARED は共有棟（COMMON_TEAM の親）。
+DEFAULT_TENANT_ID = "00000000-0000-0000-0000-0000000000t1"
+SHARED_TENANT_ID = "00000000-0000-0000-0000-0000000000t0"
+DEFAULT_TENANT_NAME = "デフォルト"
+SHARED_TENANT_NAME = "共有"
+TENANT_KIND_ORG = "org"
+TENANT_KIND_SHARED = "shared"
+TENANT_ROLE_PRIMARY = "primary"
+TENANT_ROLE_GUEST = "guest"
+TENANT_ROLE_SHARED = "shared"
+FIXED_TENANT_IDS = frozenset({DEFAULT_TENANT_ID, SHARED_TENANT_ID})
+# 「どの棟にも所属していない」を表す番兵。実在の tenantId(UUID) とは衝突しない。
+# 履歴・カタログ・ナレッジのフィルタで使うと何にも一致せず、空を返す。
+NO_TENANT_ID = "__none__"
 
 # GenU 組み込み機能の itemId。共通チームのカタログ（名前・紹介・公開）として登録し、
 # ピン留め対象にもする。knowledge は専用ページだが同じカタログで出し分ける。
@@ -118,6 +134,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 teamName TEXT NOT NULL DEFAULT '',
                 exAppName TEXT NOT NULL DEFAULT '',
                 userId TEXT NOT NULL DEFAULT '',
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 inputs TEXT NOT NULL DEFAULT '{}',
                 outputs TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'COMPLETED',
@@ -131,9 +148,10 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 userId TEXT NOT NULL,
                 teamId TEXT NOT NULL,
                 itemId TEXT NOT NULL,
+                tenantId TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-0000000000t1',
                 displayOrder INTEGER NOT NULL,
                 pinnedDate TEXT NOT NULL,
-                PRIMARY KEY (userId, teamId, itemId)
+                PRIMARY KEY (userId, teamId, itemId, tenantId)
             );
             """
         )
@@ -153,6 +171,9 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                     " VALUES (?, ?, ?, ?)",
                     (fixed_id, fixed_name, now, now),
                 )
+        _migrate_tenants(conn)
+        _migrate_app_settings(conn)
+        _migrate_tenant_scoped_user_data(conn)
 
     # 共通チームに既定アプリ(RAG 等)をシード
     for app in seed_exapps or []:
@@ -180,6 +201,225 @@ def _migrate_org_columns(conn: sqlite3.Connection) -> None:
             )
             """
         )
+
+
+# 公式カタログ（棟の機能・おすすめ設定）。未設定時のおすすめもこの順。
+OFFICIAL_CATALOG_EXAPP_IDS = (
+    "chat",
+    "generate",
+    "translate",
+    "image",
+    "diagram",
+    "whisper",
+    "prompt",
+    "chosei",
+    "doccheck",
+    "patchform",
+    "docmaker",
+    "procuretech-navigator",
+    "procuretech-editor",
+    "knowledge",
+    "rag",
+    "notebook",
+    "ssh",
+)
+DEFAULT_RECOMMENDED_EXAPP_IDS = OFFICIAL_CATALOG_EXAPP_IDS
+# 本体に同梱。外部マイクロサービスや画像生成サーバの起動は見ない。
+ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
+    "chat",
+    "generate",
+    "translate",
+    "diagram",
+    "knowledge",
+    "rag",
+)
+RECOMMENDED_SETTING_KEY = "recommendedExAppIds"
+# 後からおすすめ候補に足した ID。保存済み設定に無ければ一度だけ既定オンにする。
+RECOMMENDED_BACKFILL_IDS = ("rag",)
+RECOMMENDED_BACKFILL_KEY = "recommendedExAppIdsBackfill"
+
+
+def select_running_official_exapp_ids(
+    *,
+    image_up: bool,
+    service_up: dict[str, bool],
+) -> list[str]:
+    """起動中の公式アプリ ID。棟の機能フラグは見ない（管理画面の候補用）。"""
+    ok = set(ALWAYS_ON_OFFICIAL_EXAPP_IDS)
+    if image_up:
+        ok.add("image")
+    ok.update(app_id for app_id, up in service_up.items() if up)
+    return [i for i in OFFICIAL_CATALOG_EXAPP_IDS if i in ok]
+
+
+def _migrate_tenant_scoped_user_data(conn: sqlite3.Connection) -> None:
+    """チャット以外の利用者データ（ピン・アプリ実行履歴）を棟で分ける。"""
+    if "tenantId" not in _table_columns(conn, "exapp_histories"):
+        conn.execute(
+            "ALTER TABLE exapp_histories ADD COLUMN tenantId TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "UPDATE exapp_histories SET tenantId = ? WHERE tenantId = '' OR tenantId IS NULL",
+        (DEFAULT_TENANT_ID,),
+    )
+    if "tenantId" not in _table_columns(conn, "user_app_pins"):
+        conn.executescript(
+            f"""
+            CREATE TABLE user_app_pins_v2 (
+                userId TEXT NOT NULL,
+                teamId TEXT NOT NULL,
+                itemId TEXT NOT NULL,
+                tenantId TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+                displayOrder INTEGER NOT NULL,
+                pinnedDate TEXT NOT NULL,
+                PRIMARY KEY (userId, teamId, itemId, tenantId)
+            );
+            INSERT INTO user_app_pins_v2
+                (userId, teamId, itemId, tenantId, displayOrder, pinnedDate)
+            SELECT userId, teamId, itemId, '{DEFAULT_TENANT_ID}', displayOrder, pinnedDate
+            FROM user_app_pins;
+            DROP TABLE user_app_pins;
+            ALTER TABLE user_app_pins_v2 RENAME TO user_app_pins;
+            """
+        )
+
+
+def _scope_tenant_id(tenant_id: str | None) -> str:
+    tid = (tenant_id or "").strip()
+    return tid or DEFAULT_TENANT_ID
+
+
+def _migrate_app_settings(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updatedDate TEXT NOT NULL
+        )
+        """
+    )
+
+
+def normalize_recommended_exapp_ids(ids: list[str] | None) -> list[str]:
+    wanted = {str(i).strip() for i in (ids or []) if str(i).strip()}
+    return [i for i in DEFAULT_RECOMMENDED_EXAPP_IDS if i in wanted]
+
+
+def _read_json_list(conn: sqlite3.Connection, key: str) -> list[str] | None:
+    row = conn.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (key,)
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        raw = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, list):
+        return None
+    return [str(x) for x in raw]
+
+
+def _write_json_list(conn: sqlite3.Connection, key: str, values: list[str]) -> None:
+    conn.execute(
+        "INSERT INTO app_settings (key, value, updatedDate) VALUES (?, ?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value,"
+        " updatedDate = excluded.updatedDate",
+        (key, json.dumps(values, ensure_ascii=False), _now()),
+    )
+
+
+def get_recommended_exapp_ids() -> list[str]:
+    """おすすめに出す公式アプリ。未保存なら既定の全件。"""
+    with _lock, _connect() as conn:
+        _migrate_app_settings(conn)
+        raw = _read_json_list(conn, RECOMMENDED_SETTING_KEY)
+        if raw is None:
+            return list(DEFAULT_RECOMMENDED_EXAPP_IDS)
+        saved = normalize_recommended_exapp_ids(raw)
+        done = set(_read_json_list(conn, RECOMMENDED_BACKFILL_KEY) or [])
+        add = [
+            i
+            for i in RECOMMENDED_BACKFILL_IDS
+            if i in DEFAULT_RECOMMENDED_EXAPP_IDS and i not in saved and i not in done
+        ]
+        if add:
+            saved = normalize_recommended_exapp_ids([*saved, *add])
+            _write_json_list(conn, RECOMMENDED_SETTING_KEY, saved)
+            _write_json_list(conn, RECOMMENDED_BACKFILL_KEY, sorted(done | set(add)))
+        return saved
+
+
+def set_recommended_exapp_ids(ids: list[str] | None) -> list[str]:
+    normalized = normalize_recommended_exapp_ids(ids)
+    with _lock, _connect() as conn:
+        _migrate_app_settings(conn)
+        _write_json_list(conn, RECOMMENDED_SETTING_KEY, normalized)
+        done = set(_read_json_list(conn, RECOMMENDED_BACKFILL_KEY) or [])
+        done.update(RECOMMENDED_BACKFILL_IDS)
+        _write_json_list(conn, RECOMMENDED_BACKFILL_KEY, sorted(done))
+    return normalized
+
+
+def _migrate_tenants(conn: sqlite3.Connection) -> None:
+    """テナント表と teams.tenantId を足し、既存データをデフォルト棟／共有棟へ寄せる。"""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS tenants (
+            tenantId TEXT PRIMARY KEY,
+            tenantName TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'org',
+            features TEXT NOT NULL DEFAULT '{}',
+            createdDate TEXT NOT NULL,
+            updatedDate TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS tenant_memberships (
+            tenantId TEXT NOT NULL,
+            userId TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'guest',
+            isAdmin INTEGER NOT NULL DEFAULT 0,
+            createdDate TEXT NOT NULL,
+            updatedDate TEXT NOT NULL,
+            PRIMARY KEY (tenantId, userId)
+        );
+        CREATE TABLE IF NOT EXISTS user_tenant_prefs (
+            userId TEXT PRIMARY KEY,
+            activeTenantId TEXT,
+            updatedDate TEXT NOT NULL
+        );
+        """
+    )
+    if "tenantId" not in _table_columns(conn, "teams"):
+        conn.execute("ALTER TABLE teams ADD COLUMN tenantId TEXT")
+    now = _now()
+    for tid, name, kind in (
+        (DEFAULT_TENANT_ID, DEFAULT_TENANT_NAME, TENANT_KIND_ORG),
+        (SHARED_TENANT_ID, SHARED_TENANT_NAME, TENANT_KIND_SHARED),
+    ):
+        if not conn.execute(
+            "SELECT 1 FROM tenants WHERE tenantId = ?", (tid,)
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO tenants"
+                " (tenantId, tenantName, kind, features, createdDate, updatedDate)"
+                " VALUES (?, ?, ?, '{}', ?, ?)",
+                (tid, name, kind, now, now),
+            )
+    conn.execute(
+        "UPDATE teams SET tenantId = ? WHERE teamId = ?",
+        (DEFAULT_TENANT_ID, COMMON_TEAM_ID),
+    )
+    conn.execute(
+        "UPDATE teams SET tenantId = NULL WHERE teamId = ?",
+        (ADMIN_TEAM_ID,),
+    )
+    conn.execute(
+        "UPDATE teams SET tenantId = ? WHERE tenantId IS NULL AND teamId NOT IN (?, ?)",
+        (DEFAULT_TENANT_ID, COMMON_TEAM_ID, ADMIN_TEAM_ID),
+    )
+    for row in conn.execute("SELECT DISTINCT userId FROM team_users").fetchall():
+        _ensure_home_key(conn, row["userId"])
 
 
 def upsert_seed_exapp(app: dict[str, Any]) -> None:
@@ -324,15 +564,155 @@ def refresh_placeholder_by_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# Tenant helpers (conn を既に持っているとき用。外側で _lock)
+# ---------------------------------------------------------------------------
+def _parse_features(raw: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _row_to_tenant(r: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "tenantId": r["tenantId"],
+        "tenantName": r["tenantName"],
+        "kind": r["kind"],
+        "features": _parse_features(r["features"] if "features" in r.keys() else "{}"),
+        "createdDate": r["createdDate"],
+        "updatedDate": r["updatedDate"],
+    }
+
+
+def _row_to_membership(r: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "tenantId": r["tenantId"],
+        "userId": r["userId"],
+        "role": r["role"],
+        "isAdmin": bool(r["isAdmin"]),
+        "createdDate": r["createdDate"],
+        "updatedDate": r["updatedDate"],
+    }
+
+
+def _unset_primary_tenant(conn: sqlite3.Connection, user_id: str) -> None:
+    conn.execute(
+        "UPDATE tenant_memberships SET role = ?, updatedDate = ?"
+        " WHERE userId = ? AND role = ?",
+        (TENANT_ROLE_GUEST, _now(), user_id, TENANT_ROLE_PRIMARY),
+    )
+
+
+def _upsert_membership_conn(
+    conn: sqlite3.Connection,
+    tenant_id: str,
+    user_id: str,
+    *,
+    role: str,
+    is_admin: bool = False,
+    overwrite: bool = False,
+) -> None:
+    user_id = normalize_email(user_id)
+    now = _now()
+    existing = conn.execute(
+        "SELECT role, isAdmin FROM tenant_memberships"
+        " WHERE tenantId = ? AND userId = ?",
+        (tenant_id, user_id),
+    ).fetchone()
+    if existing and not overwrite:
+        return
+    if role == TENANT_ROLE_PRIMARY:
+        _unset_primary_tenant(conn, user_id)
+    if existing:
+        conn.execute(
+            "UPDATE tenant_memberships SET role = ?, isAdmin = ?, updatedDate = ?"
+            " WHERE tenantId = ? AND userId = ?",
+            (role, 1 if is_admin else 0, now, tenant_id, user_id),
+        )
+        return
+    conn.execute(
+        "INSERT INTO tenant_memberships"
+        " (tenantId, userId, role, isAdmin, createdDate, updatedDate)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (tenant_id, user_id, role, 1 if is_admin else 0, now, now),
+    )
+
+
+def _has_primary_tenant(conn: sqlite3.Connection, user_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM tenant_memberships WHERE userId = ? AND role = ? LIMIT 1",
+            (user_id, TENANT_ROLE_PRIMARY),
+        ).fetchone()
+        is not None
+    )
+
+
+def _ensure_home_key(conn: sqlite3.Connection, user_id: str) -> None:
+    """既存利用者にデフォルト棟の主鍵だけ付ける。共有棟は自動では付けない。"""
+    user_id = normalize_email(user_id)
+    if not user_id:
+        return
+    role = (
+        TENANT_ROLE_PRIMARY
+        if not _has_primary_tenant(conn, user_id)
+        else TENANT_ROLE_GUEST
+    )
+    _upsert_membership_conn(conn, DEFAULT_TENANT_ID, user_id, role=role)
+
+
+def ensure_user_home_tenant(user_id: str) -> None:
+    """デフォルト棟の主鍵を付ける（既存DBの一度きり移行専用）。
+
+    真のマルチテナント運用では新規ログインで自動付与しない。棟は利用者登録時に
+    指定するか、後から招待で付ける。移行スクリプトや管理操作からのみ呼ぶこと。
+    """
+    with _lock, _connect() as conn:
+        _ensure_home_key(conn, user_id)
+
+
+def find_org_tenant(token: str) -> dict[str, Any] | None:
+    """棟の ID か名前で組織棟を1件解決する。共有棟・基盤棟は対象外。
+
+    利用者登録で棟を必須指定するときに使う（ID 完全一致を優先、無ければ名前一致）。
+    """
+    token = (token or "").strip()
+    if not token:
+        return None
+    by_id = get_tenant(token)
+    if by_id and by_id["kind"] == TENANT_KIND_ORG and by_id["tenantId"] != SHARED_TENANT_ID:
+        return by_id
+    norm = normalize_org_name(token)
+    for t in list_tenants():
+        if t["kind"] != TENANT_KIND_ORG or t["tenantId"] == SHARED_TENANT_ID:
+            continue
+        if normalize_org_name(t["tenantName"]) == norm:
+            return t
+    return None
+
+
+def get_primary_tenant_name(user_id: str) -> str | None:
+    """利用者の主鍵の棟名（一覧表示の所属棟ラベル用）。無ければ None。"""
+    tid = get_primary_tenant_id(user_id)
+    if not tid:
+        return None
+    t = get_tenant(tid)
+    return t["tenantName"] if t else None
+
+
+# ---------------------------------------------------------------------------
 # Team
 # ---------------------------------------------------------------------------
 def _row_to_team(r: sqlite3.Row) -> dict[str, Any]:
     keys = set(r.keys())
     parent = r["parentTeamId"] if "parentTeamId" in keys else None
+    tenant = r["tenantId"] if "tenantId" in keys else None
     return {
         "teamId": r["teamId"],
         "teamName": r["teamName"],
         "parentTeamId": parent or None,
+        "tenantId": tenant or None,
         "createdDate": r["createdDate"],
         "updatedDate": r["updatedDate"],
     }
@@ -353,7 +733,12 @@ def _would_cycle(conn: sqlite3.Connection, team_id: str, parent_id: str) -> bool
     return False
 
 
-def validate_parent_team_id(team_id: str | None, parent_team_id: str | None) -> str | None:
+def validate_parent_team_id(
+    team_id: str | None,
+    parent_team_id: str | None,
+    *,
+    tenant_id: str | None = None,
+) -> str | None:
     """親子設定の妥当性。問題があればメッセージ、なければ None。"""
     parent_team_id = (parent_team_id or "").strip() or None
     if not parent_team_id:
@@ -364,10 +749,13 @@ def validate_parent_team_id(team_id: str | None, parent_team_id: str | None) -> 
         return "自分自身を親にはできません"
     with _lock, _connect() as conn:
         parent = conn.execute(
-            "SELECT teamId FROM teams WHERE teamId = ?", (parent_team_id,)
+            "SELECT teamId, tenantId FROM teams WHERE teamId = ?", (parent_team_id,)
         ).fetchone()
         if not parent:
             return "親チームが見つかりません"
+        parent_tenant = parent["tenantId"] if "tenantId" in parent.keys() else None
+        if tenant_id and parent_tenant and parent_tenant != tenant_id:
+            return "親チームは同じ棟のチームにしてください"
         if team_id and _would_cycle(conn, team_id, parent_team_id):
             return "親チームの指定が循環しています"
     return None
@@ -403,22 +791,35 @@ def get_team(team_id: str) -> dict[str, Any] | None:
 
 
 def create_team(
-    team_name: str, admin_email: str, parent_team_id: str | None = None
+    team_name: str,
+    admin_email: str,
+    parent_team_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     team_id = str(uuid.uuid4())
     admin_email = normalize_email(admin_email)
     team_name = normalize_org_name(team_name)
     parent_team_id = (parent_team_id or "").strip() or None
+    tenant_id = (tenant_id or "").strip() or None
     now = _now()
     with _lock, _connect() as conn:
+        if parent_team_id and not tenant_id:
+            parent = conn.execute(
+                "SELECT tenantId FROM teams WHERE teamId = ?", (parent_team_id,)
+            ).fetchone()
+            if parent and parent["tenantId"]:
+                tenant_id = parent["tenantId"]
+        if not tenant_id:
+            tenant_id = DEFAULT_TENANT_ID
         has_primary = conn.execute(
             "SELECT 1 FROM team_users WHERE userId = ? AND isPrimary = 1 LIMIT 1",
             (admin_email,),
         ).fetchone()
         conn.execute(
-            "INSERT INTO teams (teamId, teamName, parentTeamId, createdDate, updatedDate)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (team_id, team_name, parent_team_id, now, now),
+            "INSERT INTO teams"
+            " (teamId, teamName, parentTeamId, tenantId, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (team_id, team_name, parent_team_id, tenant_id, now, now),
         )
         conn.execute(
             "INSERT INTO team_users"
@@ -426,6 +827,17 @@ def create_team(
             " VALUES (?, ?, ?, 1, ?, ?, ?)",
             (team_id, admin_email, admin_email, 0 if has_primary else 1, now, now),
         )
+        if tenant_id == SHARED_TENANT_ID:
+            _upsert_membership_conn(
+                conn, SHARED_TENANT_ID, admin_email, role=TENANT_ROLE_SHARED
+            )
+        else:
+            role = (
+                TENANT_ROLE_PRIMARY
+                if not _has_primary_tenant(conn, admin_email)
+                else TENANT_ROLE_GUEST
+            )
+            _upsert_membership_conn(conn, tenant_id, admin_email, role=role)
         team = conn.execute(
             "SELECT * FROM teams WHERE teamId = ?", (team_id,)
         ).fetchone()
@@ -558,6 +970,21 @@ def create_team_user(
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (team_id, email, email, 1 if is_admin else 0, 1 if is_primary else 0, now, now),
         )
+        team_row = conn.execute(
+            "SELECT tenantId FROM teams WHERE teamId = ?", (team_id,)
+        ).fetchone()
+        tenant_id = (team_row["tenantId"] if team_row else None) or DEFAULT_TENANT_ID
+        if tenant_id == SHARED_TENANT_ID:
+            _upsert_membership_conn(
+                conn, SHARED_TENANT_ID, email, role=TENANT_ROLE_SHARED
+            )
+        else:
+            role = (
+                TENANT_ROLE_PRIMARY
+                if not _has_primary_tenant(conn, email)
+                else TENANT_ROLE_GUEST
+            )
+            _upsert_membership_conn(conn, tenant_id, email, role=role)
         r = conn.execute(
             "SELECT * FROM team_users WHERE teamId = ? AND userId = ?",
             (team_id, email),
@@ -758,6 +1185,338 @@ def list_teams_for_member(user_id: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Tenant (棟)
+# ---------------------------------------------------------------------------
+def list_tenants() -> list[dict[str, Any]]:
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tenants ORDER BY kind DESC, createdDate ASC"
+        ).fetchall()
+    return [_row_to_tenant(r) for r in rows]
+
+
+def get_tenant(tenant_id: str) -> dict[str, Any] | None:
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT * FROM tenants WHERE tenantId = ?", (tenant_id,)
+        ).fetchone()
+    return _row_to_tenant(r) if r else None
+
+
+def create_tenant(
+    tenant_name: str,
+    *,
+    kind: str = TENANT_KIND_ORG,
+    features: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tenant_id = str(uuid.uuid4())
+    tenant_name = normalize_org_name(tenant_name)
+    if kind not in (TENANT_KIND_ORG, TENANT_KIND_SHARED):
+        kind = TENANT_KIND_ORG
+    now = _now()
+    feat = json.dumps(features or {}, ensure_ascii=False)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT INTO tenants"
+            " (tenantId, tenantName, kind, features, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (tenant_id, tenant_name, kind, feat, now, now),
+        )
+        r = conn.execute(
+            "SELECT * FROM tenants WHERE tenantId = ?", (tenant_id,)
+        ).fetchone()
+    return _row_to_tenant(r)
+
+
+def update_tenant(
+    tenant_id: str,
+    *,
+    tenant_name: str | None = None,
+    features: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    current = get_tenant(tenant_id)
+    if not current:
+        return None
+    name = (
+        normalize_org_name(tenant_name)
+        if tenant_name is not None
+        else current["tenantName"]
+    )
+    feat = json.dumps(
+        features if features is not None else current["features"],
+        ensure_ascii=False,
+    )
+    with _lock, _connect() as conn:
+        conn.execute(
+            "UPDATE tenants SET tenantName = ?, features = ?, updatedDate = ?"
+            " WHERE tenantId = ?",
+            (name, feat, _now(), tenant_id),
+        )
+        r = conn.execute(
+            "SELECT * FROM tenants WHERE tenantId = ?", (tenant_id,)
+        ).fetchone()
+    return _row_to_tenant(r) if r else None
+
+
+def delete_tenant(tenant_id: str) -> str | None:
+    """削除する。問題があればメッセージ、なければ None。"""
+    if tenant_id in FIXED_TENANT_IDS:
+        return "固定の棟は削除できません"
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        return "棟が見つかりません"
+    with _lock, _connect() as conn:
+        used = conn.execute(
+            "SELECT 1 FROM teams WHERE tenantId = ? LIMIT 1", (tenant_id,)
+        ).fetchone()
+        if used:
+            return "チームが残っている棟は削除できません"
+        conn.execute(
+            "DELETE FROM tenant_memberships WHERE tenantId = ?", (tenant_id,)
+        )
+        conn.execute(
+            "UPDATE user_tenant_prefs SET activeTenantId = NULL"
+            " WHERE activeTenantId = ?",
+            (tenant_id,),
+        )
+        conn.execute("DELETE FROM tenants WHERE tenantId = ?", (tenant_id,))
+    return None
+
+
+def list_tenant_memberships(tenant_id: str) -> list[dict[str, Any]]:
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tenant_memberships WHERE tenantId = ?"
+            " ORDER BY createdDate ASC",
+            (tenant_id,),
+        ).fetchall()
+    return [_row_to_membership(r) for r in rows]
+
+
+def get_tenant_membership(tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT * FROM tenant_memberships WHERE tenantId = ? AND userId = ?",
+            (tenant_id, user_id),
+        ).fetchone()
+    return _row_to_membership(r) if r else None
+
+
+def upsert_tenant_membership(
+    tenant_id: str,
+    user_id: str,
+    *,
+    role: str,
+    is_admin: bool = False,
+) -> dict[str, Any] | None:
+    """主鍵 / 招待鍵 / 共通鍵を渡す。tenant が無ければ None。"""
+    if role not in (
+        TENANT_ROLE_PRIMARY,
+        TENANT_ROLE_GUEST,
+        TENANT_ROLE_SHARED,
+    ):
+        role = TENANT_ROLE_GUEST
+    if not get_tenant(tenant_id):
+        return None
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        _upsert_membership_conn(
+            conn, tenant_id, user_id, role=role, is_admin=is_admin, overwrite=True
+        )
+        r = conn.execute(
+            "SELECT * FROM tenant_memberships WHERE tenantId = ? AND userId = ?",
+            (tenant_id, user_id),
+        ).fetchone()
+    return _row_to_membership(r) if r else None
+
+
+def remove_tenant_membership(tenant_id: str, user_id: str) -> None:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "DELETE FROM tenant_memberships WHERE tenantId = ? AND userId = ?",
+            (tenant_id, user_id),
+        )
+        pref = conn.execute(
+            "SELECT activeTenantId FROM user_tenant_prefs WHERE userId = ?",
+            (user_id,),
+        ).fetchone()
+        if pref and pref["activeTenantId"] == tenant_id:
+            conn.execute(
+                "UPDATE user_tenant_prefs SET activeTenantId = NULL, updatedDate = ?"
+                " WHERE userId = ?",
+                (_now(), user_id),
+            )
+
+
+def list_tenants_for_user(user_id: str) -> list[dict[str, Any]]:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT t.*, m.role AS role, m.isAdmin AS isAdmin"
+            " FROM tenants t JOIN tenant_memberships m ON t.tenantId = m.tenantId"
+            " WHERE m.userId = ? ORDER BY t.kind DESC, t.createdDate ASC",
+            (user_id,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        item = _row_to_tenant(r)
+        item["role"] = r["role"]
+        item["isAdmin"] = bool(r["isAdmin"])
+        out.append(item)
+    return out
+
+
+def get_primary_tenant_id(user_id: str) -> str | None:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT tenantId FROM tenant_memberships"
+            " WHERE userId = ? AND role = ? LIMIT 1",
+            (user_id, TENANT_ROLE_PRIMARY),
+        ).fetchone()
+    return r["tenantId"] if r else None
+
+
+def can_access_tenant(tenant_id: str, user_id: str) -> bool:
+    return get_tenant_membership(tenant_id, user_id) is not None
+
+
+def is_tenant_admin(tenant_id: str, user_id: str) -> bool:
+    m = get_tenant_membership(tenant_id, user_id)
+    return bool(m and m["isAdmin"])
+
+
+def tenant_id_of_team(team_id: str) -> str | None:
+    team = get_team(team_id)
+    return (team or {}).get("tenantId")
+
+
+def is_tenant_admin_of_team(user_id: str, team_id: str) -> bool:
+    """そのチームが属する棟の管理者か。基盤専用チームは対象外。"""
+    tid = tenant_id_of_team(team_id)
+    if not tid:
+        return False
+    return is_tenant_admin(tid, user_id)
+
+
+def list_tenant_ids_administered(user_id: str) -> list[str]:
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT tenantId FROM tenant_memberships"
+            " WHERE userId = ? AND isAdmin = 1",
+            (user_id,),
+        ).fetchall()
+    return [r["tenantId"] for r in rows]
+
+
+def list_teams_for_tenant_admin(user_id: str) -> list[dict[str, Any]]:
+    """棟管理者が見られるチーム（管理対象棟のチーム）。"""
+    tenant_ids = list_tenant_ids_administered(user_id)
+    if not tenant_ids:
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tid in tenant_ids:
+        for team in list_teams_in_tenant(tid):
+            if team["teamId"] in seen or team["teamId"] == ADMIN_TEAM_ID:
+                continue
+            seen.add(team["teamId"])
+            out.append(team)
+    return out
+
+
+def get_active_tenant_id(user_id: str, *, allow_any: bool = False) -> str:
+    """活性棟。保存値が鍵に含まれるならそれ、なければ主鍵、なければデフォルト棟。"""
+    user_id = normalize_email(user_id)
+    with _lock, _connect() as conn:
+        pref = conn.execute(
+            "SELECT activeTenantId FROM user_tenant_prefs WHERE userId = ?",
+            (user_id,),
+        ).fetchone()
+        saved = (pref["activeTenantId"] if pref else None) or None
+        if saved:
+            exists = conn.execute(
+                "SELECT 1 FROM tenants WHERE tenantId = ?", (saved,)
+            ).fetchone()
+            member = conn.execute(
+                "SELECT 1 FROM tenant_memberships WHERE tenantId = ? AND userId = ?",
+                (saved, user_id),
+            ).fetchone()
+            if exists and (allow_any or member):
+                return saved
+    primary = get_primary_tenant_id(user_id)
+    if primary:
+        return primary
+    if can_access_tenant(SHARED_TENANT_ID, user_id):
+        return SHARED_TENANT_ID
+    # どの棟の鍵も無ければ、デフォルト棟へは落とさず「所属なし」を返す。
+    return NO_TENANT_ID
+
+
+def set_active_tenant_id(
+    user_id: str, tenant_id: str, *, allow_any: bool = False
+) -> str | None:
+    """活性棟を保存。鍵が無ければメッセージ。"""
+    user_id = normalize_email(user_id)
+    if not get_tenant(tenant_id):
+        return "棟が見つかりません"
+    if not allow_any and not can_access_tenant(tenant_id, user_id):
+        return "この棟の鍵がありません"
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT INTO user_tenant_prefs (userId, activeTenantId, updatedDate)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(userId) DO UPDATE SET"
+            " activeTenantId = excluded.activeTenantId,"
+            " updatedDate = excluded.updatedDate",
+            (user_id, tenant_id, _now()),
+        )
+    return None
+
+
+def list_teams_in_tenant(tenant_id: str) -> list[dict[str, Any]]:
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM teams WHERE tenantId = ? ORDER BY createdDate ASC",
+            (tenant_id,),
+        ).fetchall()
+    return [_row_to_team(r) for r in rows]
+
+
+def visible_tenant_ids_for_scope(active_tenant_id: str) -> set[str]:
+    """活性棟で見てよい tenantId。共有棟は活性が共有のときだけ。"""
+    return {active_tenant_id}
+
+
+def team_visible_in_tenant(team_id: str, active_tenant_id: str) -> bool:
+    """活性棟からそのチームのナレッジ／アプリを見てよいか。"""
+    if team_id == ADMIN_TEAM_ID:
+        return False
+    team = get_team(team_id)
+    if not team:
+        return False
+    tid = team.get("tenantId")
+    return tid in visible_tenant_ids_for_scope(active_tenant_id)
+
+
+def filter_team_ids_for_tenant(
+    team_ids: list[str], active_tenant_id: str
+) -> list[str]:
+    allowed = visible_tenant_ids_for_scope(active_tenant_id)
+    out: list[str] = []
+    for tid in team_ids:
+        if tid == ADMIN_TEAM_ID:
+            continue
+        team = get_team(tid)
+        if team and team.get("tenantId") in allowed:
+            out.append(tid)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # exApps
 # ---------------------------------------------------------------------------
 def _row_to_exapp(r: sqlite3.Row) -> dict[str, Any]:
@@ -943,11 +1702,81 @@ def copy_exapp(team_id: str, ex_app_id: str, overrides: dict[str, Any]) -> dict[
     return create_exapp(team_id, data)
 
 
-def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, Any]]:
+def list_knowledge_scopes(
+    user_id: str, is_system_admin: bool, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """ナレッジ UI 用のスコープ一覧（活性棟のチーム。共通は自棟にあるときだけ）。"""
+    active = tenant_id or get_active_tenant_id(user_id)
+    scopes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(scope: str, name: str, kind: str, can_manage: bool) -> None:
+        if scope in seen:
+            if can_manage:
+                for item in scopes:
+                    if item["scope"] == scope:
+                        item["canManage"] = True
+            return
+        seen.add(scope)
+        scopes.append(
+            {"scope": scope, "name": name, "kind": kind, "canManage": can_manage}
+        )
+
+    if team_visible_in_tenant(COMMON_TEAM_ID, active):
+        _add(
+            COMMON_TEAM_ID,
+            "共有ナレッジ（共通）",
+            "common",
+            is_system_admin or is_tenant_admin_of_team(user_id, COMMON_TEAM_ID),
+        )
+    for t in list_teams_for_tenant_admin(user_id):
+        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        if not team_visible_in_tenant(t["teamId"], active):
+            continue
+        _add(t["teamId"], t.get("teamName") or t["teamId"], "team", True)
+    for t in list_teams_for_member(user_id):
+        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        if not team_visible_in_tenant(t["teamId"], active):
+            continue
+        _add(t["teamId"], t.get("teamName") or t["teamId"], "team", True)
+    for t in list_inherited_teams_for_user(user_id):
+        if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+            continue
+        if not team_visible_in_tenant(t["teamId"], active):
+            continue
+        _add(
+            t["teamId"],
+            f"{t.get('teamName') or t['teamId']}（配下・閲覧）",
+            "team",
+            False,
+        )
+    return scopes
+
+
+def builtin_feature_enabled(tenant_id: str | None, ex_app_id: str) -> bool:
+    """tenants.features で組み込みアプリを隠す。キーが無ければ出す。"""
+    if not tenant_id or not ex_app_id:
+        return True
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        return True
+    features = tenant.get("features") or {}
+    if ex_app_id not in features:
+        return True
+    return bool(features[ex_app_id])
+
+
+def list_visible_exapps(
+    user_id: str,
+    is_system_admin: bool,
+    tenant_id: str | None = None,
+) -> list[dict[str, Any]]:
     """AI アプリ一覧（公開済み）を可視範囲で返す（teamName 付き）。
 
-    - システム管理者: 全チームの公開アプリ
-    - それ以外: 明示所属 + 主所属の配下 + 共通チームの公開アプリ（管理者ツールは除外）
+    - システム管理者: 活性棟＋共有棟（管理者ツールは常に可）
+    - それ以外: 明示所属 + 主所属の配下 + 共通チーム（管理者ツールは除外）
     """
     teams = {t["teamId"]: t["teamName"] for t in list_teams()}
     with _lock, _connect() as conn:
@@ -955,13 +1784,26 @@ def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, A
             "SELECT * FROM exapps WHERE status = 'published'"
         ).fetchall()
     visible_team_ids = set(list_effective_team_ids_for_user(user_id))
-    visible_team_ids.add(COMMON_TEAM_ID)
+    if tenant_id:
+        if team_visible_in_tenant(COMMON_TEAM_ID, tenant_id):
+            visible_team_ids.add(COMMON_TEAM_ID)
+        visible_team_ids = set(
+            filter_team_ids_for_tenant(list(visible_team_ids), tenant_id)
+        )
+    else:
+        visible_team_ids.add(COMMON_TEAM_ID)
     result = []
     for r in rows:
         app = _row_to_exapp(r)
         if app["teamId"] == ADMIN_TEAM_ID and not is_system_admin:
             continue
+        if is_system_admin and app["teamId"] == ADMIN_TEAM_ID:
+            result.append({**app, "teamName": teams.get(app["teamId"], "")})
+            continue
         if is_system_admin or app["teamId"] in visible_team_ids:
+            if tenant_id and app["teamId"] != ADMIN_TEAM_ID:
+                if not team_visible_in_tenant(app["teamId"], tenant_id):
+                    continue
             result.append({**app, "teamName": teams.get(app["teamId"], "")})
     return result
 
@@ -969,14 +1811,17 @@ def list_visible_exapps(user_id: str, is_system_admin: bool) -> list[dict[str, A
 # ---------------------------------------------------------------------------
 # 利用者ごとの AI アプリ ピン留め（カテゴリ横断・本人のみ）
 # ---------------------------------------------------------------------------
-def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
-    """本人のピン留め一覧（displayOrder 昇順）。"""
+def list_user_app_pins(
+    user_id: str, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """本人のピン留め一覧（displayOrder 昇順）。活性棟だけ返す。"""
     user_id = normalize_email(user_id)
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT teamId, itemId, displayOrder FROM user_app_pins"
-            " WHERE userId = ? ORDER BY displayOrder ASC",
-            (user_id,),
+            " WHERE userId = ? AND tenantId = ? ORDER BY displayOrder ASC",
+            (user_id, tenant_id),
         ).fetchall()
     return [
         {"teamId": r["teamId"], "itemId": r["itemId"], "displayOrder": r["displayOrder"]}
@@ -984,70 +1829,96 @@ def list_user_app_pins(user_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _is_pinnable_app(user_id: str, team_id: str, item_id: str, is_system_admin: bool) -> bool:
-    """ピン留め可能か（本人が見える公開 exApp、または共通チームの GenU 機能）。"""
-    if team_id == COMMON_TEAM_ID and item_id in GENU_APP_IDS:
+def _is_pinnable_app(
+    user_id: str,
+    team_id: str,
+    item_id: str,
+    is_system_admin: bool,
+    tenant_id: str | None = None,
+) -> bool:
+    """ピン留め可能か（本人が見える公開 exApp、または共通チームの公式機能）。"""
+    tenant_id = _scope_tenant_id(tenant_id)
+    if team_id == COMMON_TEAM_ID and (
+        item_id in GENU_APP_IDS or item_id in OFFICIAL_CATALOG_EXAPP_IDS
+    ):
+        if not builtin_feature_enabled(tenant_id, item_id):
+            return False
         app = get_exapp(COMMON_TEAM_ID, item_id)
         # 未シード環境の後方互換。登録済みなら公開中だけピン留め可。
         if app is None:
             return True
         return app.get("status") == "published"
-    visible = list_visible_exapps(user_id, is_system_admin)
+    visible = list_visible_exapps(user_id, is_system_admin, tenant_id)
     return any(a["teamId"] == team_id and a["exAppId"] == item_id for a in visible)
 
 
 def add_user_app_pin(
-    user_id: str, team_id: str, item_id: str, is_system_admin: bool
+    user_id: str,
+    team_id: str,
+    item_id: str,
+    is_system_admin: bool,
+    tenant_id: str | None = None,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """ピンを追加する。成功時は最新一覧、失敗時はエラーメッセージを返す。"""
     user_id = normalize_email(user_id)
-    if not _is_pinnable_app(user_id, team_id, item_id, is_system_admin):
+    tenant_id = _scope_tenant_id(tenant_id)
+    if not _is_pinnable_app(user_id, team_id, item_id, is_system_admin, tenant_id):
         return None, "ピン留めできないアプリです"
     with _lock, _connect() as conn:
         existing = conn.execute(
-            "SELECT 1 FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
-            (user_id, team_id, item_id),
+            "SELECT 1 FROM user_app_pins"
+            " WHERE userId = ? AND teamId = ? AND itemId = ? AND tenantId = ?",
+            (user_id, team_id, item_id, tenant_id),
         ).fetchone()
         if not existing:
             count_row = conn.execute(
-                "SELECT COUNT(*) AS c FROM user_app_pins WHERE userId = ?", (user_id,)
+                "SELECT COUNT(*) AS c FROM user_app_pins"
+                " WHERE userId = ? AND tenantId = ?",
+                (user_id, tenant_id),
             ).fetchone()
             if int(count_row["c"]) >= MAX_APP_PINS:
                 return None, f"ピン留めは{MAX_APP_PINS}件までです"
             max_row = conn.execute(
                 "SELECT COALESCE(MAX(displayOrder), -1) AS m FROM user_app_pins"
-                " WHERE userId = ?",
-                (user_id,),
+                " WHERE userId = ? AND tenantId = ?",
+                (user_id, tenant_id),
             ).fetchone()
             next_order = int(max_row["m"]) + 1
             conn.execute(
-                "INSERT INTO user_app_pins (userId, teamId, itemId, displayOrder, pinnedDate)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (user_id, team_id, item_id, next_order, _now()),
+                "INSERT INTO user_app_pins"
+                " (userId, teamId, itemId, tenantId, displayOrder, pinnedDate)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, team_id, item_id, tenant_id, next_order, _now()),
             )
-    return list_user_app_pins(user_id), None
+    return list_user_app_pins(user_id, tenant_id), None
 
 
-def remove_user_app_pin(user_id: str, team_id: str, item_id: str) -> list[dict[str, Any]]:
+def remove_user_app_pin(
+    user_id: str, team_id: str, item_id: str, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
     user_id = normalize_email(user_id)
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         conn.execute(
-            "DELETE FROM user_app_pins WHERE userId = ? AND teamId = ? AND itemId = ?",
-            (user_id, team_id, item_id),
+            "DELETE FROM user_app_pins"
+            " WHERE userId = ? AND teamId = ? AND itemId = ? AND tenantId = ?",
+            (user_id, team_id, item_id, tenant_id),
         )
-    return list_user_app_pins(user_id)
+    return list_user_app_pins(user_id, tenant_id)
 
 
 # ---------------------------------------------------------------------------
 # exApp 実行履歴（会話継続/履歴表示のためにローカルでも保持する）
 # ---------------------------------------------------------------------------
 def _row_to_history(r: sqlite3.Row) -> dict[str, Any]:
+    keys = r.keys()
     return {
         "teamId": r["teamId"],
         "teamName": r["teamName"],
         "exAppId": r["exAppId"],
         "exAppName": r["exAppName"],
         "userId": r["userId"],
+        "tenantId": r["tenantId"] if "tenantId" in keys else DEFAULT_TENANT_ID,
         "inputs": json.loads(r["inputs"] or "{}"),
         "outputs": r["outputs"],
         "createdDate": r["createdDate"],
@@ -1065,6 +1936,7 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
     """
     team_id = data.get("teamId", "")
     ex_app_id = data.get("exAppId", "")
+    tenant_id = _scope_tenant_id(data.get("tenantId"))
     created = data.get("createdDate") or _now()
     with _lock, _connect() as conn:
         # 同一ミリ秒の衝突を避ける
@@ -1075,8 +1947,9 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
             created = str(int(created) + 1)
         conn.execute(
             "INSERT INTO exapp_histories (teamId, exAppId, createdDate, teamName,"
-            " exAppName, userId, inputs, outputs, status, progress, artifacts, sessionId)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " exAppName, userId, tenantId, inputs, outputs, status, progress,"
+            " artifacts, sessionId)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 team_id,
                 ex_app_id,
@@ -1084,6 +1957,7 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
                 data.get("teamName", ""),
                 data.get("exAppName", ""),
                 data.get("userId", ""),
+                tenant_id,
                 json.dumps(data.get("inputs") or {}, ensure_ascii=False),
                 data.get("outputs", ""),
                 data.get("status", "COMPLETED"),
@@ -1102,34 +1976,44 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_exapp_histories(
-    team_id: str, ex_app_id: str, user_id: str
+    team_id: str,
+    ex_app_id: str,
+    user_id: str,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """指定ユーザーの、特定 AI アプリの実行履歴を新しい順で返す。"""
+    """指定ユーザーの、特定 AI アプリの実行履歴を新しい順で返す。活性棟だけ。"""
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM exapp_histories"
-            " WHERE teamId = ? AND exAppId = ? AND userId = ?"
+            " WHERE teamId = ? AND exAppId = ? AND userId = ? AND tenantId = ?"
             " ORDER BY createdDate DESC",
-            (team_id, ex_app_id, user_id),
+            (team_id, ex_app_id, user_id, tenant_id),
         ).fetchall()
     return [_row_to_history(r) for r in rows]
 
 
 def get_exapp_history(
-    team_id: str, ex_app_id: str, created_date: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             r = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND userId = ?",
-                (team_id, ex_app_id, created_date, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, user_id, tenant_id),
             ).fetchone()
         else:
             r = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
-                (team_id, ex_app_id, created_date),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, tenant_id),
             ).fetchone()
     return _row_to_history(r) if r else None
 
@@ -1155,65 +2039,83 @@ def delete_histories_older_than(cutoff_created: str) -> int:
 
 
 def delete_exapp_history(
-    team_id: str, ex_app_id: str, created_date: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> bool:
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND userId = ?",
-                (team_id, ex_app_id, created_date, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, user_id, tenant_id),
             )
         else:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND createdDate = ?",
-                (team_id, ex_app_id, created_date),
+                " WHERE teamId = ? AND exAppId = ? AND createdDate = ? AND tenantId = ?",
+                (team_id, ex_app_id, created_date, tenant_id),
             )
         return cur.rowcount > 0
 
 
 def list_exapp_histories_by_session(
-    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    session_id: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """同一 sessionId の実行履歴を古い順で返す（会話単位の削除用）。"""
     if not session_id:
         return []
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             rows = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " AND userId = ? AND tenantId = ?"
                 " ORDER BY createdDate ASC",
-                (team_id, ex_app_id, session_id, user_id),
+                (team_id, ex_app_id, session_id, user_id, tenant_id),
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND tenantId = ?"
                 " ORDER BY createdDate ASC",
-                (team_id, ex_app_id, session_id),
+                (team_id, ex_app_id, session_id, tenant_id),
             ).fetchall()
     return [_row_to_history(r) for r in rows]
 
 
 def delete_exapp_histories_by_session(
-    team_id: str, ex_app_id: str, session_id: str, user_id: str | None = None
+    team_id: str,
+    ex_app_id: str,
+    session_id: str,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> int:
     """同一 sessionId の実行履歴をまとめて削除する。削除件数を返す。"""
     if not session_id:
         return 0
+    tenant_id = _scope_tenant_id(tenant_id)
     with _lock, _connect() as conn:
         if user_id is not None:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND userId = ?",
-                (team_id, ex_app_id, session_id, user_id),
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?"
+                " AND userId = ? AND tenantId = ?",
+                (team_id, ex_app_id, session_id, user_id, tenant_id),
             )
         else:
             cur = conn.execute(
                 "DELETE FROM exapp_histories"
-                " WHERE teamId = ? AND exAppId = ? AND sessionId = ?",
-                (team_id, ex_app_id, session_id),
+                " WHERE teamId = ? AND exAppId = ? AND sessionId = ? AND tenantId = ?",
+                (team_id, ex_app_id, session_id, tenant_id),
             )
         return cur.rowcount

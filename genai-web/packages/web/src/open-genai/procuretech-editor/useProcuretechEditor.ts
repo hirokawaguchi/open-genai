@@ -154,6 +154,18 @@ export const useEditorActions = () => {
     [run],
   );
 
+  const renameProject = useCallback(
+    (projectId: string, name: string) =>
+      run(async () => {
+        const res = await teamApi.patch<{ project: EditorProject }>(
+          `${BASE}/projects/${enc(projectId)}`,
+          { name },
+        );
+        return res.data?.project ?? null;
+      }, 'プロジェクト名の変更に失敗しました。'),
+    [run],
+  );
+
   const deleteProject = useCallback(
     (projectId: string) =>
       run(async () => {
@@ -304,6 +316,7 @@ export const useEditorActions = () => {
 
   return {
     createProject,
+    renameProject,
     deleteProject,
     saveFile,
     uploadFile,
