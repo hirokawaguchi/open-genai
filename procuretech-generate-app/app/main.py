@@ -34,6 +34,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import uuid
 import zipfile
@@ -86,6 +87,11 @@ app = FastAPI(title="ProcureTech Generate", version="1.0.0")
 
 # request_id -> {"created": float, "zip": bytes, "doc_type": str}
 _JOBS: dict[str, dict[str, Any]] = {}
+
+# 非同期 compose ジョブ（重い pptx 生成の実進捗を返すため）。
+#   job_id -> {"status", "progress"(0-100), "step", "zip"?, "error"?, "created"}
+_COMPOSE_JOBS: dict[str, dict[str, Any]] = {}
+_COMPOSE_LOCK = threading.Lock()
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -462,26 +468,96 @@ def _log_deck_check(fmt: str, deck: dict[str, Any], data: bytes) -> None:
 
 
 def _render_output(
-    fmt: str, name: str, sections: list[dict[str, Any]], assets: dict[str, bytes]
+    fmt: str,
+    name: str,
+    sections: list[dict[str, Any]],
+    assets: dict[str, bytes],
+    on_progress: Any = None,
 ) -> bytes:
     # HTML はブラウザでの庁内情報伝達を目的とし、常に縦スクロールの単一文書にする。
     # スライド（LLM デッキ）は PPTX 専用に残す。
     if fmt == "html":
-        return markdown_to_html(name, sections, assets)
+        data = markdown_to_html(name, sections, assets)
+        if on_progress:
+            on_progress(1.0, "書き出し")
+        return data
     if fmt == "pptx":
-        deck = plan_deck(name, sections, assets)
+        deck = plan_deck(name, sections, assets, on_progress=on_progress)
         if deck:
             print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
+            if on_progress:
+                on_progress(0.95, "スライドを書き出し")
             data = render_deck(deck, assets)
             _log_deck_check("pptx", deck, data)
+            if on_progress:
+                on_progress(1.0, "書き出し")
             return data
         print("[generate] pptx: fallback (heading split)")
-        return markdown_to_pptx(name, sections, assets)
+        data = markdown_to_pptx(name, sections, assets)
+        if on_progress:
+            on_progress(1.0, "書き出し")
+        return data
     if fmt == "txt":
         return markdown_to_txt(sections)
     if fmt == "md":
         return markdown_to_md(sections)
     return _markdown_to_docx(name, sections, assets)
+
+
+def _render_all(
+    outputs: list[Any],
+    assets: dict[str, bytes],
+    progress_cb: Any = None,
+) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """outputs をレンダリングして (rendered[(arcname,bytes)], unknown_formats) を返す。
+
+    progress_cb(pct:int, step:str) があれば、出力ごとの帯（0-95%）で実進捗を通知する。
+    """
+    valid = [o for o in outputs if isinstance(o, dict)]
+    total = max(len(valid), 1)
+    rendered: list[tuple[str, bytes]] = []
+    unknown: list[str] = []
+    used: set[str] = set()
+    idx = 0
+    for i, o in enumerate(outputs, 1):
+        if not isinstance(o, dict):
+            continue
+        name = str(o.get("name") or f"output{i}")
+        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
+        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
+            unknown.append(raw_fmt)
+            idx += 1
+            continue
+        fmt = normalize_format(raw_fmt)
+        sections = o.get("sections") or []
+        if not isinstance(sections, list):
+            sections = []
+        lo = 95.0 * idx / total
+        hi = 95.0 * (idx + 1) / total
+
+        def _op(frac: float, label: str, _lo=lo, _hi=hi, _name=name) -> None:
+            if progress_cb:
+                pct = int(_lo + (_hi - _lo) * max(0.0, min(1.0, frac)))
+                progress_cb(pct, f"{_name}: {label}")
+
+        data = _render_output(fmt, name, sections, assets, on_progress=_op if progress_cb else None)
+        arc = f"{name}.{fmt}"
+        n = 2
+        while arc in used:
+            arc = f"{name}({n}).{fmt}"
+            n += 1
+        used.add(arc)
+        rendered.append((arc, data))
+        idx += 1
+    return rendered, unknown
+
+
+def _zip_rendered(rendered: list[tuple[str, bytes]]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for arc, data in rendered:
+            zf.writestr(arc, data)
+    return buf.getvalue()
 
 
 @app.post("/compose")
@@ -507,30 +583,7 @@ async def compose(
         return JSONResponse(status_code=400, content={"error": "outputs がありません"})
     assets = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
 
-    unknown: list[str] = []
-    rendered: list[tuple[str, bytes]] = []
-    used: set[str] = set()
-    for i, o in enumerate(outputs, 1):
-        if not isinstance(o, dict):
-            continue
-        name = str(o.get("name") or f"output{i}")
-        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
-        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
-            unknown.append(raw_fmt)
-            continue
-        fmt = normalize_format(raw_fmt)
-        sections = o.get("sections") or []
-        if not isinstance(sections, list):
-            sections = []
-        data = _render_output(fmt, name, sections, assets)
-        arc = f"{name}.{fmt}"
-        n = 2
-        while arc in used:
-            arc = f"{name}({n}).{fmt}"
-            n += 1
-        used.add(arc)
-        rendered.append((arc, data))
-
+    rendered, unknown = _render_all(outputs, assets)
     if unknown and not rendered:
         return JSONResponse(
             status_code=422,
@@ -539,12 +592,107 @@ async def compose(
     if not rendered:
         return JSONResponse(status_code=400, content={"error": "合成対象の内容がありません"})
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for arc, data in rendered:
-            zf.writestr(arc, data)
     return Response(
-        content=buf.getvalue(),
+        content=_zip_rendered(rendered),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="compose.zip"'},
+    )
+
+
+def _run_compose_job(job_id: str, outputs: list[Any], assets: dict[str, bytes]) -> None:
+    """バックグラウンドで合成し、実進捗を _COMPOSE_JOBS に書く。"""
+
+    def progress_cb(pct: int, step: str) -> None:
+        with _COMPOSE_LOCK:
+            job = _COMPOSE_JOBS.get(job_id)
+            if job is not None:
+                job["progress"] = max(0, min(99, int(pct)))
+                job["step"] = step
+
+    try:
+        rendered, unknown = _render_all(outputs, assets, progress_cb=progress_cb)
+        if not rendered:
+            msg = (
+                f"未対応の出力形式です: {', '.join(sorted(set(unknown)))}"
+                if unknown
+                else "合成対象の内容がありません"
+            )
+            with _COMPOSE_LOCK:
+                _COMPOSE_JOBS[job_id].update(status="error", error=msg, step="エラー")
+            return
+        data = _zip_rendered(rendered)
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(
+                status="success", progress=100, step="完了", zip=data
+            )
+    except Exception as exc:  # noqa: BLE001
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(status="error", error=str(exc), step="エラー")
+
+
+@app.post("/compose/jobs")
+async def compose_job_start(
+    request: Request, x_api_key: str | None = Header(default=None)
+) -> JSONResponse:
+    """非同期で合成を開始し、job_id を返す。進捗は GET /compose/jobs/{id}。"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    outputs = body.get("outputs") if isinstance(body, dict) else None
+    if not isinstance(outputs, list) or not outputs:
+        return JSONResponse(status_code=400, content={"error": "outputs がありません"})
+    assets = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
+    job_id = uuid.uuid4().hex
+    with _COMPOSE_LOCK:
+        _COMPOSE_JOBS[job_id] = {
+            "status": "processing",
+            "progress": 0,
+            "step": "準備中",
+            "created": time.time(),
+        }
+    threading.Thread(
+        target=_run_compose_job, args=(job_id, outputs, assets), daemon=True
+    ).start()
+    return JSONResponse(status_code=202, content={"job_id": job_id})
+
+
+@app.get("/compose/jobs/{job_id}")
+def compose_job_status(job_id: str, x_api_key: str | None = Header(default=None)) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    with _COMPOSE_LOCK:
+        job = _COMPOSE_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        payload = {
+            "status": job.get("status"),
+            "progress": job.get("progress", 0),
+            "step": job.get("step", ""),
+        }
+        if job.get("error"):
+            payload["error"] = job["error"]
+    return JSONResponse(content=payload)
+
+
+@app.get("/compose/jobs/{job_id}/result")
+def compose_job_result(job_id: str, x_api_key: str | None = Header(default=None)) -> Response:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    with _COMPOSE_LOCK:
+        job = _COMPOSE_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        if job.get("status") != "success" or not job.get("zip"):
+            return JSONResponse(status_code=409, content={"error": "not ready"})
+        data = job["zip"]
+    return Response(
+        content=data,
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="compose.zip"'},
     )

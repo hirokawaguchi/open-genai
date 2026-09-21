@@ -43,6 +43,8 @@
 - Markdown エディタの docx 書き出しで、GFM 表・太字／斜体／コード／リンク／番号付きリスト／引用をプレビュー相当に反映する
 - Markdown エディタの HTML 書き出しをスライド（LLM デッキ）から切り離し、常に自己完結・縦スクロールの庁内文書 HTML にする。見出しから目次を自動生成し、リンク／斜体／取消／番号付き・タスクリスト／水平線／Mermaid 画像をカバー。system フォント＋レスポンシブ＋print 対応。PPTX は従来の LLM デッキのまま
 - Markdown エディタの PPTX を notes-first に転換。まず LLM が原文を根拠に「整理ノート（構造化要点）」を作り、それをスライド本体の材料にする。ノートには整理ノート＋原文を常に併記（フォールバック経路にも原文ノートを付与、20字閾値は撤廃）。空列やプレースホルダを解消し、DADS の型スケール（見出し/本文/キャプション）と自動縮小で密度と可読性を上げる。原文グラウンディング（新規の数値・カタカナ・英字を除去）は維持
+- 書き出し（compose）の実進捗を表示する。generate-app に非同期ジョブ（`POST /compose/jobs` → `GET /compose/jobs/{id}` / `/result`）を追加し、pptx 生成の段階（構成→要点整理 n/N→スライド構成 m/M→書き出し）で実際の進捗を返す。editor は Excel と同様にポーリングして `compose_jobs` の progress/step に反映（未実装環境へは同期 `/compose` にフォールバック）。フロントの進捗バー・文言が処理中に更新されるようになる
+- PPTX にフリーフォーム自由配置（フェーズ B）を追加。`GENERATE_PPTX_FREEFORM=1` のとき、コンポーザ用モデル（`PROCURETECH_COMPOSE_MODEL`。例: Ollama Cloud の deepseek）が 12×6 グリッド上に見出し/本文/箇条書き/KPI/表/画像/面パネルを配置する `freeform` レイアウトを生成する。座標はサーバ側でクランプ、配色・フォントは DADS のみ・角丸なし、テキストは自動縮小。原文グラウンディングを通し、失敗・無効時は従来の固定レイアウトへフォールバック
 - 成果物配信 `ARTIFACT_DELIVERY_MODE` に `auto` を追加。`open`（常に直接DL）/`carrier`（常にリンクファイル）に加え、Host が `*.lgwan.jp` のときだけリンクファイルにする
 - インターネット入口ホスト（`PORTAL_LOGIN_HOSTS`）では Keycloak の ID/PW でログインし、成功後は `FRONTEND_URL` へ戻す。庁内公開面（`PUBLIC_URL`）は SAML のまま。前面プロキシ出口 IP（`OPERATOR_SAML_SOURCE_IPS`）がインターネット本体へ来た場合は庁内 URL へ返す
 - 本番 web ビルドが TypeScript の `Array.at` / `Uint8Array` 型で落ちるのを直す（ノートブック・Web SSH）
