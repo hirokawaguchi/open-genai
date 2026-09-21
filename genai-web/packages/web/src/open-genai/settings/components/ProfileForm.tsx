@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
+import { RequirementBadge } from '@/components/ui/dads/RequirementBadge';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { isApiError, teamApi } from '@/lib/fetcher';
 import { type ProfileSchema, profileSchema } from '../schema';
@@ -59,7 +60,7 @@ export const ProfileForm = ({ profile, onUpdated }: Props) => {
       <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
         <div className='flex flex-col gap-1.5'>
           <Label htmlFor='settings-lastname' size='lg'>
-            姓
+            姓<RequirementBadge>※必須</RequirementBadge>
           </Label>
           <Input
             id='settings-lastname'
@@ -75,7 +76,7 @@ export const ProfileForm = ({ profile, onUpdated }: Props) => {
         </div>
         <div className='flex flex-col gap-1.5'>
           <Label htmlFor='settings-firstname' size='lg'>
-            名
+            名（任意）
           </Label>
           <Input
             id='settings-firstname'
