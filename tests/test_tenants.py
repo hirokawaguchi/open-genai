@@ -167,6 +167,15 @@ def test_visible_exapps_respect_active_tenant(store) -> None:
             "status": "published",
         },
     )
+    store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "共通ナビ",
+            "endpoint": "http://example.com/invoke",
+            "placeholder": "{}",
+            "status": "published",
+        },
+    )
     other = store.create_tenant("さいたま市")
     far = store.create_team("別課", "b@example.com", tenant_id=other["tenantId"])
     store.create_exapp(
@@ -181,7 +190,14 @@ def test_visible_exapps_respect_active_tenant(store) -> None:
     apps = store.list_visible_exapps("a@example.com", False, store.DEFAULT_TENANT_ID)
     names = {a["exAppName"] for a in apps}
     assert "課アプリ" in names
+    assert "共通ナビ" in names
     assert "別アプリ" not in names
+
+    other_apps = store.list_visible_exapps("a@example.com", False, other["tenantId"])
+    other_names = {a["exAppName"] for a in other_apps}
+    assert "共通ナビ" in other_names
+    assert "課アプリ" not in other_names
+    assert "別アプリ" not in other_names
 
 
 def test_builtin_feature_flag(store) -> None:
