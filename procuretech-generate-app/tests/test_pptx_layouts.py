@@ -1312,11 +1312,58 @@ def test_pending_mermaid_assigns_path_when_png_missing():
     }
     items = pending_mermaid(deck, {})
     assert len(items) == 1
-    assert items[0]["code"].startswith("flowchart")
+    assert items[0]["code"].startswith("flowchart LR")
     assert items[0]["path"].startswith("images/pptx-mmd-")
     assert deck["slides"][0]["content"]["image"] == items[0]["path"]
     assert pending_mermaid(deck, {items[0]["path"]: b"\x89PNG\r\n\x1a\n" + b"ok"}) == []
     assert pending_mermaid(deck, {items[0]["path"]: b"not-a-png"}) != []
+
+
+def test_mermaid_flowchart_is_lr():
+    from app.pptx_figure import mermaid_flowchart, mermaid_landscape
+
+    assert mermaid_flowchart(["準備", "確認"], branch=False).startswith("flowchart LR")
+    assert mermaid_landscape("flowchart TD\nA-->B").startswith("flowchart LR")
+    assert mermaid_landscape("graph TB\nA-->B").startswith("graph LR")
+    assert mermaid_landscape("sequenceDiagram\nA->>B: hi").startswith("sequenceDiagram")
+
+
+def test_figure_png_fits_in_slide_frame():
+    import struct
+    import zlib
+
+    from app.dads import pptx_content_height
+
+    def png(w: int, h: int) -> bytes:
+        def chunk(tag: bytes, data: bytes) -> bytes:
+            crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+        raw = b"".join(b"\x00" + b"\xff\xff\xff\xff" * w for _ in range(h))
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 0))
+            + chunk(b"IEND", b"")
+        )
+
+    deck = {
+        "slides": [
+            {"type": "cover", "title": "表紙"},
+            {
+                "type": "content",
+                "title": "手順",
+                "layout": "figure-frame",
+                "content": {"image": "images/tall.png", "alt": "図"},
+            },
+        ]
+    }
+    data = render_deck(validate_deck(deck) or deck, {"images/tall.png": png(80, 800)})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = zf.read("ppt/slides/slide2.xml").decode("utf-8")
+    pic = xml.split("<p:pic>", 1)[1]
+    cy = int(pic.split('cy="', 1)[1].split('"', 1)[0])
+    assert cy <= int(pptx_content_height() * 914400)
 
 
 def test_parse_generated_mermaid_flowchart():

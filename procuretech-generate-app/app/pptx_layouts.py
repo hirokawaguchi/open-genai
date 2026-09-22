@@ -395,8 +395,16 @@ def _add_footers(prs: Any) -> None:
         _set_run_font(run, size=Pt(PPTX_TYPE["footer"]), color=PPTX_MUTED)
 
 
-def _picture(slide: Any, rel: str, assets: dict[str, bytes], left: Any, top: Any, width: Any) -> bool:
-    from app.pptx_figure import asset_png, is_png
+def _picture(
+    slide: Any,
+    rel: str,
+    assets: dict[str, bytes],
+    left: Any,
+    top: Any,
+    width: Any,
+    height: Any = None,
+) -> bool:
+    from app.pptx_figure import asset_png, is_png, png_size
 
     data = asset_png(rel, assets)
     if not is_png(data):
@@ -406,7 +414,25 @@ def _picture(slide: Any, rel: str, assets: dict[str, bytes], left: Any, top: Any
     if not is_png(data):
         return False
     try:
-        slide.shapes.add_picture(io.BytesIO(data), left, top, width=width)
+        pic_left, pic_top, pic_w, pic_h = left, top, width, height
+        size = png_size(data) if height is not None else None
+        if size and height is not None:
+            nw, nh = size
+            box_w, box_h = float(width), float(height)
+            scale = min(box_w / nw, box_h / nh)
+            pic_w = int(nw * scale)
+            pic_h = int(nh * scale)
+            pic_left = int(left + (box_w - pic_w) / 2)
+            pic_top = int(top + (box_h - pic_h) / 2)
+        if pic_h is None:
+            pic = slide.shapes.add_picture(io.BytesIO(data), pic_left, pic_top, width=pic_w)
+        else:
+            pic = slide.shapes.add_picture(
+                io.BytesIO(data), pic_left, pic_top, width=pic_w, height=pic_h
+            )
+            # 枠内に収めた図を、題名帯より手前に置く。
+            el = pic._element
+            el.getparent().append(el)
         return True
     except Exception as exc:  # noqa: BLE001
         log = __import__("logging").getLogger("procuretech-generate")
@@ -1128,8 +1154,16 @@ def _render_figure_frame(slide: Any, prs: Any, content: dict[str, Any], assets: 
     width = Inches(pptx_content_width())
     height = Inches(pptx_content_height())
     rel = str(content.get("image") or "").strip()
-    pad = Inches(0.28)
-    if _picture(slide, rel, assets, left + pad, top + Inches(0.28), width - pad * 2):
+    pad = Inches(0.2)
+    if _picture(
+        slide,
+        rel,
+        assets,
+        left + pad,
+        top + Inches(0.08),
+        width - pad * 2,
+        height - Inches(0.16),
+    ):
         return
     if rel:
         import logging
