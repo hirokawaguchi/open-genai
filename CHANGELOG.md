@@ -18,6 +18,7 @@
 | [v0.8.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.8.0) | `b1943d1` 以降 | 提案実装（第2弾）：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP |
 | [v0.9.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.9.0) | `d48cb96` 以降 | 提案実装（第3弾）：Markdown エディタ＋オプションの各種文書作成（調達仕様書・セキュリティポリシー/実施手順・業務マニュアル・アクションプラン等を AI 対話で作成。生成 API はプラガブル＝契約は OSS 公開・生成ロジックは非公開アプリに閉じ込め可能） |
 | [v0.10.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.10.0) | `1a135f0` 以降 | ノートブック（調べて項目に整理・スキル/MCP/OCR）・Web SSH・アプリ表示の編集・ヒアリングシート |
+| [v0.11.0](https://github.com/hirokawaguchi/open-genai/releases/tag/v0.11.0) | `8483c15` 以降 | 棟（テナント）・おすすめアプリ・Markdown エディタの HTML/PPTX 書き出し |
 
 ## 設計思想の転換（0.1 → 0.2）
 
@@ -33,6 +34,23 @@
 ---
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-09-23
+
+このリリースの主役は **棟（テナント）** です。既存組織はデフォルト棟のまま、
+区や市など複数の組織を一つの基盤で分けられます。ナレッジ・アプリ・カタログ・
+履歴は活性棟で限定し、スーパー管理者は全棟、棟の管理者はその棟だけを扱います。
+利用者登録では棟を必須にし、鍵の無い人にはカタログを出しません。
+
+あわせて **Markdown エディタの書き出し** を厚くしました。HTML は庁内向けの
+縦スクロール文書、PPTX は整理ノート先行（notes-first）で DADS の見た目に寄せ、
+Mermaid 図を高解像度 PNG として前面に置けます。docx はプレビュー相当の表と装飾、
+書き出し中は実進捗を出します。
+
+おすすめアプリの管理、未起動アプリの非表示、インターネット入口ログイン、
+LGWAN 向け成果物配信 `auto`、文字起こしの音声・動画形式案内も入ります。
+
+---
 
 - 文字起こしの使い方に、faster-whisper / PyAV が実務上読める音声・動画形式の表を追加。アップロード欄は代表形式の案内のまま、表にある拡張子も選択できるようにした
 - Markdown エディタの使い方を、ノートブックと同じくタブ横のボタン＋ダイアログにした
@@ -614,7 +632,8 @@ Dify エラー分類の改善に加え、公式リポジトリとしてのガバ
 
 ---
 
-[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/hirokawaguchi/open-genai/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hirokawaguchi/open-genai/compare/v0.7.0...v0.8.0
