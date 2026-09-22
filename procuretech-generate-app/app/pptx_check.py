@@ -13,6 +13,48 @@ _COUNT_TITLE_RE = re.compile(
 _PLACEHOLDER_RE = re.compile(
     r"(Text\s*\d+|ラベル\s*\d+|タイトル\s*\d+|◯◯|YYYY年|Source\s*\d+)"
 )
+_SELF_REF_RE = re.compile(r"本ページ|この1枚|本スライド|このスライド")
+_LABEL_PREFIX_RE = re.compile(r"^(現状|課題|結論|ポイント|概要|背景)[:：]")
+_DASH_RE = re.compile(r"[—―–]|——|--")
+_TITLE_FAIL_MESSAGES = {
+    "empty-title": "タイトルが空です",
+    "desumasu": "ですますで終わっている",
+    "count-title": "個数をタイトルに入れている",
+    "placeholder": "プレースホルダが残っている",
+    "twopart-title": "二段構え（A。B）になっている",
+    "self-ref": "本ページなど自己言及がある",
+    "label-prefix": "ラベル前置きがある",
+    "dash": "ダッシュを使っている",
+}
+
+
+def _is_twopart_title(title: str) -> bool:
+    """末尾の句点は許容し、文の途中の「。」で切れた二段構えだけを見る。"""
+    core = (title or "").strip().rstrip("。．. ")
+    return "。" in core or "．" in core
+
+
+def title_fail_codes(title: str) -> list[str]:
+    """採用できない題名のコード。空は empty-title。"""
+    text = (title or "").strip()
+    if not text:
+        return ["empty-title"]
+    codes: list[str] = []
+    if _DESUMASU_RE.search(text):
+        codes.append("desumasu")
+    if _COUNT_TITLE_RE.search(text):
+        codes.append("count-title")
+    if _PLACEHOLDER_RE.search(text):
+        codes.append("placeholder")
+    if _is_twopart_title(text):
+        codes.append("twopart-title")
+    if _SELF_REF_RE.search(text):
+        codes.append("self-ref")
+    if _LABEL_PREFIX_RE.search(text):
+        codes.append("label-prefix")
+    if _DASH_RE.search(text):
+        codes.append("dash")
+    return codes
 
 
 @dataclass(frozen=True)
@@ -42,14 +84,11 @@ def check_deck(deck: dict[str, Any] | None) -> list[CheckIssue]:
         if not title:
             issues.append(CheckIssue("FAIL", "empty-title", "タイトルが空です", i))
             continue
-        if _DESUMASU_RE.search(title):
-            issues.append(CheckIssue("FAIL", "desumasu", f"ですますで終わっている: {title}", i))
-        if _COUNT_TITLE_RE.search(title):
-            issues.append(CheckIssue("FAIL", "count-title", f"個数をタイトルに入れている: {title}", i))
-        if _PLACEHOLDER_RE.search(title):
-            issues.append(CheckIssue("FAIL", "placeholder", f"プレースホルダが残っている: {title}", i))
-        if len(title) > 40:
-            issues.append(CheckIssue("WARN", "long-title", f"40字超（2行想定）: {title}", i))
+        for code in title_fail_codes(title):
+            hint = _TITLE_FAIL_MESSAGES.get(code, code)
+            issues.append(CheckIssue("FAIL", code, f"{hint}: {title}", i))
+        if len(title) > 56:
+            issues.append(CheckIssue("WARN", "long-title", f"56字超（2行上限）: {title}", i))
     return issues
 
 

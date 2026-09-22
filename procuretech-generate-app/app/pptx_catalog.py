@@ -110,13 +110,13 @@ NUMERIC_LAYOUTS = frozenset(
 )
 
 SELECTION_GUIDE = """\
-先に基本形を当てる（カードの羅列は最後）
-- 説明・定義・要点: fullwidth-points（全幅。囲みを置かない）
-- 行＝項目・列＝観点の整理: axis-table
-- 左に前提・事実、右に意味合い: premise-conclusion
-- 左右対比: before-after-split
-- 数値の図＋意味合い: chart-insight（本文に数値があるときだけ）
-- 手順・プロセス: chevron-steps
+先に用途を当て、既存の基本形へ写す（カードの羅列は最後）
+- explain 説明・定義・要点: fullwidth-points（全幅。囲みを置かない）
+- decompose 内訳・寄与: axis-table
+- compare 同じ物差し: before-after-split（表があるときは axis-table）
+- change 前後の変化: chart-insight（本文に数値があるときだけ）
+- time 手順・工程: chevron-steps（分岐は step-flow）
+- relation 関係・分岐: 図枠。無ければ fullwidth-points
 その他
 - 数値KPI: kpi-three-col / text-data-emphasis（左上に全体指標）
 - 要件・チェック: checklist-table

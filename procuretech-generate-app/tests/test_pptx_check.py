@@ -18,6 +18,16 @@ def test_check_deck_flags_desumasu_and_count_title():
     assert "count-title" in codes
 
 
+def test_check_deck_flags_twopart_and_self_ref():
+    from app.pptx_check import title_fail_codes
+
+    assert "twopart-title" in title_fail_codes("検索が遅い。重複がある")
+    assert "self-ref" in title_fail_codes("本ページの要点を示す")
+    assert "label-prefix" in title_fail_codes("現状：検索が遅い")
+    assert not title_fail_codes("検索遅延を索引で解消する")
+    assert not title_fail_codes("検索遅延を索引で解消する。")
+
+
 def test_check_deck_ok_for_claim_title():
     issues = check_deck(
         {
