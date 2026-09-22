@@ -68,6 +68,7 @@ from app.compose_formats import (
     normalize_format,
 )
 from app.pptx_check import check_deck, check_html_bytes, check_pptx_bytes, format_issues
+from app.pptx_figure import pending_mermaid
 from app.pptx_layouts import render_deck
 from app.pptx_plan import plan_deck
 from app.waiting import make_fallback_waiting_png
@@ -347,10 +348,18 @@ def _decode_assets(raw: Any) -> dict[str, bytes]:
     for rel, b64 in raw.items():
         if not isinstance(rel, str) or not isinstance(b64, str):
             continue
+        payload = b64.strip()
+        if payload.startswith("data:"):
+            comma = payload.find(",")
+            if comma != -1:
+                payload = payload[comma + 1 :]
+        payload = re.sub(r"\s+", "", payload)
         try:
-            out[rel.replace("\\", "/").lstrip("/")] = base64.b64decode(b64)
+            raw = base64.b64decode(payload, validate=False)
         except Exception:  # noqa: BLE001
             continue
+        if raw:
+            out[rel.replace("\\", "/").lstrip("./")] = raw
     return out
 
 
@@ -560,6 +569,94 @@ def _zip_rendered(rendered: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _unique_arc(name: str, fmt: str, used: set[str]) -> str:
+    arc = f"{name}.{fmt}"
+    n = 2
+    while arc in used:
+        arc = f"{name}({n}).{fmt}"
+        n += 1
+    used.add(arc)
+    return arc
+
+
+def _prepare_compose(
+    outputs: list[Any],
+    assets: dict[str, bytes],
+    progress_cb: Any = None,
+    *,
+    defer_mermaid: bool = False,
+) -> tuple[list[tuple[str, bytes]], list[str], list[dict[str, Any]], list[dict[str, str]]]:
+    """同期合成と同じ中身。defer_mermaid なら図の PNG 待ちを外に出す。"""
+    valid = [o for o in outputs if isinstance(o, dict)]
+    total = max(len(valid), 1)
+    rendered: list[tuple[str, bytes]] = []
+    unknown: list[str] = []
+    deferred: list[dict[str, Any]] = []
+    mermaid: list[dict[str, str]] = []
+    used: set[str] = set()
+    idx = 0
+    for i, o in enumerate(outputs, 1):
+        if not isinstance(o, dict):
+            continue
+        name = str(o.get("name") or f"output{i}")
+        raw_fmt = str(o.get("format") or "docx").strip().lower().lstrip(".")
+        if raw_fmt and raw_fmt not in SUPPORTED_FORMATS:
+            unknown.append(raw_fmt)
+            idx += 1
+            continue
+        fmt = normalize_format(raw_fmt)
+        sections = o.get("sections") or []
+        if not isinstance(sections, list):
+            sections = []
+        lo = 95.0 * idx / total
+        hi = 95.0 * (idx + 1) / total
+
+        def _op(frac: float, label: str, _lo=lo, _hi=hi, _name=name) -> None:
+            if progress_cb:
+                pct = int(_lo + (_hi - _lo) * max(0.0, min(1.0, frac)))
+                progress_cb(pct, f"{_name}: {label}")
+
+        op = _op if progress_cb else None
+        if fmt == "pptx" and defer_mermaid:
+            deck = plan_deck(name, sections, assets, on_progress=op)
+            if deck:
+                needed = pending_mermaid(deck, assets)
+                if needed:
+                    deferred.append({"arc": _unique_arc(name, fmt, used), "deck": deck})
+                    mermaid.extend(needed)
+                    idx += 1
+                    continue
+                if op:
+                    op(0.95, "スライドを書き出し")
+                data = render_deck(deck, assets)
+                _log_deck_check("pptx", deck, data)
+                if op:
+                    op(1.0, "書き出し")
+            else:
+                data = markdown_to_pptx(name, sections, assets)
+                if op:
+                    op(1.0, "書き出し")
+        else:
+            data = _render_output(fmt, name, sections, assets, on_progress=op)
+        rendered.append((_unique_arc(name, fmt, used), data))
+        idx += 1
+    return rendered, unknown, deferred, mermaid
+
+
+def _finish_deferred_pptx(
+    deferred: list[dict[str, Any]], assets: dict[str, bytes]
+) -> list[tuple[str, bytes]]:
+    out: list[tuple[str, bytes]] = []
+    for item in deferred:
+        deck = item.get("deck")
+        if not isinstance(deck, dict):
+            continue
+        data = render_deck(deck, assets)
+        _log_deck_check("pptx", deck, data)
+        out.append((str(item.get("arc") or "output.pptx"), data))
+    return out
+
+
 @app.post("/compose")
 async def compose(
     request: Request, x_api_key: str | None = Header(default=None)
@@ -610,8 +707,10 @@ def _run_compose_job(job_id: str, outputs: list[Any], assets: dict[str, bytes]) 
                 job["step"] = step
 
     try:
-        rendered, unknown = _render_all(outputs, assets, progress_cb=progress_cb)
-        if not rendered:
+        rendered, unknown, deferred, mermaid = _prepare_compose(
+            outputs, assets, progress_cb=progress_cb, defer_mermaid=True
+        )
+        if not rendered and not deferred:
             msg = (
                 f"未対応の出力形式です: {', '.join(sorted(set(unknown)))}"
                 if unknown
@@ -619,6 +718,20 @@ def _run_compose_job(job_id: str, outputs: list[Any], assets: dict[str, bytes]) 
             )
             with _COMPOSE_LOCK:
                 _COMPOSE_JOBS[job_id].update(status="error", error=msg, step="エラー")
+            return
+        if mermaid:
+            print(f"[generate] pptx: wait mermaid x{len(mermaid)}")
+            with _COMPOSE_LOCK:
+                current = _COMPOSE_JOBS.get(job_id) or {}
+                _COMPOSE_JOBS[job_id].update(
+                    status="need_mermaid",
+                    progress=max(int(current.get("progress") or 0), 80),
+                    step="図を画像化しています",
+                    rendered=rendered,
+                    deferred=deferred,
+                    mermaid=mermaid,
+                    assets=assets,
+                )
             return
         data = _zip_rendered(rendered)
         with _COMPOSE_LOCK:
@@ -676,7 +789,49 @@ def compose_job_status(job_id: str, x_api_key: str | None = Header(default=None)
         }
         if job.get("error"):
             payload["error"] = job["error"]
+        if job.get("status") == "need_mermaid" and job.get("mermaid"):
+            payload["mermaid"] = job["mermaid"]
     return JSONResponse(content=payload)
+
+
+@app.post("/compose/jobs/{job_id}/mermaid")
+async def compose_job_mermaid(
+    job_id: str, request: Request, x_api_key: str | None = Header(default=None)
+) -> JSONResponse:
+    """書き出し側が Mermaid→PNG した画像を載せて、PPTX を描く。"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    incoming = _decode_assets(body.get("assets") if isinstance(body, dict) else None)
+    from app.pptx_figure import is_png
+
+    png_n = sum(1 for v in incoming.values() if is_png(v))
+    print(f"[generate] mermaid assets in={len(incoming)} png={png_n} keys={list(incoming)[:8]}")
+    with _COMPOSE_LOCK:
+        job = _COMPOSE_JOBS.get(job_id)
+        if job is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        if job.get("status") != "need_mermaid":
+            return JSONResponse(status_code=409, content={"error": "not waiting for mermaid"})
+        assets = dict(job.get("assets") or {})
+        assets.update(incoming)
+        rendered = list(job.get("rendered") or [])
+        deferred = list(job.get("deferred") or [])
+        job.update(status="processing", step="スライドを書き出し", assets=assets)
+    try:
+        rendered.extend(_finish_deferred_pptx(deferred, assets))
+        data = _zip_rendered(rendered)
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(status="success", progress=100, step="完了", zip=data)
+        return JSONResponse(content={"status": "success", "progress": 100})
+    except Exception as exc:  # noqa: BLE001
+        with _COMPOSE_LOCK:
+            _COMPOSE_JOBS[job_id].update(status="error", error=str(exc), step="エラー")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 @app.get("/compose/jobs/{job_id}/result")

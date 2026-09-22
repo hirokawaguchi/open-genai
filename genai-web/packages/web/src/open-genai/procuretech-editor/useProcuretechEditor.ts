@@ -101,6 +101,16 @@ export const fetchCompose = (projectId: string, requestId: string): Promise<Edit
     `${BASE}/projects/${enc(projectId)}/composes/${enc(requestId)}`,
   );
 
+/** 書き出し中の Mermaid を、プレビューと同じ PNG 化で埋める。 */
+export const postComposeMermaid = (
+  projectId: string,
+  requestId: string,
+  assets: Record<string, string>,
+): Promise<void> =>
+  teamApi
+    .post(`${BASE}/projects/${enc(projectId)}/composes/${enc(requestId)}/mermaid`, { assets })
+    .then(() => undefined);
+
 /** 生成ジョブの待ち画像（PNG）。失敗時は呼び出し側でフォールバックする。 */
 export const fetchGenerationWaitingBlob = (
   projectId: string,

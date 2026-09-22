@@ -83,6 +83,14 @@ class GenerateError(RuntimeError):
     """利用者に提示してよい生成エラー。"""
 
 
+class NeedMermaid(Exception):
+    """PPTX の図を、呼び出し元の Mermaid→PNG で埋める待ち。"""
+
+    def __init__(self, job_id: str, items: list[dict[str, str]]):
+        self.job_id = job_id
+        self.items = items
+
+
 # --- テーマ定義 ---------------------------------------------------------------
 
 HEARING_THEME_ID = "hearing"
@@ -578,6 +586,9 @@ async def _poll_compose_job(
         status = str(payload.get("status") or "").lower()
         if on_progress:
             on_progress(int(payload.get("progress") or 0), str(payload.get("step") or ""))
+        if status == "need_mermaid":
+            items = payload.get("mermaid") if isinstance(payload.get("mermaid"), list) else []
+            raise NeedMermaid(job_id, [x for x in items if isinstance(x, dict)])
         if status == "success":
             try:
                 res = await client.get(
@@ -595,6 +606,35 @@ async def _poll_compose_job(
         if asyncio.get_event_loop().time() >= deadline:
             raise GenerateError("文書の合成が時間内に終わりませんでした。")
         await asyncio.sleep(1.0)
+
+
+async def finish_compose_mermaid(
+    job_id: str,
+    assets: dict[str, bytes],
+    *,
+    base_url: str,
+    api_key: str = "",
+    on_progress: "ExcelProgress | None" = None,
+) -> bytes:
+    """エディタが作った Mermaid PNG を渡して、PPTX 合成を完了する。"""
+    if not base_url:
+        raise GenerateError("文書生成 API が未設定です（このテーマの合成先が未設定）。")
+    body = {
+        "assets": {
+            path: base64.b64encode(data).decode("ascii") for path, data in (assets or {}).items()
+        }
+    }
+    headers = _headers(api_key)
+    async with httpx.AsyncClient(timeout=COMPOSE_TIMEOUT) as client:
+        try:
+            res = await client.post(
+                f"{base_url}/compose/jobs/{job_id}/mermaid", json=body, headers=headers
+            )
+        except httpx.HTTPError as e:
+            raise GenerateError(f"外部サービスとの通信に失敗しました: {_httpx_message(e)}") from e
+        if res.status_code not in (200, 202):
+            raise GenerateError(_compose_error(res, "図の埋め込みに失敗しました。"))
+        return await _poll_compose_job(client, base_url, job_id, headers, on_progress)
 
 
 class ExcelSkip(Exception):

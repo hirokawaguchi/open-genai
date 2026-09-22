@@ -633,6 +633,75 @@ def test_parse_and_fill_markdown_table():
     assert "**" not in table["rows"][0][1]
 
 
+def test_notes_keep_table_rows_not_column_names():
+    from app.pptx_plan import _enrich_notes, _mechanical_notes, parse_source_blocks
+
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 用語定義\n\n"
+                "| 用語 | 定義 |\n"
+                "|------|------|\n"
+                "| ローカルAI | 庁内で動かす生成AI |\n"
+                "| Dify | 画面操作で組み立てる基盤 |\n"
+            ),
+        }
+    ]
+    block = parse_source_blocks("文書", sections)[0]
+    mechanical = _mechanical_notes(block)
+    blob = "\n".join(mechanical)
+    assert "ローカルAI" in blob
+    assert "庁内で動かす生成AI" in blob
+    assert "表（" not in blob
+
+    thin = _enrich_notes(["用語と定義が表にまとめられている", "表形式で整理"], block)
+    thin_blob = "\n".join(thin)
+    assert "ローカルAI" in thin_blob
+    assert "用語と定義が表にまとめられている" not in thin_blob
+
+
+def test_plan_deck_keeps_table_rows_when_notes_are_thin(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 共通題材\n\n"
+                "| 区分 | ファイル名 |\n"
+                "|------|------------|\n"
+                "| 正規職員 | 職員規則.pdf |\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "共通題材"},
+                        "role": "definition",
+                        "points": ["表には区分とファイル名が列挙"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    shown = json.dumps(content, ensure_ascii=False)
+    assert "正規職員" in shown
+    assert "職員規則.pdf" in shown
+    notes = content.get("notes") or ""
+    assert "正規職員" in notes
+    assert content["layout"] == "axis-table"
+    assert content["content"].get("rows")
+
+
 def test_plan_deck_forces_axis_table_for_gfm(monkeypatch):
     monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
     sections = [
@@ -730,6 +799,14 @@ def test_slide_tokens_meet_contrast():
     assert contrast_ratio(INK, PAPER) >= 4.5
 
 
+def test_pptx_body_follows_dads_projection_size():
+    from app.dads import PPTX_TYPE
+
+    assert PPTX_TYPE["body"] == 22
+    assert PPTX_TYPE["title"] >= 36
+    assert PPTX_TYPE["table"] >= 18
+
+
 def test_default_layout_is_fullwidth():
     from app.pptx_catalog import DEFAULT_LAYOUT, normalize_layout
 
@@ -796,6 +873,15 @@ def test_section_role_selects_layout():
     photo = SourceBlock(filename="a.md", heading="構成", text="関係を示す", images=["images/flow.png"])
     assert _role_to_layout("explanation", photo, "") == "fullscreen-photo"
 
+    flow = SourceBlock(
+        filename="a.md",
+        heading="2.4 完成イメージ",
+        text="利用者の質問\n↓\n質問分類\n├─ 正規職員の質問 → 職員規則を検索\n└─ 区分不明 → 聞き返す\n",
+        bullets=["分岐を先に行う"],
+    )
+    assert _guess_role(flow) == "procedure"
+    assert _role_to_layout("procedure", flow, "") == "step-flow"
+
 
 def test_split_dense_breaks_long_points_and_tables():
     from app.pptx_plan import _split_dense
@@ -812,6 +898,11 @@ def test_split_dense_breaks_long_points_and_tables():
     assert len(tables) == 3
     assert tables[0][1]["headers"] == ["列"]
     assert len(tables[0][1]["rows"]) == 8
+
+    steps = [{"title": f"手順{i}"} for i in range(5)]
+    flow = _split_dense("chevron-steps", {"steps": steps}, "手順")
+    assert len(flow) == 2
+    assert len(flow[0][1]["steps"]) == 3
 
 
 def test_autofit_only_when_text_overflows():
@@ -837,6 +928,9 @@ def test_default_freeform_puts_kpi_top_left():
     kpi = next(e for e in out["elements"] if e["kind"] == "kpi")
     assert kpi["col"] == 0 and kpi["row"] == 0
     assert "3" in kpi["value"]
+    lower = [e for e in out["elements"] if e["kind"] != "kpi"]
+    assert lower
+    assert all(e["row"] >= 2 and e["col"] == 0 for e in lower)
 
 
 def test_cover_has_no_banner_label():
@@ -880,7 +974,8 @@ def test_numbered_steps_become_bullets_and_mechanical_notes():
     blob = "\n".join(points)
     assert "規則を混ぜずに" in blob or "目的" in blob
     assert "ナレッジを開く" in blob
-    assert "表（" in blob
+    assert "開始" in blob
+    assert "表（" not in blob
     assert "ノートの原文" in blob
     assert "長いプロンプト本文" not in blob
 
@@ -944,3 +1039,651 @@ def test_plan_splits_long_points(monkeypatch):
     assert len(contents) >= 2
     assert contents[0]["layout"] == "fullwidth-points"
     assert "続き" in contents[1]["title"]
+
+
+def test_parse_keeps_mermaid_blocks():
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 関係\n\n```mermaid\nflowchart TD\nA-->B\n```\n",
+        }
+    ]
+    blocks = parse_source_blocks("文書", sections)
+    assert blocks
+    assert blocks[0].mermaid_blocks
+    assert "flowchart TD" in blocks[0].mermaid_blocks[0]
+
+
+def test_guess_figure_trusts_llm_and_skips_without_it():
+    from app.pptx_figure import guess_figure
+    from app.pptx_plan import SourceBlock
+
+    table = SourceBlock(
+        filename="a.md",
+        heading="用語",
+        text="",
+        tables=[{"headers": ["語", "意味"], "rows": [["検索", "遅い"]]}],
+    )
+    assert guess_figure(table) == ""
+    assert guess_figure(table, "flowchart") == "flowchart"
+
+    steps = SourceBlock(filename="a.md", heading="6.1 手順", text="", bullets=["開く", "作る"])
+    assert guess_figure(steps) == ""
+
+    prose = SourceBlock(
+        filename="a.md",
+        heading="質問分類を設定する",
+        text="質問を3つの経路に分ける",
+        bullets=["職員区分の判定を開く"],
+    )
+    assert guess_figure(prose) == ""
+    assert guess_figure(prose, "flowchart") == "flowchart"
+
+    photo = SourceBlock(
+        filename="a.md",
+        heading="完成イメージ",
+        text="関係を示す",
+        images=["images/flow.png"],
+    )
+    assert guess_figure(photo, "flowchart") == ""
+
+    editor_mmd = SourceBlock(
+        filename="a.md",
+        heading="関係",
+        text="",
+        images=["images/mermaid-abc-0.png"],
+    )
+    assert guess_figure(editor_mmd) == "flowchart"
+
+
+def test_branch_section_becomes_figure_frame(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    monkeypatch.setattr("app.pptx_figure.render_mermaid_png", lambda code: None)
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 2.4 完成イメージ\n\n"
+                "利用者の質問\n"
+                "↓\n"
+                "質問分類\n"
+                "├─ 正規職員の質問 → 職員規則を検索\n"
+                "└─ 区分不明 → 聞き返す\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "2.4 完成イメージ"},
+                        "role": "procedure",
+                        "title": "質問分類の分岐",
+                        "figure": "flowchart",
+                        "figure_caption": "質問分類の分岐",
+                        "points": ["利用者の質問", "質問分類", "正規職員の質問 → 職員規則を検索"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "figure-frame"
+    body = content["content"]
+    assert body["alt"] == "ここに質問分類の分岐の図を入れる"
+    assert not body.get("image")
+    assert "flowchart" in (body.get("mermaid") or "")
+    notes = content.get("notes") or ""
+    assert "図のMermaid" in notes
+    assert "flowchart" in notes
+
+
+def test_source_mermaid_becomes_figure_frame(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    monkeypatch.setattr("app.pptx_figure.render_mermaid_png", lambda code: None)
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 関係\n\n```mermaid\nflowchart TD\n質問 --> 分類\n```\n",
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "関係"},
+                        "role": "explanation",
+                        "figure": "flowchart",
+                        "figure_caption": "関係",
+                        "points": ["質問", "分類"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "figure-frame"
+    assert "質問 --> 分類" in (content["content"].get("mermaid") or "")
+
+
+def test_figure_embeds_png_when_renderer_returns(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    png = b"\x89PNG\r\n\x1a\n" + b"fake"
+    monkeypatch.setattr("app.pptx_figure.render_mermaid_png", lambda code: png)
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 2.4 完成イメージ\n\n質問\n↓\n分類\n↓\n回答\n",
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "2.4 完成イメージ"},
+                        "role": "procedure",
+                        "figure": "flowchart",
+                        "figure_caption": "完成イメージ",
+                        "points": ["質問", "分類", "回答"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    assets: dict[str, bytes] = {}
+    deck = plan_deck("文書", sections, assets, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    rel = content["content"]["image"]
+    assert rel
+    assert assets[rel] == png
+    data = render_deck(deck, assets)
+    assert data[:2] == b"PK"
+
+
+def test_llm_figure_on_prose_becomes_frame(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    monkeypatch.setattr("app.pptx_figure.render_mermaid_png", lambda code: None)
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 質問分類を設定する\n\n"
+                "利用者の質問を分類し、正規職員なら規則を検索し、区分不明なら聞き返す。\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "質問分類を設定する"},
+                        "role": "explanation",
+                        "title": "質問の分岐",
+                        "figure": "flowchart",
+                        "figure_caption": "質問の分岐",
+                        "points": ["利用者の質問を分類し", "正規職員なら規則を検索し", "区分不明なら聞き返す"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "figure-frame"
+    assert content["content"]["alt"] == "ここに質問の分岐の図を入れる"
+
+
+def test_table_and_short_steps_stay_native(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [
+        {
+            "filename": "a.md",
+            "content": (
+                "# 用語\n\n| 語 | 意味 |\n|---|---|\n| 検索 | 遅い |\n\n"
+                "# 6.1 手順\n- 開く\n- 作る\n"
+            ),
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "用語"},
+                        "role": "definition",
+                        "figure": "",
+                        "points": ["検索 / 遅い"],
+                    },
+                    {
+                        "source": {"filename": "a.md", "heading": "6.1 手順"},
+                        "role": "procedure",
+                        "figure": "",
+                        "points": ["開く", "作る"],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    contents = [s for s in deck["slides"] if s["type"] == "content"]
+    layouts = {s["title"]: s["layout"] for s in contents}
+    assert layouts["用語"] == "axis-table"
+    assert layouts["6.1 手順"] == "chevron-steps"
+    assert "figure-frame" not in {s["layout"] for s in contents}
+
+
+def test_pending_mermaid_assigns_path_when_png_missing():
+    from app.pptx_figure import pending_mermaid
+
+    deck = {
+        "slides": [
+            {
+                "type": "content",
+                "layout": "figure-frame",
+                "content": {"mermaid": "flowchart TD\nA-->B", "image": "", "alt": "図"},
+            }
+        ]
+    }
+    items = pending_mermaid(deck, {})
+    assert len(items) == 1
+    assert items[0]["code"].startswith("flowchart")
+    assert items[0]["path"].startswith("images/pptx-mmd-")
+    assert deck["slides"][0]["content"]["image"] == items[0]["path"]
+    assert pending_mermaid(deck, {items[0]["path"]: b"\x89PNG\r\n\x1a\n" + b"ok"}) == []
+    assert pending_mermaid(deck, {items[0]["path"]: b"not-a-png"}) != []
+
+
+def test_parse_generated_mermaid_flowchart():
+    from app.pptx_figure import mermaid_flowchart, mermaid_to_flow_items, parse_mermaid_flowchart
+
+    code = mermaid_flowchart(["質問", "分類", "正規職員", "区分不明"], branch=True)
+    parsed = parse_mermaid_flowchart(code)
+    assert parsed is not None
+    assert len(parsed["nodes"]) == 4
+    items, mode = mermaid_to_flow_items(code)
+    assert mode == "branch"
+    assert items[0]["heading"] == "質問"
+    assert "正規職員" in {it["heading"] for it in items}
+
+
+def test_editor_mermaid_png_is_embedded(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    png = b"\x89PNG\r\n\x1a\n" + b"editor"
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 関係\n\n![diagram](images/mermaid-abc-0.png)\n",
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "関係"},
+                        "role": "explanation",
+                        "figure": "flowchart",
+                        "figure_caption": "関係",
+                        "points": ["質問", "分類"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    assets = {"images/mermaid-abc-0.png": png}
+    deck = plan_deck("文書", sections, assets, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "figure-frame"
+    assert content["content"]["image"] == "images/mermaid-abc-0.png"
+    assert not content["content"].get("mermaid")
+    from app.pptx_figure import pending_mermaid
+
+    assert pending_mermaid(deck, assets) == []
+    data = render_deck(deck, assets)
+    assert data[:2] == b"PK"
+
+
+def test_notes_figure_without_source_mermaid_is_pending(monkeypatch):
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    monkeypatch.setattr("app.pptx_figure.render_mermaid_png", lambda code: None)
+    sections = [
+        {
+            "filename": "a.md",
+            "content": "# 知識検索と結果なし分岐設定\n\n- 検索を開く\n- 結果なしなら聞き返す\n",
+        }
+    ]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "知識検索と結果なし分岐設定"},
+                        "role": "procedure",
+                        "figure": "flowchart",
+                        "figure_caption": "知識検索",
+                        "points": ["検索を開く", "結果なしなら聞き返す"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, {}, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "figure-frame"
+    assert content["content"]["mermaid"].startswith("flowchart")
+    from app.pptx_figure import pending_mermaid
+
+    assert pending_mermaid(deck, {}) != []
+
+
+def test_figure_frame_draws_mermaid_without_png():
+    deck = {
+        "slides": [
+            {"type": "cover", "title": "表紙"},
+            {
+                "type": "content",
+                "title": "完成イメージ",
+                "layout": "figure-frame",
+                "content": {
+                    "caption": "質問分類",
+                    "alt": "ここに質問分類の図を入れる",
+                    "image": "",
+                    "mermaid": (
+                        "flowchart TD\n"
+                        '  N0["利用者の質問"]\n'
+                        '  N1["質問分類"]\n'
+                        "  N0 --> N1\n"
+                        '  N1 --> N2["職員規則を検索"]\n'
+                    ),
+                },
+            },
+        ]
+    }
+    data = render_deck(validate_deck(deck) or deck, {})
+    assert data[:2] == b"PK"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        xml = "\n".join(
+            zf.read(name).decode("utf-8", errors="replace")
+            for name in zf.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert "利用者の質問" in xml
+    assert "質問分類" in xml
+    assert "ここに質問分類の図を入れる" not in xml
+
+
+def test_repair_keeps_short_chevron():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "手順",
+                    "layout": "chevron-steps",
+                    "content": {
+                        "steps": [
+                            {"title": "受付"},
+                            {"title": "確認"},
+                            {"title": "公開"},
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "chevron-steps"
+
+
+def test_repair_converts_overflow_flow_to_fullwidth():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "質問分類",
+                    "layout": "chevron-steps",
+                    "content": {
+                        "steps": [
+                            {"title": "職員区分の判定を開いて分類クラスを3つ作る"},
+                            {"title": "正規職員の質問は職員規則ナレッジを検索する"},
+                            {"title": "区分不明のときは聞き返してから分類する"},
+                        ]
+                    },
+                    "notes": "整理ノート\n・ 職員区分の判定を開いて分類クラスを3つ作る\n",
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "fullwidth-points"
+    assert "職員区分の判定" in content["content"]["points"][0]
+
+
+def test_repair_fills_empty_table_from_notes():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "用語",
+                    "layout": "axis-table",
+                    "content": {"headers": ["語", "意味"], "rows": []},
+                    "notes": "整理ノート\n・ 検索 / 遅い\n・ 登録 / 重複\n",
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "fullwidth-points"
+    assert "検索 / 遅い" in content["content"]["points"]
+
+
+def test_repair_long_kpis_become_table():
+    from app.pptx_repair import is_metric_value, repair_deck
+
+    assert is_metric_value("50分")
+    assert is_metric_value("1.0")
+    assert not is_metric_value("R8-DIFY-EX1")
+    assert not is_metric_value("2026-09-12")
+    assert not is_metric_value("令和8年10月19日")
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "手順書概要",
+                    "layout": "freeform",
+                    "content": {
+                        "elements": [
+                            {"kind": "heading", "text": "手順書概要"},
+                            {"kind": "kpi", "value": "R8-DIFY-EX1", "label": "文書番号"},
+                            {"kind": "kpi", "value": "1.0", "label": "版数"},
+                            {"kind": "kpi", "value": "2026-09-12", "label": "作成日"},
+                            {"kind": "kpi", "value": "令和8年10月19日", "label": "対象研修"},
+                            {"kind": "kpi", "value": "50分", "label": "所要時間"},
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "axis-table"
+    rows = content["content"]["rows"]
+    assert ["文書番号", "R8-DIFY-EX1"] in rows
+    assert ["所要時間", "50分"] in rows
+
+
+def test_repair_keeps_short_kpis():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "規模",
+                    "layout": "kpi-three-col",
+                    "content": {
+                        "items": [
+                            {"value": "12件", "label": "質問"},
+                            {"value": "3", "label": "経路"},
+                            {"value": "50%", "label": "完了"},
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "kpi-three-col"
+
+
+def test_strip_title_echo_drops_matching_heading():
+    from app.pptx_repair import strip_title_echo
+
+    content = strip_title_echo(
+        "目的",
+        {
+            "elements": [
+                {"kind": "heading", "text": "【目的】", "col": 0, "row": 0, "colspan": 12, "rowspan": 1},
+                {"kind": "bullets", "col": 0, "row": 1, "colspan": 6, "rowspan": 5, "bullets": ["目的", "部署の規則"]},
+            ],
+            "points": ["目的", "研修後にボットを作る"],
+            "items": [{"heading": "目的", "body": "ナレッジに格納する"}],
+        },
+    )
+    kinds = [el["kind"] for el in content["elements"]]
+    assert "heading" not in kinds
+    assert content["elements"][0]["bullets"] == ["部署の規則"]
+    assert content["points"] == ["研修後にボットを作る"]
+    assert content["items"][0]["heading"] == ""
+    assert content["items"][0]["body"] == "ナレッジに格納する"
+
+
+def test_strip_title_echo_keeps_different_heading():
+    from app.pptx_repair import strip_title_echo
+
+    content = strip_title_echo(
+        "目的",
+        {"elements": [{"kind": "heading", "text": "進め方"}], "points": ["進め方"]},
+    )
+    assert content["elements"][0]["text"] == "進め方"
+    assert content["points"] == ["進め方"]
+
+
+def test_repair_deck_strips_title_echo():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "目的",
+                    "layout": "freeform",
+                    "content": {
+                        "elements": [
+                            {"kind": "heading", "text": "目的", "col": 0, "row": 0, "colspan": 12, "rowspan": 1},
+                            {
+                                "kind": "bullets",
+                                "col": 0,
+                                "row": 1,
+                                "colspan": 12,
+                                "rowspan": 5,
+                                "bullets": ["部署の規則をナレッジに格納する"],
+                            },
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert all(el.get("kind") != "heading" for el in content["content"]["elements"])
+
+
+def test_repair_splits_many_short_steps():
+    from app.pptx_repair import repair_deck
+
+    deck = repair_deck(
+        {
+            "slides": [
+                {"type": "cover", "title": "表紙"},
+                {
+                    "type": "content",
+                    "title": "手順",
+                    "layout": "chevron-steps",
+                    "content": {
+                        "steps": [
+                            {"title": "開く"},
+                            {"title": "作る"},
+                            {"title": "確認"},
+                            {"title": "公開"},
+                            {"title": "保存"},
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+    assert deck is not None
+    contents = [s for s in deck["slides"] if s["type"] == "content"]
+    assert len(contents) == 2
+    assert all(s["layout"] == "chevron-steps" for s in contents)
+    assert len(contents[0]["content"]["steps"]) == 3
+    assert contents[1]["title"] == "手順（続き）"

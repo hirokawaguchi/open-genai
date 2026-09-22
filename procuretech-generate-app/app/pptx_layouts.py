@@ -396,13 +396,21 @@ def _add_footers(prs: Any) -> None:
 
 
 def _picture(slide: Any, rel: str, assets: dict[str, bytes], left: Any, top: Any, width: Any) -> bool:
-    data = assets.get(rel)
-    if not data:
+    from app.pptx_figure import asset_png, is_png
+
+    data = asset_png(rel, assets)
+    if not is_png(data):
+        raw = assets.get(rel) if rel else None
+        if is_png(raw):
+            data = raw
+    if not is_png(data):
         return False
     try:
         slide.shapes.add_picture(io.BytesIO(data), left, top, width=width)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        log = __import__("logging").getLogger("procuretech-generate")
+        log.info("pptx picture failed %s: %s", rel, exc)
         return False
 
 
@@ -558,9 +566,20 @@ def _items_from(content: dict[str, Any]) -> list[dict[str, str]]:
 def _render_fullwidth(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
     from pptx.util import Inches, Pt
 
-    points = [str(p) for p in _as_list(content.get("points")) if str(p).strip()]
+    from app.pptx_repair import _echoes_title
+
+    title = str(content.get("_slide_title") or "")
+    points = [
+        str(p)
+        for p in _as_list(content.get("points"))
+        if str(p).strip() and not _echoes_title(p, title)
+    ]
     if not points:
-        points = [x["heading"] or x["body"] for x in _items_from(content) if x["heading"] or x["body"]]
+        points = [
+            x["heading"] or x["body"]
+            for x in _items_from(content)
+            if (x["heading"] or x["body"]) and not _echoes_title(x["heading"] or x["body"], title)
+        ]
     if not points:
         narrative = str(content.get("narrative") or content.get("text") or "").strip()
         if narrative:
@@ -587,7 +606,15 @@ def _render_fullwidth(slide: Any, prs: Any, content: dict[str, Any], assets: dic
 def _render_cards(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
     from pptx.util import Inches, Pt
 
-    items = _items_from(content)[:4]
+    from app.pptx_repair import _echoes_title
+
+    title = str(content.get("_slide_title") or "")
+    items = []
+    for raw in _items_from(content)[:4]:
+        heading = "" if _echoes_title(raw["heading"], title) else raw["heading"]
+        body = raw["body"]
+        if heading or body:
+            items.append({"heading": heading or body, "body": body if heading else ""})
     if not items:
         return
     left0 = Inches(PPTX_FRAME["left"])
@@ -622,10 +649,168 @@ def _render_cards(slide: Any, prs: Any, content: dict[str, Any], assets: dict[st
         _card(slide, left, top, w, height, heading, body, index=i + 1)
 
 
+def _flow_items(content: dict[str, Any]) -> list[dict[str, str]]:
+    items = _items_from(content)
+    if items:
+        return items[:5]
+    steps = _as_list(content.get("steps"))
+    out: list[dict[str, str]] = []
+    for i, step in enumerate(steps[:5]):
+        if isinstance(step, dict):
+            out.append(
+                {
+                    "heading": str(step.get("title") or step.get("heading") or step.get("label") or ""),
+                    "body": str(step.get("text") or step.get("description") or step.get("body") or ""),
+                }
+            )
+        else:
+            out.append({"heading": str(step), "body": ""})
+    return [x for x in out if x["heading"] or x["body"]]
+
+
+def _render_process_row(slide: Any, items: list[dict[str, str]]) -> None:
+    """DADS のプロセス型。一列に箱＋矢印。斜めには置かない。"""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    n = len(items)
+    left0 = PPTX_FRAME["left"]
+    width = pptx_content_width()
+    arrow_w = 0.26 if n > 1 else 0.0
+    box_w = (width - arrow_w * max(n - 1, 0)) / n
+    top = PPTX_FRAME["content_top"] + 0.85
+    h = 2.4
+    for i, item in enumerate(items):
+        x = left0 + i * (box_w + arrow_w)
+        _rect(slide, Inches(x), Inches(top), Inches(box_w - 0.04), Inches(h), PRIMARY_SURFACE if i == 0 else SURFACE)
+        heading = item["heading"] or item["body"]
+        body = item["body"] if item["heading"] else ""
+        _textbox(
+            slide,
+            Inches(x + 0.12),
+            Inches(top + 0.16),
+            Inches(box_w - 0.28),
+            Inches(0.4),
+            str(i + 1),
+            size=Pt(PPTX_TYPE["caption"]),
+            color=ACCENT,
+            bold=True,
+        )
+        _textbox(
+            slide,
+            Inches(x + 0.12),
+            Inches(top + 0.55),
+            Inches(box_w - 0.28),
+            Inches(0.9),
+            heading,
+            size=Pt(PPTX_TYPE["subhead"]),
+            color=INK,
+            bold=True,
+        )
+        if body:
+            _textbox(
+                slide,
+                Inches(x + 0.12),
+                Inches(top + 1.5),
+                Inches(box_w - 0.28),
+                Inches(0.7),
+                body,
+                size=Pt(PPTX_TYPE["body"]),
+                color=BODY,
+            )
+        if i < n - 1:
+            shape = slide.shapes.add_shape(
+                MSO_SHAPE.RIGHT_ARROW,
+                Inches(x + box_w - 0.02),
+                Inches(top + h / 2 - 0.12),
+                Inches(arrow_w),
+                Inches(0.24),
+            )
+            _solid(shape, ACCENT)
+
+
+def _render_branch_flow(slide: Any, root: dict[str, str], branches: list[dict[str, str]]) -> None:
+    """上段に起点、下段に分岐を横並び。樹形を斜めにしない。"""
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    left0 = PPTX_FRAME["left"]
+    width = pptx_content_width()
+    top = PPTX_FRAME["content_top"]
+    _rect(slide, Inches(left0), Inches(top), Inches(width), Inches(1.55), PRIMARY_SURFACE)
+    _textbox(
+        slide,
+        Inches(left0 + 0.25),
+        Inches(top + 0.2),
+        Inches(width - 0.5),
+        Inches(1.15),
+        root.get("heading") or root.get("body") or "",
+        size=Pt(PPTX_TYPE["subhead"]),
+        color=INK,
+        bold=True,
+        align=PP_ALIGN.CENTER,
+    )
+    row = branches[:4]
+    if not row:
+        return
+    gap = 0.2
+    w = (width - gap * (len(row) - 1)) / len(row)
+    y = top + 1.85
+    h = pptx_content_height() - 1.95
+    for i, item in enumerate(row):
+        x = left0 + i * (w + gap)
+        _rect(slide, Inches(x), Inches(y), Inches(w), Inches(h), SURFACE)
+        _rect(slide, Inches(x), Inches(y), Inches(w), Inches(0.08), ACCENT)
+        heading = item.get("heading") or item.get("body") or ""
+        body = item.get("body") if item.get("heading") else ""
+        _textbox(
+            slide,
+            Inches(x + 0.16),
+            Inches(y + 0.22),
+            Inches(w - 0.32),
+            Inches(1.1),
+            heading,
+            size=Pt(PPTX_TYPE["card_head"]),
+            color=INK,
+            bold=True,
+        )
+        if body:
+            _textbox(
+                slide,
+                Inches(x + 0.16),
+                Inches(y + 1.35),
+                Inches(w - 0.32),
+                Inches(h - 1.55),
+                body,
+                size=Pt(PPTX_TYPE["body"]),
+                color=BODY,
+            )
+
+
 @register("step-flow")
 @register("step-up")
 def _render_steps(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
-    _render_cards(slide, prs, content, assets)
+    items = _flow_items(content)
+    if not items:
+        return
+    branches = _as_list(content.get("branches"))
+    branch_items: list[dict[str, str]] = []
+    for raw in branches:
+        if isinstance(raw, dict):
+            branch_items.append(
+                {
+                    "heading": str(raw.get("title") or raw.get("heading") or raw.get("label") or ""),
+                    "body": str(raw.get("text") or raw.get("description") or raw.get("body") or ""),
+                }
+            )
+        else:
+            branch_items.append({"heading": str(raw), "body": ""})
+    branch_items = [x for x in branch_items if x["heading"] or x["body"]]
+    if content.get("mode") == "branch" and len(items) >= 2:
+        _render_branch_flow(slide, items[0], branch_items or items[1:])
+        return
+    _render_process_row(slide, items)
 
 
 @register("user-pain-points")
@@ -764,9 +949,9 @@ def _render_ba(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, 
     for x, key in ((0.7, "before"), (7.05, "after")):
         block = content.get(key) if isinstance(content.get(key), dict) else {}
         _rect(slide, Inches(x), Inches(1.4), Inches(5.55), Inches(5.1), SURFACE)
-        _textbox(slide, Inches(x + 0.25), Inches(1.55), Inches(5.1), Inches(0.45), str(block.get("title") or key), size=Pt(16), color=INK, bold=True)
+        _textbox(slide, Inches(x + 0.25), Inches(1.55), Inches(5.1), Inches(0.45), str(block.get("title") or key), size=Pt(PPTX_TYPE["subhead"]), color=INK, bold=True)
         points = [str(p) for p in _as_list(block.get("points"))]
-        _lines(slide, Inches(x + 0.25), Inches(2.15), Inches(5.1), Inches(4.1), points, size=Pt(14), bullet=True)
+        _lines(slide, Inches(x + 0.25), Inches(2.15), Inches(5.1), Inches(4.1), points, size=Pt(PPTX_TYPE["body"]), bullet=True)
 
 
 @register("kpi-three-col")
@@ -929,6 +1114,58 @@ def _render_members(slide: Any, prs: Any, content: dict[str, Any], assets: dict[
     _render_cards(slide, prs, {"items": _as_list(content.get("members"))}, assets)
 
 
+@register("figure-frame")
+def _render_figure_frame(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
+    """図の枠。PNG があれば埋め、無ければ Mermaid フローを箱で描く。"""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    from app.pptx_figure import mermaid_to_flow_items
+
+    left = Inches(PPTX_FRAME["left"])
+    top = Inches(PPTX_FRAME["content_top"])
+    width = Inches(pptx_content_width())
+    height = Inches(pptx_content_height())
+    rel = str(content.get("image") or "").strip()
+    pad = Inches(0.28)
+    if _picture(slide, rel, assets, left + pad, top + Inches(0.28), width - pad * 2):
+        return
+    if rel:
+        import logging
+
+        logging.getLogger("procuretech-generate").info(
+            "pptx figure: no png for %s (assets=%s)",
+            rel,
+            [k for k in (assets or {}) if str(k).endswith(".png")][:12],
+        )
+    items, mode = mermaid_to_flow_items(str(content.get("mermaid") or ""))
+    if items:
+        if mode == "branch" and len(items) >= 3:
+            _render_branch_flow(slide, items[0], items[1:])
+        else:
+            _render_process_row(slide, items)
+        return
+    frame = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
+    frame.fill.solid()
+    frame.fill.fore_color.rgb = _rgb(SURFACE)
+    frame.line.color.rgb = _rgb(RULE_MEANINGFUL)
+    frame.line.width = Pt(1.25)
+    _rect(slide, left, top, Inches(PPTX_FRAME["rule_width"]), Inches(PPTX_FRAME["rule_height"]), ACCENT)
+    alt = str(content.get("alt") or "").strip() or "ここに図を入れる"
+    _textbox(
+        slide,
+        left + Inches(0.4),
+        top + height / 3,
+        width - Inches(0.8),
+        Inches(1.4),
+        alt,
+        size=Pt(PPTX_TYPE["subhead"]),
+        color=PPTX_MUTED,
+        align=PP_ALIGN.CENTER,
+    )
+
+
 @register("fullscreen-photo")
 def _render_photo(slide: Any, prs: Any, content: dict[str, Any], assets: dict[str, bytes]) -> None:
     from pptx.util import Inches, Pt
@@ -989,8 +1226,11 @@ def _render_axis_table(slide: Any, prs: Any, content: dict[str, Any], assets: di
     from pptx.util import Inches
 
     headers = [str(h) for h in _as_list(content.get("headers") or ["項目", "内容"])]
+    data_rows = _as_list(content.get("rows"))
+    if not data_rows:
+        return
     rows: list[list[str]] = [headers]
-    for row in _as_list(content.get("rows")):
+    for row in data_rows:
         if isinstance(row, dict):
             vals = [str(v) for v in row.values()]
             rows.append((vals + [""] * len(headers))[: len(headers)])
@@ -1055,9 +1295,39 @@ def _render_chevron(slide: Any, prs: Any, content: dict[str, Any], assets: dict[
         else:
             n_lab, title, text = str(i + 1), str(step), ""
         ink = ON_ACCENT if i == 0 else INK
-        _textbox(slide, left + Inches(0.15), top + Inches(0.12), w - Inches(0.4), Inches(0.35), n_lab, size=Pt(11), color=ink, bold=True, align=PP_ALIGN.LEFT)
-        _textbox(slide, left + Inches(0.15), top + Inches(0.45), w - Inches(0.4), Inches(0.45), title, size=Pt(13), color=ink, bold=True)
-        _textbox(slide, left + Inches(0.15), top + Inches(0.95), w - Inches(0.4), Inches(0.5), text, size=Pt(11), color=ink)
+        _textbox(
+            slide,
+            left + Inches(0.15),
+            top + Inches(0.1),
+            w - Inches(0.4),
+            Inches(0.35),
+            n_lab,
+            size=Pt(PPTX_TYPE["caption"]),
+            color=ink,
+            bold=True,
+            align=PP_ALIGN.LEFT,
+        )
+        _textbox(
+            slide,
+            left + Inches(0.15),
+            top + Inches(0.42),
+            w - Inches(0.4),
+            Inches(0.5),
+            title,
+            size=Pt(PPTX_TYPE["card_head"]),
+            color=ink,
+            bold=True,
+        )
+        _textbox(
+            slide,
+            left + Inches(0.15),
+            top + Inches(0.95),
+            w - Inches(0.4),
+            Inches(0.5),
+            text,
+            size=Pt(PPTX_TYPE["caption"]),
+            color=ink,
+        )
 
 
 @register("chart-insight")
@@ -1238,15 +1508,46 @@ def _render_freeform(slide: Any, prs: Any, content: dict[str, Any], assets: dict
             bullets = [str(b) for b in _as_list(el.get("bullets") or el.get("text")) if str(b).strip()]
             _lines(slide, left, top, width, height, bullets, size=_size_pt(style.get("size"), "body"), color=color, bullet=True)
         elif kind == "kpi":
+            from pptx.util import Emu, Inches
+
             value = str(el.get("value") or el.get("text") or "")
             label = str(el.get("label") or "")
-            _textbox(slide, left, top, width, height, value, size=_size_pt(style.get("size"), "metric"), color=ACCENT if fill != "accent" else ON_ACCENT, bold=True, align=align)
+            box_h = _inches_of(height)
+            value_h = min(1.05, max(box_h * 0.55, 0.5)) if label else box_h
+            metric = PPTX_TYPE["metric"]
+            size = _size_pt(style.get("size"), "metric")
+            if _needs_autofit(value, width, Inches(value_h), metric):
+                size = _size_pt("head", "head")
+            _textbox(
+                slide,
+                left,
+                top,
+                width,
+                Inches(value_h),
+                value,
+                size=size,
+                color=ACCENT if fill != "accent" else ON_ACCENT,
+                bold=True,
+                align=align,
+            )
             if label:
-                from pptx.util import Emu, Inches
-
-                _textbox(slide, left, Emu(top + Inches(0.7)), width, height, label, size=_size_pt("body", "body"), color=PPTX_MUTED if fill != "accent" else ON_ACCENT, align=align)
+                _textbox(
+                    slide,
+                    left,
+                    Emu(top + Inches(value_h)),
+                    width,
+                    Inches(max(box_h - value_h, 0.3)),
+                    label,
+                    size=_size_pt("body", "body"),
+                    color=PPTX_MUTED if fill != "accent" else ON_ACCENT,
+                    align=align,
+                )
         elif kind == "heading":
-            _textbox(slide, left, top, width, height, str(el.get("text") or ""), size=_size_pt(style.get("size"), "head"), color=(INK if fill != "accent" else ON_ACCENT), bold=True, align=align)
+            from app.pptx_repair import _echoes_title
+
+            heading = str(el.get("text") or el.get("heading") or el.get("label") or "")
+            if heading and not _echoes_title(heading, content.get("_slide_title")):
+                _textbox(slide, left, top, width, height, heading, size=_size_pt(style.get("size"), "head"), color=(INK if fill != "accent" else ON_ACCENT), bold=True, align=align)
         elif kind == "box":
             text = str(el.get("text") or "")
             if text and fill == "none":
@@ -1292,6 +1593,10 @@ def render_deck(deck: dict[str, Any], assets: dict[str, bytes] | None = None) ->
             _fill_slide(slide)
             _add_content_chrome(slide, prs, str(slide_def.get("title") or ""))
         content = slide_def.get("content") if isinstance(slide_def.get("content"), dict) else {}
+        from app.pptx_repair import strip_title_echo
+
+        title = str(slide_def.get("title") or "")
+        content = {**strip_title_echo(title, content), "_slide_title": title}
         renderer = _REGISTRY.get(layout) or _REGISTRY[DEFAULT_LAYOUT]
         renderer(slide, prs, content, assets)
         _add_source(slide, prs, str(slide_def.get("source") or content.get("source") or ""))

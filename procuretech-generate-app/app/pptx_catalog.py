@@ -66,6 +66,7 @@ LAYOUT_IDS: tuple[str, ...] = (
     "numbered-feature-cards",
     "awards-parallel",
     "fullscreen-photo",
+    "figure-frame",
     "logo-wall",
     "location-map",
     "case-two-col",
@@ -121,6 +122,7 @@ SELECTION_GUIDE = """\
 - 要件・チェック: checklist-table
 - 時系列: timeline / schedule-list
 - 画像または Mermaid PNG: fullscreen-photo
+- 分岐・関係・完成イメージの図枠: figure-frame（PNG が無ければ代替テキスト）
 - 並列の機能説明だけ numbered-feature-cards / parallel-items
 - venn-diagram / funnel 等の関係図名は画像が無いときカードになるので選ばない
 - 数値が本文に無いときはチャート系を選ばない
@@ -386,6 +388,11 @@ def minimal_fixture(layout: str) -> dict[str, Any]:
         "fullscreen-photo": {
             "headline": "見出し",
             "subMessages": ["補足"],
+        },
+        "figure-frame": {
+            "caption": "質問分類の分岐",
+            "alt": "ここに質問分類の分岐の図を入れる",
+            "image": "",
         },
         "logo-wall": {"logos": [{"name": "組織A"}, {"name": "組織B"}]},
         "location-map": {
