@@ -97,7 +97,7 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
 
     audio = _extract_audio(inputs)
     if not audio:
-        return {"outputs": "音声ファイルが添付されていません。音声を添付してください。"}
+        return {"outputs": "音声または動画ファイルが添付されていません。ファイルを添付してください。"}
 
     filename, raw = audio
     language = inputs.get("language") or "auto"

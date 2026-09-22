@@ -665,7 +665,7 @@ Open GENAI では **機能ごとに入口を分けています**（どちらも�
 
 ### 文字起こし（ローカル Whisper）
 
-- `whisper-app`（faster-whisper / CPU）。音声を添付して実行すると文字起こし（タイムスタンプ付き）を返します。
+- `whisper-app`（faster-whisper / CPU）。音声・動画を添付して実行すると文字起こし（タイムスタンプ付き）を返します。使い方に対応形式の表があります。
 - モデルは `.env` の `WHISPER_MODEL`（既定 `medium`。`small`/`large-v3` も可）。初回実行時にモデルを取得し `whisper_cache` ボリュームにキャッシュします。
 - クラウドの Amazon Transcribe + S3 への依存を置き換えています。
 
