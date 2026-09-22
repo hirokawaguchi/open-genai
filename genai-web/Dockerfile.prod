@@ -9,7 +9,7 @@ COPY packages/cdk/package.json packages/cdk/package.json
 COPY packages/common/package.json packages/common/package.json
 COPY packages/types/package.json packages/types/package.json
 
-RUN npm install
+RUN npm install --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 COPY . .
 
