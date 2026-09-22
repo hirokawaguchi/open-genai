@@ -69,7 +69,11 @@ export const KnowledgePage = () => {
             className='max-w-md'
             aria-disabled={scopesLoading || scopes.length === 0 || undefined}
           >
-            {scopes.length === 0 && <option value=''>読み込み中…</option>}
+            {scopes.length === 0 && (
+              <option value=''>
+                {scopesLoading ? '読み込み中…' : 'この棟で見えるスコープがありません'}
+              </option>
+            )}
             {scopes.map((s) => (
               <option key={s.scope} value={s.scope}>
                 {s.name}
