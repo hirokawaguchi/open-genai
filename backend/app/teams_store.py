@@ -1777,6 +1777,7 @@ def list_visible_exapps(
 
     - システム管理者: 活性棟＋共有棟（管理者ツールは常に可）
     - それ以外: 明示所属 + 主所属の配下 + 共通チーム（管理者ツールは除外）
+    - 共通チームの公開アプリは全区のカタログに出す。ナレッジの部屋範囲とは独立
     """
     teams = {t["teamId"]: t["teamName"] for t in list_teams()}
     with _lock, _connect() as conn:
@@ -1784,13 +1785,11 @@ def list_visible_exapps(
             "SELECT * FROM exapps WHERE status = 'published'"
         ).fetchall()
     visible_team_ids = set(list_effective_team_ids_for_user(user_id))
+    visible_team_ids.add(COMMON_TEAM_ID)
     if tenant_id:
-        if team_visible_in_tenant(COMMON_TEAM_ID, tenant_id):
-            visible_team_ids.add(COMMON_TEAM_ID)
         visible_team_ids = set(
             filter_team_ids_for_tenant(list(visible_team_ids), tenant_id)
         )
-    else:
         visible_team_ids.add(COMMON_TEAM_ID)
     result = []
     for r in rows:
@@ -1798,6 +1797,9 @@ def list_visible_exapps(
         if app["teamId"] == ADMIN_TEAM_ID and not is_system_admin:
             continue
         if is_system_admin and app["teamId"] == ADMIN_TEAM_ID:
+            result.append({**app, "teamName": teams.get(app["teamId"], "")})
+            continue
+        if app["teamId"] == COMMON_TEAM_ID:
             result.append({**app, "teamName": teams.get(app["teamId"], "")})
             continue
         if is_system_admin or app["teamId"] in visible_team_ids:
