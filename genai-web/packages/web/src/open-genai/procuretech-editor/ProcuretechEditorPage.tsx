@@ -481,7 +481,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
         for (const item of items) {
           if (!item?.path || !item?.code) continue;
           try {
-            const dataUrl = await mermaidToPngDataUrl(item.code);
+            const dataUrl = await mermaidToPngDataUrl(item.code, 2, { landscape: true });
             const comma = dataUrl.indexOf(',');
             assets[item.path] = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
           } catch {
@@ -681,6 +681,9 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
         if (f && f.kind === 'markdown') targets.set(f.id, f.rel_path);
       }
     }
+    const landscape = outputs.some(
+      (o) => o.enabled !== false && composeFormatOf(o) === 'pptx',
+    );
     const fence = /```mermaid[^\n]*\n([\s\S]*?)```/g;
     for (const [fileId, relPath] of targets) {
       const content = (await fetchFileContent(projectId, relPath))?.content ?? '';
@@ -696,7 +699,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
       const replacements: string[] = [];
       for (let i = 0; i < blocks.length; i++) {
         try {
-          const dataUrl = await mermaidToPngDataUrl(blocks[i]);
+          const dataUrl = await mermaidToPngDataUrl(blocks[i], 2, { landscape });
           const filename = `mermaid-${fileId}-${i}.png`;
           const uploaded = await actions.uploadFile(projectId, {
             filename,

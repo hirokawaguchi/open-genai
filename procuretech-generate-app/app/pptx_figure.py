@@ -86,6 +86,16 @@ _EDGE_RE = re.compile(
     r'([A-Za-z][\w-]*)(?:\s*\[\s*"?([^"\]]+)"?\s*\])?'
 )
 _HEADER_RE = re.compile(r"^(?:flowchart|graph)\b", re.I)
+_FLOW_DIR_RE = re.compile(
+    r"^(\s*)(flowchart|graph)(?:\s+(TD|TB|BT|DT|LR|RL))?(\b.*)?$",
+    re.I,
+)
+_OTHER_DIAGRAM_RE = re.compile(
+    r"^\s*(sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|"
+    r"mindmap|timeline|gitGraph|journey|quadrantChart|xychart|sankey|"
+    r"block-beta|requirementDiagram|C4Context|architecture-beta)\b",
+    re.I,
+)
 
 
 def parse_mermaid_flowchart(code: str) -> dict[str, Any] | None:
@@ -148,12 +158,28 @@ def mermaid_to_flow_items(code: str) -> tuple[list[dict[str, str]], str]:
     return [{"heading": lab, "body": ""} for _, lab in nodes][:5], "linear"
 
 
+def mermaid_landscape(code: str) -> str:
+    """flowchart / graph を LR（横書き）にする。他の図種はそのまま。"""
+    text = (code or "").strip()
+    if not text or _OTHER_DIAGRAM_RE.match(text):
+        return text
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        match = _FLOW_DIR_RE.match(line)
+        if not match:
+            continue
+        indent, kind, _direction, rest = match.groups()
+        lines[i] = f"{indent}{kind} LR{rest or ''}"
+        return "\n".join(lines)
+    return text
+
+
 def mermaid_flowchart(nodes: list[str], *, branch: bool) -> str:
     labels = [_mmd_label(n) for n in nodes if _mmd_label(n)]
     if not labels:
         return ""
     ids = [f"N{i}" for i in range(len(labels))]
-    lines = ["flowchart TD"]
+    lines = ["flowchart LR"]
     for i, label in enumerate(labels):
         lines.append(f'  {ids[i]}["{label}"]')
     if branch and len(ids) >= 3:
@@ -229,6 +255,18 @@ def is_png(data: bytes | None) -> bool:
     return bool(data) and data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def png_size(data: bytes | None) -> tuple[int, int] | None:
+    """PNG の IHDR から幅・高さ（px）。"""
+    import struct
+
+    if not is_png(data) or data is None or len(data) < 24:
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    if width < 1 or height < 1:
+        return None
+    return width, height
+
+
 def asset_png(rel: str, assets: dict[str, bytes] | None) -> bytes | None:
     """相対パス、なければ同じファイル名の PNG を探す。"""
     if not rel or not assets:
@@ -267,7 +305,7 @@ def pending_mermaid(
         path = rel or mermaid_pending_path(code, i)
         content["image"] = path
         slide["content"] = content
-        out.append({"id": str(i), "path": path, "code": code})
+        out.append({"id": str(i), "path": path, "code": mermaid_landscape(code)})
     return out
 
 
@@ -295,10 +333,10 @@ def figure_content(
         rel = rel or mmd_imgs[0]
         log.info("pptx figure: source image %s", rel)
     elif source:
-        mermaid = source
+        mermaid = mermaid_landscape(source)
         log.info("pptx figure: source mermaid")
     else:
-        mermaid = mermaid_from_notes(block, notes.points if notes else None)
+        mermaid = mermaid_landscape(mermaid_from_notes(block, notes.points if notes else None))
         if mermaid:
             png = render_mermaid_png(mermaid)
             if png and assets is not None:
