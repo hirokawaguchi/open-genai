@@ -166,6 +166,8 @@ export type EditorComposeResult = {
   /** 生成をスキップした出力（例: 一次審査表の対象章が無い等）。 */
   skipped?: { name: string; reason: string }[];
   error?: string;
+  /** PPTX 図枠の Mermaid。書き出し中に既存の Mermaid→PNG で埋める。 */
+  mermaid?: { id?: string; path: string; code: string }[];
 };
 
 /** ヒアリングシート → 章別 Markdown 生成ジョブの状態。 */

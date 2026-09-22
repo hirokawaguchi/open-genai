@@ -119,7 +119,11 @@
     エディタは docx をテーマの `/compose` へ、それ以外を `EDITOR_COMPOSE_URL` へ振り分ける。
     html は縦スクロールの庁内文書。pptx は既定で LLM（`OPENAI_BASE_URL`、空なら Ollama）が
     見出し骨格のうえに節ごとの役割と要点を載せ、伏せた内容レビューで deck JSON を組み、決定論レンダラ
-    （DADS パワポ応用・16:9）で描く。根拠原文はスピーカーノート（pptx）に残す。
+    （DADS パワポ応用・16:9）で描く。描画前に溢れる・空のレイアウトは分割または全幅へ直す。
+    分岐・関係・完成イメージは図枠を置く。原稿の ```` ```mermaid ```` は呼び出し元が
+    先に PNG 化して assets に載せる。ノートが新たに図にした枚だけ
+    `need_mermaid` → `POST /compose/jobs/{id}/mermaid`。同期 `/compose` と画像化失敗時は箱と矢印。
+    スライド題名と同じ見出しは本文に出さない。収まらない KPI（文書番号・日付など）は項目表に直す。根拠原文はスピーカーノート（pptx）に残す。
     `GENERATE_PPTX_LLM=0` または計画失敗時は html を長文変換、pptx を見出し分割へ落とす。
     `GENERATE_PPTX_REVIEW=0` でレビューだけ省略。
 - `reference` は任意（Word のスタイル参照ドキュメントの種別など）。docx 以外では無視してよい。

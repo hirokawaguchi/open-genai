@@ -72,6 +72,7 @@ import type {
 import {
   fetchCompose,
   fetchFileContent,
+  postComposeMermaid,
   fetchGeneration,
   fetchGenerationWaitingBlob,
   fetchProjectWaitingBlob,
@@ -466,11 +467,37 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   );
 
   const composeRequestId = compose.phase === 'running' ? compose.requestId : null;
+  const mermaidPostedRef = useRef('');
   useEffect(() => {
     if (!composeRequestId) return;
     let stop = false;
     const apply = (res: Awaited<ReturnType<typeof fetchCompose>>) => {
       setCompose(composeUiFromResult(res, composeRequestId));
+      const items = res.mermaid ?? [];
+      if (!items.length || mermaidPostedRef.current === composeRequestId) return;
+      mermaidPostedRef.current = composeRequestId;
+      void (async () => {
+        const assets: Record<string, string> = {};
+        for (const item of items) {
+          if (!item?.path || !item?.code) continue;
+          try {
+            const dataUrl = await mermaidToPngDataUrl(item.code);
+            const comma = dataUrl.indexOf(',');
+            assets[item.path] = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+          } catch {
+            // 1件失敗しても他を続ける。全部失敗なら次のポーリングで再試行する。
+          }
+        }
+        if (!Object.keys(assets).length) {
+          mermaidPostedRef.current = '';
+          return;
+        }
+        try {
+          await postComposeMermaid(projectId, composeRequestId, assets);
+        } catch {
+          mermaidPostedRef.current = '';
+        }
+      })();
     };
     const poll = async () => {
       if (stop) return;
@@ -636,9 +663,8 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     }
   }, [actions, projectId, currentComposition, mutate]);
 
-  // 合成に含まれる Markdown ファイルのうち、``` mermaid ブロックを持つものを
-  // クライアント側で PNG 画像化し、画像参照へ差し替えた本文（overrides）を作る。
-  // pandoc は Mermaid をそのままでは図にできないため、画像にして埋め込む。
+  // 原稿の ```mermaid を 1 回だけ PNG 化し、画像参照へ差し替える（docx / html / pptx 共通）。
+  // PPTX でノートが新たに図にした枚は、合成中の handshake だけが PNG 化する。
   const materializeMermaid = useCallback(async (): Promise<Record<string, string>> => {
     const overrides: Record<string, string> = {};
     // 有効な Markdown 出力が参照するファイル（重複なし）を集める。

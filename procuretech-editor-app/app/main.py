@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -18,7 +19,7 @@ import uuid
 import zipfile
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Header
+from fastapi import BackgroundTasks, FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
 
 from . import excel, generate, intauth, objstore, store, waiting
@@ -27,6 +28,10 @@ API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 MAX_UPLOAD_BYTES = int(os.environ.get("EDITOR_MAX_UPLOAD_BYTES", "20971520"))  # 20MB
 
 app = FastAPI(title="Open GENAI ProcureTech Editor App", version="0.1.0")
+
+# 書き出し中の Mermaid→PNG 待ち（request_id → Future[dict[path, bytes]]）。
+_MERMAID_WAITS: dict[str, asyncio.Future[dict[str, bytes]]] = {}
+_MERMAID_WAIT_SECONDS = 180.0
 
 
 # --- 認証 ---------------------------------------------------------------------
@@ -1444,6 +1449,7 @@ async def _run_compose_job(
                 excel_outputs.append((name, builder))
             else:
                 fmt = generate.normalize_compose_format(o.get("format"))
+                # 原稿の ```mermaid はクライアントが PNG 化した overrides を使う（pptx も含む）。
                 use_overrides = overrides if fmt in generate.VISUAL_COMPOSE_FORMATS else None
                 sections = _collect_output_sections(o, files_by_key, files_by_id, use_overrides)
                 if not sections:
@@ -1469,6 +1475,16 @@ async def _run_compose_job(
                     data = objstore.get_bytes(f["s3_key"])
                     if data is not None:
                         assets[rel] = data
+        for f in files:
+            rel = str(f.get("rel_path") or "").replace("\\", "/").lstrip("/")
+            name = rel.rsplit("/", 1)[-1].lower()
+            if not name.startswith("mermaid-") and not name.startswith("mermaid_"):
+                continue
+            if rel in assets:
+                continue
+            data = objstore.get_bytes(f["s3_key"])
+            if data is not None:
+                assets[rel] = data
 
         if not theme_md and not generic_md and not excel_outputs:
             store.update_compose_job(
@@ -1552,6 +1568,38 @@ async def _run_compose_job(
                         on_progress=_on_progress,
                     )
                 )
+            except generate.NeedMermaid as pending:
+                loop = asyncio.get_running_loop()
+                fut: asyncio.Future[dict[str, bytes]] = loop.create_future()
+                _MERMAID_WAITS[request_id] = fut
+                store.update_compose_job(
+                    request_id,
+                    uid,
+                    progress=max(work_progress(), 80),
+                    current_step="図を画像化しています",
+                    result={"mermaid": pending.items},
+                )
+                try:
+                    pngs = await asyncio.wait_for(asyncio.shield(fut), _MERMAID_WAIT_SECONDS)
+                except asyncio.TimeoutError:
+                    pngs = {}
+                finally:
+                    _MERMAID_WAITS.pop(request_id, None)
+                try:
+                    compose_zips.append(
+                        await generate.finish_compose_mermaid(
+                            pending.job_id,
+                            pngs,
+                            base_url=url,
+                            api_key=key,
+                            on_progress=_on_progress,
+                        )
+                    )
+                except generate.GenerateError as e:
+                    store.update_compose_job(
+                        request_id, uid, status="error", error=str(e), current_step="エラー",
+                    )
+                    return False
             except generate.GenerateError as e:
                 store.update_compose_job(
                     request_id, uid, status="error", error=str(e), current_step="エラー",
@@ -1735,3 +1783,48 @@ async def compose_status(
     if job is None:
         return JSONResponse(status_code=404, content={"error": "合成ジョブが見つかりません。"})
     return JSONResponse(content=_compose_job_payload(job))
+
+
+@app.post("/projects/{project_id}/composes/{request_id}/mermaid")
+async def compose_mermaid_pngs(
+    project_id: str,
+    request_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    """書き出し中の Mermaid を、エディタ既存の PNG 化結果で埋める。"""
+    err, uid = _auth(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    job = store.get_compose_job(request_id, project_id, uid)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "合成ジョブが見つかりません。"})
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    raw = body.get("assets") if isinstance(body, dict) else None
+    assets: dict[str, bytes] = {}
+    if isinstance(raw, dict):
+        for path, val in raw.items():
+            rel = str(path or "").replace("\\", "/").lstrip("/")
+            if not rel or not isinstance(val, str):
+                continue
+            try:
+                assets[rel] = excel.decode_upload(val, max_bytes=MAX_UPLOAD_BYTES)
+            except excel.ExcelError:
+                continue
+    print(f"[editor] mermaid pngs {len(assets)} keys={list(assets)[:8]}")
+    fut = _MERMAID_WAITS.get(request_id)
+    if fut is None or fut.done():
+        return JSONResponse(status_code=409, content={"error": "図の受け取り待ちではありません。"})
+    fut.set_result(assets)
+    return JSONResponse(content={"ok": True, "count": len(assets)})

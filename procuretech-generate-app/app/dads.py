@@ -47,19 +47,19 @@ CONTRAST_GRAPHIC_MIN = 3.0
 DOCX_FONT = "游ゴシック"
 DOCX_FONT_MONO = "ＭＳ ゴシック"
 
-# PPTX 型スケール（pt, 16:9）。DADS パワポ応用（投影 22pt）と机上閲覧の中間。
+# PPTX 型スケール（pt, 16:9）。DADS パワポ応用の本文 22pt に合わせる。
 # 縮める前に整理・分割する。自動縮小は溢れた箱だけ。
 PPTX_TYPE = {
-    "cover": 40,
-    "title": 32,
-    "section": 36,
-    "subhead": 22,
-    "card_head": 20,
-    "body": 18,
-    "table": 16,
-    "caption": 14,
-    "footer": 12,
-    "metric": 40,
+    "cover": 44,
+    "title": 36,
+    "section": 40,
+    "subhead": 24,
+    "card_head": 22,
+    "body": 22,
+    "table": 18,
+    "caption": 16,
+    "footer": 14,
+    "metric": 48,
 }
 
 # 16:9 = 1280×720 px（96dpi）。zip の framePx を inch に換算（px / 96）。
