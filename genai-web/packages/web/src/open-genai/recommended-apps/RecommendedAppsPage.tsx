@@ -57,7 +57,7 @@ export const RecommendedAppsPage = () => {
               setError('');
               setBusy(true);
               const res = await save(checked);
-              const kept = new Set(res.exAppIds);
+              const kept = new Set<string>(res.exAppIds);
               for (const id of checked) {
                 kept.add(id);
               }
