@@ -34,6 +34,7 @@
 
 ## [Unreleased]
 
+- 文字起こしの使い方に、faster-whisper / PyAV が実務上読める音声・動画形式の表を追加。アップロード欄は代表形式の案内のまま、表にある拡張子も選択できるようにした
 - Markdown エディタの PPTX で、Mermaid 図は `flowchart LR` の横書きにし、スライド本文枠（約 2400×920）の高解像度 PNG として前面に置く
 - Markdown エディタの PPTX で、書き出し中の Mermaid PNG を backend 経由で editor-app へ渡す（`POST …/composes/{id}/mermaid`）
 - Markdown エディタの PPTX で、原稿の Mermaid は書き出し前に 1 回 PNG 化して埋め、ノートが新たに図にした枚だけ合成中に Mermaid→PNG する
