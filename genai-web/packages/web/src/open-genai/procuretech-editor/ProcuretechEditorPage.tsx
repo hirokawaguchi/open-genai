@@ -36,6 +36,7 @@ import {
 import { Button } from '@/components/ui/dads/Button';
 import { Input } from '@/components/ui/dads/Input';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
 import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
@@ -1104,9 +1105,6 @@ export const ProcuretechEditorPage = () => {
   // アプリ名・説明は「AIアプリの編集」（レジストリ）の内容に追従させ、取得前は既定値を使う。
   const { data: registryApp } = useFetchExApp(COMMON_EXAPPS_TEAM_ID, PROCURETECH_EDITOR_EXAPP_ID);
   const appTitle = (registryApp?.exAppName || '').trim() || 'Markdown エディタ';
-  const appDescription =
-    (registryApp?.description || '').trim() ||
-    'プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。';
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const {
@@ -1895,10 +1893,19 @@ export const ProcuretechEditorPage = () => {
       <PageTitle title={appTitle} />
 
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'>
-        <div className='flex flex-col gap-1'>
-          <h1 className='text-std-22B-150 text-solid-gray-900'>{appTitle}</h1>
-          <p className='text-dns-16N-170 text-solid-gray-700'>{appDescription}</p>
-        </div>
+        <ManagedAppHeader
+          teamId={COMMON_EXAPPS_TEAM_ID}
+          exAppId={PROCURETECH_EDITOR_EXAPP_ID}
+          fallbackTitle='Markdown エディタ'
+          fallbackDescription='プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。'
+          fallbackHowTo={
+            <>
+              <p>・「プロジェクト選択」で対象を選びます。</p>
+              <p>・ファイル管理から Markdown を作成・アップロード・編集・保存できます。</p>
+              <p>・「書き出し・統合」で章を並べ、Word / HTML などへ出力します。</p>
+            </>
+          }
+        />
 
         {unavailable && (
           <div
