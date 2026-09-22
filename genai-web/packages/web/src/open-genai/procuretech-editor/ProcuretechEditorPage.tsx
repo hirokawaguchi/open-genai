@@ -7,6 +7,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   PiArrowDown,
   PiArrowUp,
+  PiBookOpenBold,
   PiColumns,
   PiCopySimple,
   PiDownloadSimple,
@@ -36,6 +37,7 @@ import {
 import { Button } from '@/components/ui/dads/Button';
 import { Input } from '@/components/ui/dads/Input';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
@@ -1105,6 +1107,7 @@ export const ProcuretechEditorPage = () => {
   // アプリ名・説明は「AIアプリの編集」（レジストリ）の内容に追従させ、取得前は既定値を使う。
   const { data: registryApp } = useFetchExApp(COMMON_EXAPPS_TEAM_ID, PROCURETECH_EDITOR_EXAPP_ID);
   const appTitle = (registryApp?.exAppName || '').trim() || 'Markdown エディタ';
+  const howToUse = (registryApp?.howToUse || '').trim();
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const {
@@ -1122,6 +1125,7 @@ export const ProcuretechEditorPage = () => {
   const [fileLoading, setFileLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>(PROJECTS_TAB);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [previewStyle, setPreviewStyle] = useState<PreviewStyle>(() => {
     if (typeof window === 'undefined') return 'plain';
@@ -1898,13 +1902,7 @@ export const ProcuretechEditorPage = () => {
           exAppId={PROCURETECH_EDITOR_EXAPP_ID}
           fallbackTitle='Markdown エディタ'
           fallbackDescription='プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。'
-          fallbackHowTo={
-            <>
-              <p>・「プロジェクト選択」で対象を選びます。</p>
-              <p>・ファイル管理から Markdown を作成・アップロード・編集・保存できます。</p>
-              <p>・「書き出し・統合」で章を並べ、Word / HTML などへ出力します。</p>
-            </>
-          }
+          hideHowTo={true}
         />
 
         {unavailable && (
@@ -1933,10 +1931,22 @@ export const ProcuretechEditorPage = () => {
           </div>
         )}
 
-        <div className='flex flex-wrap gap-1 overflow-x-auto border-b border-solid-gray-300'>
-          {tabBtn(PROJECTS_TAB, 'プロジェクト選択')}
-          {tabBtn(EDIT_TAB, '編集')}
-          {tabBtn(EXPORT_TAB, '書き出し・統合')}
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <div className='flex flex-wrap gap-1 overflow-x-auto border-b border-solid-gray-300'>
+            {tabBtn(PROJECTS_TAB, 'プロジェクト選択')}
+            {tabBtn(EDIT_TAB, '編集')}
+            {tabBtn(EXPORT_TAB, '書き出し・統合')}
+          </div>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='inline-flex items-center gap-1'
+            onClick={() => setHelpOpen(true)}
+          >
+            <PiBookOpenBold aria-hidden={true} className='size-4' />
+            使い方
+          </Button>
         </div>
 
         {activeTab === PROJECTS_TAB && (
@@ -2225,6 +2235,25 @@ export const ProcuretechEditorPage = () => {
 
         {activeTab === EXPORT_TAB && project && <CompositionEditor projectId={project.id} />}
       </div>
+
+      <CustomDialog isOpen={helpOpen} onClose={() => setHelpOpen(false)}>
+        <CustomDialogPanel className='max-w-xl'>
+          <CustomDialogHeader hasClose onClose={() => setHelpOpen(false)}>
+            使い方
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            {howToUse ? (
+              <ExAppUsageMarkdownRenderer content={howToUse} size='sm' />
+            ) : (
+              <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
+                <p>・「プロジェクト選択」で対象を選びます。</p>
+                <p>・ファイル管理から Markdown を作成・アップロード・編集・保存できます。</p>
+                <p>・「書き出し・統合」で章を並べ、Word / HTML などへ出力します。</p>
+              </div>
+            )}
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
 
       <FileManagerModal
         open={fileModalOpen}
