@@ -200,7 +200,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       items.push({
         label: nameOf('whisper', '文字起こし'),
         to: WHISPER_EXAPP_PATH,
-        description: descOf('whisper', '音声ファイルから文字起こし'),
+        description: descOf('whisper', '音声・動画ファイルから文字起こし'),
       });
     }
 

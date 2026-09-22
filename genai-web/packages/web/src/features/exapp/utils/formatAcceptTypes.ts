@@ -68,6 +68,11 @@ const MIME_TYPE_LABELS: Record<string, { category: MediaCategory; label: string 
   'audio/opus': { category: 'audio', label: 'Opus' },
   'audio/ogg': { category: 'audio', label: 'OGG' },
   'audio/webm': { category: 'audio', label: 'WebM' },
+  'audio/x-ms-wma': { category: 'audio', label: 'WMA' },
+  'audio/wma': { category: 'audio', label: 'WMA' },
+  'audio/aiff': { category: 'audio', label: 'AIFF' },
+  'audio/x-aiff': { category: 'audio', label: 'AIFF' },
+  'audio/amr': { category: 'audio', label: 'AMR' },
   'audio/L16': { category: 'audio', label: 'PCM' },
   'audio/pcm': { category: 'audio', label: 'PCM' },
 };
@@ -121,6 +126,10 @@ const EXTENSION_LABELS: Record<string, { category: MediaCategory; label: string 
   '.flac': { category: 'audio', label: 'FLAC' },
   '.opus': { category: 'audio', label: 'Opus' },
   '.ogg': { category: 'audio', label: 'OGG' },
+  '.wma': { category: 'audio', label: 'WMA' },
+  '.aiff': { category: 'audio', label: 'AIFF' },
+  '.aif': { category: 'audio', label: 'AIFF' },
+  '.amr': { category: 'audio', label: 'AMR' },
   '.pcm': { category: 'audio', label: 'PCM' },
 };
 
