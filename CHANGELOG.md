@@ -34,6 +34,8 @@
 
 ## [Unreleased]
 
+- Markdown エディタの PPTX で、Mermaid 図は `flowchart LR` の横書きにし、スライド本文枠（約 2400×920）の高解像度 PNG として前面に置く
+- Markdown エディタの PPTX で、書き出し中の Mermaid PNG を backend 経由で editor-app へ渡す（`POST …/composes/{id}/mermaid`）
 - Markdown エディタの PPTX で、原稿の Mermaid は書き出し前に 1 回 PNG 化して埋め、ノートが新たに図にした枚だけ合成中に Mermaid→PNG する
 - Markdown エディタの PPTX で、文書番号・日付など長い値を大きな KPI にしない。収まらないときは項目表に直す
 - Markdown エディタの PPTX で、スライド題名と同じ見出し・要点を本文から除く（タイトル帯との二重表示を止める）
