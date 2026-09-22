@@ -1452,7 +1452,10 @@ def get_active_tenant_id(user_id: str, *, allow_any: bool = False) -> str:
         return primary
     if can_access_tenant(SHARED_TENANT_ID, user_id):
         return SHARED_TENANT_ID
-    # どの棟の鍵も無ければ、デフォルト棟へは落とさず「所属なし」を返す。
+    # システム管理者は鍵が無くてもデフォルト棟を見る。
+    if allow_any:
+        return DEFAULT_TENANT_ID
+    # 一般利用者は鍵が無ければ所属なし。デフォルト棟へは自動で落とさない。
     return NO_TENANT_ID
 
 
@@ -1729,6 +1732,11 @@ def list_knowledge_scopes(
             "common",
             is_system_admin or is_tenant_admin_of_team(user_id, COMMON_TEAM_ID),
         )
+    if is_system_admin and active and active != NO_TENANT_ID:
+        for t in list_teams_in_tenant(active):
+            if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
+                continue
+            _add(t["teamId"], t.get("teamName") or t["teamId"], "team", True)
     for t in list_teams_for_tenant_admin(user_id):
         if t["teamId"] in (COMMON_TEAM_ID, ADMIN_TEAM_ID):
             continue

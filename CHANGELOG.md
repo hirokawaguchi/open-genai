@@ -35,6 +35,9 @@
 ## [Unreleased]
 
 - 文字起こしの使い方に、faster-whisper / PyAV が実務上読める音声・動画形式の表を追加。アップロード欄は代表形式の案内のまま、表にある拡張子も選択できるようにした
+- Markdown エディタの使い方を、ノートブックと同じくタブ横のボタン＋ダイアログにした
+- システム管理者は棟の鍵が無くてもデフォルト棟のナレッジスコープ（共有＋その棟のチーム）を見られるようにした。空のときは「読み込み中」ではなく空である旨を出す
+- 本番 web イメージの `npm install` に再試行を付け、一時的な通信切れでビルドが落ちにくくした
 - Markdown エディタの PPTX で、Mermaid 図は `flowchart LR` の横書きにし、スライド本文枠（約 2400×920）の高解像度 PNG として前面に置く
 - Markdown エディタの PPTX で、書き出し中の Mermaid PNG を backend 経由で editor-app へ渡す（`POST …/composes/{id}/mermaid`）
 - Markdown エディタの PPTX で、原稿の Mermaid は書き出し前に 1 回 PNG 化して埋め、ノートが新たに図にした枚だけ合成中に Mermaid→PNG する
