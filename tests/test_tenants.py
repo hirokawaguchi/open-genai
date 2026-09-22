@@ -326,3 +326,25 @@ def test_shared_tenant_is_opt_in(store) -> None:
         )
     }
     assert store.COMMON_TEAM_ID not in scopes
+
+
+def test_system_admin_without_key_sees_default_tenant(store) -> None:
+    assert store.get_active_tenant_id("root@example.com") == store.NO_TENANT_ID
+    assert (
+        store.get_active_tenant_id("root@example.com", allow_any=True)
+        == store.DEFAULT_TENANT_ID
+    )
+
+
+def test_system_admin_knowledge_scopes_include_tenant_teams(store) -> None:
+    home = store.create_team("企画課", "staff@example.com")
+    scopes = {
+        s["scope"]: s
+        for s in store.list_knowledge_scopes(
+            "root@example.com", True, store.DEFAULT_TENANT_ID
+        )
+    }
+    assert store.COMMON_TEAM_ID in scopes
+    assert scopes[store.COMMON_TEAM_ID]["canManage"] is True
+    assert home["teamId"] in scopes
+    assert scopes[home["teamId"]]["canManage"] is True
