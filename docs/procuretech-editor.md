@@ -99,6 +99,7 @@ docker compose up -d --build
 | `PUT /procuretech-editor/projects/{id}/composition` | 合成定義を保存（`{composition:{theme, outputs}}`） |
 | `POST /procuretech-editor/projects/{id}/compose` | 合成ジョブ開始（`request_id`。進捗は GET） |
 | `GET /procuretech-editor/projects/{id}/composes/{request_id}` | 合成進捗（`progress` / `current_step`。完了時は zip の `object_key`。LGWAN の `carrier` では案内ファイル） |
+| `POST /procuretech-editor/projects/{id}/composes/{request_id}/mermaid` | 書き出し中の Mermaid を PNG（`{assets:{相対パス: base64}}`）で渡す |
 
 すべて `user_id`（backend が JWT から付与し HMAC 署名）でスコープし、他ユーザーの
 プロジェクトは参照・変更できません。

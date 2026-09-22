@@ -4981,6 +4981,25 @@ async def procuretech_editor_compose_status(
     )
 
 
+@app.post("/procuretech-editor/projects/{project_id}/composes/{request_id}/mermaid")
+async def procuretech_editor_compose_mermaid(
+    project_id: str, request_id: str, request: Request
+) -> JSONResponse:
+    """書き出し中の Mermaid→PNG を editor-app へ渡す。"""
+    err, headers = _procuretech_editor_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_procuretech_editor(
+        "POST",
+        _procuretech_editor_app_url(
+            f"/projects/{project_id}/composes/{request_id}/mermaid"
+        ),
+        headers,
+        body,
+    )
+
+
 # ---------------------------------------------------------------------------
 # ノートブック専用ページ(/notebook) 用プロキシ
 #
