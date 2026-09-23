@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import csv
 import hmac
 import html
+import io
 import json
 import os
 import re
@@ -466,8 +468,39 @@ USERMGMT_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": _USERMGMT_FORM,
-    "description": "利用者一覧の表示、および CSV による一括登録/更新/削除（システム管理者のみ）。",
-    "howToUse": "## このアプリでできること（管理者）\n\nKeycloak 上の利用者アカウントを一覧表示し、CSV で一括作成・更新・削除できます。\n\n## ユーザ一覧\n\n1. 「操作」で「ユーザ一覧（表示のみ）」を選びます（既定）。\n2. 必要なら「検索」と「表示件数」を指定して「実行」します。\n3. username / email / 氏名 / 所属グループ / 有効状態が一覧表示されます（変更はされません）。\n\n## CSV の準備\n\n1行目に見出し、2行目以降に利用者を記載します。見出し例:\n\n```\naction,username,email,name,password,groups,enabled\nupsert,yamada,yamada@example.com,山田太郎,Passw0rd!,UserGroup,true\n```\n\n- **action**: `create`（新規）/`update`（更新）/`delete`（削除）/`upsert`（無ければ作成・あれば更新／既定）。\n- **username**: 必須。ログインID。\n- **email / name**: メールアドレス・氏名。\n- **password**: 新規作成時の初期パスワード（更新時は変更したい場合のみ）。\n- **groups**: 権限グループ（例 `SystemAdminGroup`＝システム管理者）。`;` か `,` 区切り。\n- **enabled**: 有効/無効（`true`/`false`）。\n\n## CSV 操作手順\n\n1. CSV ファイルを添付するか、「CSV（貼り付け）」に直接貼り付けます。\n2. 「操作」で「ドライラン」を選んで実行し、**対象と操作内容を必ず確認**します（この時点では変更されません）。\n3. 問題なければ「操作」を「適用」にして実行します（確認ダイアログが表示されます）。\n\n## 注意\n\n- 「適用」は作成・更新・**削除**を伴い、削除は元に戻せません。必ずドライランで確認してください。\n- パスワード列を含む CSV の保管・共有には十分注意してください。",
+    "description": "利用者の一覧、登録、変更、および CSV による一括処理ができます。",
+    "howToUse": (
+        "## この画面でできること\n\n"
+        "利用者を一覧し、登録・変更できます。CSV での一括処理もできます。\n\n"
+        "## 原則\n\n"
+        "1. **人はメールアドレスで一人です。** ログイン名は入り方、氏名は表示名です。\n"
+        "2. **メールアドレスとログイン名は、登録後は変えません。** アドレスを変えるときは、新しい人として登録します。\n"
+        "3. **所属は、主所属が一つで、ほかの棟は招待です。** 管理者にするかどうかは、棟ごとに付けます。\n"
+        "4. **変更できるのは、氏名、権限、有効か無効か、パスワードです。** いま開いている棟の所属者だけを、この画面で扱います。\n\n"
+        "## 利用者一覧\n\n"
+        "1. 検索と表示件数を指定します。\n"
+        "2. 各行の「変更」から、姓・名・権限グループ・有効状態を更新できます。"
+        "初期パスワードは、入力したときだけ変わります。\n"
+        "3. ログイン名とメールアドレスは表示だけです。\n\n"
+        "## 利用者登録\n\n"
+        "ユーザー名、メールアドレス、姓は必須です。名は空でも登録できます。\n\n"
+        "## CSV\n\n"
+        "見出し例:\n\n"
+        "```\n"
+        "action,username,email,lastName,firstName,password,groups,enabled\n"
+        "create,yamada,yamada@example.com,山田,太郎,Passw0rd!,UserGroup,true\n"
+        "```\n\n"
+        "- **action**: `create` / `update` / `delete` / `upsert`（既定）。\n"
+        "- **username**: 必須。ログイン名。登録後は変えません。\n"
+        "- **email**: 必須。人を指すキーです。既存の人の行では、今のメールアドレスをそのまま書きます。違うアドレスの行は拒否されます。\n"
+        "- **lastName / firstName**: 姓・名。`name` に「山田 太郎」と書いても分けられます。\n"
+        "- **password**: 新規の初期パスワード。更新時は変えたいときだけ。\n"
+        "- **groups**: `UserGroup` など。`;` か `,` 区切り。画面の「変更」だけ権限グループを入れ替えます。"
+        "CSV はグループを足すだけで、外しません。\n"
+        "- **enabled**: `true` / `false`。\n\n"
+        "削除は元に戻せません。先にドライランで確認してください。"
+        "パスワード列を含む CSV の保管には注意してください。"
+    ),
     "copyable": False,
     "status": "published",
 }
@@ -887,6 +920,12 @@ RETIRED_SEED_EXAPP_IDS = [
 # リネーム前の既定シード文言（未編集で DB に残っている場合のみ現行シードへ揃える移行に使う）。
 # 管理者が意図的に変更した文言は上書きしない（旧文言に完全一致する場合だけ更新）。
 _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
+    {
+        "seed": USERMGMT_SEED,
+        "old_name": "利用者一括管理（管理者限定）",
+        "old_description": "利用者一覧の表示、および CSV による一括登録/更新/削除（システム管理者のみ）。",
+        "old_howto_markers": ("変更はされません", "メール・姓・名"),
+    },
     {
         "seed": WHISPER_SEED,
         "old_name": "文字起こし",
@@ -2901,11 +2940,28 @@ async def list_exapps(request: Request) -> list[Any]:
     candidates = [
         a for a in candidates if a.get("exAppId") not in RETIRED_SEED_EXAPP_IDS
     ]
-    # 管理者限定 exApp（監査ログ参照 等）は非管理者の一覧から隠す
+    # 管理者限定 exApp（監査ログ参照 等）は非管理者の一覧から隠す。
+    # 利用者一括管理だけは、いま開いている組織棟の管理者にも見せる。
     if not is_admin:
         candidates = [
             a for a in candidates if a.get("exAppId") not in ADMIN_ONLY_EXAPP_IDS
         ]
+        active_tenant = (
+            teams_store.get_tenant(active)
+            if user_id and active and not _has_no_tenant(active)
+            else None
+        )
+        if (
+            active_tenant
+            and active_tenant.get("kind") == teams_store.TENANT_KIND_ORG
+            and teams_store.is_tenant_admin(active, user_id)
+        ):
+            app = teams_store.get_exapp(ADMIN_TEAM_ID, "usermgmt")
+            if app and app.get("status") == "published":
+                team = teams_store.get_team(ADMIN_TEAM_ID)
+                candidates.append(
+                    {**app, "teamName": (team or {}).get("teamName") or ""}
+                )
     # 組み込みカタログは下書きも含めて返す（メニュー表示の判定用。ヘルス不要）
     seen = {(a["teamId"], a["exAppId"]) for a in candidates}
     for builtin in teams_store.list_builtin_exapps():
@@ -7143,11 +7199,25 @@ def _usermgmt_app_url(path: str) -> str:
     return base + path
 
 
-def _usermgmt_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+def _usermgmt_headers(
+    request: Request,
+) -> tuple[JSONResponse | None, dict[str, str], dict[str, Any]]:
+    """いま開いている組織棟の管理者（またはシステム管理者）だけ通す。
+
+    署名スコープは管理者チーム。usermgmt-app はそのスコープを、backend が
+    権限を確認したあとの入場許可として扱う。別の棟の名前はここから出さない。
+    """
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden("利用者一括管理には管理者権限が必要です"), {}
     user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"}), {}, {}
+    active = _active_tenant_id(user_id, claims)
+    tenant = teams_store.get_tenant(active) if not _has_no_tenant(active) else None
+    if not tenant or tenant.get("kind") != teams_store.TENANT_KIND_ORG:
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE}), {}, {}
+    is_system_admin = _is_system_admin(claims)
+    if not is_system_admin and not teams_store.is_tenant_admin(active, user_id):
+        return _forbidden("利用者の管理には管理者権限が必要です"), {}, {}
     groups_str = ",".join(claims.get("groups") or [])
     team_ids = _user_team_ids_str(user_id)
     teams_hdr = _user_teams_header(user_id)
@@ -7161,14 +7231,17 @@ def _usermgmt_headers(request: Request) -> tuple[JSONResponse | None, dict[str, 
         **intauth.signed_headers(user_id, groups_str, ADMIN_TEAM_ID, team_ids),
         "Content-Type": "application/json",
     }
-    return None, headers
+    return None, headers, {
+        "tenant_id": tenant["tenantId"],
+        "allow_system_admin": is_system_admin,
+    }
 
 
 def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
     """本人向け（自己プロフィール/パスワード）用の署名ヘッダ。管理者権限は不要。
 
-    対象ユーザーは JWT の sub（正規化メール）を x-user-id として署名付与し、
-    usermgmt-app 側でこのメールから Keycloak ユーザーを厳密解決する。
+    対象ユーザーは JWT の sub（メール）と、ログイン名（username）から解決する。
+    メールを変えたあとも、ログイン中のセッションから本人の姓名を変更できる。
     """
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
@@ -7177,6 +7250,9 @@ def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[
     groups_str = ",".join(claims.get("groups") or [])
     team_ids = _user_team_ids_str(user_id)
     teams_hdr = _user_teams_header(user_id)
+    login_name = (claims.get("name") or "").strip()
+    if login_name.lower() == user_id.lower():
+        login_name = ""
     headers = {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
@@ -7184,9 +7260,13 @@ def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[
         "x-user-tags": team_ids,
         "x-user-teams": teams_hdr,
         "x-scope": COMMON_TEAM_ID,
-        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        **intauth.signed_headers(
+            user_id, groups_str, COMMON_TEAM_ID, team_ids, login_name or None
+        ),
         "Content-Type": "application/json",
     }
+    if login_name:
+        headers["x-username"] = login_name
     return None, headers
 
 
@@ -7267,115 +7347,297 @@ async def change_my_password(request: Request) -> JSONResponse:
     return await _proxy_usermgmt("POST", _usermgmt_app_url("/me/password"), headers, body)
 
 
-# 棟の解決結果を CSV 行へ付ける（登録時に棟を必須にするための共通処理）。
-def _resolve_row_tenant(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """CSV 行の棟トークンを組織棟に解決する。(tenant, error) を返す。
+# 専用ページの CSV 見出し。usermgmt-app と同じ別名を、ここで扱う列だけ持つ。
+_USER_CSV_ALIASES = {
+    "action": "action",
+    "username": "username",
+    "user": "username",
+    "email": "email",
+    "mail": "email",
+    "firstname": "firstName",
+    "first_name": "firstName",
+    "名": "firstName",
+    "lastname": "lastName",
+    "last_name": "lastName",
+    "姓": "lastName",
+    "name": "name",
+    "displayname": "name",
+    "password": "password",
+    "groups": "groups",
+    "group": "groups",
+    "enabled": "enabled",
+    "temporary": "temporary",
+    "groupsmode": "groupsMode",
+    "groups_mode": "groupsMode",
+    "tenant": "tenant",
+    "tenantid": "tenant",
+    "tenant_id": "tenant",
+    "テナント": "tenant",
+    "棟": "tenant",
+}
+_NOT_IN_TENANT = "対象の利用者が見当たりません"
 
-    - delete: 棟は不要（None, None）
-    - 記入あり: 組織棟へ解決（共有棟・不明はエラー）
-    - 記入なし: create/新規は必須エラー、update は任意（None, None）
+
+def _tenant_member_ids(tenant_id: str) -> set[str]:
+    """この棟の主所属と招待所属。招待で管理者にした人も一覧に出す。"""
+    ids: set[str] = set()
+    for member in teams_store.list_tenant_memberships(tenant_id):
+        if member.get("role") not in (
+            teams_store.TENANT_ROLE_PRIMARY,
+            teams_store.TENANT_ROLE_GUEST,
+        ):
+            continue
+        user_id = teams_store.normalize_email(member.get("userId") or "")
+        if user_id:
+            ids.add(user_id)
+    return ids
+
+
+def _identity_in(ids: set[str], *values: str) -> bool:
+    for value in values:
+        norm = teams_store.normalize_email(value)
+        if norm and norm in ids:
+            return True
+    return False
+
+
+def _parse_user_csv_row(raw: dict[str, Any]) -> dict[str, str]:
+    row: dict[str, str] = {}
+    for key, value in raw.items():
+        if key is None:
+            continue
+        canon = _USER_CSV_ALIASES.get(str(key).strip().lower())
+        if canon:
+            row[canon] = (value or "").strip()
+    return row
+
+
+def _csv_column(fieldnames: list[str], canon: str) -> str | None:
+    for name in fieldnames:
+        if _USER_CSV_ALIASES.get(name.strip().lower()) == canon:
+            return name
+    return None
+
+
+def _prepare_user_admin_csv(
+    csv_text: str,
+    tenant_id: str,
+    *,
+    allow_system_admin: bool,
+) -> tuple[str, list[dict[str, Any]]]:
+    """この画面の CSV を、いま開いている組織棟の所属者だけに限定する。
+
+    人はメールアドレスで識別する。メールの無い行は送らない。
+    棟の列は空にする（所属は呼び出し側が開いている棟へ付ける）。
+    この棟の所属でない人の更新・削除は送らない。所属でない人の upsert は作成だけにし、
+    既存アカウントの更新や所属の移動をしない。棟の管理者は SystemAdminGroup を付けられない。
+    元の CSV に無い姓名の列は足さない（空列で氏名を消さないため）。
     """
-    action = (row.get("action") or "upsert").strip().lower()
-    if action == "delete":
-        return None, None
-    token = (row.get("tenant") or "").strip()
-    if not token:
-        if action in ("create", "upsert"):
-            return None, "棟（tenant）が未指定です。組織棟の名前か ID を指定してください"
-        return None, None
-    tenant = teams_store.find_org_tenant(token)
-    if not tenant:
-        return None, f"棟が見つかりません: {token}（共有棟は登録時に指定できません）"
-    return tenant, None
+    members = _tenant_member_ids(tenant_id)
+    reader = csv.DictReader(io.StringIO((csv_text or "").lstrip("\ufeff")))
+    fieldnames = [name for name in (reader.fieldnames or []) if name]
+    action_col = _csv_column(fieldnames, "action") or "action"
+    groups_col = _csv_column(fieldnames, "groups") or "groups"
+    tenant_col = _csv_column(fieldnames, "tenant")
+    if action_col not in fieldnames:
+        fieldnames.append(action_col)
+    if groups_col not in fieldnames:
+        fieldnames.append(groups_col)
+    kept: list[dict[str, str]] = []
+    skipped: list[dict[str, Any]] = []
+    for raw in reader:
+        row = _parse_user_csv_row(raw)
+        if not any(row.values()):
+            continue
+        action = (row.get("action") or "upsert").strip().lower() or "upsert"
+        groups = [
+            part.strip()
+            for part in (row.get("groups") or "").replace(";", ",").split(",")
+            if part.strip()
+        ]
+        if not allow_system_admin:
+            groups = [name for name in groups if name != "SystemAdminGroup"]
+            if not groups:
+                groups = ["UserGroup"]
+        email = (row.get("email") or "").strip()
+        if not email:
+            skipped.append(
+                {
+                    "username": row.get("username", ""),
+                    "email": "",
+                    "action": action,
+                    "groups": groups,
+                    "result": "スキップ",
+                    "note": "メールアドレスは必須です",
+                    "error": "メールアドレスは必須です",
+                }
+            )
+            continue
+        is_member = _identity_in(members, email, row.get("username") or "")
+        if action in ("update", "delete") and not is_member:
+            skipped.append(
+                {
+                    "username": row.get("username", ""),
+                    "email": row.get("email", ""),
+                    "action": action,
+                    "groups": groups,
+                    "result": "スキップ",
+                    "note": _NOT_IN_TENANT,
+                    "error": _NOT_IN_TENANT,
+                }
+            )
+            continue
+        if action == "upsert" and not is_member:
+            action = "create"
+        out = {name: (raw.get(name) or "") for name in fieldnames}
+        out[action_col] = action
+        out[groups_col] = ",".join(groups)
+        if tenant_col:
+            out[tenant_col] = ""
+        kept.append(out)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(kept)
+    return buf.getvalue(), skipped
 
 
-def _enrich_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """ドライラン結果に棟の解決結果／エラーを足す。"""
-    enriched: list[dict[str, Any]] = []
-    for row in rows:
-        tenant, terr = _resolve_row_tenant(row)
-        item = {**row}
-        item["tenantName"] = tenant["tenantName"] if tenant else ""
-        item["tenantError"] = terr
-        if terr and not item.get("error"):
-            item["error"] = terr
-        enriched.append(item)
-    return enriched
+def _csv_has_body(text: str) -> bool:
+    return len([line for line in text.splitlines() if line.strip()]) > 1
+
+
+def _hide_tenant_fields(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in ("tenant", "tenantName", "tenantError")
+    }
+
+
+def _detach_deleted_member(tenant_id: str, row: dict[str, Any]) -> None:
+    """削除できた利用者の、この棟の主所属だけ外す。"""
+    if (row.get("result") or "") != "削除":
+        return
+    for target in (row.get("email") or "", row.get("username") or ""):
+        if not target:
+            continue
+        current = teams_store.get_tenant_membership(tenant_id, target)
+        if current and current.get("role") == teams_store.TENANT_ROLE_PRIMARY:
+            teams_store.remove_tenant_membership(tenant_id, target)
+
+
+def _attach_created_member(tenant_id: str, row: dict[str, Any]) -> None:
+    """新規作成だけ、開いている組織棟の主所属を付ける。更新では所属を動かさない。"""
+    if (row.get("result") or "") != "作成":
+        return
+    target = row.get("email") or row.get("username") or ""
+    if not target:
+        return
+    try:
+        teams_store.upsert_tenant_membership(
+            tenant_id,
+            target,
+            role=teams_store.TENANT_ROLE_PRIMARY,
+        )
+    except Exception:  # noqa: BLE001
+        note = (row.get("note") or "").strip()
+        row["note"] = f"{note}／所属の設定に失敗しました".strip("／")
 
 
 @app.get("/admin/users")
 async def list_admin_users(request: Request) -> JSONResponse:
-    err, headers = _usermgmt_headers(request)
+    err, headers, ctx = _usermgmt_headers(request)
     if err:
         return err
     qp = request.query_params
-    params = {
-        "search": qp.get("search") or "",
-        "limit": qp.get("limit") or "200",
-    }
+    try:
+        requested = int(qp.get("limit") or 200)
+    except (TypeError, ValueError):
+        requested = 200
+    requested = max(1, min(requested, 1000))
+    # 先頭ページだけ見てから絞ると、所属者が件数の外に落ちる。
+    # 取得上限まで読んでから、この棟の所属者だけに絞る。
     status, payload = await _request_usermgmt(
-        "GET", _usermgmt_app_url("/users"), headers, params=params
+        "GET",
+        _usermgmt_app_url("/users"),
+        headers,
+        params={"search": qp.get("search") or "", "limit": 1000},
     )
-    # 一覧に所属棟（主鍵の棟名）を添える。Keycloak にだけいる人は空。
     if status == 200 and isinstance(payload, dict):
-        for u in payload.get("users") or []:
-            email = u.get("email") or u.get("username") or ""
-            try:
-                u["tenantName"] = teams_store.get_primary_tenant_name(email) or ""
-            except Exception:  # noqa: BLE001
-                u["tenantName"] = ""
+        members = _tenant_member_ids(ctx["tenant_id"])
+        filtered = []
+        for user in payload.get("users") or []:
+            if not _identity_in(members, user.get("email") or "", user.get("username") or ""):
+                continue
+            filtered.append(_hide_tenant_fields(user))
+        reached = len(filtered) > requested or bool(payload.get("limitReached"))
+        payload["users"] = filtered[:requested]
+        payload["count"] = len(payload["users"])
+        payload["limitReached"] = reached
     return JSONResponse(status_code=status, content=payload)
 
 
 @app.post("/admin/users/plan")
 async def plan_admin_users(request: Request) -> JSONResponse:
-    err, headers = _usermgmt_headers(request)
+    err, headers, ctx = _usermgmt_headers(request)
     if err:
         return err
     body = await request.json()
-    status, payload = await _request_usermgmt(
-        "POST", _usermgmt_app_url("/users/plan"), headers, body
+    csv_text = body.get("csv_text") or ""
+    if not str(csv_text).strip():
+        return JSONResponse(status_code=400, content={"error": "CSV が指定されていません（csv_text が空です）"})
+    rewritten, skipped = _prepare_user_admin_csv(
+        csv_text,
+        ctx["tenant_id"],
+        allow_system_admin=bool(ctx["allow_system_admin"]),
     )
-    if status == 200 and isinstance(payload, dict):
-        payload["rows"] = _enrich_plan_rows(payload.get("rows") or [])
-    return JSONResponse(status_code=status, content=payload)
+    rows: list[dict[str, Any]] = []
+    if _csv_has_body(rewritten):
+        status, payload = await _request_usermgmt(
+            "POST",
+            _usermgmt_app_url("/users/plan"),
+            headers,
+            {"csv_text": rewritten},
+        )
+        if status != 200:
+            return JSONResponse(status_code=status, content=payload)
+        rows = [_hide_tenant_fields(row) for row in (payload.get("rows") or [])]
+    rows.extend(_hide_tenant_fields(row) for row in skipped)
+    return JSONResponse(content={"rows": rows, "count": len(rows)})
 
 
 @app.post("/admin/users/apply")
 async def apply_admin_users(request: Request) -> JSONResponse:
-    err, headers = _usermgmt_headers(request)
+    err, headers, ctx = _usermgmt_headers(request)
     if err:
         return err
     body = await request.json()
-    status, payload = await _request_usermgmt(
-        "POST", _usermgmt_app_url("/users/apply"), headers, body
+    csv_text = body.get("csv_text") or ""
+    if not str(csv_text).strip():
+        return JSONResponse(status_code=400, content={"error": "CSV が指定されていません（csv_text が空です）"})
+    tenant_id = ctx["tenant_id"]
+    rewritten, skipped = _prepare_user_admin_csv(
+        csv_text,
+        tenant_id,
+        allow_system_admin=bool(ctx["allow_system_admin"]),
     )
-    # Keycloak 反映が成功した行に、棟の主鍵を付ける（usermgmt-app は Keycloak 専用）。
-    if status == 200 and isinstance(payload, dict):
-        for r in payload.get("results") or []:
-            result = r.get("result") or ""
-            if result not in ("作成", "更新"):
-                continue
-            tenant, terr = _resolve_row_tenant(r)
-            if terr:
-                r["note"] = f"{r.get('note', '')}／棟未設定: {terr}".strip("／")
-                continue
-            if not tenant:
-                continue
-            target = r.get("email") or r.get("username") or ""
-            if not target:
-                continue
-            try:
-                teams_store.upsert_tenant_membership(
-                    tenant["tenantId"],
-                    target,
-                    role=teams_store.TENANT_ROLE_PRIMARY,
-                )
-                r["tenantName"] = tenant["tenantName"]
-                r["note"] = f"{r.get('note', '')}／棟={tenant['tenantName']}".strip("／")
-            except Exception as e:  # noqa: BLE001
-                r["note"] = f"{r.get('note', '')}／棟付与に失敗: {e}".strip("／")
-    return JSONResponse(status_code=status, content=payload)
+    results: list[dict[str, Any]] = []
+    if _csv_has_body(rewritten):
+        status, payload = await _request_usermgmt(
+            "POST",
+            _usermgmt_app_url("/users/apply"),
+            headers,
+            {"csv_text": rewritten},
+        )
+        if status != 200:
+            return JSONResponse(status_code=status, content=payload)
+        for row in payload.get("results") or []:
+            item = _hide_tenant_fields(row)
+            _attach_created_member(tenant_id, item)
+            _detach_deleted_member(tenant_id, item)
+            results.append(item)
+    results.extend(_hide_tenant_fields(row) for row in skipped)
+    return JSONResponse(content={"results": results, "count": len(results)})
 
 
 @app.get("/me/teams")
