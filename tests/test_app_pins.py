@@ -23,7 +23,9 @@ def teams_store(tmp_path, monkeypatch):
 
 
 def _make_team_with_app(store, team_name="テストチーム", admin="admin@example.com"):
-    team = store.create_team(team_name, admin)
+    team = store.create_team(
+        team_name, admin, tenant_id=store.DEFAULT_TENANT_ID
+    )
     app = store.create_exapp(
         team["teamId"],
         {
@@ -131,7 +133,11 @@ def test_pin_rejects_draft_builtin(teams_store) -> None:
         }
     )
     pins, error = teams_store.add_user_app_pin(
-        "user@example.com", teams_store.COMMON_TEAM_ID, "diagram", False
+        "user@example.com",
+        teams_store.COMMON_TEAM_ID,
+        "diagram",
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert pins is None
     assert error is not None
@@ -178,7 +184,11 @@ def test_seed_preserves_edited_description_and_howto(teams_store) -> None:
 def test_pin_and_list(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
     pins, error = teams_store.add_user_app_pin(
-        "admin@example.com", team["teamId"], app["exAppId"], False
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert error is None
     assert pins is not None
@@ -189,7 +199,11 @@ def test_pin_and_list(teams_store) -> None:
 
 def test_pin_common_genu_app(teams_store) -> None:
     pins, error = teams_store.add_user_app_pin(
-        "user@example.com", teams_store.COMMON_TEAM_ID, "chat", False
+        "user@example.com",
+        teams_store.COMMON_TEAM_ID,
+        "chat",
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert error is None
     assert pins is not None
@@ -198,16 +212,28 @@ def test_pin_common_genu_app(teams_store) -> None:
 
 def test_pin_is_idempotent(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
-    teams_store.add_user_app_pin("admin@example.com", team["teamId"], app["exAppId"], False)
+    teams_store.add_user_app_pin(
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
+    )
     pins, error = teams_store.add_user_app_pin(
-        "admin@example.com", team["teamId"], app["exAppId"], False
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert error is None
     assert len(pins) == 1
 
 
 def test_pin_limit(teams_store) -> None:
-    team = teams_store.create_team("上限テスト", "admin@example.com")
+    team = teams_store.create_team(
+        "上限テスト", "admin@example.com", tenant_id=teams_store.DEFAULT_TENANT_ID
+    )
     team_id = team["teamId"]
     created_ids = []
     for i in range(teams_store.MAX_APP_PINS + 1):
@@ -228,17 +254,25 @@ def test_pin_limit(teams_store) -> None:
     last_error = None
     for ex_id in created_ids:
         _, last_error = teams_store.add_user_app_pin(
-            "admin@example.com", team_id, ex_id, False
+            "admin@example.com", team_id, ex_id, False, teams_store.DEFAULT_TENANT_ID
         )
     assert last_error is not None
     assert str(teams_store.MAX_APP_PINS) in last_error
-    assert len(teams_store.list_user_app_pins("admin@example.com")) == teams_store.MAX_APP_PINS
+    assert len(teams_store.list_user_app_pins(
+        "admin@example.com", teams_store.DEFAULT_TENANT_ID
+    )) == teams_store.MAX_APP_PINS
 
 
 def test_pin_rejects_unknown_app(teams_store) -> None:
-    team = teams_store.create_team("拒否テスト", "admin@example.com")
+    team = teams_store.create_team(
+        "拒否テスト", "admin@example.com", tenant_id=teams_store.DEFAULT_TENANT_ID
+    )
     pins, error = teams_store.add_user_app_pin(
-        "admin@example.com", team["teamId"], "not-a-real-app", False
+        "admin@example.com",
+        team["teamId"],
+        "not-a-real-app",
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert pins is None
     assert error is not None
@@ -248,7 +282,11 @@ def test_pin_rejects_invisible_app(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
     # other@example.com は team に所属しないため、その exApp は不可視
     pins, error = teams_store.add_user_app_pin(
-        "other@example.com", team["teamId"], app["exAppId"], False
+        "other@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
     )
     assert pins is None
     assert error is not None
@@ -256,20 +294,47 @@ def test_pin_rejects_invisible_app(teams_store) -> None:
 
 def test_remove_pin(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
-    teams_store.add_user_app_pin("admin@example.com", team["teamId"], app["exAppId"], False)
-    pins = teams_store.remove_user_app_pin("admin@example.com", team["teamId"], app["exAppId"])
+    teams_store.add_user_app_pin(
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
+    )
+    pins = teams_store.remove_user_app_pin(
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        teams_store.DEFAULT_TENANT_ID,
+    )
     assert pins == []
 
 
 def test_pins_are_per_user(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
-    teams_store.add_user_app_pin("admin@example.com", team["teamId"], app["exAppId"], False)
+    teams_store.add_user_app_pin(
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
+    )
     # 別ユーザーにはピンが共有されない
-    assert teams_store.list_user_app_pins("someone-else@example.com") == []
+    assert teams_store.list_user_app_pins(
+        "someone-else@example.com", teams_store.DEFAULT_TENANT_ID
+    ) == []
 
 
 def test_delete_exapp_removes_pins(teams_store) -> None:
     team, app = _make_team_with_app(teams_store)
-    teams_store.add_user_app_pin("admin@example.com", team["teamId"], app["exAppId"], False)
+    teams_store.add_user_app_pin(
+        "admin@example.com",
+        team["teamId"],
+        app["exAppId"],
+        False,
+        teams_store.DEFAULT_TENANT_ID,
+    )
     teams_store.delete_exapp(team["teamId"], app["exAppId"])
-    assert teams_store.list_user_app_pins("admin@example.com") == []
+    assert teams_store.list_user_app_pins(
+        "admin@example.com", teams_store.DEFAULT_TENANT_ID
+    ) == []

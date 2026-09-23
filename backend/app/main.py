@@ -3103,6 +3103,9 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     ) -> None:
         team = teams_store.get_team(team_id)
         try:
+            active = _active_tenant_id(user_id, claims)
+            if _has_no_tenant(active):
+                raise ValueError("棟が指定されていません")
             teams_store.create_exapp_history(
                 {
                     "teamId": team_id,
@@ -3110,7 +3113,7 @@ async def invoke_exapp(request: Request) -> JSONResponse:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "tenantId": _active_tenant_id(user_id, claims),
+                    "tenantId": active,
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -3320,6 +3323,9 @@ async def invoke_exapp_stream(request: Request) -> Any:
     ) -> None:
         team = teams_store.get_team(team_id)
         try:
+            active = _active_tenant_id(user_id, claims)
+            if _has_no_tenant(active):
+                raise ValueError("棟が指定されていません")
             teams_store.create_exapp_history(
                 {
                     "teamId": team_id,
@@ -3327,7 +3333,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
                     "exAppId": ex_app_id,
                     "exAppName": app_def.get("exAppName", ""),
                     "userId": user_id,
-                    "tenantId": _active_tenant_id(user_id, claims),
+                    "tenantId": active,
                     "inputs": history_inputs(inputs),
                     "outputs": outputs,
                     "status": status,
@@ -7746,7 +7752,7 @@ async def remove_tenant_member(
 # チーム管理 (Team Access Control API)
 # ---------------------------------------------------------------------------
 @app.get("/teams")
-async def list_teams(request: Request) -> dict[str, Any]:
+async def list_teams(request: Request) -> dict[str, Any] | JSONResponse:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
     if _is_system_admin(claims):
@@ -7759,8 +7765,12 @@ async def list_teams(request: Request) -> dict[str, Any]:
             by_id[t["teamId"]] = t
         teams = list(by_id.values())
     # 管理者ツールは管理一覧から除外。共通アプリはスーパー管理者と
-    # その棟の管理者だけが一覧へ出す。
-    active = _active_tenant_id(user_id, claims) if user_id else teams_store.DEFAULT_TENANT_ID
+    # その棟の管理者だけが一覧へ出す。活性棟が取れなければ既定の棟には落とさない。
+    if not user_id:
+        return JSONResponse(status_code=400, content={"error": "棟が指定されていません"})
+    active = _active_tenant_id(user_id, claims)
+    if _has_no_tenant(active):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     if _is_system_admin(claims):
         teams = [t for t in teams if t["teamId"] != ADMIN_TEAM_ID]
         teams.sort(key=lambda t: (0 if t["teamId"] == COMMON_TEAM_ID else 1, t.get("teamName", "")))
@@ -7775,8 +7785,7 @@ async def list_teams(request: Request) -> dict[str, Any]:
     teams = [
         t
         for t in teams
-        if t["teamId"] == COMMON_TEAM_ID
-        or teams_store.team_visible_in_tenant(t["teamId"], active)
+        if teams_store.team_visible_in_tenant(t["teamId"], active)
     ]
     return {"teams": teams, "lastEvaluatedKey": None}
 
@@ -7798,11 +7807,13 @@ async def create_team(request: Request) -> JSONResponse:
         parent = teams_store.get_team(parent_team_id)
         tenant_id = (parent or {}).get("tenantId") or None
     if not tenant_id:
-        tenant_id = (
-            _active_tenant_id(user_id, claims)
-            if user_id
-            else teams_store.DEFAULT_TENANT_ID
-        )
+        if not user_id:
+            return JSONResponse(
+                status_code=400, content={"error": "棟が指定されていません"}
+            )
+        tenant_id = _active_tenant_id(user_id, claims)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     if not _is_system_admin(claims) and not (
         user_id and teams_store.is_tenant_admin(tenant_id, user_id)
     ):
@@ -7814,9 +7825,12 @@ async def create_team(request: Request) -> JSONResponse:
     )
     if parent_err:
         return JSONResponse(status_code=400, content={"error": parent_err})
-    team = teams_store.create_team(
-        team_name, admin_email, parent_team_id, tenant_id=tenant_id
-    )
+    try:
+        team = teams_store.create_team(
+            team_name, admin_email, parent_team_id, tenant_id=tenant_id
+        )
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     # 新規チームには「ナレッジ検索」のみ自動登録。
     # タグ管理・登録・管理は専用ページ /knowledge（スコープ選択）で行う。
     teams_store.create_exapp(team["teamId"], _team_rag_search_app(team_name))
@@ -7952,9 +7966,12 @@ async def create_team_user(team_id: str, request: Request) -> JSONResponse:
     is_primary = body.get("isPrimary")
     if is_primary is not None:
         is_primary = bool(is_primary)
-    user = teams_store.create_team_user(
-        team_id, email, bool(body.get("isAdmin")), is_primary
-    )
+    try:
+        user = teams_store.create_team_user(
+            team_id, email, bool(body.get("isAdmin")), is_primary
+        )
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     if user is None:
         return JSONResponse(status_code=409, content={"error": "既にメンバーです。"})
     return JSONResponse(content=user)
