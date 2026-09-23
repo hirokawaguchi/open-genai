@@ -26,6 +26,9 @@ export const useUsers = (search: string, limit: number) => {
   );
 
   const forbidden = error instanceof ApiError && error.status === 403;
+  const forbiddenMessage = forbidden
+    ? errorMessage(error, 'このページの閲覧には管理者権限が必要です。')
+    : null;
 
   return {
     users: data?.users ?? [],
@@ -33,6 +36,7 @@ export const useUsers = (search: string, limit: number) => {
     limitReached: data?.limitReached ?? false,
     isLoading,
     forbidden,
+    forbiddenMessage,
     loadError:
       error && !forbidden
         ? '利用者一覧の取得に失敗しました。時間をおいて再度お試しください。'

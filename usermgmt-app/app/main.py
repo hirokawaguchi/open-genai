@@ -28,10 +28,14 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
 from . import intauth
-from .kcadmin import parse_csv, plan_rows
+from .kcadmin import email_change_forbidden, parse_csv, plan_rows
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 ADMIN_GROUP = os.environ.get("AUDIT_ADMIN_GROUP", "SystemAdminGroup")
+# backend が「システム管理者、またはいま開いている組織棟の管理者」と確認したあとだけ付けるスコープ。
+_ADMIN_PAGE_SCOPE = "00000000-0000-0000-0000-0000000000a1"
+_ROLE_GROUPS = ("UserGroup", "SystemAdminGroup")
+_EMAIL_LOCKED = "メールアドレスは変更できません"
 
 KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080").rstrip("/")
 KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM", "open-genai")
@@ -213,6 +217,8 @@ async def _collect_users(search: str, limit: int) -> tuple[list[dict[str, Any]],
                     "id": uid,
                     "username": u.get("username") or "",
                     "email": u.get("email") or "",
+                    "firstName": (u.get("firstName") or "").strip(),
+                    "lastName": (u.get("lastName") or "").strip(),
                     "name": name,
                     "groups": groups,
                     "enabled": bool(u.get("enabled", True)),
@@ -303,6 +309,49 @@ async def _apply_groups(
     return notes
 
 
+async def _remove_group(
+    client: httpx.AsyncClient, token: str, user_id: str, name: str
+) -> list[str]:
+    gid = await _group_id(client, token, name)
+    if not gid:
+        return [f"グループ未検出:{name}"]
+    r = await client.delete(
+        f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users/{user_id}/groups/{gid}",
+        headers=_auth_headers(token),
+    )
+    if r.status_code not in (204, 200):
+        return [f"グループ解除失敗:{name}({r.status_code})"]
+    return []
+
+
+async def _sync_role_groups(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    groups: list[str],
+    *,
+    allow_system_admin: bool,
+) -> list[str]:
+    """UserGroup と SystemAdminGroup を指定どおりに入れ替える。それ以外のグループは追加のみ。"""
+    desired = list(groups)
+    if not allow_system_admin:
+        desired = [g for g in desired if g != ADMIN_GROUP]
+    current = set(await _user_groups(client, token, user_id))
+    notes: list[str] = []
+    desired_roles = {g for g in desired if g in _ROLE_GROUPS}
+    for name in _ROLE_GROUPS:
+        if name == ADMIN_GROUP and not allow_system_admin:
+            continue
+        if name in desired_roles and name not in current:
+            notes.extend(await _apply_groups(client, token, user_id, [name]))
+        elif name not in desired_roles and name in current:
+            notes.extend(await _remove_group(client, token, user_id, name))
+    extras = [g for g in desired if g not in _ROLE_GROUPS and g not in current]
+    if extras:
+        notes.extend(await _apply_groups(client, token, user_id, extras))
+    return notes
+
+
 async def _process(inputs: dict[str, Any]) -> str:
     operation = (inputs.get("operation") or "list").strip().lower()
     if operation == "list":
@@ -335,9 +384,9 @@ async def _process(inputs: dict[str, Any]) -> str:
         lines.append("> ドライランです。実際に反映するには「操作」で **適用** を選んで再実行してください。")
         return "\n".join(lines)
 
-    # apply: Keycloak へ反映
+    # apply: Keycloak へ反映（/invoke はシステム管理者だけが到達する）
     try:
-        results = await _apply_plans(plans)
+        results = await _apply_plans(plans, allow_system_admin=True)
     except Exception as e:  # noqa: BLE001
         return f"[Keycloak への接続/認証に失敗しました] {e}"
     for i, r in enumerate(results, 1):
@@ -347,10 +396,14 @@ async def _process(inputs: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def _apply_plans(plans: list[dict[str, Any]]) -> list[dict[str, str]]:
+async def _apply_plans(
+    plans: list[dict[str, Any]], *, allow_system_admin: bool = True
+) -> list[dict[str, str]]:
     """計画を Keycloak へ反映し、行ごとの結果を構造化して返す。
 
     Markdown レポート(/invoke) と REST(/users/apply) の共通ソース。
+    allow_system_admin が偽のときは SystemAdminGroup の付与・解除をせず、
+    そのグループにいる利用者は変更しない。
     """
     results: list[dict[str, str]] = []
     async with httpx.AsyncClient(timeout=120) as client:
@@ -372,7 +425,9 @@ async def _apply_plans(plans: list[dict[str, Any]]) -> list[dict[str, str]]:
                 continue
             try:
                 existing = await _find_user(client, token, username)
-                result, note = await _apply_one(client, token, p, existing)
+                result, note = await _apply_one(
+                    client, token, p, existing, allow_system_admin=allow_system_admin
+                )
             except httpx.HTTPStatusError as e:
                 result, note = "エラー", f"HTTP {e.response.status_code}"
             except Exception as e:  # noqa: BLE001
@@ -395,10 +450,25 @@ async def _apply_one(
     token: str,
     plan: dict[str, Any],
     existing: dict[str, Any] | None,
+    *,
+    allow_system_admin: bool = True,
 ) -> tuple[str, str]:
     action = plan["action"]
     rep = plan["rep"]
-    groups = plan["groups"]
+    groups = list(plan["groups"] or [])
+    if not allow_system_admin:
+        groups = [g for g in groups if g != ADMIN_GROUP]
+        if existing:
+            current = await _user_groups(client, token, existing["id"])
+            if ADMIN_GROUP in current:
+                return "スキップ", "この利用者は変更できません"
+
+    async def _assign_groups(user_id: str) -> list[str]:
+        if (plan.get("groupsMode") or "") == "replace":
+            return await _sync_role_groups(
+                client, token, user_id, groups, allow_system_admin=allow_system_admin
+            )
+        return await _apply_groups(client, token, user_id, groups)
 
     if action == "delete":
         if not existing:
@@ -412,6 +482,11 @@ async def _apply_one(
     if action == "update" or (action == "upsert" and existing):
         if not existing:
             return "スキップ", "対象なし（update）"
+        current_email = (existing.get("email") or "").strip()
+        if email_change_forbidden(current_email, plan.get("email") or ""):
+            return "スキップ", _EMAIL_LOCKED
+        if current_email and rep is not None:
+            rep["email"] = current_email
         r = await client.put(
             f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/users/{existing['id']}",
             json=rep,
@@ -419,7 +494,7 @@ async def _apply_one(
         )
         if r.status_code not in (204, 200):
             return "エラー", f"更新失敗 HTTP {r.status_code}"
-        notes = await _apply_groups(client, token, existing["id"], groups)
+        notes = await _assign_groups(existing["id"])
         return "更新", "; ".join(notes)
 
     # create または upsert(新規)
@@ -435,7 +510,7 @@ async def _apply_one(
     if r.status_code not in (201, 204):
         return "エラー", f"作成失敗 HTTP {r.status_code}"
     created = await _find_user(client, token, plan["username"])
-    notes = await _apply_groups(client, token, created["id"], groups) if created else ["作成後IDの取得に失敗"]
+    notes = await _assign_groups(created["id"]) if created else ["作成後IDの取得に失敗"]
     return "作成", "; ".join(notes)
 
 
@@ -460,12 +535,15 @@ def _verify_admin(request: Request) -> JSONResponse | None:
         h.get("x-user-tags"),
     ):
         return JSONResponse(status_code=401, content={"error": "invalid internal signature"})
-    if not _is_admin(h.get("x-user-groups")):
-        return JSONResponse(
-            status_code=403,
-            content={"error": "この機能はシステム管理者のみが利用できます（SystemAdminGroup 所属が必要です）"},
-        )
-    return None
+    groups = h.get("x-user-groups")
+    scope = (h.get("x-scope") or "").strip()
+    # システム管理者、または backend が棟の管理者と確認して付けた管理者スコープ。
+    if _is_admin(groups) or scope == _ADMIN_PAGE_SCOPE:
+        return None
+    return JSONResponse(
+        status_code=403,
+        content={"error": "この機能を利用する権限がありません"},
+    )
 
 
 def _plans_from_body(body: dict[str, Any]) -> tuple[JSONResponse | None, list[dict[str, Any]]]:
@@ -518,6 +596,27 @@ async def list_users_api(request: Request) -> Any:
     return {"users": users, "count": len(users), "limitReached": limit_reached}
 
 
+async def _mark_locked_emails(plans: list[dict[str, Any]]) -> None:
+    """既存アカウントのメールが CSV と違う行を、適用前の確認で拒否する。"""
+    pending = [
+        p
+        for p in plans
+        if not p.get("error")
+        and p.get("action") in ("update", "upsert")
+        and (p.get("email") or "").strip()
+    ]
+    if not pending:
+        return
+    async with httpx.AsyncClient(timeout=120) as client:
+        token = await _admin_token(client)
+        for plan in pending:
+            existing = await _find_user(client, token, plan.get("username") or "")
+            if existing and email_change_forbidden(
+                existing.get("email") or "", plan.get("email") or ""
+            ):
+                plan["error"] = _EMAIL_LOCKED
+
+
 @app.post("/users/plan")
 async def plan_users_api(request: Request) -> Any:
     err = _verify_admin(request)
@@ -527,6 +626,12 @@ async def plan_users_api(request: Request) -> Any:
     perr, plans = _plans_from_body(body)
     if perr:
         return perr
+    try:
+        await _mark_locked_emails(plans)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
+        )
     rows = _plan_public(plans)
     return {"rows": rows, "count": len(rows)}
 
@@ -541,7 +646,9 @@ async def apply_users_api(request: Request) -> Any:
     if perr:
         return perr
     try:
-        results = await _apply_plans(plans)
+        results = await _apply_plans(
+            plans, allow_system_admin=_is_admin(request.headers.get("x-user-groups"))
+        )
     except Exception as e:  # noqa: BLE001
         return JSONResponse(
             status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
@@ -556,12 +663,13 @@ async def apply_users_api(request: Request) -> Any:
 # 管理者権限は不要だが、対象ユーザーは backend が署名付与する x-user-id（メール）
 # から厳密に解決し、リクエスト本文の指定は信用しない（他人のなりすまし防止）。
 # ---------------------------------------------------------------------------
-def _verify_self(request: Request) -> tuple[JSONResponse | None, str]:
-    """内部署名を検証し、対象ユーザーのメール（x-user-id）を返す。管理者権限は不要。"""
+def _verify_self(request: Request) -> tuple[JSONResponse | None, str, str]:
+    """内部署名を検証し、(メール, ログイン名) を返す。管理者権限は不要。"""
     h = request.headers
     err = _check_key(h.get("x-api-key"))
     if err:
-        return err, ""
+        return err, "", ""
+    username = (h.get("x-username") or "").strip()
     if not intauth.verify(
         h.get("x-user-id"),
         h.get("x-user-groups"),
@@ -569,12 +677,28 @@ def _verify_self(request: Request) -> tuple[JSONResponse | None, str]:
         h.get("x-user-ts"),
         h.get("x-user-sig"),
         h.get("x-user-tags"),
+        username or None,
     ):
-        return JSONResponse(status_code=401, content={"error": "invalid internal signature"}), ""
+        return JSONResponse(status_code=401, content={"error": "invalid internal signature"}), "", ""
     uid = (h.get("x-user-id") or "").strip()
-    if not uid:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"}), ""
-    return None, uid
+    if not uid and not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"}), "", ""
+    return None, uid, username
+
+
+async def _find_self_user(
+    client: httpx.AsyncClient, token: str, email: str, username: str
+) -> dict[str, Any] | None:
+    """署名済みのメール、見つからなければ署名済みのログイン名で本人だけを探す。"""
+    if email:
+        found = await _find_user_by_email(client, token, email)
+        if found and (found.get("email") or "").strip().lower() == email.strip().lower():
+            return found
+    if username:
+        found = await _find_user(client, token, username)
+        if found and (found.get("username") or "") == username:
+            return found
+    return None
 
 
 def _display_name(user: dict[str, Any]) -> str:
@@ -597,13 +721,13 @@ def _profile_payload(user: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/me/profile")
 async def get_me_profile(request: Request) -> Any:
-    err, email = _verify_self(request)
+    err, email, username = _verify_self(request)
     if err:
         return err
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             token = await _admin_token(client)
-            user = await _find_user_by_email(client, token, email)
+            user = await _find_self_user(client, token, email, username)
     except Exception as e:  # noqa: BLE001
         return JSONResponse(
             status_code=502, content={"error": f"Keycloak への接続/認証に失敗しました: {e}"}
@@ -615,7 +739,7 @@ async def get_me_profile(request: Request) -> Any:
 
 @app.put("/me/profile")
 async def update_me_profile(request: Request) -> Any:
-    err, email = _verify_self(request)
+    err, email, username = _verify_self(request)
     if err:
         return err
     body = await request.json()
@@ -624,7 +748,7 @@ async def update_me_profile(request: Request) -> Any:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             token = await _admin_token(client)
-            user = await _find_user_by_email(client, token, email)
+            user = await _find_self_user(client, token, email, username)
             if not user:
                 return JSONResponse(status_code=404, content={"error": "ユーザーが見つかりません"})
             rep = {"firstName": first, "lastName": last}
@@ -666,7 +790,7 @@ async def _verify_current_password(
 
 @app.post("/me/password")
 async def change_me_password(request: Request) -> Any:
-    err, email = _verify_self(request)
+    err, email, username = _verify_self(request)
     if err:
         return err
     body = await request.json()
@@ -683,11 +807,11 @@ async def change_me_password(request: Request) -> Any:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             token = await _admin_token(client)
-            user = await _find_user_by_email(client, token, email)
+            user = await _find_self_user(client, token, email, username)
             if not user:
                 return JSONResponse(status_code=404, content={"error": "ユーザーが見つかりません"})
-            username = user.get("username") or ""
-            if not await _verify_current_password(client, username, current):
+            login = user.get("username") or ""
+            if not await _verify_current_password(client, login, current):
                 return JSONResponse(
                     status_code=400, content={"error": "現在のパスワードが正しくありません"}
                 )
