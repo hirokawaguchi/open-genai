@@ -35,6 +35,8 @@ _ALIASES = {
     "group": "groups",
     "enabled": "enabled",
     "temporary": "temporary",
+    "groupsmode": "groupsMode",
+    "groups_mode": "groupsMode",
     # 棟（テナント）。ID か棟名を書ける。解決・検証は backend 側で行う。
     "tenant": "tenant",
     "tenantid": "tenant",
@@ -89,10 +91,17 @@ def validate_row(row: dict[str, str]) -> str | None:
         return f"不正な action: {action}（{'/'.join(VALID_ACTIONS)} のいずれか）"
     if not row.get("username"):
         return "username は必須です"
-    if action in ("create", "upsert") and not row.get("email"):
-        # email 未指定でも作成は可能だが、SAML 属性として推奨のため警告扱いにしない
-        return None
+    if not (row.get("email") or "").strip():
+        return "メールアドレスは必須です"
     return None
+
+
+def email_change_forbidden(current_email: str, proposed_email: str) -> bool:
+    """既存のメールと CSV のメールが違えば変更なので拒否する。空欄は別の検査に任せる。"""
+    proposed = (proposed_email or "").strip().lower()
+    if not proposed:
+        return False
+    return proposed != (current_email or "").strip().lower()
 
 
 def normalized_action(row: dict[str, str]) -> str:
@@ -121,14 +130,26 @@ def build_user_representation(row: dict[str, str]) -> dict[str, Any]:
     if row.get("email"):
         rep["email"] = row["email"]
         rep["emailVerified"] = True
+    # 列があるときは空文字も書く（名を消す）。列が無いときだけ name から補う。
+    explicit_first = "firstName" in row
+    explicit_last = "lastName" in row
     first = (row.get("firstName") or "").strip()
     last = (row.get("lastName") or "").strip()
-    if not first and not last and row.get("name"):
+    if not explicit_first and not explicit_last and row.get("name"):
         last, first = _split_japanese_name(row["name"])
-    if first:
-        rep["firstName"] = first
-    if last:
-        rep["lastName"] = last
+        if first:
+            rep["firstName"] = first
+        if last:
+            rep["lastName"] = last
+    else:
+        if explicit_first:
+            rep["firstName"] = first
+        elif first:
+            rep["firstName"] = first
+        if explicit_last:
+            rep["lastName"] = last
+        elif last:
+            rep["lastName"] = last
     if row.get("password"):
         rep["credentials"] = [
             {
@@ -152,6 +173,8 @@ def plan_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "email": row.get("email", ""),
                 "action": action,
                 "groups": parse_groups(row.get("groups")),
+                # replace のときだけ UserGroup / SystemAdminGroup を入れ替える。空なら従来どおり追加のみ。
+                "groupsMode": (row.get("groupsMode") or "").strip().lower(),
                 # 棟は Keycloak には保存しない。backend が解決・付与するため素通しで返す。
                 "tenant": (row.get("tenant") or "").strip(),
                 "rep": build_user_representation(row) if action != "delete" and not err else None,

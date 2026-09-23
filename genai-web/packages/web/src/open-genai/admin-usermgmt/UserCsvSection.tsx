@@ -22,8 +22,8 @@ const ACTION_LABEL: Record<string, string> = {
 
 const actionLabel = (action: string): string => ACTION_LABEL[action] ?? action;
 
-const CSV_SAMPLE = `action,username,email,name,password,groups,enabled,tenant
-upsert,yamada,yamada@example.com,山田太郎,Passw0rd!,UserGroup,true,能代市役所`;
+const CSV_SAMPLE = `action,username,email,lastName,firstName,password,groups,enabled
+create,yamada,yamada@example.com,山田,太郎,Passw0rd!,UserGroup,true`;
 
 type Props = {
   onApplied: () => void;
@@ -82,9 +82,10 @@ export const UserCsvSection = ({ onApplied }: Props) => {
         </Label>
         <SupportText>
           見出し: action, username, email, lastName（姓）, firstName（名）, name（姓
-          名）, password, groups, enabled, tenant（棟）。action は create / update / delete /
+          名）, password, groups, enabled。action は create / update / delete /
           upsert（既定 upsert）。name だけ書く場合は「山田 太郎」のように空白で姓と名を分けます。
-          tenant は棟名か棟 ID を指定します（新規登録は必須。共有棟は招待で付けるため指定不可）。
+          メールアドレスは毎行必須です。ログイン名とメールアドレスは登録後に変えられません。既存の人の行では今のメールアドレスをそのまま書き、違うアドレスの行は拒否されます。
+          CSV の groups は足すだけです。外す場合は一覧の「変更」を使います。
         </SupportText>
         <Textarea
           id='csv-text'
@@ -143,13 +144,12 @@ export const UserCsvSection = ({ onApplied }: Props) => {
             {planRows.length} 件中、エラー {planErrorCount} 件。問題なければ「適用」を実行してください。
           </SupportText>
           <ResultTable
-            headers={['#', 'username', '操作', 'groups', '棟', '判定']}
+            headers={['#', 'username', '操作', 'groups', '判定']}
             rows={planRows.map((r, i) => [
               String(i + 1),
               r.username || '-',
               actionLabel(r.action),
-              r.groups.join(', ') || '-',
-              r.tenantName || r.tenant || '-',
+              (r.groups ?? []).join(', ') || '-',
               r.error ? `エラー: ${r.error}` : '実行予定',
             ])}
             errorRow={(i) => !!planRows[i].error}
@@ -161,13 +161,12 @@ export const UserCsvSection = ({ onApplied }: Props) => {
         <div className='flex flex-col gap-2'>
           <h3 className='text-std-16B-150'>適用結果</h3>
           <ResultTable
-            headers={['#', 'username', '操作', '結果', '棟', '備考']}
+            headers={['#', 'username', '操作', '結果', '備考']}
             rows={applyResults.map((r, i) => [
               String(i + 1),
               r.username || '-',
               actionLabel(r.action),
               r.result,
-              r.tenantName || '-',
               r.note || '-',
             ])}
             errorRow={(i) => applyResults[i].result === 'エラー'}
