@@ -7751,7 +7751,7 @@ async def remove_tenant_member(
 # ---------------------------------------------------------------------------
 # チーム管理 (Team Access Control API)
 # ---------------------------------------------------------------------------
-@app.get("/teams")
+@app.get("/teams", response_model=None)
 async def list_teams(request: Request) -> dict[str, Any] | JSONResponse:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
