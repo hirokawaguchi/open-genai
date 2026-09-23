@@ -22,7 +22,7 @@ def db_path(monkeypatch):
 
 def test_update_message_extra_data(db_path):
     user = "user-1"
-    chat = storage.create_chat(user, "/image")
+    chat = storage.create_chat(user, "/image", storage.DEFAULT_TENANT_ID)
     chat_id = chat["chatId"].replace("chat#", "")
     recorded = storage.create_messages(
         chat_id,
@@ -35,6 +35,7 @@ def test_update_message_extra_data(db_path):
                 "usecase": "/image",
             }
         ],
+        storage.DEFAULT_TENANT_ID,
     )
     assert recorded
 
@@ -49,7 +50,9 @@ def test_update_message_extra_data(db_path):
             },
         }
     ]
-    updated = storage.update_message_extra_data(chat_id, user, "msg-1", extra)
+    updated = storage.update_message_extra_data(
+        chat_id, user, "msg-1", extra, storage.DEFAULT_TENANT_ID
+    )
     assert updated is not None
     assert updated["extraData"] == extra
 

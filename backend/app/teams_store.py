@@ -28,7 +28,7 @@ COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
 ADMIN_TEAM_ID = "00000000-0000-0000-0000-0000000000a1"
 ADMIN_TEAM_NAME = "管理者ツール"
 
-# テナント（棟）。DEFAULT は既存組織の移行先。SHARED は共有棟（COMMON_TEAM の親）。
+# テナント（棟）。DEFAULT は大分市役所（既存データの居場所）。SHARED は招待された人だけの共有棟。
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-0000000000t1"
 SHARED_TENANT_ID = "00000000-0000-0000-0000-0000000000t0"
 DEFAULT_TENANT_NAME = "デフォルト"
@@ -285,8 +285,11 @@ def _migrate_tenant_scoped_user_data(conn: sqlite3.Connection) -> None:
 
 
 def _scope_tenant_id(tenant_id: str | None) -> str:
+    """ピンと実行履歴の読み書き先。空はエラーで、特定の組織棟には落とさない。"""
     tid = (tenant_id or "").strip()
-    return tid or DEFAULT_TENANT_ID
+    if not tid:
+        raise ValueError("棟が指定されていません")
+    return tid
 
 
 def _migrate_app_settings(conn: sqlite3.Connection) -> None:
@@ -363,7 +366,11 @@ def set_recommended_exapp_ids(ids: list[str] | None) -> list[str]:
 
 
 def _migrate_tenants(conn: sqlite3.Connection) -> None:
-    """テナント表と teams.tenantId を足し、既存データをデフォルト棟／共有棟へ寄せる。"""
+    """テナント表と teams.tenantId を足す。
+
+    棟が空の既存チームだけをデフォルト棟へ埋める（カラム追加前の移管）。
+    すでに別棟の共通アプリは上書きしない。起動のたびに利用者へ鍵は足さない。
+    """
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS tenants (
@@ -407,7 +414,8 @@ def _migrate_tenants(conn: sqlite3.Connection) -> None:
                 (tid, name, kind, now, now),
             )
     conn.execute(
-        "UPDATE teams SET tenantId = ? WHERE teamId = ?",
+        "UPDATE teams SET tenantId = ?"
+        " WHERE teamId = ? AND (tenantId IS NULL OR tenantId = '')",
         (DEFAULT_TENANT_ID, COMMON_TEAM_ID),
     )
     conn.execute(
@@ -418,8 +426,6 @@ def _migrate_tenants(conn: sqlite3.Connection) -> None:
         "UPDATE teams SET tenantId = ? WHERE tenantId IS NULL AND teamId NOT IN (?, ?)",
         (DEFAULT_TENANT_ID, COMMON_TEAM_ID, ADMIN_TEAM_ID),
     )
-    for row in conn.execute("SELECT DISTINCT userId FROM team_users").fetchall():
-        _ensure_home_key(conn, row["userId"])
 
 
 def upsert_seed_exapp(app: dict[str, Any]) -> None:
@@ -810,7 +816,7 @@ def create_team(
             if parent and parent["tenantId"]:
                 tenant_id = parent["tenantId"]
         if not tenant_id:
-            tenant_id = DEFAULT_TENANT_ID
+            raise ValueError("棟が指定されていません")
         has_primary = conn.execute(
             "SELECT 1 FROM team_users WHERE userId = ? AND isPrimary = 1 LIMIT 1",
             (admin_email,),
@@ -960,6 +966,13 @@ def create_team_user(
         ).fetchone()
         if existing:
             return None
+        team_row = conn.execute(
+            "SELECT tenantId FROM teams WHERE teamId = ?", (team_id,)
+        ).fetchone()
+        raw_tenant = team_row["tenantId"] if team_row else None
+        tenant_id = (raw_tenant or "").strip()
+        if not tenant_id:
+            raise ValueError("チームに棟がありません")
         if is_primary is None:
             is_primary = not _user_has_primary(conn, email)
         if is_primary:
@@ -970,10 +983,6 @@ def create_team_user(
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (team_id, email, email, 1 if is_admin else 0, 1 if is_primary else 0, now, now),
         )
-        team_row = conn.execute(
-            "SELECT tenantId FROM teams WHERE teamId = ?", (team_id,)
-        ).fetchone()
-        tenant_id = (team_row["tenantId"] if team_row else None) or DEFAULT_TENANT_ID
         if tenant_id == SHARED_TENANT_ID:
             _upsert_membership_conn(
                 conn, SHARED_TENANT_ID, email, role=TENANT_ROLE_SHARED
@@ -1429,7 +1438,11 @@ def list_teams_for_tenant_admin(user_id: str) -> list[dict[str, Any]]:
 
 
 def get_active_tenant_id(user_id: str, *, allow_any: bool = False) -> str:
-    """活性棟。保存値が鍵に含まれるならそれ、なければ主鍵、なければデフォルト棟。"""
+    """活性棟。保存値が使えるならそれ、なければ主鍵、なければ共有棟、なければ所属なし。
+
+    allow_any はシステム管理者が、鍵が無くても保存済みの棟を維持するため。
+    鍵も保存された活性棟も無ければ所属なしであり、特定の組織棟には落とさない。
+    """
     user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
         pref = conn.execute(
@@ -1452,10 +1465,6 @@ def get_active_tenant_id(user_id: str, *, allow_any: bool = False) -> str:
         return primary
     if can_access_tenant(SHARED_TENANT_ID, user_id):
         return SHARED_TENANT_ID
-    # システム管理者は鍵が無くてもデフォルト棟を見る。
-    if allow_any:
-        return DEFAULT_TENANT_ID
-    # 一般利用者は鍵が無ければ所属なし。デフォルト棟へは自動で落とさない。
     return NO_TENANT_ID
 
 

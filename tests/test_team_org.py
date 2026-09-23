@@ -28,7 +28,11 @@ def test_normalize_org_name_fullwidth(store) -> None:
 
 
 def test_primary_and_effective_downward(store) -> None:
-    bureau = store.create_team("デジタル戦略局", "watanabe.eiji@city.oita.oita.jp")
+    bureau = store.create_team(
+        "デジタル戦略局",
+        "watanabe.eiji@city.oita.oita.jp",
+        tenant_id=store.DEFAULT_TENANT_ID,
+    )
     ka = store.create_team(
         "ＤＸ推進課",
         "goto.issei@city.oita.oita.jp",
@@ -59,13 +63,19 @@ def test_primary_and_effective_downward(store) -> None:
 
 
 def test_extra_tag_does_not_expand(store) -> None:
-    bureau = store.create_team("デジタル戦略局", "chief@example.com")
+    bureau = store.create_team(
+        "デジタル戦略局", "chief@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     ka = store.create_team("DX推進課", "staff@example.com", parent_team_id=bureau["teamId"])
-    extra = store.create_team("プロジェクトA", "lead@example.com")
+    extra = store.create_team(
+        "プロジェクトA", "lead@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     # 課員がプロジェクトを追加タグで持つ（主所属は課のまま）
     store.create_team_user(extra["teamId"], "staff@example.com", False, is_primary=False)
     # 別局を兼務しても配下は展開しない
-    other_bureau = store.create_team("別局", "other@example.com")
+    other_bureau = store.create_team(
+        "別局", "other@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other_ka = store.create_team(
         "別課", "other.staff@example.com", parent_team_id=other_bureau["teamId"]
     )
@@ -81,7 +91,9 @@ def test_extra_tag_does_not_expand(store) -> None:
 
 
 def test_visible_exapps_include_descendants(store) -> None:
-    bureau = store.create_team("デジタル戦略局", "chief@example.com")
+    bureau = store.create_team(
+        "デジタル戦略局", "chief@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     ka = store.create_team("DX推進課", "staff@example.com", parent_team_id=bureau["teamId"])
     store.create_exapp(
         ka["teamId"],
@@ -97,7 +109,9 @@ def test_visible_exapps_include_descendants(store) -> None:
 
 
 def test_share_targets_are_explicit_only(store) -> None:
-    bureau = store.create_team("デジタル戦略局", "chief@example.com")
+    bureau = store.create_team(
+        "デジタル戦略局", "chief@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     store.create_team("DX推進課", "staff@example.com", parent_team_id=bureau["teamId"])
     mine = store.list_teams_for_member("chief@example.com")
     assert [t["teamId"] for t in mine] == [bureau["teamId"]]
@@ -105,15 +119,17 @@ def test_share_targets_are_explicit_only(store) -> None:
 
 
 def test_parent_cycle_rejected(store) -> None:
-    a = store.create_team("A", "a@example.com")
+    a = store.create_team("A", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID)
     b = store.create_team("B", "b@example.com", parent_team_id=a["teamId"])
     err = store.validate_parent_team_id(a["teamId"], b["teamId"])
     assert err is not None
 
 
 def test_switching_primary_unsets_previous(store) -> None:
-    t1 = store.create_team("課1", "u@example.com")
-    t2 = store.create_team("課2", "admin2@example.com")
+    t1 = store.create_team("課1", "u@example.com", tenant_id=store.DEFAULT_TENANT_ID)
+    t2 = store.create_team(
+        "課2", "admin2@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     store.create_team_user(t2["teamId"], "u@example.com", False, is_primary=True)
     assert store.get_primary_team_id("u@example.com") == t2["teamId"]
     u1 = store.get_team_user(t1["teamId"], "u@example.com")
