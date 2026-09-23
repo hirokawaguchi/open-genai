@@ -141,8 +141,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _normalize_tenant_id(tenant_id: str | None) -> str:
+    """新規の作成・一覧に使う棟。空はエラーで、特定の組織棟には落とさない。
+
+    カラム追加前の行をデフォルト棟とみなす比較は、呼び出し側の
+    `(stored or DEFAULT_TENANT_ID)` に残す。
+    """
     tid = (tenant_id or "").strip()
-    return tid or DEFAULT_TENANT_ID
+    if not tid:
+        raise ValueError("棟が指定されていません")
+    return tid
 
 
 def _normalize_usecase(usecase: str) -> str:
