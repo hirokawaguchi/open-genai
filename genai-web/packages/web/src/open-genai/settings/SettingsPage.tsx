@@ -7,7 +7,7 @@ import { SubmitKeySettings } from './components/SubmitKeySettings';
 import { useMyProfile } from './useMyProfile';
 
 export const SettingsPage = () => {
-  const { profile, isLoading, mutate } = useMyProfile();
+  const { profile, isLoading, error, mutate } = useMyProfile();
 
   return (
     <LayoutBody>
@@ -26,6 +26,12 @@ export const SettingsPage = () => {
           <div className='py-6'>
             <ProgressIndicator label='設定を読み込み中...' />
           </div>
+        )}
+
+        {!isLoading && !profile && error && (
+          <p className='text-dns-16N-130 text-error-1' role='alert'>
+            プロフィールを読み込めませんでした。ページを再読み込みしてください。
+          </p>
         )}
 
         {!isLoading && profile && (
