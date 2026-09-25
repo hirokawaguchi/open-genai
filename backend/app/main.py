@@ -140,6 +140,10 @@ PROCURETECH_EDITOR_APP_URL = os.environ.get(
 # Web SSH（Compose profiles: ["ssh"]）。実 API は /ssh/* と /ssh/ws。
 SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 
+# 戦国国取り（Compose profiles: ["sengoku"] でオプション起動。お遊びのシミュレーションゲーム）。
+# 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
+SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
+
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
     os.environ.get("NOTEBOOK_APP_URL")
@@ -797,6 +801,32 @@ SSH_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 戦国国取り（共通アプリ・お遊び）。UI は専用ページ /sengoku。Compose profile `sengoku`
+# 未起動時は /health 失敗で一覧非表示。endpoint はヘルスチェック用（実 API は /sengoku/* プロキシ）。
+SENGOKU_SEED: dict[str, Any] = {
+    "exAppId": "sengoku",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "戦国国取り",
+    "endpoint": (
+        SENGOKU_APP_URL
+        if SENGOKU_APP_URL.endswith("/invoke")
+        else SENGOKU_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "戦国時代を題材にしたターン制の国取りシミュレーション。敵対大名は AI が動かします。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「戦国国取り」で大名家を選んで開始します。\n"
+        "- 1 ターンに 1 つ命令（開墾・徴兵・侵攻・外交）を出すと、敵対大名も動きます。\n"
+        "- 全土を統一すれば勝ち、所領を失うと負けです。「新規」でやり直せます。\n"
+        "- 有効化: `docker compose --profile sengoku up -d` または `COMPOSE_PROFILES=sengoku`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -902,6 +932,7 @@ EXAPP_SEEDS = [
     PROCURETECH_EDITOR_SEED,
     PROCURETECH_HEARING_SEED,
     SSH_SEED,
+    SENGOKU_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -2905,6 +2936,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("procuretech-editor", _as_invoke_url(PROCURETECH_EDITOR_APP_URL)),
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
         ("ssh", _as_invoke_url(SSH_APP_URL)),
+        ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
     ]
 
 
@@ -4006,6 +4038,117 @@ async def chosei_event_carrier(
         content=content.encode("utf-8"),
         media_type=media,
         headers={"Content-Disposition": disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 戦国国取り専用ページ(/sengoku) 用プロキシ（お遊びのシミュレーションゲーム）
+#
+# Compose profiles: ["sengoku"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。ターンは LLM 待ちがあるためタイムアウト長め。
+# ---------------------------------------------------------------------------
+def _sengoku_app_url(path: str) -> str:
+    if SENGOKU_APP_URL.endswith("/invoke"):
+        base = SENGOKU_APP_URL[: -len("/invoke")]
+    else:
+        base = SENGOKU_APP_URL.rstrip("/")
+    return base + path
+
+
+def _sengoku_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_sengoku(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 30,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "戦国国取りサービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile sengoku up -d` "
+                    "または `COMPOSE_PROFILES=sengoku` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "戦国国取りサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/sengoku/config")
+async def sengoku_config(request: Request) -> JSONResponse:
+    err, headers = _sengoku_headers(request)
+    if err:
+        return err
+    return await _proxy_sengoku("GET", _sengoku_app_url("/config"), headers)
+
+
+@app.get("/sengoku/game")
+async def sengoku_get_game(request: Request) -> JSONResponse:
+    err, headers = _sengoku_headers(request)
+    if err:
+        return err
+    return await _proxy_sengoku("GET", _sengoku_app_url("/game"), headers)
+
+
+@app.post("/sengoku/game")
+async def sengoku_new_game(request: Request) -> JSONResponse:
+    err, headers = _sengoku_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_sengoku("POST", _sengoku_app_url("/game"), headers, body)
+
+
+@app.delete("/sengoku/game")
+async def sengoku_delete_game(request: Request) -> JSONResponse:
+    err, headers = _sengoku_headers(request)
+    if err:
+        return err
+    return await _proxy_sengoku("DELETE", _sengoku_app_url("/game"), headers)
+
+
+@app.post("/sengoku/game/turn")
+async def sengoku_play_turn(request: Request) -> JSONResponse:
+    """1 ターン進める。敵対大名の思考に LLM を使うためタイムアウトを長めに取る。"""
+    err, headers = _sengoku_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_sengoku(
+        "POST", _sengoku_app_url("/game/turn"), headers, body, timeout=180
     )
 
 
