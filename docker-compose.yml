@@ -749,6 +749,33 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 戦国国取り（お遊びのシミュレーションゲーム）
+  # (`docker compose --profile sengoku up -d` または COMPOSE_PROFILES=sengoku)
+  # プレイヤーの命令は決定的ルールで解決し、敵対大名の手だけ LLM が決める（失敗時は簡易 AI）。
+  sengoku-app:
+    profiles: ["sengoku"]
+    build: ./sengoku-app
+    container_name: open-genai-sengoku-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - SENGOKU_DB_PATH=/data/sengoku.db
+      # 敵対大名の思考に使う LLM（OpenAI 互換。未指定なら Ollama /v1）
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - SENGOKU_MODEL=${SENGOKU_MODEL:-${DEFAULT_MODEL:-gpt-oss:20b}}
+      - SENGOKU_EXTRA_BODY=${SENGOKU_EXTRA_BODY:-}
+      - SENGOKU_LLM_TIMEOUT=${SENGOKU_LLM_TIMEOUT:-90}
+    volumes:
+      - sengoku_app_data:/data
+    ports:
+      # 開発用: サービスをホストから直接確認できる。本番はホスト公開しないでよい。
+      - "${SENGOKU_PORT:-8019}:8019"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 volumes:
   backend_data:
   web_node_modules:
@@ -771,3 +798,4 @@ volumes:
   # ノートブック用。既存環境のボリューム名を維持する。
   procuretech_hearing_app_data:
   ssh_app_data:
+  sengoku_app_data:
