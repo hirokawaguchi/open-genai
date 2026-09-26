@@ -8,7 +8,7 @@ import { useFilteredTeams } from '@/features/exapps/hooks/useFilteredTeams';
 import { ALL_APPS_NAV_ITEM, pinnedAppHref, useRecommendedNavItems } from '@/layout/navItems';
 import { partitionPinnedApps } from '@/open-genai/app-pins/partitionPinnedApps';
 import { useFetchAppPins } from '@/open-genai/app-pins/useFetchAppPins';
-import { TenantSwitcher } from '@/open-genai/tenants/TenantSwitcher';
+import { CurrentTenantName } from '@/open-genai/tenants/CurrentTenantName';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { MobileMenuItemButton, MobileMenuItemLink } from './MobileMenuItem';
@@ -115,7 +115,7 @@ export const MobileMenu = forwardRef<HTMLDialogElement, Props>((props, ref) => {
             )}
             <Divider />
             <div className='px-4'>
-              <TenantSwitcher />
+              <CurrentTenantName />
             </div>
             <div>
               <MobileMenuSection
