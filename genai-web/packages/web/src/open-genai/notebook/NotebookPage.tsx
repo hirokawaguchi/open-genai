@@ -16,6 +16,7 @@ import {
   CustomDialogHeader,
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
+import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
@@ -164,7 +165,7 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
 );
 
 export const NotebookPage = () => {
-  const { documentTitle } = useRegisteredAppMeta(
+  const { documentTitle, howToUse } = useRegisteredAppMeta(
     COMMON_EXAPPS_TEAM_ID,
     NOTEBOOK_EXAPP_ID,
     'ノートブック',
@@ -1032,22 +1033,30 @@ export const NotebookPage = () => {
       />
 
       <CustomDialog isOpen={helpOpen} onClose={() => setHelpOpen(false)}>
-        <CustomDialogPanel className='max-w-xl'>
+        <CustomDialogPanel className='max-w-2xl'>
           <CustomDialogHeader hasClose onClose={() => setHelpOpen(false)}>
             使い方
           </CustomDialogHeader>
           <CustomDialogBody>
-            <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
-              <p>・「ノート一覧」でノートを作り、開きます。</p>
-              <p>・「参考資料」にファイルやナレッジを取り込みます。項目の根拠になります。</p>
-              <p>・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。</p>
-              <p>・共有ナレッジ MCP は共通チームのナレッジをその場で検索します（取り込みではありません）。</p>
-              <p>・「対話」で質問や整理をします。調べた手順は回答の上に出ます。</p>
-              <p>・下書きを「項目に追加」すると、シートの正本になります。</p>
-              <p>・「項目」で設問を直し、記入済みシートを Markdown エディタへ渡せます。</p>
-              <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>
-              {config?.llm?.model && <p>・利用モデル: {config.llm.model}</p>}
-            </div>
+            {howToUse ? (
+              <ExAppUsageMarkdownRenderer content={howToUse} size='sm' />
+            ) : (
+              <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
+                <p>・「ノート一覧」でノートを作り、開きます。</p>
+                <p>・「参考資料」にファイルやナレッジを取り込みます。項目の根拠になります。</p>
+                <p>・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。</p>
+                <p>・共有ナレッジ MCP は共通チームのナレッジをその場で検索します（取り込みではありません）。</p>
+                <p>・「対話」で質問や整理をします。調べた手順は回答の上に出ます。</p>
+                <p>・下書きを「項目に追加」すると、シートの正本になります。</p>
+                <p>・「項目」で設問を直し、記入済みシートを Markdown エディタへ渡せます。</p>
+                <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>
+              </div>
+            )}
+            {config?.llm?.model && (
+              <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
+                利用モデル: {config.llm.model}
+              </p>
+            )}
           </CustomDialogBody>
         </CustomDialogPanel>
       </CustomDialog>
