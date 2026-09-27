@@ -2441,7 +2441,11 @@ def _rag_base() -> str:
 
 def _knowledge_headers(claims: dict[str, Any], scope: str) -> dict[str, str]:
     user_id = _user_id(claims)
-    groups_str = ",".join(claims.get("groups") or [])
+    # 棟の管理者は、その棟の共有ナレッジを登録・管理できる。
+    # rag-app は SystemAdminGroup しか見ないため、署名付きの管理印を足す。
+    groups_str = teams_store.knowledge_proxy_groups(
+        claims.get("groups") or [], user_id, scope
+    )
     team_ids = _user_team_ids_str(user_id)
     return {
         "x-api-key": RAG_API_KEY,
