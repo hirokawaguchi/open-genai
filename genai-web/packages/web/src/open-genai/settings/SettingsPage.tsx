@@ -1,6 +1,9 @@
 import { PageTitle } from '@/components/PageTitle';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { LayoutBody } from '@/layout/LayoutBody';
+import { OrgIcon } from '@/open-genai/tenants/CurrentTenantName';
+import { TenantSwitcher } from '@/open-genai/tenants/TenantSwitcher';
+import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { PasswordForm } from './components/PasswordForm';
 import { ProfileForm } from './components/ProfileForm';
 import { SubmitKeySettings } from './components/SubmitKeySettings';
@@ -8,6 +11,9 @@ import { useMyProfile } from './useMyProfile';
 
 export const SettingsPage = () => {
   const { profile, isLoading, error, mutate } = useMyProfile();
+  const { switchableTenants, activeTenantId, canSwitchTenants } = useMyTenants();
+  const current =
+    switchableTenants.find((t) => t.tenantId === activeTenantId) ?? switchableTenants[0];
 
   return (
     <LayoutBody>
@@ -62,6 +68,23 @@ export const SettingsPage = () => {
               <PasswordForm />
             </section>
           </>
+        )}
+
+        {current && (
+          <section className='flex flex-col gap-4 rounded-8 border border-solid-gray-300 bg-white p-5'>
+            <div className='flex flex-col gap-1'>
+              <h2 className='text-std-18B-160 text-solid-gray-900'>組織</h2>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                いま開いている組織は
+                <span className='mx-1 inline-flex items-center gap-1 align-middle text-solid-gray-800'>
+                  <OrgIcon />
+                  {current.tenantName}
+                </span>
+                です。次回開いたときもここから始まります。
+              </p>
+            </div>
+            {canSwitchTenants && <TenantSwitcher />}
+          </section>
         )}
 
         <section className='flex flex-col gap-4 rounded-8 border border-solid-gray-300 bg-white p-5'>
