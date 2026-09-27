@@ -57,6 +57,29 @@ def test_internet_app_host_is_blank() -> None:
     assert dest.kind == "blank"
 
 
+def test_operator_host_is_ops_not_blank() -> None:
+    users = (
+        '[{"email":"ops@example.jp","name":"運用",'
+        '"password_hash":"$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        '"groups":["SystemAdminGroup"]}]'
+    )
+    mod = _mod(
+        PUBLIC_URL="https://app.example.lg.jp",
+        FRONTEND_URL="https://app.example.jp",
+        OPERATOR_LOGIN_HOSTS="ops.example.jp",
+        OPERATOR_USERS=users,
+        OPERATOR_SAML_SOURCE_IPS="203.0.113.10",
+    )
+    dest = mod.login_destination(_req("ops.example.jp", real_ip="198.51.100.20"))
+    assert dest.kind == "ops"
+    saml = mod.login_destination(_req("ops.example.jp", real_ip="203.0.113.10"))
+    assert saml.kind == "saml"
+    assert saml.relay == "https://app.example.lg.jp"
+    lgwan = mod.login_destination(_req("app.example.lg.jp", real_ip="203.0.113.10"))
+    assert lgwan.kind == "saml"
+    assert lgwan.relay == "https://app.example.lg.jp"
+
+
 def test_saml_source_on_internet_app_redirects_to_public() -> None:
     mod = _mod(**ENV)
     dest = mod.login_destination(_req("app.example.jp", real_ip="203.0.113.10"))
