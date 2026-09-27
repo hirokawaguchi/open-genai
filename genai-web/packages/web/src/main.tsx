@@ -31,7 +31,20 @@ const AuthGate = ({ children }: { children: ReactNode }) => {
   }
   if (!isAuthenticated()) {
     login();
-    return null;
+    return (
+      <div
+        style={{
+          minHeight: '100dvh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#333',
+          fontFamily: 'sans-serif',
+        }}
+      >
+        ログイン画面へ移動しています…
+      </div>
+    );
   }
   // 認証済みの間は、期限前にサイレント再発行してセッションを維持する
   startSessionKeepAlive();
