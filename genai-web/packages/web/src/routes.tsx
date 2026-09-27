@@ -48,6 +48,7 @@ import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
+import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { Layout } from './layout/Layout';
@@ -139,6 +140,9 @@ export const createRoutes = (): RouteObject[] => {
     // Web SSH（Compose profiles: ["ssh"]）。
     { path: 'ssh', element: <SshPage /> },
     { path: 'apps/:teamId/ssh', element: <Navigate to='/ssh' replace /> },
+    // 戦国国取り（お遊び・Compose profiles: ["sengoku"]）。
+    { path: 'sengoku', element: <SengokuPage /> },
+    { path: 'apps/:teamId/sengoku', element: <Navigate to='/sengoku' replace /> },
     // 旧 URL 互換：フォーム配下の「マイ手続き」は docmaker へ寄せる。
     { path: 'patchform/my', element: <Navigate to='/docmaker' replace /> },
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。
