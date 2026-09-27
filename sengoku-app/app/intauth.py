@@ -37,14 +37,8 @@ def _canonical(
     scope: str | None,
     ts: str,
     tags: str | None = None,
-    username: str | None = None,
 ) -> str:
-    base = f"{user_id or ''}\n{_norm(groups)}\n{scope or ''}\n{_norm(tags)}\n{ts}"
-    # 空のときは従来の署名と一致させる。本人特定のログイン名があるときだけ足す。
-    login = (username or "").strip()
-    if login:
-        return base + "\n" + login
-    return base
+    return f"{user_id or ''}\n{_norm(groups)}\n{scope or ''}\n{_norm(tags)}\n{ts}"
 
 
 def _compute(
@@ -53,11 +47,10 @@ def _compute(
     scope: str | None,
     ts: str,
     tags: str | None = None,
-    username: str | None = None,
 ) -> str:
     return hmac.new(
         SECRET.encode("utf-8"),
-        _canonical(user_id, groups, scope, ts, tags, username).encode("utf-8"),
+        _canonical(user_id, groups, scope, ts, tags).encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
@@ -67,11 +60,10 @@ def sign(
     groups: str | None,
     scope: str | None = "",
     tags: str | None = None,
-    username: str | None = None,
 ) -> tuple[str, str]:
     """(ts, signature) を返す。SECRET 未設定でも ts/sig は返す（検証側で無視）。"""
     ts = str(int(time.time()))
-    return ts, _compute(user_id, groups, scope, ts, tags, username)
+    return ts, _compute(user_id, groups, scope, ts, tags)
 
 
 def signed_headers(
@@ -79,9 +71,8 @@ def signed_headers(
     groups: str | None,
     scope: str | None = "",
     tags: str | None = None,
-    username: str | None = None,
 ) -> dict[str, str]:
-    ts, sig = sign(user_id, groups, scope, tags, username)
+    ts, sig = sign(user_id, groups, scope, tags)
     return {"x-user-ts": ts, "x-user-sig": sig}
 
 
@@ -92,7 +83,6 @@ def verify(
     ts: str | None,
     sig: str | None,
     tags: str | None = None,
-    username: str | None = None,
 ) -> bool:
     """署名を検証する。SECRET 未設定なら常に True（開発時）。
 
@@ -108,6 +98,4 @@ def verify(
             return False
     except ValueError:
         return False
-    return hmac.compare_digest(
-        _compute(user_id, groups, scope, ts, tags, username), sig
-    )
+    return hmac.compare_digest(_compute(user_id, groups, scope, ts, tags), sig)

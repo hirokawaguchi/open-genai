@@ -11,6 +11,7 @@ import {
   useProcuretechEditorAvailable,
   useNotebookAvailable,
   useSshAvailable,
+  useSengokuAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
@@ -87,6 +88,12 @@ export const SSH_PATH = '/ssh';
 /** Web SSH exApp の識別子（専用ページへ振り替える対象） */
 export const SSH_EXAPP_ID = 'ssh';
 
+/** 戦国国取り（お遊び）は汎用 exApp フォームではなく専用ページで提供する */
+export const SENGOKU_PATH = '/sengoku';
+
+/** 戦国国取り exApp の識別子（専用ページへ振り替える対象） */
+export const SENGOKU_EXAPP_ID = 'sengoku';
+
 /** 旧ヒアリングシート ID（ピン留めの振り替え用） */
 export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
 
@@ -131,6 +138,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
+  const sengokuAvailable = useSengokuAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -289,6 +297,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (sengokuAvailable && listed(SENGOKU_EXAPP_ID)) {
+      items.push({
+        label: nameOf(SENGOKU_EXAPP_ID, '戦国国取り'),
+        to: SENGOKU_PATH,
+        description: descOf(
+          SENGOKU_EXAPP_ID,
+          '戦国時代を題材にしたターン制の国取りシミュレーション。敵対大名は AI が動かします。',
+        ),
+      });
+    }
+
     if (listed('knowledge')) {
       items.push({
         label: nameOf('knowledge', 'ナレッジ管理'),
@@ -320,6 +339,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     procuretechEditorAvailable,
     notebookAvailable,
     sshAvailable,
+    sengokuAvailable,
     registryApps,
     catalogLoaded,
     running,
@@ -371,6 +391,10 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   }
   if (item.app.value === SSH_EXAPP_ID) {
     return SSH_PATH;
+  }
+  // 戦国国取りは専用ページへ振り替える
+  if (item.app.value === SENGOKU_EXAPP_ID) {
+    return SENGOKU_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

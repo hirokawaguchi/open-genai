@@ -850,6 +850,60 @@ def test_plan_uses_llm_role_for_layout(monkeypatch):
     assert content["title"] == "分類を先に作る"
 
 
+def test_purpose_overrides_role_for_layout():
+    from app.pptx_plan import SourceBlock, _normalize_purpose, _select_layout
+
+    compare = SourceBlock(
+        filename="a.md",
+        heading="背景",
+        text="現状は手作業。更改後は自動で突合する。",
+        bullets=["手作業", "自動突合"],
+    )
+    assert _normalize_purpose("compare", "explanation") == "compare"
+    assert _select_layout("compare", "explanation", compare, "") == "before-after-split"
+    assert _select_layout("time", "explanation", compare, "") == "chevron-steps"
+    assert _select_layout("", "procedure", compare, "") == "chevron-steps"
+
+
+def test_usable_title_drops_twopart_and_novel_facts():
+    from app.pptx_plan import _usable_title
+
+    allowed = "検索が遅い。重複登録がある。"
+    assert _usable_title("検索が遅く重複登録がある", allowed) == "検索が遅く重複登録がある"
+    assert _usable_title("検索が遅い。重複登録がある", allowed) == ""
+    assert _usable_title("検索遅延をネオシステムで解消する", allowed) == ""
+    assert _usable_title("これは結論です", allowed) == ""
+
+
+def test_plan_uses_llm_purpose_for_layout(monkeypatch):
+    """見出しが説明でも、LLM が compare なら対比レイアウトにする。"""
+    monkeypatch.setenv("GENERATE_PPTX_LLM", "1")
+    monkeypatch.setenv("GENERATE_PPTX_REVIEW", "0")
+    sections = [{"filename": "a.md", "content": "# 背景\n- 手作業で突合している\n- 更改後は自動で突合する\n"}]
+
+    def fake_complete(messages, **kwargs):
+        return json.dumps(
+            {
+                "slides": [
+                    {
+                        "source": {"filename": "a.md", "heading": "背景"},
+                        "purpose": "compare",
+                        "role": "explanation",
+                        "title": "突合は手作業から自動へ移る",
+                        "points": ["手作業で突合している", "更改後は自動で突合する"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    deck = plan_deck("文書", sections, complete=fake_complete)
+    assert deck is not None
+    content = next(s for s in deck["slides"] if s["type"] == "content")
+    assert content["layout"] == "before-after-split"
+    assert content["title"] == "突合は手作業から自動へ移る"
+
+
 def test_section_role_selects_layout():
     from app.pptx_plan import SourceBlock, _guess_role, _role_to_layout
 

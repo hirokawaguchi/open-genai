@@ -34,14 +34,24 @@ def test_seed_default_and_shared(store) -> None:
     assert common["tenantId"] == store.DEFAULT_TENANT_ID
     assert admin["tenantId"] is None
 
+    other = store.create_tenant("別の市")
+    with store._lock, store._connect() as conn:
+        conn.execute(
+            "UPDATE teams SET tenantId = ? WHERE teamId = ?",
+            (other["tenantId"], store.COMMON_TEAM_ID),
+        )
+    store.init_db(seed_exapps=[])
+    assert store.get_team(store.COMMON_TEAM_ID)["tenantId"] == other["tenantId"]
+
 
 def test_create_team_gets_default_tenant_without_shared_key(store) -> None:
-    team = store.create_team("企画課", "a@example.com")
-    assert team["tenantId"] == store.DEFAULT_TENANT_ID
-    keys = {t["tenantId"]: t for t in store.list_tenants_for_user("a@example.com")}
-    assert keys[store.DEFAULT_TENANT_ID]["role"] == "primary"
-    assert store.SHARED_TENANT_ID not in keys
-    assert store.get_active_tenant_id("a@example.com") == store.DEFAULT_TENANT_ID
+    before = {t["teamId"] for t in store.list_teams()}
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        store.create_team("企画課", "a@example.com")
+    assert {t["teamId"] for t in store.list_teams()} == before
+    keys = store.list_tenants_for_user("a@example.com")
+    assert keys == []
+    assert store.SHARED_TENANT_ID not in {t["tenantId"] for t in keys}
 
 
 def test_child_inherits_parent_tenant(store) -> None:
@@ -58,7 +68,9 @@ def test_child_inherits_parent_tenant(store) -> None:
 
 
 def test_parent_rejected_across_tenants(store) -> None:
-    home = store.create_team("川口企画", "k@example.com")
+    home = store.create_team(
+        "川口企画", "k@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other = store.create_tenant("さいたま市")
     err = store.validate_parent_team_id(
         None, home["teamId"], tenant_id=other["tenantId"]
@@ -67,7 +79,9 @@ def test_parent_rejected_across_tenants(store) -> None:
 
 
 def test_invite_guest_and_active_tenant(store) -> None:
-    store.create_team("企画課", "kawaguchi@example.com")
+    store.create_team(
+        "企画課", "kawaguchi@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other = store.create_tenant("さいたま市")
     store.create_team(
         "情報政策課", "saitama@example.com", tenant_id=other["tenantId"]
@@ -89,7 +103,9 @@ def test_invite_guest_and_active_tenant(store) -> None:
 
 
 def test_team_visible_is_active_tenant_only(store) -> None:
-    home = store.create_team("企画課", "a@example.com")
+    home = store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other = store.create_tenant("さいたま市")
     far = store.create_team(
         "別課", "b@example.com", tenant_id=other["tenantId"]
@@ -103,7 +119,9 @@ def test_team_visible_is_active_tenant_only(store) -> None:
 
 
 def test_filter_team_ids_for_tenant(store) -> None:
-    home = store.create_team("企画課", "a@example.com")
+    home = store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other = store.create_tenant("さいたま市")
     far = store.create_team(
         "別課", "b@example.com", tenant_id=other["tenantId"]
@@ -119,7 +137,9 @@ def test_filter_team_ids_for_tenant(store) -> None:
 
 
 def test_cannot_delete_fixed_or_occupied_tenant(store) -> None:
-    store.create_team("企画課", "a@example.com")
+    store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     assert store.delete_tenant(store.DEFAULT_TENANT_ID) is not None
     assert store.delete_tenant(store.SHARED_TENANT_ID) is not None
     empty = store.create_tenant("空の市")
@@ -135,7 +155,9 @@ def test_features_roundtrip(store) -> None:
 
 
 def test_knowledge_scopes_hide_other_tenant(store) -> None:
-    home = store.create_team("企画課", "a@example.com")
+    home = store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     other = store.create_tenant("さいたま市")
     far = store.create_team("別課", "b@example.com", tenant_id=other["tenantId"])
     store.upsert_tenant_membership(other["tenantId"], "a@example.com", role="guest")
@@ -157,7 +179,9 @@ def test_knowledge_scopes_hide_other_tenant(store) -> None:
 
 
 def test_visible_exapps_respect_active_tenant(store) -> None:
-    home = store.create_team("企画課", "a@example.com")
+    home = store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     store.create_exapp(
         home["teamId"],
         {
@@ -212,11 +236,13 @@ def test_builtin_feature_flag(store) -> None:
 
 
 def test_migrate_existing_users_get_keys(store, tmp_path, monkeypatch) -> None:
-    # init 後に作った所属者は鍵を持つ。再 init しても壊れない。
-    store.create_team("企画課", "a@example.com")
+    # 他棟だけの利用者に、再起動でデフォルト棟の鍵は足さない。
+    other = store.create_tenant("別の市")
+    store.create_team("企画課", "a@example.com", tenant_id=other["tenantId"])
     store.init_db(seed_exapps=[])
     keys = {t["tenantId"] for t in store.list_tenants_for_user("a@example.com")}
-    assert store.DEFAULT_TENANT_ID in keys
+    assert other["tenantId"] in keys
+    assert store.DEFAULT_TENANT_ID not in keys
     assert store.SHARED_TENANT_ID not in keys
 
 
@@ -279,7 +305,9 @@ def test_ensure_home_tenant_without_team(store) -> None:
 
 def test_tenant_admin_manages_own_tenant_only(store) -> None:
     other = store.create_tenant("さいたま市")
-    home = store.create_team("企画課", "staff@example.com")
+    home = store.create_team(
+        "企画課", "staff@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     far = store.create_team(
         "情報政策課", "other@example.com", tenant_id=other["tenantId"]
     )
@@ -310,7 +338,9 @@ def test_tenant_admin_manages_own_tenant_only(store) -> None:
 
 
 def test_shared_tenant_is_opt_in(store) -> None:
-    store.create_team("企画課", "a@example.com")
+    store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     assert not store.can_access_tenant(store.SHARED_TENANT_ID, "a@example.com")
     store.upsert_tenant_membership(
         store.SHARED_TENANT_ID, "a@example.com", role="shared"
@@ -332,12 +362,32 @@ def test_system_admin_without_key_sees_default_tenant(store) -> None:
     assert store.get_active_tenant_id("root@example.com") == store.NO_TENANT_ID
     assert (
         store.get_active_tenant_id("root@example.com", allow_any=True)
-        == store.DEFAULT_TENANT_ID
+        == store.NO_TENANT_ID
+    )
+    other = store.create_tenant("別の市")
+    assert (
+        store.set_active_tenant_id(
+            "root@example.com", other["tenantId"], allow_any=True
+        )
+        is None
+    )
+    assert (
+        store.get_active_tenant_id("root@example.com", allow_any=True)
+        == other["tenantId"]
     )
 
 
+def test_member_of_team_without_tenant_gets_no_default_key(store) -> None:
+    with pytest.raises(ValueError, match="チームに棟がありません"):
+        store.create_team_user(store.ADMIN_TEAM_ID, "x@example.com", False)
+    assert store.list_tenants_for_user("x@example.com") == []
+    assert store.get_team_user(store.ADMIN_TEAM_ID, "x@example.com") is None
+
+
 def test_system_admin_knowledge_scopes_include_tenant_teams(store) -> None:
-    home = store.create_team("企画課", "staff@example.com")
+    home = store.create_team(
+        "企画課", "staff@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
     scopes = {
         s["scope"]: s
         for s in store.list_knowledge_scopes(

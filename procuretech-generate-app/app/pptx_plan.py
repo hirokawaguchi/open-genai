@@ -1,7 +1,8 @@
 """Markdown 章から deck JSON を組み立てる。
 
 機械が見出し・リスト・表・コードの骨格を取り、LLM は節ごとに
-{role, points} へ圧縮する。文書全体の「ストーリー（タイトル列）」は作らない。
+{purpose, role, title, points} へ圧縮する。文書全体の「ストーリー（タイトル列）」は作らない。
+題名は原文にある事実（と判断）を完全文にし、用途から既存レイアウトを引く。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from app.pptx_catalog import (
     content_nonempty,
 )
 from app.compose_formats import _TABLE_LINE_RE, parse_gfm_table
+from app.pptx_check import title_fail_codes
 from app.pptx_layouts import validate_deck
 
 log = logging.getLogger("procuretech-generate")
@@ -55,6 +57,35 @@ ROLES = frozenset(
     }
 )
 DEFAULT_ROLE = "explanation"
+# グラフ種類ではなく「何をしたいか」。既存レイアウトへ写す。
+PURPOSES = frozenset(
+    {"explain", "decompose", "compare", "change", "time", "relation"}
+)
+DEFAULT_PURPOSE = "explain"
+_PURPOSE_ALIASES = {
+    "explanation": "explain",
+    "breakdown": "decompose",
+    "split": "decompose",
+    "analysis": "decompose",
+    "comparison": "compare",
+    "versus": "compare",
+    "before-after": "change",
+    "trend": "change",
+    "process": "time",
+    "procedure": "time",
+    "timeline": "time",
+    "map": "relation",
+    "structure": "relation",
+}
+_ROLE_TO_PURPOSE = {
+    "procedure": "time",
+    "comparison": "compare",
+    "numeric": "change",
+    "definition": "decompose",
+    "caution": "explain",
+    "attachment": "explain",
+    "explanation": "explain",
+}
 _ROLE_ALIASES = {
     "explain": "explanation",
     "description": "explanation",
@@ -79,6 +110,7 @@ class SectionNotes:
     title: str = ""
     figure: str = ""
     figure_caption: str = ""
+    purpose: str = ""
 
 
 @dataclass
@@ -263,6 +295,26 @@ def _normalize_role(raw: Any) -> str:
     return name if name in ROLES else DEFAULT_ROLE
 
 
+def _normalize_purpose(raw: Any, role: str = "") -> str:
+    name = str(raw or "").strip().lower()
+    name = _PURPOSE_ALIASES.get(name, name)
+    if name in PURPOSES:
+        return name
+    return _ROLE_TO_PURPOSE.get(_normalize_role(role), DEFAULT_PURPOSE)
+
+
+def _guess_purpose(block: SourceBlock) -> str:
+    return _ROLE_TO_PURPOSE.get(_guess_role(block), DEFAULT_PURPOSE)
+
+
+def _usable_title(title: Any, allowed: str) -> str:
+    """採用してよい題名だけ残す。二段構え・ですます・個数などは捨てる。"""
+    text = str(title or "").strip()
+    if not text or title_fail_codes(text) or _introduces_novel_facts(text, allowed):
+        return ""
+    return text
+
+
 _BRANCH_MARK_RE = re.compile(r"[├└]|分岐|経路")
 
 
@@ -345,8 +397,33 @@ def _role_to_layout(role: str, block: SourceBlock, previous: str) -> str:
     return "fullwidth-points"
 
 
+def _select_layout(
+    purpose: str, role: str, block: SourceBlock, previous: str
+) -> str:
+    """用途を先に見て、既存レイアウトへ写す。画像と役割は従来どおり後段。"""
+    if _content_images(block.images):
+        return "fullscreen-photo" if previous != "fullscreen-photo" else "fullwidth-points"
+    purpose = _normalize_purpose(purpose, role)
+    role = _normalize_role(role)
+    if purpose == "time" or role == "procedure":
+        return "step-flow" if _looks_like_branch(block) else "chevron-steps"
+    if purpose == "compare" or role == "comparison":
+        return "axis-table" if block.tables else "before-after-split"
+    if purpose == "decompose":
+        return "axis-table" if block.tables else "fullwidth-points"
+    if purpose == "change" or role == "numeric":
+        from app.pptx_repair import looks_like_meta
+
+        if looks_like_meta(block.heading, block.text, *block.bullets):
+            return "axis-table"
+        return "chart-insight" if previous != "chart-insight" else "kpi-three-col"
+    if purpose == "relation":
+        return "step-flow" if _looks_like_branch(block) else "fullwidth-points"
+    return _role_to_layout(role, block, previous)
+
+
 def _suggest_layout(block: SourceBlock, previous: str) -> str:
-    return _role_to_layout(_guess_role(block), block, previous)
+    return _select_layout(_guess_purpose(block), _guess_role(block), block, previous)
 
 
 def _fill_content(layout: str, block: SourceBlock) -> dict[str, Any]:
@@ -620,18 +697,25 @@ def _notes_for_batch(
     try:
         data = _call_json(
             complete,
-            "あなたは日本語の要点整理係。各節の役割と要点だけを返す。本文は書かない。JSON のみ。",
+            "あなたは日本語の要点整理係。各節の用途・役割と要点だけを返す。本文は書かない。JSON のみ。",
             (
                 f"{outline}\n\n"
                 "各節を次の JSON だけに圧縮する。\n"
                 '{"slides":[{"source":{"filename":"...","heading":"..."},'
-                '"role":"explanation","title":"任意の短い見出し",'
+                '"purpose":"explain","role":"explanation",'
+                '"title":"主語と述語のある一文",'
                 '"figure":"","figure_caption":"",'
                 '"points":["要点1","要点2"]}]}\n'
+                "- purpose は用途（グラフ種類ではない）: explain / decompose / compare / change / time / relation。\n"
+                "  explain=説明、decompose=内訳・寄与、compare=同じ物差し、change=前後の変化、time=手順・工程、relation=関係・分岐。\n"
                 "- role は explanation / procedure / definition / comparison / numeric / caution / attachment。\n"
-                "- 分からなければ explanation。手順は procedure。用語・表だけの一覧は definition。\n"
-                "- 対比は comparison。件数・割合など短い指標は numeric。文書番号・版数・日付・所要時間の欄は definition。\n"
+                "- 分からなければ purpose=explain, role=explanation。手順は time+procedure。用語・表だけの一覧は decompose+definition。\n"
+                "- 対比は compare+comparison。件数・割合など短い指標は change+numeric。文書番号・版数・日付・所要時間の欄は definition。\n"
                 "- 注意・例外は caution。貼付文・コードだけは attachment。\n"
+                "- title は必須。主語と述語のある完全文。ですます禁止。見出しのコピーにしない。\n"
+                "- 原文に判断（必要／限られる／ではなく／できない）があれば事実＋含意を1文にする。無ければ事実文（〜は〜である／〜が〜する）。推奨（すべきだ）を作らない。\n"
+                "- 禁止：「A。B」の二段構え／体言止め／ダッシュ／「本ページ」「この1枚」／個数（3つの理由）／ラベル前置き（現状：）。\n"
+                "- 長さは30〜60字。まず36字以内。数字は実質値だけ最大2つ。\n"
                 "- figure は見出し語ではなく中身で判断する。関係・分岐・完成イメージ・構成を図で見せるべきなら flowchart（流れ以外は sequence）。\n"
                 "- 表・短い手順の列挙・数値・文章だけの説明は figure を空文字。\n"
                 "- figure_caption は図の題（ここに○○の図を入れる、の○○）。\n"
@@ -640,7 +724,6 @@ def _notes_for_batch(
                 "- 手順は各ステップを残す。目的だけの1点に潰さない。\n"
                 "- 「表にまとめられている」など中身の無い要約は禁止。\n"
                 "- コードやプロンプトの貼付文は points に載せない。\n"
-                "- title は任意。見出しのコピーにせず、ですます禁止。\n"
             ),
         )
     except Exception as exc:  # noqa: BLE001
@@ -667,9 +750,7 @@ def _notes_for_batch(
             if not text or _introduces_novel_facts(text, allowed):
                 continue
             points.append(text)
-        title = str(s.get("title") or "").strip()
-        if title and _introduces_novel_facts(title, allowed):
-            title = ""
+        title = _usable_title(s.get("title"), allowed)
         figure = _normalize_figure(s.get("figure"))
         caption = str(s.get("figure_caption") or "").strip()
         if caption and _introduces_novel_facts(caption, allowed):
@@ -677,6 +758,7 @@ def _notes_for_batch(
         if points or figure:
             organized[_block_key(block)] = SectionNotes(
                 role=_normalize_role(s.get("role")),
+                purpose=_normalize_purpose(s.get("purpose"), s.get("role")),
                 points=_enrich_notes(points, block) or _mechanical_notes(block),
                 title=title,
                 figure=figure,
@@ -824,7 +906,7 @@ def _plan_notes(
     blocks: list[SourceBlock],
     on_progress: Any = None,
 ) -> dict[tuple[str, str], SectionNotes]:
-    """節ごとに {role, points} を取る。LLM は圧縮だけ。失敗した節は機械推定。"""
+    """節ごとに {purpose, role, points} を取る。LLM は圧縮だけ。失敗した節は機械推定。"""
     organized: dict[tuple[str, str], SectionNotes] = {}
     total = max(len(blocks), 1)
     for i in range(0, len(blocks), _NOTES_BATCH):
@@ -836,11 +918,16 @@ def _plan_notes(
             if not organized.get(key):
                 mechanical = _mechanical_notes(block)
                 if mechanical:
-                    organized[key] = SectionNotes(role=_guess_role(block), points=mechanical)
+                    organized[key] = SectionNotes(
+                        role=_guess_role(block),
+                        purpose=_guess_purpose(block),
+                        points=mechanical,
+                    )
             elif organized.get(key):
                 notes = organized[key]
                 organized[key] = SectionNotes(
                     role=notes.role,
+                    purpose=notes.purpose or _guess_purpose(block),
                     points=_enrich_notes(notes.points, block),
                     title=notes.title,
                     figure=notes.figure,
@@ -1232,7 +1319,12 @@ def _variants_for_block(
     if fig:
         variants = [("figure-frame", fig, title)]
     else:
-        layout = _role_to_layout(notes.role if notes else _guess_role(block), block, previous_layout)
+        layout = _select_layout(
+            notes.purpose if notes else _guess_purpose(block),
+            notes.role if notes else _guess_role(block),
+            block,
+            previous_layout,
+        )
         if (
             points
             and layout in TABLE_LAYOUTS
@@ -1420,10 +1512,11 @@ def _apply_review(deck: dict[str, Any], review: dict[str, Any]) -> dict[str, Any
         )
         new_title = change.get("title")
         if isinstance(new_title, str) and new_title.strip():
-            if _introduces_novel_facts(new_title, allowed):
-                log.info("pptx review: drop title with novel facts at %s", idx)
+            kept = _usable_title(new_title, allowed)
+            if not kept:
+                log.info("pptx review: drop unusable title at %s", idx)
             else:
-                slide["title"] = new_title.strip()
+                slide["title"] = kept
         content = slide.get("content") if isinstance(slide.get("content"), dict) else None
         right = change.get("right") or change.get("insight")
         if content and isinstance(right, dict):
@@ -1454,7 +1547,7 @@ def plan_deck(
     complete: Any = chat,
     on_progress: Any = None,
 ) -> dict[str, Any] | None:
-    """見出し骨格のうえに、節ごとの {role, points} を載せる。失敗時は None。"""
+    """見出し骨格のうえに、節ごとの {purpose, role, title, points} を載せる。失敗時は None。"""
     if not llm_enabled():
         log.info("pptx plan skipped (GENERATE_PPTX_LLM=0)")
         return None
@@ -1492,9 +1585,13 @@ def plan_deck(
                     complete,
                     "資料の作り方は知らない。日本語と論理だけを見る。JSON のみ。",
                     (
-                        "次のデッキを読み、タイトルのですます・個数・ラベル前置き、"
-                        "タイトルと本文の食い違い、根拠のない評価語を指摘する。\n"
-                        "新しい数値・固有名は提案しない。不採用は adopt:false。\n"
+                        "次のデッキを読み、外れていれば直す。新しい数値・固有名は提案しない。"
+                        "不採用は adopt:false。\n"
+                        "見るもの:\n"
+                        "- タイトル: 完全文か／ですます／個数／ラベル前置き／"
+                        "二段構え（A。B）／体言止め／自己言及（本ページ・この1枚）\n"
+                        "- タイトルと本文の食い違い。タイトルの各節を本体のどの要素が証明するか\n"
+                        "- 根拠のない評価語\n"
                         '{"changes":[{"index":1,"adopt":true,"title":"直した主張",'
                         '"right":{"bullets":["意味合い"]}}]}\n\n'
                         f"{_review_payload(deck)}\n"

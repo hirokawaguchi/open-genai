@@ -6,12 +6,14 @@ import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
-import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { USERMGMT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
+import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { UserCreateSection } from './UserCreateSection';
 import { UserCsvSection } from './UserCsvSection';
+import { UserEditDialog } from './UserEditDialog';
+import type { ManagedUser } from './types';
 import { useUsers } from './useUserMgmt';
 
 type Mode = 'list' | 'create' | 'csv';
@@ -23,6 +25,7 @@ const MODES: { id: Mode; label: string }[] = [
 ];
 
 const LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
+const NO_TENANT_MESSAGE = '所属する棟がありません。管理者に連絡してください。';
 
 /**
  * 利用者一括管理 専用ページ（管理者限定・OpenGENAI 拡張）。
@@ -30,34 +33,54 @@ const LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
  * 往復がしづらいため、一覧と CSV 一括処理を専用ページとして提供する。
  */
 export const UserMgmtPage = () => {
-  const { isSystemAdminGroup } = useTeamAuth();
+  const { tenants, activeTenantId, isSystemAdmin, isLoading } = useMyTenants();
   const [mode, setMode] = useState<Mode>('list');
+  const active = tenants.find((t) => t.tenantId === activeTenantId);
+  const activeOrg = active && active.kind !== 'shared' ? active : undefined;
+  const canManage = !!activeOrg && (isSystemAdmin || !!activeOrg.isAdmin);
 
   const header = (
     <ManagedAppHeader
       teamId={ADMIN_EXAPPS_TEAM_ID}
       exAppId={USERMGMT_EXAPP_ID}
       fallbackTitle='利用者一括管理'
-      fallbackDescription='利用者アカウント（Keycloak）の一覧表示と、CSV による一括登録・更新・削除ができます（システム管理者のみ）。'
+      fallbackDescription='利用者の一覧、登録、変更、および CSV による一括処理ができます。'
       fallbackHowTo={
         <>
-          <p>・「利用者一覧」で現在のアカウントを検索・確認できます（変更はされません）。</p>
-          <p>・「CSV一括処理」でCSVを貼り付け／読み込み、まず「ドライラン」で内容を確認します。</p>
-          <p>・問題なければ「適用」で Keycloak に反映します（作成・更新・削除。削除は元に戻せません）。</p>
+          <p>1. 人はメールアドレスで一人です。ログイン名は入り方、氏名は表示名です。</p>
+          <p>2. メールアドレスとログイン名は、登録後は変えません。アドレスを変えるときは、新しい人として登録します。</p>
+          <p>3. 所属は、主所属が一つで、ほかの棟は招待です。管理者にするかどうかは、棟ごとに付けます。</p>
+          <p>4. 変更できるのは、氏名、権限、有効か無効か、パスワードです。いま開いている棟の所属者だけを、この画面で扱います。</p>
+          <p>・「利用者一覧」で検索し、行の「変更」から氏名・権限・有効状態・パスワードを更新できます。</p>
+          <p>・「利用者登録」ではユーザー名、メールアドレス、姓が必須です。名は空でも登録できます。</p>
+          <p>・「CSV一括処理」では、まず「ドライラン」で内容を確認します。既存の人の行でメールアドレスが違うとその行は拒否されます。</p>
+          <p>・問題なければ「適用」で反映します（作成・更新・削除。削除は元に戻せません）。</p>
           <p>・password 列を含む CSV の保管・共有には十分注意してください。</p>
         </>
       }
     />
   );
 
-  if (!isSystemAdminGroup) {
+  if (isLoading) {
+    return (
+      <LayoutBody>
+        <PageTitle title='利用者一括管理' />
+        <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
+          {header}
+          <SupportText>読み込み中...</SupportText>
+        </div>
+      </LayoutBody>
+    );
+  }
+
+  if (!canManage) {
     return (
       <LayoutBody>
         <PageTitle title='利用者一括管理' />
         <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
           {header}
           <p className='text-dns-16N-130 text-error-1' role='alert'>
-            このページの閲覧には管理者権限が必要です。
+            {activeOrg ? 'このページの閲覧には管理者権限が必要です。' : NO_TENANT_MESSAGE}
           </p>
         </div>
       </LayoutBody>
@@ -93,9 +116,9 @@ export const UserMgmtPage = () => {
         </div>
 
         {mode === 'list' ? (
-          <UserListSection />
+          <UserListSection isSystemAdmin={isSystemAdmin} />
         ) : mode === 'create' ? (
-          <UserCreateSection onCreated={() => setMode('list')} />
+          <UserCreateSection isSystemAdmin={isSystemAdmin} onCreated={() => setMode('list')} />
         ) : (
           <UserCsvSection onApplied={() => setMode('list')} />
         )}
@@ -104,16 +127,15 @@ export const UserMgmtPage = () => {
   );
 };
 
-/** 「利用者一覧」: 検索・件数指定で Keycloak の利用者を表示（読み取り専用）。 */
-const UserListSection = () => {
+/** 「利用者一覧」: いま開いている組織の主所属だけを表示し、行から変更できる。 */
+const UserListSection = ({ isSystemAdmin }: { isSystemAdmin: boolean }) => {
   const [draftSearch, setDraftSearch] = useState('');
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(200);
+  const [editing, setEditing] = useState<ManagedUser | null>(null);
 
-  const { users, count, limitReached, isLoading, forbidden, loadError, mutate } = useUsers(
-    search,
-    limit,
-  );
+  const { users, count, limitReached, isLoading, forbidden, forbiddenMessage, loadError, mutate } =
+    useUsers(search, limit);
 
   return (
     <div className='flex flex-col gap-4'>
@@ -161,7 +183,7 @@ const UserListSection = () => {
 
       {forbidden ? (
         <p className='text-dns-16N-130 text-error-1' role='alert'>
-          このページの閲覧には管理者権限が必要です。
+          {forbiddenMessage}
         </p>
       ) : loadError ? (
         <p className='text-dns-16N-130 text-error-1' role='alert'>
@@ -187,34 +209,61 @@ const UserListSection = () => {
                     <th className='px-3 py-2 font-bold'>email</th>
                     <th className='px-3 py-2 font-bold'>氏名</th>
                     <th className='px-3 py-2 font-bold'>groups</th>
-                    <th className='whitespace-nowrap px-3 py-2 font-bold'>所属棟</th>
                     <th className='whitespace-nowrap px-3 py-2 font-bold'>状態</th>
+                    <th className='whitespace-nowrap px-3 py-2 font-bold'>操作</th>
                   </tr>
                 </thead>
                 <tbody className='divide-y divide-solid-gray-300'>
-                  {users.map((u) => (
-                    <tr key={u.id || u.username} className='align-top text-solid-gray-900'>
-                      <td className='px-3 py-2'>{u.username || '-'}</td>
-                      <td className='px-3 py-2'>{u.email || '-'}</td>
-                      <td className='px-3 py-2'>{u.name || '-'}</td>
-                      <td className='px-3 py-2'>{u.groups.length > 0 ? u.groups.join(', ') : '-'}</td>
-                      <td className='px-3 py-2'>
-                        {u.tenantName || <span className='text-solid-gray-500'>未所属</span>}
-                      </td>
-                      <td className='whitespace-nowrap px-3 py-2'>
-                        {u.enabled ? (
-                          '有効'
-                        ) : (
-                          <span className='text-solid-gray-500'>無効</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {users.map((u) => {
+                    const locked = !isSystemAdmin && u.groups.includes('SystemAdminGroup');
+                    return (
+                      <tr key={u.id || u.username} className='align-top text-solid-gray-900'>
+                        <td className='px-3 py-2'>{u.username || '-'}</td>
+                        <td className='px-3 py-2'>{u.email || '-'}</td>
+                        <td className='px-3 py-2'>{u.name || '-'}</td>
+                        <td className='px-3 py-2'>
+                          {u.groups.length > 0 ? u.groups.join(', ') : '-'}
+                        </td>
+                        <td className='whitespace-nowrap px-3 py-2'>
+                          {u.enabled ? (
+                            '有効'
+                          ) : (
+                            <span className='text-solid-gray-500'>無効</span>
+                          )}
+                        </td>
+                        <td className='whitespace-nowrap px-3 py-2'>
+                          {locked ? (
+                            <span className='text-solid-gray-500'>変更できません</span>
+                          ) : (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() => setEditing(u)}
+                            >
+                              変更
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </>
+      )}
+      {editing && (
+        <UserEditDialog
+          user={editing}
+          isSystemAdmin={isSystemAdmin}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            mutate();
+          }}
+        />
       )}
     </div>
   );
