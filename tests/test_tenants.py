@@ -336,6 +336,27 @@ def test_tenant_admin_manages_own_tenant_only(store) -> None:
     assert scopes[home["teamId"]]["canManage"] is True
     assert far["teamId"] not in scopes
 
+    marked = store.knowledge_proxy_groups(
+        ["UserGroup", store.TENANT_SCOPE_ADMIN_GROUP],
+        "tadmin@example.com",
+        store.COMMON_TEAM_ID,
+    )
+    assert marked == "UserGroup,TenantScopeAdmin"
+    assert (
+        store.knowledge_proxy_groups(
+            ["UserGroup", "TenantScopeAdmin"],
+            "tadmin@example.com",
+            far["teamId"],
+        )
+        == "UserGroup"
+    )
+    assert (
+        store.knowledge_proxy_groups(
+            ["UserGroup"], "staff@example.com", store.COMMON_TEAM_ID
+        )
+        == "UserGroup"
+    )
+
 
 def test_shared_tenant_is_opt_in(store) -> None:
     store.create_team(
