@@ -1615,9 +1615,12 @@ async def auth_middleware(request: Request, call_next):
     if authz.startswith("Bearer "):
         try:
             auth.verify_token(authz[7:])
-            return await call_next(request)
         except Exception:  # noqa: BLE001 - トークン不正は 401 に集約
             pass
+        else:
+            # トークン検証のあとで起きた例外は 401 にしない。
+            # ここに含めると、プロフィール取得の失敗がログアウトになる。
+            return await call_next(request)
 
     if _patchform_service_request(request):
         return await call_next(request)
@@ -7384,6 +7387,16 @@ def _usermgmt_headers(
     }
 
 
+def _ascii_header(value: str) -> str:
+    """HTTP ヘッダ値にできる ASCII だけを返す。表示名の日本語は空にする。"""
+    text = (value or "").strip()
+    try:
+        text.encode("ascii")
+    except UnicodeEncodeError:
+        return ""
+    return text
+
+
 def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
     """本人向け（自己プロフィール/パスワード）用の署名ヘッダ。管理者権限は不要。
 
@@ -7397,7 +7410,9 @@ def _usermgmt_self_headers(request: Request) -> tuple[JSONResponse | None, dict[
     groups_str = ",".join(claims.get("groups") or [])
     team_ids = _user_team_ids_str(user_id)
     teams_hdr = _user_teams_header(user_id)
-    login_name = (claims.get("name") or "").strip()
+    # name は表示名。日本語は HTTP ヘッダに載せると送信側で落ち、
+    # 認証ミドルウェアがそれを 401 にするとログイン画面へ戻される。
+    login_name = _ascii_header(claims.get("name") or "")
     if login_name.lower() == user_id.lower():
         login_name = ""
     headers = {
