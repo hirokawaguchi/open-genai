@@ -122,7 +122,7 @@ def test_own_system_contexts_are_per_tenant(storage) -> None:
 
 def test_pins_and_histories_are_per_tenant(store) -> None:
     user = "a@example.com"
-    store.create_team("企画課", user)
+    store.create_team("企画課", user, tenant_id=store.DEFAULT_TENANT_ID)
     other = store.create_tenant("能代役所")
     store.upsert_tenant_membership(other["tenantId"], user, role="guest")
 
@@ -166,3 +166,34 @@ def test_pins_and_histories_are_per_tenant(store) -> None:
     )
     assert [h["outputs"] for h in home_h] == ["本庁"]
     assert [h["outputs"] for h in other_h] == ["能代"]
+
+
+def test_new_writes_without_tenant_do_not_use_default(storage, store) -> None:
+    user = "a@example.com"
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        storage.create_chat(user, "/chat")
+    assert storage.list_chats(user, storage.DEFAULT_TENANT_ID) == []
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        storage.list_chats(user, None)
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        storage.create_system_context(user, "無指定", "p")
+    assert storage.list_system_contexts(user, [], storage.DEFAULT_TENANT_ID) == []
+
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        store.add_user_app_pin(user, store.COMMON_TEAM_ID, "chat", False)
+    assert store.list_user_app_pins(user, store.DEFAULT_TENANT_ID) == []
+    with pytest.raises(ValueError, match="棟が指定されていません"):
+        store.create_exapp_history(
+            {
+                "teamId": store.COMMON_TEAM_ID,
+                "exAppId": "rag",
+                "userId": user,
+                "outputs": "無指定",
+            }
+        )
+    assert (
+        store.list_exapp_histories(
+            store.COMMON_TEAM_ID, "rag", user, store.DEFAULT_TENANT_ID
+        )
+        == []
+    )

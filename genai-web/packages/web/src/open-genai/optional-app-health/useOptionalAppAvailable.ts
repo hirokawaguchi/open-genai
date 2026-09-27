@@ -46,3 +46,5 @@ export const useProcuretechEditorAvailable = (): boolean =>
 export const useNotebookAvailable = (): boolean => useOptionalAppAvailable('notebook/config');
 
 export const useSshAvailable = (): boolean => useOptionalAppAvailable('ssh/config');
+
+export const useSengokuAvailable = (): boolean => useOptionalAppAvailable('sengoku/config');
