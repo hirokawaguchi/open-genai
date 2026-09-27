@@ -1,10 +1,12 @@
 """インターネット入口と庁内（SAML）公開面のログイン振り分け。
 
 - PORTAL_LOGIN_HOSTS: Keycloak ID/PW フォーム
+- OPERATOR_LOGIN_HOSTS: 運用者フォーム（SAML 出口 IP は除く）
 - PUBLIC_URL（または LGWAN_PUBLIC_URL / ACS URL）のホスト、あるいは
   OPERATOR_SAML_SOURCE_IPS: SAML
-- SAML 出口 IP がインターネット本体ホストへ来た場合: PUBLIC_URL へリダイレクト
-- それ以外のインターネット: 白紙。ログインは入口ホストからのみ
+- SAML 出口 IP が「庁内と別の」インターネット本体ホストへ来た場合: PUBLIC_URL へリダイレクト
+  （運用者ホストや ASP が Host を付け替える構成ではその場で SAML）
+- それ以外のインターネット: 白紙。ログインは入口／運用者ホストからのみ
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from . import ops_login, portal_login
 
 @dataclass(frozen=True)
 class LoginDest:
-    kind: str  # portal | saml | redirect | blank
+    kind: str  # portal | ops | saml | redirect | blank
     url: str = ""
     relay: str = ""
 
@@ -76,12 +78,27 @@ def is_lgwan_request(request: Any) -> bool:
 def login_destination(request: Any) -> LoginDest:
     if portal_login.enabled(request):
         return LoginDest(kind="portal")
+    if ops_login.enabled(request):
+        return LoginDest(kind="ops")
 
     lgwan = lgwan_public()
     host = portal_login.request_host(request)
 
     if is_lgwan_request(request):
-        if lgwan and host and host != lgwan_host():
+        # インターネット本体ホストだけ庁内 URL へ寄せる。
+        # 運用者ホストではその場で SAML にする。前面が Host を保ったまま
+        # 庁内 FQDN へ 302 するとループする。
+        inet = internet_app_host()
+        lgwan_h = lgwan_host()
+        if (
+            lgwan
+            and host
+            and lgwan_h
+            and inet
+            and host == inet
+            and host != lgwan_h
+            and host not in ops_login.operator_hosts()
+        ):
             return LoginDest(kind="redirect", url=f"{lgwan}/api/auth/login")
         return LoginDest(kind="saml", relay=lgwan)
 
