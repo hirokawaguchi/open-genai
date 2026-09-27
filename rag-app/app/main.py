@@ -914,17 +914,23 @@ def _user_groups(x_user_groups: str | None) -> list[str]:
     return [g.strip() for g in (x_user_groups or "").split(",") if g.strip()]
 
 
+# backend の teams_store.TENANT_SCOPE_ADMIN_GROUP と同じ。
+# 対象スコープの棟の管理者だと、署名付きヘッダにだけ付く。
+TENANT_SCOPE_ADMIN_GROUP = "TenantScopeAdmin"
+
+
 def _is_admin(x_user_groups: str | None) -> bool:
-    return "SystemAdminGroup" in set(_user_groups(x_user_groups))
+    groups = set(_user_groups(x_user_groups))
+    return "SystemAdminGroup" in groups or TENANT_SCOPE_ADMIN_GROUP in groups
 
 
 def _can_manage(scope: str, is_admin: bool) -> bool:
     """自グループ(チーム)スコープの基本管理を許可するか。
 
-    - システム管理者: 常に許可。
+    - システム管理者、または署名で示された棟の管理者: 常に許可。
     - 一般利用者: 自チームスコープ（= 共有 common 以外）なら許可（backend が
       当該チームのメンバーであることを保証済み）。
-    - 共有(common)ナレッジの管理は管理者のみ。
+    - 共有(common)ナレッジの管理はシステム管理者またはその棟の管理者のみ。
     """
     return is_admin or scope != DEFAULT_SCOPE
 
@@ -1298,7 +1304,7 @@ async def invoke(
     # ---- タグ操作 ----
     if action == "create_tag":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのタグ作成はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジのタグ作成はシステム管理者またはこの棟の管理者のみ実行できます。"}
         try:
             name = await _kb_create_tag(scope, inputs.get("new_tag") or "")
         except (ValueError, KnowledgeError) as e:
@@ -1320,7 +1326,7 @@ async def invoke(
 
     if action == "rename_tag":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのタグ変更はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジのタグ変更はシステム管理者またはこの棟の管理者のみ実行できます。"}
         old = (inputs.get("tag") or "").strip()
         try:
             r = await _kb_rename_tag(scope, old, inputs.get("rename_to") or "")
@@ -1335,7 +1341,7 @@ async def invoke(
 
     if action == "delete_tag":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのタグ削除はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジのタグ削除はシステム管理者またはこの棟の管理者のみ実行できます。"}
         name = (inputs.get("tag") or "").strip()
         try:
             await _kb_delete_tag(scope, name)
@@ -1346,7 +1352,7 @@ async def invoke(
     # ---- ドキュメント登録（簡易）: 全文 + ベクトル（ツリーなし）----
     if action == "add_docs":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジへの登録はシステム管理者またはこの棟の管理者のみ実行できます。"}
         assign = _resolve_assign_tags(inputs)
         files = _iter_uploaded_files(inputs)
         if not files:
@@ -1376,7 +1382,7 @@ async def invoke(
     # ---- ドキュメント登録（標準）: ツリー索引 + ベクトル併用 ----
     if action == "add_tree_docs":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジへの登録はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジへの登録はシステム管理者またはこの棟の管理者のみ実行できます。"}
         assign = _resolve_assign_tags(inputs)
         files = _iter_uploaded_files(inputs)
         if not files:
@@ -1404,7 +1410,7 @@ async def invoke(
     # ---- URL 取り込み（ドキュメントの一種）----
     if action == "add_url":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジへの URL 登録はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジへの URL 登録はシステム管理者またはこの棟の管理者のみ実行できます。"}
         url = (inputs.get("new_url") or inputs.get("url") or "").strip()
         assign = _resolve_assign_tags(inputs)
         try:
@@ -1437,7 +1443,7 @@ async def invoke(
 
     if action == "delete_url":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジの URL 削除はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジの URL 削除はシステム管理者またはこの棟の管理者のみ実行できます。"}
         url = (inputs.get("url") or inputs.get("document") or "").strip()
         try:
             await _kb_delete_url(scope, url)
@@ -1447,7 +1453,7 @@ async def invoke(
 
     if action == "refresh_urls":
         if not is_admin:
-            return {"outputs": "URL の再取り込みはシステム管理者のみ実行できます。"}
+            return {"outputs": "URL の再取り込みはシステム管理者またはこの棟の管理者のみ実行できます。"}
         await _kb_refresh_urls(scope)
         return {"outputs": "このチームの登録済み URL を再取り込みしました（変更分のみ更新）。"}
 
@@ -1529,7 +1535,7 @@ async def invoke(
 
     if action == "retag_source":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのタグ付け替えはシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジのタグ付け替えはシステム管理者またはこの棟の管理者のみ実行できます。"}
         source = (inputs.get("document") or inputs.get("source") or "").strip()
         assign = _resolve_assign_tags(inputs)
         try:
@@ -1544,7 +1550,7 @@ async def invoke(
 
     if action == "delete_source":
         if not _can_manage(scope, is_admin):
-            return {"outputs": "共有ナレッジのドキュメント削除はシステム管理者のみ実行できます。"}
+            return {"outputs": "共有ナレッジのドキュメント削除はシステム管理者またはこの棟の管理者のみ実行できます。"}
         source = (inputs.get("document") or inputs.get("source") or "").strip()
         try:
             await _kb_delete_source(scope, source)
@@ -1554,7 +1560,7 @@ async def invoke(
 
     if action == "clear":
         if not is_admin:
-            return {"outputs": "この操作はシステム管理者のみ実行できます。"}
+            return {"outputs": "この操作はシステム管理者またはこの棟の管理者のみ実行できます。"}
         r = await _kb_clear(scope)
         note = f"（URL {r['urls']} / 構造化 {r['docs']} / タグ {r['tags']}）"
         return {"outputs": f"このチームのナレッジを全消去しました{note}。"}
@@ -1628,11 +1634,12 @@ async def invoke(
 
 # ---------------------------------------------------------------------------
 # 構造化 REST（専用ページ /knowledge 用）。すべて backend の署名付きプロキシ経由。
-# 認証: API キー + 内部署名（x-user-*）。権限: 共有(common)書込は管理者のみ、
+# 認証: API キー + 内部署名（x-user-*）。権限: 共有(common)書込は
+# システム管理者またはその棟の管理者（署名の TenantScopeAdmin）。
 # チームスコープはメンバー（backend が membership を保証）。書込は _kb_* を共用。
 # ---------------------------------------------------------------------------
-_FORBIDDEN_MANAGE = {"error": "共有ナレッジの管理はシステム管理者のみ実行できます。"}
-_FORBIDDEN_ADMIN = {"error": "この操作はシステム管理者のみ実行できます。"}
+_FORBIDDEN_MANAGE = {"error": "共有ナレッジの管理はシステム管理者またはこの棟の管理者のみ実行できます。"}
+_FORBIDDEN_ADMIN = {"error": "この操作はシステム管理者またはこの棟の管理者のみ実行できます。"}
 
 
 async def _kb_rest_auth(
