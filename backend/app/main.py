@@ -1704,12 +1704,12 @@ async def auth_login(request: Request) -> Response:
     dest = access_split.login_destination(request)
     if dest.kind == "portal":
         return HTMLResponse(content=portal_login.login_form(request))
+    if dest.kind == "ops" or ops_login.enabled(request):
+        return HTMLResponse(content=ops_login.login_form(request))
     if dest.kind == "redirect" and dest.url:
         return RedirectResponse(dest.url, status_code=302)
     if dest.kind == "blank":
         return HTMLResponse(content="", status_code=200)
-    if ops_login.enabled(request):
-        return HTMLResponse(content=ops_login.login_form(request))
     relay = request.query_params.get("redirect") or dest.relay or access_split.lgwan_public() or FRONTEND_URL
     try:
         req = await _prepare_saml_request(request)
