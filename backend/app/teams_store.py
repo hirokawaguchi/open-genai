@@ -1410,6 +1410,25 @@ def is_tenant_admin_of_team(user_id: str, team_id: str) -> bool:
     return is_tenant_admin(tid, user_id)
 
 
+# rag-app の管理判定が同じ文字列を見る。Keycloak のグループではない。
+TENANT_SCOPE_ADMIN_GROUP = "TenantScopeAdmin"
+
+
+def knowledge_proxy_groups(
+    groups: list[str] | None, user_id: str, scope: str
+) -> str:
+    """ナレッジサービスへ渡すグループ文字列。
+
+    対象スコープの棟の管理者には管理印を足す。印は署名の対象になり、
+    そのリクエストのスコープにだけ効く。JWT に同じ名前があっても一度外し、
+    棟の管理者であるときだけ付け直す。
+    """
+    cleaned = [g for g in (groups or []) if g and g != TENANT_SCOPE_ADMIN_GROUP]
+    if user_id and scope and is_tenant_admin_of_team(user_id, scope):
+        cleaned.append(TENANT_SCOPE_ADMIN_GROUP)
+    return ",".join(cleaned)
+
+
 def list_tenant_ids_administered(user_id: str) -> list[str]:
     user_id = normalize_email(user_id)
     with _lock, _connect() as conn:
