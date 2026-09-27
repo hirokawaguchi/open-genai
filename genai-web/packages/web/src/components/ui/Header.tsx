@@ -9,7 +9,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useMobileMenuHandler } from '@/layout/hooks/useMobileMenuHandler';
 import { signOut as localSignOut } from '@/local/localAuth';
 import { useMyProfile } from '@/open-genai/settings/useMyProfile';
-import { TenantSwitcher } from '@/open-genai/tenants/TenantSwitcher';
+import { CurrentTenantName } from '@/open-genai/tenants/CurrentTenantName';
 
 type Props = {
   className?: string;
@@ -66,7 +66,7 @@ export const Header = (props: Props) => {
         )}
 
         <div className='hidden ml-auto md:flex h-full items-center gap-2'>
-          <TenantSwitcher />
+          <CurrentTenantName />
           <AccountMenu
             onClickSignout={onClickSignout}
             userDisplayName={userDisplayName}
