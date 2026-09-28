@@ -10,7 +10,7 @@ import { NoTenantBanner } from '@/open-genai/tenants/NoTenantBanner';
 // ストリーミングで本文が伸びる画面では、文書末のフッターが
 // 自動スクロール（scrollIntoView）と干渉して表示がカクつく。
 // /apps は Dify 対話など exApp（/apps/:teamId/:exAppId）を含む。
-const FOOTER_HIDDEN_PATHS = ['/chat', '/image', '/apps', '/notebook', '/sengoku'];
+const FOOTER_HIDDEN_PATHS = ['/chat', '/image', '/apps', '/notebook', '/sengoku', '/diagram'];
 
 export const Layout = () => {
   const { pathname } = useLocation();

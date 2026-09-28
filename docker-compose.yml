@@ -22,6 +22,7 @@ services:
       - web
       - backend
       - keycloak
+      - drawio
     restart: unless-stopped
 
   backend:
@@ -774,6 +775,15 @@ services:
       - "${SENGOKU_PORT:-8019}:8019"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ダイアグラム編集 UI。図の中身は backend の /diagrams に保存し、ここは編集画面だけを出す。
+  # ホストへポートは出さず、proxy の /drawio/ からのみ届く。
+  drawio:
+    image: jgraph/drawio:latest
+    container_name: open-genai-drawio
+    expose:
+      - "8080"
     restart: unless-stopped
 
 volumes:

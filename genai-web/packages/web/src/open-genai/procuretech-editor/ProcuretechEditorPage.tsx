@@ -75,10 +75,10 @@ import type {
 import {
   fetchCompose,
   fetchFileContent,
-  postComposeMermaid,
   fetchGeneration,
   fetchGenerationWaitingBlob,
   fetchProjectWaitingBlob,
+  postComposeMermaid,
   useEditorActions,
   useEditorComposition,
   useEditorConfig,
@@ -407,14 +407,10 @@ type ComposeUiState =
     }
   | { phase: 'error'; message: string };
 
-const composeStatus = (res: EditorComposeResult): string =>
-  String(res.status ?? '').toLowerCase();
+const composeStatus = (res: EditorComposeResult): string => String(res.status ?? '').toLowerCase();
 
 /** 合成 API の応答を待ち画面 / 完了 / エラーへ写す。 */
-const composeUiFromResult = (
-  res: EditorComposeResult,
-  requestId?: string,
-): ComposeUiState => {
+const composeUiFromResult = (res: EditorComposeResult, requestId?: string): ComposeUiState => {
   if (composeStatus(res) === 'error' || res.error) {
     return { phase: 'error', message: res.error || '書き出しに失敗しました。' };
   }
@@ -588,8 +584,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     const known = new Set(fromTheme.map((s) => s.key));
     const extras = composable
       .filter(
-        (f) =>
-          !!f.section_key && !known.has(f.section_key) && !excelSectionKeys.has(f.section_key),
+        (f) => !!f.section_key && !known.has(f.section_key) && !excelSectionKeys.has(f.section_key),
       )
       .map((f) => ({ key: f.section_key as string, label: f.rel_path }));
     return [...fromTheme, ...extras];
@@ -684,9 +679,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
         if (f && f.kind === 'markdown') targets.set(f.id, f.rel_path);
       }
     }
-    const landscape = outputs.some(
-      (o) => o.enabled !== false && composeFormatOf(o) === 'pptx',
-    );
+    const landscape = outputs.some((o) => o.enabled !== false && composeFormatOf(o) === 'pptx');
     const fence = /```mermaid[^\n]*\n([\s\S]*?)```/g;
     for (const [fileId, relPath] of targets) {
       const content = (await fetchFileContent(projectId, relPath))?.content ?? '';
@@ -1069,9 +1062,7 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                   }}
                 >
                   <PiDownloadSimple className='size-4' />
-                  {carrierLoading
-                    ? '取得中…'
-                    : `${compose.filename ?? '成果物'} のリンクファイル`}
+                  {carrierLoading ? '取得中…' : `${compose.filename ?? '成果物'} のリンクファイル`}
                 </Button>
               </div>
             )}
@@ -1107,6 +1098,9 @@ export const ProcuretechEditorPage = () => {
   // アプリ名・説明は「AIアプリの編集」（レジストリ）の内容に追従させ、取得前は既定値を使う。
   const { data: registryApp } = useFetchExApp(COMMON_EXAPPS_TEAM_ID, PROCURETECH_EDITOR_EXAPP_ID);
   const appTitle = (registryApp?.exAppName || '').trim() || 'Markdown エディタ';
+  const appDescription =
+    (registryApp?.description || '').trim() ||
+    'プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。';
   const howToUse = (registryApp?.howToUse || '').trim();
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -1896,14 +1890,31 @@ export const ProcuretechEditorPage = () => {
     <LayoutBody>
       <PageTitle title={appTitle} />
 
-      <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'>
-        <ManagedAppHeader
-          teamId={COMMON_EXAPPS_TEAM_ID}
-          exAppId={PROCURETECH_EDITOR_EXAPP_ID}
-          fallbackTitle='Markdown エディタ'
-          fallbackDescription='プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。'
-          hideHowTo={true}
-        />
+      <div
+        className={
+          activeTab === EDIT_TAB
+            ? 'mx-auto flex h-[calc(100dvh-var(--header-height))] w-full max-w-(--page-width) flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
+            : 'mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'
+        }
+      >
+        {activeTab === EDIT_TAB ? (
+          <div className='flex min-w-0 items-baseline gap-3'>
+            <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{appTitle}</h1>
+            {appDescription && (
+              <p className='truncate text-dns-14N-130 text-solid-gray-600' title={appDescription}>
+                {appDescription}
+              </p>
+            )}
+          </div>
+        ) : (
+          <ManagedAppHeader
+            teamId={COMMON_EXAPPS_TEAM_ID}
+            exAppId={PROCURETECH_EDITOR_EXAPP_ID}
+            fallbackTitle='Markdown エディタ'
+            fallbackDescription='プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。'
+            hideHowTo={true}
+          />
+        )}
 
         {unavailable && (
           <div
@@ -2059,7 +2070,7 @@ export const ProcuretechEditorPage = () => {
         )}
 
         {activeTab === EDIT_TAB && project && (
-          <>
+          <div className='flex min-h-0 flex-1 flex-col gap-2'>
             <div className='flex flex-wrap items-center gap-2 rounded-8 border border-solid-gray-300 px-3 py-2'>
               <Button
                 type='button'
@@ -2155,7 +2166,7 @@ export const ProcuretechEditorPage = () => {
             )}
 
             {!fileLoading && selected != null && !isEditable && (
-              <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
+              <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-auto rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
                 <p>
                   {selected.kind === 'excel'
                     ? 'Excel ファイル（情報化企画書 / 全般的事項）はエディタでは編集しません。'
@@ -2168,7 +2179,7 @@ export const ProcuretechEditorPage = () => {
                     <img
                       src={binaryUrl}
                       alt={baseName(selected.rel_path)}
-                      className='max-h-[calc(100dvh-360px)] max-w-full object-contain'
+                      className='max-h-full max-w-full object-contain'
                     />
                   </div>
                 )}
@@ -2190,7 +2201,7 @@ export const ProcuretechEditorPage = () => {
             {!fileLoading && selected != null && isEditable && (
               <div
                 data-color-mode='light'
-                className='grid h-[calc(100dvh-260px)] min-h-[520px] gap-3'
+                className='grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3'
                 style={{
                   gridTemplateColumns:
                     isMarkdown && viewMode === 'split'
@@ -2224,7 +2235,7 @@ export const ProcuretechEditorPage = () => {
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === EXPORT_TAB && !project && (
