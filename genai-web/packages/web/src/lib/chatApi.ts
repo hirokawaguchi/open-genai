@@ -15,6 +15,7 @@ import { decomposeId } from '@/utils/decomposeId';
 
 export type SaveImageResultRequest = {
   images: string[];
+  sourceImage?: string;
   meta: {
     prompt: string;
     negativePrompt: string;
@@ -32,7 +33,7 @@ export const createChat = async (req: { usecase?: string } = {}) => {
 };
 
 export const createMessages = async (_chatId: string, req: CreateMessagesRequest) => {
-  const chatId = decomposeId(_chatId);
+  const chatId = decomposeId(_chatId) ?? _chatId;
   const res = await genUApi.post<CreateMessagesResponse>(`chats/${chatId}/messages`, req);
   return res.data;
 };

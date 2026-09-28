@@ -51,82 +51,25 @@ export const CONTROL_MODE_OPTIONS = ['CANNY_EDGE', 'SEGMENTATION'].map((s) => ({
 // 一覧は、以下の style_preset を参照
 // https://platform.stability.ai/docs/api-reference#tag/v1generation/operation/textToImage
 export const STYLE_PRESET_OPTIONS = [
-  {
-    value: '',
-    label: '未設定',
-  },
-  {
-    value: '3d-model',
-    label: '3d-model',
-  },
-  {
-    value: 'analog-film',
-    label: 'analog-film',
-  },
-  {
-    value: 'anime',
-    label: 'anime',
-  },
-  {
-    value: 'cinematic',
-    label: 'cinematic',
-  },
-  {
-    value: 'comic-book',
-    label: 'comic-book',
-  },
-  {
-    value: 'digital-art',
-    label: 'digital-art',
-  },
-  {
-    value: 'enhance',
-    label: 'enhance',
-  },
-  {
-    value: 'fantasy-art',
-    label: 'fantasy-art',
-  },
-  {
-    value: 'isometric',
-    label: 'isometric',
-  },
-  {
-    value: 'line-art',
-    label: 'line-art',
-  },
-  {
-    value: 'low-poly',
-    label: 'low-poly',
-  },
-  {
-    value: 'modeling-compound',
-    label: 'modeling-compound',
-  },
-  {
-    value: 'neon-punk',
-    label: 'neon-punk',
-  },
-  {
-    value: 'origami',
-    label: 'origami',
-  },
-  {
-    value: 'photographic',
-    label: 'photographic',
-  },
-  {
-    value: 'pixel-art',
-    label: 'pixel-art',
-  },
-  {
-    value: 'tile-texture',
-    label: 'tile-texture',
-  },
-].map((s) => ({
-  value: s.value,
-  label: s.label,
-}));
+  { value: '', label: 'そのまま' },
+  { value: 'photographic', label: '写真' },
+  { value: 'anime', label: 'アニメ' },
+  { value: 'cinematic', label: '映画' },
+  { value: 'line-art', label: '線画' },
+  { value: 'digital-art', label: 'デジタルアート' },
+  { value: 'comic-book', label: '漫画' },
+  { value: 'fantasy-art', label: 'ファンタジー' },
+  { value: '3d-model', label: '3D' },
+  { value: 'analog-film', label: 'フィルム写真' },
+  { value: 'enhance', label: '高精細' },
+  { value: 'isometric', label: 'アイソメトリック' },
+  { value: 'low-poly', label: 'ローポリ' },
+  { value: 'modeling-compound', label: '粘土' },
+  { value: 'neon-punk', label: 'ネオン' },
+  { value: 'origami', label: '折り紙' },
+  { value: 'pixel-art', label: 'ドット絵' },
+  { value: 'tile-texture', label: 'タイル' },
+];
 
 export const COLORS_OPTIONS = [
   {
@@ -212,6 +155,14 @@ export const MODEL_INFO: Record<string, ModelInfo<'base' | 'advanced'>> = {
       GENERATION_MODES.IMAGE_VARIATION,
     ],
     resolutionPresets: DEFAULT_MODEL_PRESETS,
+  },
+  'gpt-image-1': {
+    supportedModes: [GENERATION_MODES.TEXT_IMAGE],
+    resolutionPresets: [
+      { value: '1024 x 1024', label: '正方形' },
+      { value: '1536 x 1024', label: '横長' },
+      { value: '1024 x 1536', label: '縦長' },
+    ],
   },
   [STABILITY_AI_MODELS.STABLE_DIFFUSION_XL]: {
     supportedModes: [
