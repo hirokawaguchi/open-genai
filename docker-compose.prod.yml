@@ -45,6 +45,7 @@ services:
       - web
       - backend
       - keycloak
+      - drawio
     restart: unless-stopped
 
   backend:
@@ -719,6 +720,14 @@ services:
       timeout: 5s
       retries: 12
       start_period: 25s
+    restart: unless-stopped
+
+  # ダイアグラム編集 UI。図の中身は backend の /diagrams に保存し、ここは編集画面だけを出す。
+  drawio:
+    image: jgraph/drawio:latest
+    container_name: open-genai-drawio
+    expose:
+      - "8080"
     restart: unless-stopped
 
 volumes:

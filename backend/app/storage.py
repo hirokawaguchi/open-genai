@@ -81,6 +81,19 @@ def init_db() -> None:
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS diagrams (
+                diagramId TEXT PRIMARY KEY,
+                userId TEXT NOT NULL,
+                tenantId TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                instruction TEXT NOT NULL DEFAULT '',
+                diagramType TEXT NOT NULL DEFAULT '',
+                mermaidSource TEXT NOT NULL DEFAULT '',
+                drawioXml TEXT NOT NULL DEFAULT '',
+                createdDate TEXT NOT NULL,
+                updatedDate TEXT NOT NULL
+            );
             """
         )
         _migrate(conn)
@@ -92,6 +105,8 @@ def init_db() -> None:
                 ON chats(userId, tenantId, updatedDate DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_chat
                 ON messages(chatId, seq);
+            CREATE INDEX IF NOT EXISTS idx_diagrams_owner
+                ON diagrams(userId, tenantId, updatedDate DESC);
             """
         )
 
@@ -138,6 +153,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         " WHERE tenantId = '' OR tenantId IS NULL",
         (DEFAULT_TENANT_ID,),
     )
+
+    diagram_cols = [
+        r["name"] for r in conn.execute("PRAGMA table_info(diagrams)").fetchall()
+    ]
+    if diagram_cols and "instruction" not in diagram_cols:
+        conn.execute(
+            "ALTER TABLE diagrams ADD COLUMN instruction TEXT NOT NULL DEFAULT ''"
+        )
+    if diagram_cols and "diagramType" not in diagram_cols:
+        conn.execute(
+            "ALTER TABLE diagrams ADD COLUMN diagramType TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def _normalize_tenant_id(tenant_id: str | None) -> str:
@@ -610,3 +637,147 @@ def create_messages(
             "UPDATE chats SET updatedDate = ? WHERE chatId = ?", (_now(), chat_id)
         )
     return recorded
+
+
+def _diagram_belongs(
+    conn: sqlite3.Connection, diagram_id: str, user_id: str, tenant_id: str | None
+) -> bool:
+    row = conn.execute(
+        "SELECT userId, tenantId FROM diagrams WHERE diagramId = ?", (diagram_id,)
+    ).fetchone()
+    if not row or row["userId"] != user_id:
+        return False
+    stored = row["tenantId"] if "tenantId" in row.keys() else DEFAULT_TENANT_ID
+    return (stored or DEFAULT_TENANT_ID) == _normalize_tenant_id(tenant_id)
+
+
+def _row_to_diagram(row: sqlite3.Row, *, include_body: bool) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "diagramId": row["diagramId"],
+        "title": row["title"],
+        "createdDate": row["createdDate"],
+        "updatedDate": row["updatedDate"],
+    }
+    if include_body:
+        item["instruction"] = row["instruction"] if "instruction" in row.keys() else ""
+        item["diagramType"] = row["diagramType"] if "diagramType" in row.keys() else ""
+        item["mermaidSource"] = row["mermaidSource"] or ""
+        item["drawioXml"] = row["drawioXml"] or ""
+    return item
+
+
+def list_diagrams(user_id: str, tenant_id: str | None = None) -> list[dict[str, Any]]:
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT diagramId, title, createdDate, updatedDate FROM diagrams"
+            " WHERE userId = ? AND tenantId = ?"
+            " ORDER BY updatedDate DESC",
+            (user_id, tenant_id),
+        ).fetchall()
+    return [_row_to_diagram(row, include_body=False) for row in rows]
+
+
+def find_diagram(
+    diagram_id: str, user_id: str, tenant_id: str | None = None
+) -> dict[str, Any] | None:
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        if not _diagram_belongs(conn, diagram_id, user_id, tenant_id):
+            return None
+        row = conn.execute(
+            "SELECT * FROM diagrams WHERE diagramId = ?", (diagram_id,)
+        ).fetchone()
+    return _row_to_diagram(row, include_body=True) if row else None
+
+
+def create_diagram(
+    user_id: str,
+    tenant_id: str | None,
+    title: str,
+    mermaid_source: str = "",
+    drawio_xml: str = "",
+    instruction: str = "",
+    diagram_type: str = "",
+) -> dict[str, Any]:
+    diagram_id = str(uuid.uuid4())
+    now = _now()
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT INTO diagrams"
+            " (diagramId, userId, tenantId, title, instruction, diagramType,"
+            "  mermaidSource, drawioXml, createdDate, updatedDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                diagram_id,
+                user_id,
+                tenant_id,
+                title,
+                instruction,
+                diagram_type,
+                mermaid_source,
+                drawio_xml,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM diagrams WHERE diagramId = ?", (diagram_id,)
+        ).fetchone()
+    return _row_to_diagram(row, include_body=True)
+
+
+def update_diagram(
+    diagram_id: str,
+    user_id: str,
+    tenant_id: str | None,
+    *,
+    title: str | None = None,
+    mermaid_source: str | None = None,
+    drawio_xml: str | None = None,
+    instruction: str | None = None,
+    diagram_type: str | None = None,
+) -> dict[str, Any] | None:
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        if not _diagram_belongs(conn, diagram_id, user_id, tenant_id):
+            return None
+        sets: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if mermaid_source is not None:
+            sets.append("mermaidSource = ?")
+            params.append(mermaid_source)
+        if drawio_xml is not None:
+            sets.append("drawioXml = ?")
+            params.append(drawio_xml)
+        if instruction is not None:
+            sets.append("instruction = ?")
+            params.append(instruction)
+        if diagram_type is not None:
+            sets.append("diagramType = ?")
+            params.append(diagram_type)
+        sets.append("updatedDate = ?")
+        params.append(_now())
+        params.append(diagram_id)
+        conn.execute(
+            f"UPDATE diagrams SET {', '.join(sets)} WHERE diagramId = ?", params
+        )
+        row = conn.execute(
+            "SELECT * FROM diagrams WHERE diagramId = ?", (diagram_id,)
+        ).fetchone()
+    return _row_to_diagram(row, include_body=True) if row else None
+
+
+def delete_diagram(
+    diagram_id: str, user_id: str, tenant_id: str | None = None
+) -> bool:
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        if not _diagram_belongs(conn, diagram_id, user_id, tenant_id):
+            return False
+        conn.execute("DELETE FROM diagrams WHERE diagramId = ?", (diagram_id,))
+    return True

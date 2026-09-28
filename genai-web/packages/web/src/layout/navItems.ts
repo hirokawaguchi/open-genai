@@ -4,17 +4,17 @@ import { useExAppCatalog } from '@/features/exapps/hooks/useExAppCatalog';
 import { isCatalogListed } from '@/features/exapps/utils/builtinExApp';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
+import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
+import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
   useDoccheckAvailable,
+  useNotebookAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
-  useNotebookAvailable,
-  useSshAvailable,
   useSengokuAvailable,
+  useSshAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
-import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
-import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -158,9 +158,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     const nameOf = (id: string, fallback: string) => metaById.get(id)?.name || fallback;
     const descOf = (id: string, fallback: string) => metaById.get(id)?.description || fallback;
     const listed = (id: string) =>
-      (ALWAYS_ON_OFFICIAL_APP_IDS.has(id) ||
-        !runtimeLoaded ||
-        (running?.includes(id) ?? false)) &&
+      (ALWAYS_ON_OFFICIAL_APP_IDS.has(id) || !runtimeLoaded || (running?.includes(id) ?? false)) &&
       allows(id) &&
       isCatalogListed(id, registryApps, catalogLoaded);
 
@@ -200,7 +198,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       items.push({
         label: nameOf('diagram', 'ダイアグラムを生成'),
         to: '/diagram',
-        description: descOf('diagram', 'テキストからフローチャートやマインドマップを作成'),
+        description: descOf('diagram', '文章から図の下書きを作り、draw.io で編集して画像にする'),
       });
     }
 
