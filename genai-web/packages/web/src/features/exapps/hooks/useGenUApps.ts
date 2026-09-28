@@ -5,7 +5,7 @@ import { isCatalogListed } from '../utils/builtinExApp';
 import { ExAppOptions } from '../types';
 
 export const useGenUApps = () => {
-  // 画像生成は SD サーバの稼働状況に応じて出し分ける（他アプリのヘルスチェックに準拠）
+  // 画像生成は /image/health（ローカル SD またはクラウド画像プロバイダ）で出し分ける
   const imageAvailable = useImageAvailable();
   const { apps, loaded } = useExAppCatalog();
   const metaById = new Map(

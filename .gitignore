@@ -1,4 +1,5 @@
 # --- 秘密情報・ローカル設定 ---
+/key.txt
 /.env
 /.env.prod
 /.env.*.local

@@ -2221,7 +2221,8 @@ async def save_image_result(
     user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     images_b64 = body.get("images") or []
-    meta = body.get("meta") or {}
+    meta = dict(body.get("meta") or {})
+    source_b64 = body.get("sourceImage") or ""
 
     stored_images: list[dict[str, str]] = []
     for b64 in images_b64:
@@ -2240,6 +2241,26 @@ async def save_image_result(
         stored_images.append(
             {"fileUrl": filesig.build_signed_url(PUBLIC_BASE_URL, key, "GET")}
         )
+
+    if source_b64:
+        raw_src = (
+            source_b64.split(",", 1)[1]
+            if isinstance(source_b64, str) and "," in source_b64
+            else source_b64
+        )
+        try:
+            src = base64.b64decode(raw_src)
+        except (ValueError, TypeError):
+            src = b""
+        if src:
+            src_key = f"image-gen/{chat_id}/{message_id}/{uuid.uuid4().hex}-source.png"
+            src_full = _safe_path(src_key)
+            os.makedirs(os.path.dirname(src_full), exist_ok=True)
+            with open(src_full, "wb") as f:
+                f.write(src)
+            meta["sourceImage"] = {
+                "fileUrl": filesig.build_signed_url(PUBLIC_BASE_URL, src_key, "GET")
+            }
 
     if not stored_images:
         return JSONResponse(status_code=400, content={"message": "images are empty"})
@@ -2269,8 +2290,8 @@ async def save_image_result(
 # ---------------------------------------------------------------------------
 @app.get("/image/health")
 async def image_health() -> JSONResponse:
-    """画像生成(SD)サーバの稼働状況。フロントの表示出し分けに使う。"""
-    ok = await image_gen.is_sd_up()
+    """画像生成が使えるか。ローカル SD の到達、またはクラウド画像プロバイダの登録。"""
+    ok = await image_gen.is_image_available()
     return JSONResponse(content={"ok": ok})
 
 
@@ -2280,7 +2301,12 @@ async def generate_image(request: Request) -> Response:
     body = await request.json()
     params = body.get("params") or {}
     try:
-        image_base64 = await image_gen.generate_image_base64(params)
+        image_base64 = await image_gen.generate_image_base64(params, body.get("model"))
+    except image_gen.ImageGenError as exc:
+        content: dict[str, str] = {"message": str(exc)}
+        if exc.code:
+            content["code"] = exc.code
+        return JSONResponse(status_code=exc.status, content=content)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"message": str(exc)})
     except RuntimeError as exc:
@@ -3156,7 +3182,7 @@ async def _running_official_app_ids() -> list[str]:
     """起動中の公式アプリ。棟の features は見ない。"""
     services = [(app_id, ep) for app_id, ep in _official_service_endpoints() if ep]
     image_ok, *service_oks = await asyncio.gather(
-        image_gen.is_sd_up(),
+        image_gen.is_image_available(),
         *[_is_app_up(ep) for _, ep in services],
         return_exceptions=True,
     )
@@ -3228,7 +3254,7 @@ async def list_exapps(request: Request) -> list[Any]:
         + core_search
         + builtin_apps
     )
-    if not await image_gen.is_sd_up():
+    if not await image_gen.is_image_available():
         visible = [a for a in visible if a.get("exAppId") != "image"]
     return [
         a
