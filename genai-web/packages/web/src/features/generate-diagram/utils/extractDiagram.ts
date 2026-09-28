@@ -2,7 +2,10 @@ const MERMAID_DIRECTIVE =
   /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|block-beta|block|C4Context|sankey-beta|xychart-beta|architecture-beta|packet-beta)/i;
 
 const stripMarkup = (text: string): string =>
-  text.replace(/<\/?description>/gi, '').replace(/<\/?output>/gi, '').trim();
+  text
+    .replace(/<\/?description>/gi, '')
+    .replace(/<\/?output>/gi, '')
+    .trim();
 
 const pickMermaidBody = (text: string): string => {
   const cleaned = stripMarkup(text);
@@ -49,6 +52,14 @@ export const extractDiagramSentence = (content: string): string => {
 
   return content;
 };
+
+/** draw.io へ渡す前に、生成されがちな記法の揺れを整える。 */
+export const normalizeDiagramCode = (diagramCode: string): string =>
+  diagramCode
+    .replace(/(^|\s)classDef(?!\s)/gm, '$1classDef ')
+    .replace(/・/g, '/')
+    .replace(/：/g, ':')
+    .replace(/subgraph\s+(.*)/gm, (_, title: string) => `subgraph ${title.replace(/,/g, '')}`);
 
 // mermaid コードブロック部分のみを抽出
 export const extractDiagramCode = (content: string): string => {

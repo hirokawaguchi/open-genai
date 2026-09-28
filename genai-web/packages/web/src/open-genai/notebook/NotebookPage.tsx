@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { PiBookOpenBold, PiFilePlus, PiPuzzlePieceBold } from 'react-icons/pi';
-import { Button } from '@/components/ui/dads/Button';
-import { LoadingButton } from '@/components/ui/LoadingButton';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
-import { Input } from '@/components/ui/dads/Input';
-import { Label } from '@/components/ui/dads/Label';
-import { Select } from '@/components/ui/dads/Select';
-import { Textarea } from '@/components/ui/dads/Textarea';
-import { Switch } from '@/components/ui/Switch';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -16,6 +8,14 @@ import {
   CustomDialogHeader,
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
+import { Button } from '@/components/ui/dads/Button';
+import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
+import { Input } from '@/components/ui/dads/Input';
+import { Label } from '@/components/ui/dads/Label';
+import { Select } from '@/components/ui/dads/Select';
+import { Textarea } from '@/components/ui/dads/Textarea';
+import { LoadingButton } from '@/components/ui/LoadingButton';
+import { Switch } from '@/components/ui/Switch';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
@@ -24,6 +24,11 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
 import { useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import { SourceList } from './Citations';
+import { formatNotebookMarkdown, stripCitationMarks, usedCitations } from './formatMarkdown';
+import { NotebookChat } from './NotebookChat';
+import { NotebookManageDialog } from './NotebookManageDialog';
+import type { NotebookBriefing, NotebookMessage } from './types';
 import {
   downloadHearingSheetTemplate,
   downloadHearingSheetWorkbook,
@@ -35,11 +40,6 @@ import {
   useNotebookSessions,
   useNotebookSkills,
 } from './useNotebook';
-import { SourceList } from './Citations';
-import { NotebookChat } from './NotebookChat';
-import { NotebookManageDialog } from './NotebookManageDialog';
-import { formatNotebookMarkdown, stripCitationMarks, usedCitations } from './formatMarkdown';
-import type { NotebookBriefing, NotebookMessage } from './types';
 
 const PANE_TABS = [
   { id: 'list' as const, label: 'ノート一覧' },
@@ -136,9 +136,7 @@ const SourceCard = ({
           <DisclosureSummary>詳細</DisclosureSummary>
           <div className='mt-2 space-y-1'>
             {error && <p className='text-error-1'>{error}</p>}
-            {!!nodeCount && !error && (
-              <p className='text-solid-gray-600'>{nodeCount}節</p>
-            )}
+            {!!nodeCount && !error && <p className='text-solid-gray-600'>{nodeCount}節</p>}
             {!error && <SourceBriefing briefing={briefing} />}
           </div>
         </Disclosure>
@@ -152,9 +150,7 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
     className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170'
     role='status'
   >
-    <p className='text-std-16B-150 text-solid-gray-900'>
-      ノートブックに接続できません
-    </p>
+    <p className='text-std-16B-150 text-solid-gray-900'>ノートブックに接続できません</p>
     <p className='mt-2 text-solid-gray-700'>
       {message || '`docker compose up -d` でサービスを起動してください。'}
     </p>
@@ -165,10 +161,11 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
 );
 
 export const NotebookPage = () => {
-  const { documentTitle, howToUse } = useRegisteredAppMeta(
+  const { documentTitle, howToUse, title, description } = useRegisteredAppMeta(
     COMMON_EXAPPS_TEAM_ID,
     NOTEBOOK_EXAPP_ID,
     'ノートブック',
+    '参考資料を集めて調べ、項目として整理します。Markdown エディタに読み込ませるヒアリングシートも作成できます。',
   );
   const { config, isLoading: configLoading, unavailable } = useNotebookConfig();
   const { sessions, mutate: mutateSessions } = useNotebookSessions();
@@ -212,9 +209,9 @@ export const NotebookPage = () => {
     }
   }, [knowledgeScope, scopes]);
 
-  const accept = (config?.accept ?? ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md', '.csv', '.html', '.json']).join(
-    ',',
-  );
+  const accept = (
+    config?.accept ?? ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md', '.csv', '.html', '.json']
+  ).join(',');
   const llmEnabled = config?.llm?.enabled !== false;
 
   const refresh = async (next?: typeof detail) => {
@@ -296,9 +293,7 @@ export const NotebookPage = () => {
       let latest = detail;
       for (let i = 0; i < list.length; i += 1) {
         const file = list[i];
-        setAddingFileLabel(
-          list.length > 1 ? `${file.name}（${i + 1}/${list.length}）` : file.name,
-        );
+        setAddingFileLabel(list.length > 1 ? `${file.name}（${i + 1}/${list.length}）` : file.name);
         const content = await fileToBase64(file);
         latest = (await actions.addFile(sessionId, file.name, content)) ?? latest;
       }
@@ -495,8 +490,7 @@ export const NotebookPage = () => {
     }
   };
 
-  const sourceCount =
-    (detail?.files.length ?? 0) + (detail?.knowledge_refs?.length ?? 0);
+  const sourceCount = (detail?.files.length ?? 0) + (detail?.knowledge_refs?.length ?? 0);
   const connectedMcps = (detail?.mcps ?? []).filter((m) => m.connected);
   const enabledMcpCount = connectedMcps.filter((m) => m.enabled).length;
 
@@ -505,14 +499,31 @@ export const NotebookPage = () => {
   return (
     <LayoutBody>
       <PageTitle title={documentTitle} />
-      <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'>
-        <ManagedAppHeader
-          teamId={COMMON_EXAPPS_TEAM_ID}
-          exAppId={NOTEBOOK_EXAPP_ID}
-          fallbackTitle='ノートブック'
-          fallbackDescription='参考資料を集めて調べ、項目として整理します。Markdown エディタに読み込ませるヒアリングシートも作成できます。'
-          hideHowTo={true}
-        />
+      <div
+        className={
+          pane === 'list'
+            ? 'mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'
+            : 'mx-auto flex h-[calc(100dvh-var(--header-height))] w-full max-w-(--page-width) flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
+        }
+      >
+        {pane === 'list' ? (
+          <ManagedAppHeader
+            teamId={COMMON_EXAPPS_TEAM_ID}
+            exAppId={NOTEBOOK_EXAPP_ID}
+            fallbackTitle='ノートブック'
+            fallbackDescription='参考資料を集めて調べ、項目として整理します。Markdown エディタに読み込ませるヒアリングシートも作成できます。'
+            hideHowTo={true}
+          />
+        ) : (
+          <div className='flex min-w-0 items-baseline gap-3'>
+            <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{title}</h1>
+            {description && (
+              <p className='truncate text-dns-14N-130 text-solid-gray-600' title={description}>
+                {description}
+              </p>
+            )}
+          </div>
+        )}
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <UnavailableNotice message={config?.error} />
@@ -592,7 +603,12 @@ export const NotebookPage = () => {
                         作成
                       </span>
                     </Button>
-                    <Button type='button' variant='outline' size='sm' onClick={() => void onDownloadTemplate()}>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => void onDownloadTemplate()}
+                    >
                       空の雛形
                     </Button>
                   </div>
@@ -630,13 +646,20 @@ export const NotebookPage = () => {
                                 onBlur={() => void onSaveListTitle(s.id)}
                               />
                             </td>
-                            <td className='px-3 py-2 text-solid-gray-600'>{formatWhen(s.updated_at)}</td>
+                            <td className='px-3 py-2 text-solid-gray-600'>
+                              {formatWhen(s.updated_at)}
+                            </td>
                             <td className='px-3 py-2 text-solid-gray-600'>
                               {s.filled_count ?? 0}/{s.item_count ?? 0}
                             </td>
                             <td className='px-3 py-2 text-right'>
                               <div className='inline-flex gap-2'>
-                                <Button type='button' variant='solid-fill' size='xs' onClick={() => onSelect(s.id)}>
+                                <Button
+                                  type='button'
+                                  variant='solid-fill'
+                                  size='xs'
+                                  onClick={() => onSelect(s.id)}
+                                >
                                   開く
                                 </Button>
                                 <Button
@@ -665,13 +688,15 @@ export const NotebookPage = () => {
             )}
 
             {pane === 'sources' && detail && (
-              <section className='flex flex-col gap-3'>
-                <h2 className='text-std-18B-160 text-solid-gray-900'>参考資料（{sourceCount}件）</h2>
+              <section className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
+                <h2 className='text-std-18B-160 text-solid-gray-900'>
+                  参考資料（{sourceCount}件）
+                </h2>
                 <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-3'>
                   <p className='text-std-16B-150 text-solid-gray-900'>参考資料を追加</p>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    ノートに取り込む資料です。項目の根拠になります。スキャン PDF は OCR で読みます。PDF / Word / Excel / PowerPoint /
-                    テキストなど（上限{' '}
+                    ノートに取り込む資料です。項目の根拠になります。スキャン PDF は OCR
+                    で読みます。PDF / Word / Excel / PowerPoint / テキストなど（上限{' '}
                     {Math.round((config?.max_upload_bytes ?? 20 * 1024 * 1024) / 1024 / 1024)}MB）
                   </p>
                   <input
@@ -824,10 +849,15 @@ export const NotebookPage = () => {
             )}
 
             {pane === 'items' && detail && (
-              <div className='flex flex-col gap-3'>
+              <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
                 <div className='flex items-center justify-between gap-2'>
                   <h2 className='text-std-18B-160'>項目</h2>
-                  <Button type='button' variant='outline' size='sm' onClick={() => void onAddItem()}>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void onAddItem()}
+                  >
                     項目を追加
                   </Button>
                 </div>
@@ -947,7 +977,8 @@ export const NotebookPage = () => {
                 <div className='flex flex-col gap-2'>
                   <Label htmlFor='notebook-instruction'>生成指示</Label>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    ヒアリングシート内に、Markdown エディタで処理させる指示を埋め込むことができます。
+                    ヒアリングシート内に、Markdown
+                    エディタで処理させる指示を埋め込むことができます。
                   </p>
                   <Textarea
                     id='notebook-instruction'
@@ -959,10 +990,20 @@ export const NotebookPage = () => {
                 </div>
 
                 <div className='flex flex-wrap gap-2'>
-                  <Button type='button' variant='solid-fill' size='md' onClick={() => void onDownloadFilled()}>
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    onClick={() => void onDownloadFilled()}
+                  >
                     記入済みシートをダウンロード
                   </Button>
-                  <Button type='button' variant='outline' size='md' onClick={() => void onDeleteSession()}>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='md'
+                    onClick={() => void onDeleteSession()}
+                  >
                     このノートを削除
                   </Button>
                 </div>
@@ -1044,8 +1085,13 @@ export const NotebookPage = () => {
               <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
                 <p>・「ノート一覧」でノートを作り、開きます。</p>
                 <p>・「参考資料」にファイルやナレッジを取り込みます。項目の根拠になります。</p>
-                <p>・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。</p>
-                <p>・共有ナレッジ MCP は共通チームのナレッジをその場で検索します（取り込みではありません）。</p>
+                <p>
+                  ・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。
+                </p>
+                <p>
+                  ・共有ナレッジ MCP
+                  は共通チームのナレッジをその場で検索します（取り込みではありません）。
+                </p>
                 <p>・「対話」で質問や整理をします。調べた手順は回答の上に出ます。</p>
                 <p>・下書きを「項目に追加」すると、シートの正本になります。</p>
                 <p>・「項目」で設問を直し、記入済みシートを Markdown エディタへ渡せます。</p>
