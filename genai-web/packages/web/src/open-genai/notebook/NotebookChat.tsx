@@ -27,13 +27,7 @@ type Props = {
   onApplyMessage: (message: NotebookMessage) => void;
 };
 
-const AgentSteps = ({
-  traces,
-  running,
-}: {
-  traces?: NotebookToolTrace[];
-  running?: boolean;
-}) => {
+const AgentSteps = ({ traces, running }: { traces?: NotebookToolTrace[]; running?: boolean }) => {
   if (running) {
     return (
       <div className='mb-2 rounded-8 border border-blue-200 bg-blue-50 px-3 py-2 text-dns-14N-130 text-blue-900'>
@@ -110,17 +104,14 @@ export const NotebookChat = ({
 
   return (
     <div className='flex min-h-0 flex-1 flex-col'>
-      <div className='flex min-h-[40vh] flex-1 flex-col gap-3 py-3'>
+      <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3'>
         {empty && (
           <p className='text-std-16N-170 text-solid-gray-536'>
             メッセージを入力して会話を始めましょう。調べた手順は回答の上に出ます。
           </p>
         )}
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
-          >
+          <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
             <div
               className={`max-w-[85%] rounded-8 px-4 py-3 text-dns-14N-130 ${
                 m.role === 'user'
