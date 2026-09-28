@@ -1975,6 +1975,211 @@ async def update_title(chat_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content={"chat": chat})
 
 
+# ---------------------------------------------------------------------------
+# 保存した図（draw.io）。チャット履歴とは別に、利用者と棟で分ける。
+# ---------------------------------------------------------------------------
+_DIAGRAM_TITLE_MAX = 200
+_DIAGRAM_MERMAID_MAX = 200_000
+_DIAGRAM_XML_MAX = 2_000_000
+_DIAGRAM_INSTRUCTION_MAX = 200_000
+_DIAGRAM_TYPES = frozenset(
+    {
+        "AI",
+        "flowchart",
+        "piechart",
+        "mindmap",
+        "quadrantchart",
+        "sequencediagram",
+        "timeline",
+        "gitgraph",
+        "erdiagram",
+        "classdiagram",
+        "statediagram",
+        "xychart",
+        "blockdiagram",
+        "architecture",
+        "ganttchart",
+        "userjourney",
+        "sankeychart",
+        "requirementdiagram",
+        "networkpacket",
+    }
+)
+
+
+def _diagram_text(value: Any, *, limit: int, field: str) -> str | JSONResponse:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return JSONResponse(
+            status_code=400, content={"message": f"{field} は文字列で指定してください"}
+        )
+    if len(value) > limit:
+        return JSONResponse(
+            status_code=400, content={"message": f"{field} が長すぎます"}
+        )
+    return value
+
+
+def _diagram_title(value: Any, *, default: str = "無題の図") -> str | JSONResponse:
+    text = _diagram_text(
+        value if value is not None else "", limit=_DIAGRAM_TITLE_MAX, field="title"
+    )
+    if isinstance(text, JSONResponse):
+        return text
+    stripped = text.strip()
+    return stripped or default
+
+
+def _diagram_type(value: Any) -> str | JSONResponse:
+    text = _diagram_text(value, limit=40, field="diagramType")
+    if isinstance(text, JSONResponse):
+        return text
+    if text and text not in _DIAGRAM_TYPES:
+        return JSONResponse(
+            status_code=400, content={"message": "図の種類が正しくありません"}
+        )
+    return text
+
+
+@app.get("/diagrams", response_model=None)
+async def list_saved_diagrams(request: Request) -> dict[str, Any] | JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    return {"diagrams": storage.list_diagrams(user_id, tenant_id)}
+
+
+@app.post("/diagrams")
+async def create_saved_diagram(request: Request) -> JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    body = await request.json()
+    title = _diagram_title(body.get("title"))
+    if isinstance(title, JSONResponse):
+        return title
+    mermaid_source = _diagram_text(
+        body.get("mermaidSource"), limit=_DIAGRAM_MERMAID_MAX, field="mermaidSource"
+    )
+    if isinstance(mermaid_source, JSONResponse):
+        return mermaid_source
+    drawio_xml = _diagram_text(
+        body.get("drawioXml"), limit=_DIAGRAM_XML_MAX, field="drawioXml"
+    )
+    if isinstance(drawio_xml, JSONResponse):
+        return drawio_xml
+    instruction = _diagram_text(
+        body.get("instruction"), limit=_DIAGRAM_INSTRUCTION_MAX, field="instruction"
+    )
+    if isinstance(instruction, JSONResponse):
+        return instruction
+    diagram_type = _diagram_type(body.get("diagramType"))
+    if isinstance(diagram_type, JSONResponse):
+        return diagram_type
+    diagram = storage.create_diagram(
+        user_id,
+        tenant_id,
+        title,
+        mermaid_source,
+        drawio_xml,
+        instruction,
+        diagram_type,
+    )
+    return JSONResponse(status_code=201, content={"diagram": diagram})
+
+
+@app.get("/diagrams/{diagram_id}")
+async def find_saved_diagram(diagram_id: str, request: Request) -> JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    diagram = storage.find_diagram(diagram_id, user_id, tenant_id)
+    if not diagram:
+        return JSONResponse(status_code=404, content={"message": "diagram not found"})
+    return JSONResponse(content={"diagram": diagram})
+
+
+@app.put("/diagrams/{diagram_id}")
+async def update_saved_diagram(diagram_id: str, request: Request) -> JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    body = await request.json()
+    title: str | None = None
+    mermaid_source: str | None = None
+    drawio_xml: str | None = None
+    instruction: str | None = None
+    diagram_type: str | None = None
+    if "title" in body:
+        parsed = _diagram_title(body.get("title"), default="")
+        if isinstance(parsed, JSONResponse):
+            return parsed
+        if not parsed:
+            return JSONResponse(
+                status_code=400, content={"message": "title を空にはできません"}
+            )
+        title = parsed
+    if "mermaidSource" in body:
+        parsed_mermaid = _diagram_text(
+            body.get("mermaidSource"), limit=_DIAGRAM_MERMAID_MAX, field="mermaidSource"
+        )
+        if isinstance(parsed_mermaid, JSONResponse):
+            return parsed_mermaid
+        mermaid_source = parsed_mermaid
+    if "drawioXml" in body:
+        parsed_xml = _diagram_text(
+            body.get("drawioXml"), limit=_DIAGRAM_XML_MAX, field="drawioXml"
+        )
+        if isinstance(parsed_xml, JSONResponse):
+            return parsed_xml
+        drawio_xml = parsed_xml
+    if "instruction" in body:
+        parsed_instruction = _diagram_text(
+            body.get("instruction"),
+            limit=_DIAGRAM_INSTRUCTION_MAX,
+            field="instruction",
+        )
+        if isinstance(parsed_instruction, JSONResponse):
+            return parsed_instruction
+        instruction = parsed_instruction
+    if "diagramType" in body:
+        parsed_type = _diagram_type(body.get("diagramType"))
+        if isinstance(parsed_type, JSONResponse):
+            return parsed_type
+        diagram_type = parsed_type
+    if (
+        title is None
+        and mermaid_source is None
+        and drawio_xml is None
+        and instruction is None
+        and diagram_type is None
+    ):
+        return JSONResponse(
+            status_code=400, content={"message": "更新する項目がありません"}
+        )
+    diagram = storage.update_diagram(
+        diagram_id,
+        user_id,
+        tenant_id,
+        title=title,
+        mermaid_source=mermaid_source,
+        drawio_xml=drawio_xml,
+        instruction=instruction,
+        diagram_type=diagram_type,
+    )
+    if not diagram:
+        return JSONResponse(status_code=404, content={"message": "diagram not found"})
+    return JSONResponse(content={"diagram": diagram})
+
+
+@app.delete("/diagrams/{diagram_id}")
+async def delete_saved_diagram(diagram_id: str, request: Request) -> JSONResponse:
+    user_id, tenant_id, _ = _request_scope(request)
+    ok = storage.delete_diagram(diagram_id, user_id, tenant_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"message": "diagram not found"})
+    return JSONResponse(content={})
+
+
 @app.get("/chats/{chat_id}/messages")
 async def list_messages(chat_id: str, request: Request) -> dict[str, Any]:
     user_id, tenant_id, _ = _request_scope(request)

@@ -2,6 +2,7 @@ import type { RouteObject } from 'react-router';
 import { Navigate } from 'react-router';
 import { ChatPage } from '@/features/chat/ChatPage';
 import { ChatHistoryPage } from '@/features/chat-history/ChatHistoryPage';
+import { DiagramWorkspacePage } from '@/features/diagram-workspace/DiagramWorkspacePage';
 import { ExAppPage } from '@/features/exapp/ExAppPage';
 import { ExAppsPage } from '@/features/exapps/ExAppsPage';
 import { GenerateDiagramPage } from '@/features/generate-diagram/GenerateDiagramPage';
@@ -31,6 +32,7 @@ import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
 import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
+import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
 import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
@@ -42,13 +44,12 @@ import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProcedu
 import { PatchformWizardPage } from '@/open-genai/patchform/PatchformWizardPage';
 import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
 import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
-import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
-import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
-import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
-import { SshPage } from '@/open-genai/ssh/SshPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
+import { SettingsPage } from '@/open-genai/settings/SettingsPage';
+import { SshPage } from '@/open-genai/ssh/SshPage';
+import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { Layout } from './layout/Layout';
@@ -77,7 +78,7 @@ export const createRoutes = (): RouteObject[] => {
       : null,
     isUseCaseEnabled('diagram')
       ? [
-          { path: 'diagram', element: <GenerateDiagramPage /> },
+          { path: 'diagram', element: <DiagramWorkspacePage /> },
           { path: 'diagram/:chatId', element: <GenerateDiagramPage /> },
         ]
       : null,
