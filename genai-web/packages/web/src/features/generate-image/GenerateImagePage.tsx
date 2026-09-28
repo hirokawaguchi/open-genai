@@ -1,35 +1,40 @@
-import { useCallback, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { mutate } from 'swr';
 import { PageTitle } from '@/components/PageTitle';
+import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
-import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
-import { RightPanelCloseIcon } from '@/components/ui/icons/RightPanelClose';
-import { RightPanelOpenIcon } from '@/components/ui/icons/RightPanelOpen';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
-import { useGenerateImageHandler } from '@/features/generate-image/hooks/useGenerateImageHandler';
-import { usePersistImageResult } from '@/features/generate-image/hooks/usePersistImageResult';
-import { ensureImagePersistTarget } from '@/features/generate-image/utils/ensureImagePersistTarget';
+import { useGenerateImage } from '@/features/generate-image/hooks/useGenerateImage';
 import { useReset } from '@/features/generate-image/hooks/useReset';
-import { useRestoreImageFromHistory } from '@/features/generate-image/hooks/useRestoreImageFromHistory';
 import { useSetDefaultValues } from '@/features/generate-image/hooks/useSetDefaultValues';
 import { useGenerateImageStore } from '@/features/generate-image/stores/useGenerateImageStore';
+import { formatLocalSdUnavailableMessage } from '@/features/generate-image/utils/formatLocalSdUnavailable';
 import { useChat } from '@/hooks/useChat';
-import { useSyncUsecaseChatUrl } from '@/hooks/useSyncUsecaseChatUrl';
+import { useSelectedModel } from '@/hooks/useSelectedModel';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
-import { useScreen } from '@/hooks/useScreen';
-import { MODELS } from '@/models';
-import { GeneratedImages } from './components/GeneratedImages';
-import { GenerateImageAssistant } from './components/GenerateImageAssistant';
-import { GenerateImageInput } from './components/GenerateImageInput';
-import { GenerateImageStickyHeader } from './components/GenerateImageStickyHeader';
-import { ImageGeneratorForm } from './components/ImageGeneratorForm';
-import { SketchMaskDialogs } from './components/SketchMaskDialogs';
-import { Canvas } from './types';
+import { createChat, createMessages, predict, saveImageResult, updateTitle } from '@/lib/chatApi';
+import { ApiError } from '@/lib/fetcher';
+import { findModelByModelId, MODELS } from '@/models';
+import { decomposeId } from '@/utils/decomposeId';
+import { newId } from '@/utils/uuid';
+import { ImageComposer } from './components/ImageComposer';
+import { ImageThread } from './components/ImageThread';
+import { buildDirectImageAssistantContent } from './utils/ensureImagePersistTarget';
+import { buildImageTurns } from './utils/imageThread';
+import { fileUrlToBase64, findLatestImageResultMessage } from './utils/imageResultExtraData';
+
+const description = 'プロンプトから資料用の挿絵やイメージ案を作成';
+
+const readPixels = (text: string) => {
+  const match = text.match(/(\d+)\s*x\s*(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  return { width: Number(match[1]), height: Number(match[2]) };
+};
 
 export const GenerateImagePage = () => {
   const { title: appName, documentTitle } = useRegisteredAppMeta(
@@ -37,363 +42,311 @@ export const GenerateImagePage = () => {
     'image',
     '画像を生成',
   );
-  const {
-    prompt,
-    setPrompt,
-    negativePrompt,
-    setNegativePrompt,
-    resolution,
-    stylePreset,
-    setStylePreset,
-    initImage,
-    setInitImage,
-    maskImage,
-    setMaskImage,
-    chatContent,
-    setChatContent,
-    setImageGenModelId,
-    clear,
-  } = useGenerateImageStore();
-
   const { usecase, chatId } = useUsecasePath();
   const navigate = useNavigate();
-  const {
-    loading: loadingChat,
-    loadingMessages,
-    postChat,
-    clear: clearChat,
-    chatTitle,
-    sessionChatId,
-    rawMessages,
-  } = useChat(usecase, chatId);
-  useSyncUsecaseChatUrl(usecase, chatId, sessionChatId);
-  const storageChatId = chatId ?? sessionChatId;
-  const { persistForMessage } = usePersistImageResult(storageChatId);
-  useRestoreImageFromHistory(chatId, rawMessages, loadingMessages);
-  const { scrollToBottom } = useScreen({ useWindowScroll: true });
-
-  const [generating, setGenerating] = useState(false);
-  const [isFormGenerating, setIsFormGenerating] = useState(false);
-
-  const { liveStatusMessage } = useLiveStatusMessage({
-    active: true,
-    loading: isFormGenerating,
-    messages: {
-      loading: 'AIが画像を生成しています...',
-      loadingContinue: 'AIが引き続き画像を生成しています...',
-      completed: '画像の生成が完了しました',
-    },
-  });
-  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
-  const [isOpenSketch, setIsOpenSketch] = useState(false);
-  const [isOpenMask, setIsOpenMask] = useState(false);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-
+  const { rawMessages, loadingMessages, clear: clearChat, chatTitle } = useChat(usecase, chatId);
+  const { generateImage } = useGenerateImage();
+  const { selectedModelId } = useSelectedModel();
   const { imageGenModelIds } = MODELS;
-  const { handleGenerateImage, onClickRandomSeed } = useGenerateImageHandler(setGenerating);
-
-  const getLastAssistantMessageId = useCallback(() => {
-    for (let i = rawMessages.length - 1; i >= 0; i--) {
-      const m = rawMessages[i];
-      if (m.role === 'assistant' && m.messageId) {
-        return m.messageId;
-      }
-    }
-    return undefined;
-  }, [rawMessages]);
-
-  const generateAndPersist = useCallback(
-    async (p: string, np: string, sp?: string) => {
-      await handleGenerateImage(p, np, sp);
-      const target = await ensureImagePersistTarget({
-        usecase,
-        chatId,
-        sessionChatId,
-        lastAssistantMessageId: getLastAssistantMessageId(),
-        prompt: p,
-        negativePrompt: np,
-      });
-      if (!target) {
-        return;
-      }
-      if (!chatId) {
-        navigate(`${usecase}/${target.chatId}`, { replace: true });
-      }
-      try {
-        await persistForMessage(target.messageId, target.chatId);
-      } catch (e) {
-        console.error('画像結果の保存に失敗しました', e);
-      }
-    },
-    [
-      handleGenerateImage,
-      getLastAssistantMessageId,
-      persistForMessage,
-      usecase,
-      chatId,
-      sessionChatId,
-      navigate,
-    ],
-  );
-
-  const [width, height] = resolution.label.split('x').map((v) => Number(v));
-
   useReset();
-
   useSetDefaultValues();
 
-  const onChangeInitImageBase64 = (s: Canvas) => {
-    setInitImage(s);
-    setIsOpenSketch(false);
-  };
+  const [draft, setDraft] = useState('');
+  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [pending, setPending] = useState<{
+    prompt: string;
+    sourceUrl?: string;
+    resultUrl?: string;
+    error?: string;
+  } | null>(null);
+  const sentCountRef = useRef(0);
+  const threadRef = useRef<HTMLDivElement>(null);
 
-  const onChangeMaskImageBase64 = (s: Canvas) => {
-    setMaskImage(s);
-    setIsOpenMask(false);
-  };
+  const {
+    imageGenModelId,
+    resolution,
+    stylePreset,
+    step,
+    cfgScale,
+    imageStrength,
+    clear,
+    setImageGenModelId,
+  } = useGenerateImageStore();
 
-  const clearAll = () => {
-    setSelectedImageIndex(0);
-    clear();
-    clearChat();
-    if (imageGenModelIds.length > 0) {
-      setImageGenModelId(imageGenModelIds[0]);
+  useEffect(() => {
+    const node = threadRef.current;
+    const latest = node?.querySelector<HTMLElement>('[data-latest="true"]');
+    if (!node || !latest) {
+      return;
     }
-  };
+    const peek = 120;
+    node.scrollTop = Math.max(0, latest.offsetTop - peek);
+  }, [rawMessages, pending, loadingMessages]);
 
-  const generateImageWithAnnounce = async (prompt: string, negativePrompt: string) => {
-    setIsFormGenerating(true);
-    try {
-      await generateAndPersist(prompt, negativePrompt);
-    } finally {
-      setIsFormGenerating(false);
+  useEffect(() => {
+    if (!pending || pending.error || busy) {
+      return;
     }
-  };
-
-  const onSendChat = () => {
-    postChat(chatContent);
-    setChatContent('');
-    scrollToBottom();
-  };
+    const userCount = rawMessages.filter((message) => message.role === 'user').length;
+    const turns = buildImageTurns(rawMessages);
+    const last = turns[turns.length - 1];
+    if (userCount > sentCountRef.current && last?.images.length) {
+      setPending(null);
+    }
+  }, [rawMessages, pending, busy]);
 
   const onNewSession = () => {
-    clearAll();
+    const nextImageModel = imageGenModelId || imageGenModelIds[0] || '';
+    clear();
+    if (nextImageModel) {
+      setImageGenModelId(nextImageModel);
+    }
+    clearChat();
+    setDraft('');
+    setAttachmentUrl('');
+    setPending(null);
+    setRefineError('');
     navigate('/image', { state: { shouldReset: true } });
   };
 
-  const breadcrumbItems = [
-    { label: 'ホーム', to: '/' },
-    { label: 'AIアプリ', to: '/apps' },
-    { label: appName, to: chatId ? undefined : '/image' },
-    ...(chatTitle ? [{ label: chatTitle }] : []),
-  ];
+  const onRefine = async () => {
+    const text = draft.trim();
+    const model = findModelByModelId(selectedModelId);
+    if (!text || !model) {
+      return;
+    }
+    setRefining(true);
+    setRefineError('');
+    try {
+      const rewritten = await predict({
+        id: newId(),
+        model,
+        messages: [
+          {
+            role: 'user',
+            content:
+              '次の指示を、画像生成向けの具体的なプロンプトに書き直してください。説明や前置きは書かず、プロンプト文だけを返してください。\n\n' +
+              text,
+          },
+        ],
+      });
+      setDraft(rewritten.trim());
+    } catch {
+      setRefineError('プロンプトを整えられませんでした。');
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const onSend = async () => {
+    const prompt = draft.trim();
+    if (!prompt || busy) {
+      return;
+    }
+    const size =
+      readPixels(resolution.value) ??
+      readPixels(resolution.label) ?? { width: 1024, height: 1024 };
+    sentCountRef.current = rawMessages.filter((message) => message.role === 'user').length;
+    setBusy(true);
+    setRefineError('');
+    let source = attachmentUrl;
+    setPending({ prompt, sourceUrl: source || undefined });
+    try {
+      if (!source) {
+        const previous = findLatestImageResultMessage(rawMessages);
+        const previousImages = previous?.result.images ?? [];
+        const previousUrl = previousImages[previousImages.length - 1]?.fileUrl;
+        if (previousUrl) {
+          setPending({ prompt, sourceUrl: previousUrl });
+          try {
+            const previousBase64 = await fileUrlToBase64(previousUrl);
+            source = `data:image/png;base64,${previousBase64}`;
+          } catch {
+            setPending({
+              prompt,
+              sourceUrl: previousUrl,
+              error: '前の画像を読み込めなかったので、続きとして加工できませんでした。',
+            });
+            return;
+          }
+        }
+      }
+      const image = await generateImage(
+        {
+          textPrompt: [{ text: prompt, weight: 1 }],
+          width: size.width,
+          height: size.height,
+          step,
+          cfgScale,
+          seed: -1,
+          stylePreset: stylePreset || undefined,
+          initImage: source || undefined,
+          imageStrength,
+        },
+        MODELS.imageGenModels.find((model) => model.modelId === imageGenModelId),
+      );
+
+      let targetId = chatId;
+      let created = false;
+      if (!targetId) {
+        const { chat } = await createChat({ usecase });
+        targetId = decomposeId(chat.chatId) ?? chat.chatId.replace(/^chat#/, '');
+        created = true;
+      }
+      const assistantId = newId();
+      await createMessages(targetId, {
+        messages: [
+          {
+            messageId: newId(),
+            role: 'user',
+            content: prompt,
+            usecase,
+          },
+          {
+            messageId: assistantId,
+            role: 'assistant',
+            content: buildDirectImageAssistantContent(prompt, ''),
+            usecase,
+          },
+        ],
+      });
+      await saveImageResult(targetId, assistantId, {
+        images: [image],
+        sourceImage: source || undefined,
+        meta: {
+          prompt,
+          negativePrompt: '',
+          stylePreset,
+          seeds: [],
+          step,
+          cfgScale,
+          imageSample: 1,
+        },
+      });
+      if (created) {
+        await updateTitle(targetId, prompt.slice(0, 40));
+      }
+      await mutate(`chats/${targetId}/messages`);
+      await mutate((key) => typeof key === 'string' && key.startsWith('chats'), undefined, {
+        revalidate: true,
+      });
+      setDraft('');
+      setAttachmentUrl('');
+      setPending({
+        prompt,
+        sourceUrl: source || undefined,
+        resultUrl: `data:image/png;base64,${image}`,
+      });
+      if (created) {
+        navigate(`${usecase}/${targetId}`, { replace: true });
+      }
+    } catch (error) {
+      const data = error instanceof ApiError ? (error.data as { message?: string; code?: string }) : undefined;
+      const message =
+        data?.code === 'local_sd_unavailable'
+          ? formatLocalSdUnavailableMessage(imageGenModelIds)
+          : (data?.message ?? '画像を生成できませんでした。');
+      setPending({ prompt, sourceUrl: source || undefined, error: message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
       <PageTitle title={documentTitle} />
-      <div className='mx-auto max-w-(--page-width) min-h-[calc(100dvh-var(--header-height))] pt-6 px-6 lg:px-8 lg:pt-8'>
-        <div className='mb-6'>
-          <ManagedAppHeader
-            teamId={COMMON_EXAPPS_TEAM_ID}
-            exAppId='image'
-            fallbackTitle='画像を生成'
-            fallbackDescription='プロンプトから資料用の挿絵やイメージ案を作成'
-            breadcrumbItems={breadcrumbItems}
-            fallbackHowTo={
-              <div className='prose prose-sm mt-3 max-w-full'>
-                <h2>このアプリでできること</h2>
-                <p>
-                  プロンプト（文章）から画像を生成します。資料の挿絵やイメージ案の作成、
-                  たたき台づくりに役立ちます。
-                </p>
-                <h3>操作方法</h3>
-                <ol>
-                  <li>下部の入力欄に、生成したい画像の内容を入力して送信します（英語推奨・具体的に）。</li>
-                  <li>右側の「生成結果」に画像が表示されます。</li>
-                  <li>
-                    「詳細設定」を開くと、ネガティブプロンプト・画像サイズ・ステップ数・シード・
-                    スタイルなどを調整できます。
-                  </li>
-                  <li>スケッチ／マスク機能で、下絵や修正したい範囲を指定した生成もできます。</li>
-                </ol>
-                <h3>入力例・コツ</h3>
-                <ul>
-                  <li>
-                    プロンプトは具体的に。例:{' '}
-                    <code>a flat vector illustration of a city hall, simple, clean</code>
-                  </li>
-                  <li>
-                    避けたい要素はネガティブプロンプトに。例: <code>blurry, text, watermark</code>
-                  </li>
-                  <li>ステップ数を増やすと描き込みが増えますが、生成に時間がかかります。</li>
-                </ul>
-                <h3>前提（Stable Diffusion）</h3>
-                <p>
-                  画像の描画にはホスト上の AUTOMATIC1111 互換サーバ（既定: ポート <code>7860</code>
-                  ）が必要です。未起動の場合は別ターミナルで{' '}
-                  <code>python3 scripts/mock-sd-server.py</code>（検証用）または Stable Diffusion
-                  WebUI を <code>--api --listen --port 7860</code> 付きで起動してください。
-                </p>
-                <Disclosure className='my-4'>
-                  <DisclosureSummary>仕組み・注意</DisclosureSummary>
-                  <div className='pl-7'>
-                    <ul>
-                      <li>生成AI（画像生成モデル）がプロンプトに基づいて画像を生成します。</li>
-                      <li>同じ入力でも生成結果は毎回変わることがあります（シード固定で再現性を高められます）。</li>
-                      <li>生成画像の公開・配布時は、著作権・肖像権にご注意ください。</li>
-                    </ul>
-                  </div>
-                </Disclosure>
-              </div>
-            }
-          />
+      <div className='mx-auto flex h-[calc(100dvh-var(--header-height))] w-full max-w-(--page-width) flex-col overflow-hidden px-4 py-2 lg:px-6'>
+        <BreadcrumbsNav
+          items={[
+            { label: 'ホーム', to: '/' },
+            { label: 'AIアプリ', to: '/apps' },
+            chatTitle ? { label: appName, to: '/image' } : { label: appName },
+            ...(chatTitle ? [{ label: chatTitle }] : []),
+          ]}
+        />
+        <div className='mt-1 flex min-w-0 items-center gap-3'>
+          <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{appName}</h1>
+          <p className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600' title={description}>
+            {description}
+          </p>
+          <Button type='button' variant='outline' size='sm' onClick={() => setHelpOpen(true)}>
+            使い方
+          </Button>
         </div>
 
-        <div className='flex gap-6 xl:gap-8'>
-          <div className='flex min-w-0 flex-1 justify-between gap-12 xl:gap-16'>
-          <div className='flex min-w-0 flex-1 flex-col'>
-            <GenerateImageStickyHeader title={appName} />
-
-            <div className='flex-1 pt-4 pb-6 px-2'>
-              <GenerateImageAssistant
-                isGeneratingImage={generating}
-                onGenerate={async (p, np, sp) => {
-                  if (p !== prompt || np !== negativePrompt || (sp ?? '') !== stylePreset) {
-                    setSelectedImageIndex(0);
-                    setPrompt(p);
-                    setNegativePrompt(np);
-                    if (sp !== undefined) {
-                      setStylePreset(sp);
-                    }
-                  }
-                  return generateAndPersist(p, np, sp);
-                }}
+        <div className='mt-2 flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-4'>
+          <div className='order-2 flex min-h-0 min-w-0 flex-1 flex-col lg:order-1'>
+            <div ref={threadRef} className='min-h-0 flex-1 overflow-y-scroll'>
+              {loadingMessages && rawMessages.length === 0 && (
+                <p className='px-1 py-4 text-dns-14N-130 text-solid-gray-600'>読み込み中...</p>
+              )}
+              <ImageThread
+                messages={rawMessages}
+                pending={pending}
+                generating={busy && !refining}
               />
             </div>
-
-            <div className='sticky bottom-0'>
-              <div
-                className={`
-                  relative flex flex-col pb-2 border-t border-t-solid-gray-800 items-center justify-center bg-white print:hidden
-                `}
-              >
-                <GenerateImageInput
-                  textareaId='generate-image-assistant-input'
-                  content={chatContent}
-                  loading={loadingChat || generating}
-                  onChangeContent={setChatContent}
-                  onSend={onSendChat}
-                />
-              </div>
-            </div>
+            <ImageComposer
+              draft={draft}
+              attachmentUrl={attachmentUrl}
+              continuing={!attachmentUrl && Boolean(findLatestImageResultMessage(rawMessages))}
+              busy={busy}
+              refining={refining}
+              refineError={refineError}
+              onChangeDraft={(value) => {
+                setDraft(value);
+                if (refineError) {
+                  setRefineError('');
+                }
+              }}
+              onAttach={setAttachmentUrl}
+              onClearAttachment={() => setAttachmentUrl('')}
+              onRefine={onRefine}
+              onSend={onSend}
+            />
           </div>
-
-          <div className={`shrink-0 ${isRightPanelOpen ? 'w-64 lg:w-96' : ''}`}>
-            <div className='sticky top-[calc(var(--header-height))] flex h-[calc(100dvh-var(--header-height))] flex-col'>
-              <div
-                className={`shrink-0 py-3 pr-3 pl-4 ${isRightPanelOpen ? '' : 'flex justify-center'}`}
-              >
-                <div
-                  className={`flex items-center ${isRightPanelOpen ? 'justify-between' : 'justify-center'}`}
-                >
-                  {isRightPanelOpen && (
-                    <h2 className='text-std-18B-160 lg:text-std-20B-150'>生成結果</h2>
-                  )}
-                  <Tooltip placement='bottom-end'>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type='button'
-                        className='min-w-0! size-11! p-0! hover:border-[3px] hover:bg-white'
-                        size='sm'
-                        variant='outline'
-                        onClick={() => setIsRightPanelOpen((prev) => !prev)}
-                        aria-expanded={isRightPanelOpen}
-                        aria-controls={isRightPanelOpen ? 'generate-image-right-panel' : undefined}
-                      >
-                        {isRightPanelOpen ? (
-                          <RightPanelCloseIcon
-                            className='mx-auto'
-                            role='img'
-                            aria-label='生成結果を閉じる'
-                          />
-                        ) : (
-                          <RightPanelOpenIcon
-                            className='mx-auto'
-                            role='img'
-                            aria-label='生成結果を開く'
-                          />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent aria-hidden={true}>
-                      {isRightPanelOpen ? '生成結果を閉じる' : '生成結果を開く'}
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-
-              {isRightPanelOpen && (
-                <div
-                  id='generate-image-right-panel'
-                  className='flex-1 overflow-y-auto pr-3 pl-4 pb-2 [scrollbar-gutter:stable]'
-                >
-                  <GeneratedImages
-                    generating={generating}
-                    selectedImageIndex={selectedImageIndex}
-                    setSelectedImageIndex={setSelectedImageIndex}
-                  />
-
-                  <Disclosure className='mt-8 relative border-b border-b-solid-gray-536 pb-2'>
-                    <DisclosureSummary className='text-std-18B-160'>
-                      <h3>詳細設定</h3>
-                    </DisclosureSummary>
-                    <div className='py-4'>
-                      <ImageGeneratorForm
-                        loadingChat={loadingChat}
-                        generating={generating}
-                        selectedImageIndex={selectedImageIndex}
-                        setSelectedImageIndex={setSelectedImageIndex}
-                        setIsOpenSketch={setIsOpenSketch}
-                        setIsOpenMask={setIsOpenMask}
-                        generateImage={generateImageWithAnnounce}
-                        clearAll={clearAll}
-                        onClickRandomSeed={() => onClickRandomSeed(selectedImageIndex)}
-                      />
-                    </div>
-                  </Disclosure>
-                </div>
-              )}
-            </div>
-          </div>
-          </div>
-
-          <aside className='hidden shrink-0 lg:block lg:w-56 xl:w-64'>
-            <div className='sticky top-[calc(var(--header-height))] -mt-4 grid max-h-[calc(100vh-var(--header-height)-1.5rem)] grid-rows-[auto_1fr] gap-6 pt-4 pb-2'>
-              <Button variant='solid-fill' size='lg' className='w-full' onClick={onNewSession}>
-                新規セッション
-              </Button>
-              <ChatHistorySidebar />
+          <aside className='order-1 flex max-h-28 shrink-0 flex-col gap-2 overflow-y-auto lg:order-2 lg:max-h-none lg:w-56 xl:w-64'>
+            <Button variant='solid-fill' size='lg' className='w-full' onClick={onNewSession}>
+              新規セッション
+            </Button>
+            <div className='min-h-0 flex-1 overflow-y-auto'>
+              <ChatHistorySidebar scope='image' />
             </div>
           </aside>
         </div>
       </div>
 
-      <div aria-live='assertive' aria-atomic='true' className='sr-only'>
-        {liveStatusMessage}
-      </div>
-
-      <SketchMaskDialogs
-        width={width}
-        height={height}
-        initImage={initImage}
-        maskImage={maskImage}
-        isOpenSketch={isOpenSketch}
-        isOpenMask={isOpenMask}
-        onCloseSketch={() => setIsOpenSketch(false)}
-        onCloseMask={() => setIsOpenMask(false)}
-        onChangeInitImage={onChangeInitImageBase64}
-        onChangeMaskImage={onChangeMaskImageBase64}
-      />
+      {helpOpen && (
+        <div className='fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6' role='presentation'>
+          <div
+            role='dialog'
+            aria-modal='true'
+            aria-labelledby='image-help-title'
+            className='mt-16 w-full max-w-lg rounded-8 bg-white p-5 shadow-lg'
+          >
+            <h2 id='image-help-title' className='text-std-18B-160'>
+              使い方
+            </h2>
+            <ul className='mt-3 list-disc space-y-2 pl-5 text-std-16N-170'>
+              <li>作りたい内容を書いて送信すると、その文の下に画像が残ります。</li>
+              <li>「プロンプト」は文章を整えるモデル、「画像」は描くモデルです。</li>
+              <li>「プロンプトを整える」は入力欄を書き換えるだけで、会話には残りません。</li>
+              <li>同じセッションで続けて送ると、直前の画像を引き継いで加工します。履歴から開いたあとも同じです。</li>
+              <li>別の画像を添付したときは、その画像を加工します。まったく新しい絵にするときは「新規セッション」を使います。</li>
+              <li>サイズと雰囲気は「設定」を開くと変えられます。</li>
+            </ul>
+            <div className='mt-4 flex justify-end'>
+              <Button type='button' variant='outline' size='sm' onClick={() => setHelpOpen(false)}>
+                閉じる
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

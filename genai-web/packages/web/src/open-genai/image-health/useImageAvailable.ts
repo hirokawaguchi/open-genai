@@ -10,7 +10,7 @@ const fetchImageHealth = async (): Promise<{ ok: boolean }> => {
 };
 
 /**
- * 画像生成(SD)サーバが利用可能かを返す。
+ * 画像生成が利用可能かを返す（ローカル SD の到達、またはクラウド画像プロバイダの登録）。
  * 取得前（undefined）は利用可能とみなし、確定で false のときのみ非表示にする。
  */
 export const useImageAvailable = (): boolean => {

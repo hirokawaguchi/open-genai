@@ -117,7 +117,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | ファイル添付ストレージ | Amazon S3（署名付き URL） | チャット添付は `backend` **ローカル保存**。AI アプリ成果物は **SeaweedFS（S3 互換）** へ再ホストし署名付き URL で配信 |
 | RAG（ベクトル検索・埋め込み） | OpenSearch / Bedrock Knowledge Base | **Qdrant** ＋ Ollama `mxbai-embed-large`（`rag-app` として） |
 | 文字起こし | Amazon Transcribe ＋ S3 | **faster-whisper**（`whisper-app` を AI アプリとして） |
-| 画像生成 | Amazon Bedrock（画像モデル） | **源内 Web `/image`** + ホスト **Stable Diffusion**（A1111 互換、`backend/image_gen.py` 経由） |
+| 画像生成 | Amazon Bedrock（画像モデル） | **源内 Web `/image`** + ホスト **Stable Diffusion**、または `IMAGE_PROVIDERS` のクラウド画像 API（`backend/image_gen.py`） |
 | ドキュメント読取（PDF 等） | Bedrock の document 入力 | **テキスト抽出**（pypdf / python-docx / openpyxl, `shared/docextract.py`） |
 
 ### 追加したコンポーネント（すべてオープンソース）
@@ -692,9 +692,28 @@ Open GENAI では **機能ごとに入口を分けています**（どちらも�
 - 検証用モック: `python3 scripts/mock-sd-server.py`（a1111=:7860）/ `--port 8000`（fastsd）。両バックエンドのエンドポイントに対応。
 - 動作確認: `bash scripts/verify-image-gen.sh`（`SD_BACKEND` を見て疎通先を切り替え）
 
+クラウドの画像 API は、ローカル SD と同時に使えます。画面の「モデル」で `local-sd` とクラウドモデルを切り替えます（チャット用の `LLM_PROVIDERS` とは別です）。モデル未指定と `local-sd` は従来どおり `SD_BACKEND` へプロキシします。
+
+実装済みの protocol は `openai_images`（OpenAI 互換の `POST /images/generations`。`gpt-image-1` など）です。別の API（Bedrock、Gemini など）を足すときは [backend/app/image_gen.py](backend/app/image_gen.py) の `_PROTOCOLS` に関数を 1 つ登録します。
+
+有効にするには次の 3 点を設定します。API キーはリポジトリに書かず、デプロイ先の環境変数に入れます。
+
+1. `.env` の `OPENAI_PROVIDER_API_KEY`
+2. `.env` の `IMAGE_PROVIDERS`（1 行の JSON 配列）
+
+```json
+[{"name":"openai","protocol":"openai_images","base_url":"https://api.openai.com/v1","api_key_env":"OPENAI_PROVIDER_API_KEY","models":["gpt-image-1"]}]
+```
+
+3. `genai-web/packages/web/.env` の `VITE_APP_IMAGE_MODEL_IDS` に `gpt-image-1` を足し、web を再起動する（モデル一覧はビルド時埋め込み。既定は `local-sd` のみ）
+
+`gpt-image-1` はテキストからの生成のみです。幅・高さは `1024x1024` / `1536x1024` / `1024x1536` のいずれか近いアスペクトに寄せます。ネガティブプロンプトは `Avoid:` として本文に足します。steps / cfg / seed は送りません。
+
+ローカル SD が止まっていても `IMAGE_PROVIDERS` が 1 件以上あれば、画像アプリは表示したままです。その状態で `local-sd` を選ぶと、接続先 URL は出さず、選べる他モデルへの切り替えか管理者への起動依頼を案内します。どちらも無いときは、これまでどおり画像アプリを隠します。
+
 ### AI アプリの表示（ヘルスチェック）
 
-AI アプリ一覧（`/apps`）は各 exApp の `/health` を確認し、**起動していない（到達できない）アプリは自動的に利用者向け一覧から隠します**。おすすめ（トップ／サイド）も同じです。管理画面（おすすめ設定・棟の機能）には存在する公式アプリをすべて出し、起動中かどうかを表示します。画像生成は SD サーバの到達も見ます。
+AI アプリ一覧（`/apps`）は各 exApp の `/health` を確認し、**起動していない（到達できない）アプリは自動的に利用者向け一覧から隠します**。おすすめ（トップ／サイド）も同じです。管理画面（おすすめ設定・棟の機能）には存在する公式アプリをすべて出し、起動中かどうかを表示します。画像生成は、ローカル SD サーバの到達か `IMAGE_PROVIDERS` の登録を見ます。
 
 ## Dify 連携（AI アプリ）
 
