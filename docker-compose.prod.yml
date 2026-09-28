@@ -147,6 +147,8 @@ services:
       - SD_FASTSD_USE_SAFETY_CHECKER=${SD_FASTSD_USE_SAFETY_CHECKER:-false}
       - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
+      # クラウド画像生成（modelId ごとの protocol）。未設定ならローカル SD のみ。
+      - IMAGE_PROVIDERS=${IMAGE_PROVIDERS:-}
       # --- 本番 URL（すべて proxy(443) 経由の公開 URL / 相対 /api）---
       - PUBLIC_URL=${PUBLIC_URL}
       - LGWAN_PUBLIC_URL=${LGWAN_PUBLIC_URL:-${PUBLIC_URL}}

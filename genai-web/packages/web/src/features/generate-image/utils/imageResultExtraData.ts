@@ -12,6 +12,7 @@ export type StoredImageGenResult = {
   cfgScale: number;
   imageSample: number;
   images: { fileUrl: string }[];
+  sourceImage?: { fileUrl: string };
 };
 
 export const parseImageResultExtraData = (
