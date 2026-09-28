@@ -5,11 +5,15 @@ import { decomposeId } from '@/utils/decomposeId';
 import { formatDateTime } from '@/utils/formatDateTime';
 import { useUsecaseLabelFn } from '@/features/exapps/hooks/useUsecaseLabel';
 import { getChatHistoryLink, resolveChatUsecase } from '@/utils/usecasePath';
-import { useChatHistorySidebar } from '../hooks/useChatHistorySidebar';
+import { useChatHistorySidebar, type ChatHistoryScope } from '../hooks/useChatHistorySidebar';
 
-export const ChatHistorySidebar = () => {
+type Props = {
+  scope?: ChatHistoryScope;
+};
+
+export const ChatHistorySidebar = ({ scope }: Props) => {
   const usecaseLabel = useUsecaseLabelFn();
-  const { displayedChats, isLoading } = useChatHistorySidebar();
+  const { displayedChats, isLoading } = useChatHistorySidebar(scope);
   const { chatId } = useParams();
 
   const isInitialLoading = isLoading && displayedChats.length === 0;

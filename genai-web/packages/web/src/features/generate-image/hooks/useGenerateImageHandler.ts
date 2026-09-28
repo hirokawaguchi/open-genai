@@ -4,6 +4,7 @@ import { useGenerateImageStore } from '@/features/generate-image/stores/useGener
 import type { ApiError } from '@/lib/fetcher';
 import { MODELS } from '@/models';
 import { AMAZON_ADVANCED_GENERATION_MODE, GENERATION_MODES, MODEL_INFO } from '../constants';
+import { formatLocalSdUnavailableMessage } from '../utils/formatLocalSdUnavailable';
 import { generateRandomSeed } from '../utils/generateRandomSeed';
 
 type UseGenerateImageHandlerReturn = {
@@ -41,7 +42,7 @@ export const useGenerateImageHandler = (
   } = useGenerateImageStore();
 
   const { generateImage } = useGenerateImage();
-  const { imageGenModels } = MODELS;
+  const { imageGenModels, imageGenModelIds } = MODELS;
 
   const [width, height] = resolution.label.split('x').map((v) => Number(v));
 
@@ -140,7 +141,12 @@ export const useGenerateImageHandler = (
           setImage(idx, res);
         })
         .catch((e: ApiError) => {
-          setImageError(idx, (e.data as { message?: string })?.message ?? e.message);
+          const data = e.data as { message?: string; code?: string } | undefined;
+          if (data?.code === 'local_sd_unavailable') {
+            setImageError(idx, formatLocalSdUnavailableMessage(imageGenModelIds));
+            return;
+          }
+          setImageError(idx, data?.message ?? e.message);
         });
     });
 

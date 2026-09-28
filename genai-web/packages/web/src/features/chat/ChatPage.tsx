@@ -252,7 +252,7 @@ export const ChatPage = () => {
                 <Button variant='solid-fill' size='lg' className='w-full' onClick={onNewChat}>
                   新規チャット
                 </Button>
-                <ChatHistorySidebar />
+                <ChatHistorySidebar scope='chat' />
               </div>
             </div>
           </div>

@@ -41,6 +41,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
       - DB_PATH=/data/open-genai.db
       # --- 監査ログ（8-(1)）/ チャット履歴ユーザー別分離（6-(8)）---
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
@@ -118,6 +119,8 @@ services:
       - SD_FASTSD_USE_SAFETY_CHECKER=${SD_FASTSD_USE_SAFETY_CHECKER:-false}
       - SD_FASTSD_MODEL_ID=${SD_FASTSD_MODEL_ID:-}
       - SD_FASTSD_OPENVINO_MODEL_ID=${SD_FASTSD_OPENVINO_MODEL_ID:-}
+      # クラウド画像生成（modelId ごとの protocol）。未設定ならローカル SD のみ。
+      - IMAGE_PROVIDERS=${IMAGE_PROVIDERS:-}
       # --- SAML 認証 (backend = SAML SP) ---
       - APP_JWT_SECRET=${APP_JWT_SECRET:-change-me-open-genai-secret}
       # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。

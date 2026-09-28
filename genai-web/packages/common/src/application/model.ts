@@ -391,6 +391,10 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.IMAGE_GEN,
     displayName: 'Stable Diffusion (ローカル)',
   },
+  'gpt-image-1': {
+    flags: MODEL_FEATURE.IMAGE_GEN,
+    displayName: 'GPT Image 1',
+  },
 
   // Stability AI Image Gen
   'stability.stable-diffusion-xl-v1': {
