@@ -28,7 +28,7 @@ def test_normalize_mode_accepts_three_and_falls_back() -> None:
 def test_lgwan_fqdn_is_suffix_not_substring() -> None:
     mod = _mod()
     assert mod.is_lgwan_fqdn("tenant.example.lgwan.jp")
-    assert mod.is_lgwan_fqdn("ops.example.lgwan.jp")
+    assert mod.is_lgwan_fqdn("other.example.lgwan.jp")
     assert mod.is_lgwan_fqdn("lgwan.jp")
     assert mod.is_lgwan_fqdn("TENANT.EXAMPLE.LGWAN.JP")
     assert not mod.is_lgwan_fqdn("tenant.example.jp")
