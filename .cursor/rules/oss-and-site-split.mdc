@@ -1,0 +1,17 @@
+---
+description: 公開版と各環境の境界。本番ツリーではコミットしない
+alwaysApply: true
+---
+
+# 公開版と環境 overlay
+
+本番の `/opt/open-genai` は公開版の受信と起動だけに使う。そこでブランチを切って修正し、そのままプルリクエストしない。
+
+本体の修正は、開発用クローンで行い、公開リポジトリへプルリクエストする。マージ後に各環境の `/opt/open-genai` を fast-forward する。
+
+環境ごとの差分は overlay に置く。
+
+- Paris: `.env.prod` と `paris-ops`（起動用 compose と設定例）
+- Cairo / giza: `/home/ubuntu/cairo-ops`（nginx、サインアップ、Stripe、画像確認、web-overlay）
+
+公開版のテストは、両方で使う仕組みだけを `example.jp` で書く。サインアップ、課金、画像確認、環境専用 nginx のテストは overlay に置き、公開版へ入れない。機能を公開版へ上げるとき、テストや文書に本番 FQDN を残さない。
