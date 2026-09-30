@@ -1,4 +1,5 @@
 import type { ExtraData, ShownMessage } from 'genai-web';
+import { pageFileUrl } from '@/lib/fileUrl';
 
 export const IMAGE_RESULT_EXTRA_NAME = 'open-genai-generated-image';
 
@@ -49,7 +50,7 @@ export const findLatestImageResultMessage = (
 };
 
 export const fileUrlToBase64 = async (fileUrl: string): Promise<string> => {
-  const res = await fetch(fileUrl);
+  const res = await fetch(pageFileUrl(fileUrl));
   if (!res.ok) {
     throw new Error(`failed to fetch image (${res.status})`);
   }

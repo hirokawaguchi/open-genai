@@ -49,6 +49,15 @@ def build_signed_url(base_url: str, key: str, method: str, ttl: int | None = Non
     return f"{base_url.rstrip('/')}/files/{key}?{q}"
 
 
+def build_signed_path(key: str, method: str = "GET", ttl: int | None = None) -> str:
+    """ホストを含まない `/api/files/{key}?exp&sig`。
+
+    ページを開いたホストのまま取得する。絶対 URL にすると、別ホストの画面から
+    そのホストへ直接取りにいってしまう。
+    """
+    return build_signed_url("/api", key, method, ttl=ttl)
+
+
 def verify(method: str, key: str, exp: str | None, sig: str | None) -> bool:
     """署名と有効期限を検証する。"""
     if not exp or not sig:

@@ -1,4 +1,5 @@
 import type { ShownMessage } from 'genai-web';
+import { pageFileUrl } from '@/lib/fileUrl';
 import { parseImageResultExtraData } from './imageResultExtraData';
 
 export type ImageTurn = {
@@ -8,7 +9,7 @@ export type ImageTurn = {
   images: { src: string }[];
 };
 
-const imageSrc = (fileUrl: string) => fileUrl;
+const imageSrc = (fileUrl: string) => pageFileUrl(fileUrl);
 
 export const buildImageTurns = (messages: ShownMessage[]): ImageTurn[] => {
   const turns: ImageTurn[] = [];
@@ -34,7 +35,9 @@ export const buildImageTurns = (messages: ShownMessage[]): ImageTurn[] => {
     const last = turns[turns.length - 1];
     if (last && last.images.length === 0) {
       last.images = images;
-      last.sourceUrl = result.sourceImage?.fileUrl;
+      last.sourceUrl = result.sourceImage?.fileUrl
+        ? pageFileUrl(result.sourceImage.fileUrl)
+        : undefined;
       if (!last.prompt) {
         last.prompt = result.prompt;
       }
@@ -43,7 +46,9 @@ export const buildImageTurns = (messages: ShownMessage[]): ImageTurn[] => {
     turns.push({
       key: message.messageId || `image-${turns.length}`,
       prompt: result.prompt,
-      sourceUrl: result.sourceImage?.fileUrl,
+      sourceUrl: result.sourceImage?.fileUrl
+        ? pageFileUrl(result.sourceImage.fileUrl)
+        : undefined,
       images,
     });
   }
