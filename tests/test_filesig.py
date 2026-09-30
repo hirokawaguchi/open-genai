@@ -33,6 +33,13 @@ def test_build_signed_url_contains_query() -> None:
     assert "exp=" in url and "sig=" in url
 
 
+def test_build_signed_path_has_no_host() -> None:
+    url = filesig.build_signed_path("image-gen/chat/msg/a.png", "GET")
+    assert url.startswith("/api/files/image-gen/chat/msg/a.png?")
+    assert "://" not in url
+    assert "exp=" in url and "sig=" in url
+
+
 def test_warn_detects_defaults(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
