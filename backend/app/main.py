@@ -2239,7 +2239,7 @@ async def save_image_result(
         with open(full, "wb") as f:
             f.write(raw)
         stored_images.append(
-            {"fileUrl": filesig.build_signed_url(PUBLIC_BASE_URL, key, "GET")}
+            {"fileUrl": filesig.build_signed_path(key, "GET")}
         )
 
     if source_b64:
@@ -2259,7 +2259,7 @@ async def save_image_result(
             with open(src_full, "wb") as f:
                 f.write(src)
             meta["sourceImage"] = {
-                "fileUrl": filesig.build_signed_url(PUBLIC_BASE_URL, src_key, "GET")
+                "fileUrl": filesig.build_signed_path(src_key, "GET")
             }
 
     if not stored_images:
