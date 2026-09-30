@@ -1,4 +1,5 @@
 import type { ShownMessage } from 'genai-web';
+import { pageFileUrl } from '@/lib/fileUrl';
 import { buildImageTurns } from '../utils/imageThread';
 
 type PendingTurn = {
@@ -77,7 +78,7 @@ export const ImageThread = ({ messages, pending, generating }: Props) => {
           <p className='whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'>{pending.prompt}</p>
           {pending.sourceUrl && (
             <img
-              src={pending.sourceUrl}
+              src={pageFileUrl(pending.sourceUrl)}
               alt='加工前の画像'
               className='h-auto max-h-40 w-auto max-w-full rounded-8 border border-solid-gray-300 object-contain'
             />

@@ -16,6 +16,7 @@ import { useChat } from '@/hooks/useChat';
 import { useSelectedModel } from '@/hooks/useSelectedModel';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { createChat, createMessages, predict, saveImageResult, updateTitle } from '@/lib/chatApi';
+import { pageFileUrl } from '@/lib/fileUrl';
 import { ApiError } from '@/lib/fetcher';
 import { findModelByModelId, MODELS } from '@/models';
 import { decomposeId } from '@/utils/decomposeId';
@@ -161,14 +162,14 @@ export const GenerateImagePage = () => {
         const previousImages = previous?.result.images ?? [];
         const previousUrl = previousImages[previousImages.length - 1]?.fileUrl;
         if (previousUrl) {
-          setPending({ prompt, sourceUrl: previousUrl });
+          setPending({ prompt, sourceUrl: pageFileUrl(previousUrl) });
           try {
             const previousBase64 = await fileUrlToBase64(previousUrl);
             source = `data:image/png;base64,${previousBase64}`;
           } catch {
             setPending({
               prompt,
-              sourceUrl: previousUrl,
+              sourceUrl: pageFileUrl(previousUrl),
               error: '前の画像を読み込めなかったので、続きとして加工できませんでした。',
             });
             return;
