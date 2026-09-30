@@ -383,6 +383,68 @@ def test_image_available_when_provider_registered_even_if_sd_down() -> None:
     assert asyncio.run(image_gen.is_image_available()) is False
 
 
+def _image_error(image_gen, status: int, payload: dict | str):
+    res = _Resp(status, payload if isinstance(payload, dict) else {})
+    if isinstance(payload, str):
+        res.text = payload
+
+        def _not_json() -> dict:
+            raise ValueError("not json")
+
+        res.json = _not_json  # type: ignore[method-assign]
+    else:
+        res.text = json.dumps(payload)
+    try:
+        image_gen._openai_image_from_response(res, "generate")
+    except image_gen.ImageGenError as exc:
+        return exc
+    raise AssertionError("expected ImageGenError")
+
+
+def test_content_policy_refusal_explains_copyright() -> None:
+    image_gen = _load_image_gen(None)
+    cases = [
+        {
+            "error": {
+                "message": "Your request was rejected as a result of our safety system.",
+                "type": "image_generation_user_error",
+                "code": "moderation_blocked",
+            }
+        },
+        {
+            "error": {
+                "message": "This request may include copyrighted characters.",
+                "code": "content_policy_violation",
+            }
+        },
+        "blocked: copyrighted material",
+    ]
+    for payload in cases:
+        exc = _image_error(image_gen, 400, payload)
+        assert exc.status == 400
+        assert exc.code == "content_policy_rejected"
+        text = str(exc)
+        assert "著作権" in text
+        assert "拒否" in text
+        assert "失敗しました" not in text
+        assert "safety system" not in text
+
+
+def test_other_provider_errors_stay_generic() -> None:
+    image_gen = _load_image_gen(None)
+    cases = [
+        {"error": {"message": "Billing hard limit has been reached.", "code": "billing_hard_limit_reached"}},
+        {"error": {"message": "Unknown parameter: 'moderation'.", "code": "unknown_parameter"}},
+        {"error": {"message": "Invalid size.", "type": "invalid_request_error"}},
+    ]
+    for payload in cases:
+        exc = _image_error(image_gen, 400, payload)
+        assert exc.status == 502
+        assert exc.code is None
+        assert str(exc) == "画像生成に失敗しました。"
+        assert "著作権" not in str(exc)
+
+
 def test_local_sd_connection_error_hides_operator_detail() -> None:
     image_gen = _load_image_gen(None)
 

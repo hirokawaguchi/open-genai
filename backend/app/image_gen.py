@@ -32,6 +32,31 @@ LOCAL_SD_MODEL_ID = "local-sd"
 LOCAL_SD_UNAVAILABLE_MESSAGE = "ローカルの Stable Diffusion に接続できません。"
 LOCAL_SD_UNAVAILABLE_CODE = "local_sd_unavailable"
 
+# プロバイダが著作権・安全基準で拒否したとき。接続失敗やパラメータ不正とは分ける。
+CONTENT_POLICY_REJECTED_CODE = "content_policy_rejected"
+CONTENT_POLICY_REJECTED_MESSAGE = (
+    "著作権や安全上の基準に触れる可能性があるため、画像の生成を拒否されました。"
+    "作品名・キャラクター・ロゴ・実在の人物などを避けて、指示や元の画像を変えて再度お試しください。"
+)
+_CONTENT_POLICY_CODES = frozenset(
+    {
+        "moderation_blocked",
+        "content_policy_violation",
+        "content_filter",
+        "responsibleaipolicyviolation",
+    }
+)
+_CONTENT_POLICY_PHRASES = (
+    "copyright",
+    "content policy",
+    "content_policy",
+    "safety system",
+    "content filter",
+    "著作権",
+    "コンテンツポリシー",
+    "コンテンツフィルタ",
+)
+
 # OpenAI Images の許可サイズ。未登録モデルは gpt-image-1 と同じ 3 サイズへ寄せる。
 _OPENAI_IMAGE_SIZES: dict[str, tuple[tuple[int, int], ...]] = {
     "gpt-image-1": ((1024, 1024), (1536, 1024), (1024, 1536)),
@@ -400,14 +425,67 @@ async def _openai_images_edit(
     return _openai_image_from_response(res, "edit")
 
 
+def _provider_error_payload(res: httpx.Response) -> Any:
+    try:
+        return res.json()
+    except (ValueError, TypeError):
+        return getattr(res, "text", "") or ""
+
+
+def _collect_policy_signals(payload: Any, codes: set[str], texts: list[str]) -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in ("code", "error_code") and isinstance(value, str):
+                codes.add(value.strip().lower())
+                continue
+            if key in ("message", "reason", "detail", "description") and isinstance(value, str):
+                texts.append(value)
+                continue
+            if key == "error" and isinstance(value, str):
+                texts.append(value)
+                continue
+            _collect_policy_signals(value, codes, texts)
+        return
+    if isinstance(payload, list):
+        for item in payload:
+            _collect_policy_signals(item, codes, texts)
+        return
+    if isinstance(payload, str):
+        texts.append(payload)
+
+
+def is_content_policy_refusal(payload: Any) -> bool:
+    """著作権・安全基準による拒否か。パラメータ不正や課金エラーは含めない。"""
+    codes: set[str] = set()
+    texts: list[str] = []
+    _collect_policy_signals(payload, codes, texts)
+    if codes & _CONTENT_POLICY_CODES:
+        return True
+    blob = " ".join(texts).lower()
+    return any(phrase in blob for phrase in _CONTENT_POLICY_PHRASES)
+
+
+def _content_policy_rejected() -> ImageGenError:
+    return ImageGenError(
+        CONTENT_POLICY_REJECTED_MESSAGE,
+        status=400,
+        code=CONTENT_POLICY_REJECTED_CODE,
+    )
+
+
 def _openai_image_from_response(res: httpx.Response, kind: str) -> str:
+    payload = _provider_error_payload(res)
     if res.status_code != 200:
         print(f"[image] openai_images {kind} status={res.status_code} body={res.text[:500]}")
+        if is_content_policy_refusal(payload):
+            raise _content_policy_rejected()
         raise ImageGenError("画像生成に失敗しました。", status=502)
-    data = res.json()
+    data = payload if isinstance(payload, dict) else {}
     images = data.get("data") or []
     b64 = images[0].get("b64_json") if images else None
     if not b64:
+        if is_content_policy_refusal(data):
+            raise _content_policy_rejected()
         raise ImageGenError("画像が生成されませんでした。", status=502)
     return _strip_data_uri(b64)
 
