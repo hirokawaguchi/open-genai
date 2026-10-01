@@ -24,7 +24,7 @@ import time
 from typing import Any
 
 POLICY_DB_PATH = os.environ.get("POLICY_DB_PATH", "/data/policy.db")
-# 既定の棟（大分市役所。既存データの居場所）。teams_store.DEFAULT_TENANT_ID と一致。
+# 既定の棟（既存データの居場所）。teams_store.DEFAULT_TENANT_ID と一致。
 DEFAULT_TENANT_ID = os.environ.get(
     "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
 )

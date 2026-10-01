@@ -33,7 +33,7 @@ ADMIN_GROUP = os.environ.get("AUDIT_ADMIN_GROUP", "SystemAdminGroup")
 # 管理者だと確認したときだけ x-user-groups に足す（teams_store.TENANT_SCOPE_ADMIN_GROUP と一致）。
 TENANT_ADMIN_GROUP = os.environ.get("TENANT_SCOPE_ADMIN_GROUP", "TenantScopeAdmin")
 POLICY_DB_PATH = os.environ.get("POLICY_DB_PATH", "/data/policy.db")
-# 既定の棟（大分市役所。既存データの居場所）。backend teams_store.DEFAULT_TENANT_ID と一致。
+# 既定の棟（既存データの居場所）。backend teams_store.DEFAULT_TENANT_ID と一致。
 DEFAULT_TENANT_ID = os.environ.get(
     "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
 )

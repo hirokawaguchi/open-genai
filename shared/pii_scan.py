@@ -29,7 +29,7 @@ MAX_HITS_PER_CATEGORY = int(os.environ.get("PII_MAX_HITS_PER_CATEGORY", "5"))
 CONTEXT_RADIUS = 24
 
 NGWORD_DB_PATH = os.environ.get("NGWORD_DB_PATH", "/data/ngwords.db")
-# 既定の棟（大分市役所）。teams_store.DEFAULT_TENANT_ID と一致。
+# 既定の棟。teams_store.DEFAULT_TENANT_ID と一致。
 DEFAULT_TENANT_ID = os.environ.get(
     "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
 )
