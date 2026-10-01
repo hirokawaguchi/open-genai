@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Tenant, TenantMembership } from 'genai-web';
+import useSWR from 'swr';
 import { PageTitle } from '@/components/PageTitle';
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -9,7 +10,7 @@ import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { isApiError } from '@/lib/fetcher';
+import { isApiError, teamApiFetcher } from '@/lib/fetcher';
 import { OfficialAppRuntimeStatus } from '@/open-genai/official-apps/OfficialAppRuntimeStatus';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import { useMyTenants, useTenantActions } from './useTenants';
@@ -330,15 +331,27 @@ const FeatureEditor = ({
 }) => {
   const [features, setFeatures] = useState<Record<string, boolean>>(tenant.features ?? {});
   const { running } = useOfficialAppRuntime();
+  const { data: commonFeatureApps } = useSWR<{ apps: { id: string; label: string }[] }>(
+    'tenants/feature-apps',
+    teamApiFetcher,
+    { revalidateOnFocus: false },
+  );
+  const officialIds = new Set<string>(FEATURE_OPTIONS.map((opt) => opt.id));
+  const commonApps = (commonFeatureApps?.apps ?? []).filter((app) => !officialIds.has(app.id));
   useEffect(() => {
     setFeatures(tenant.features ?? {});
   }, [tenant.tenantId, tenant.features]);
+
+  const toggle = (id: string, checked: boolean) => {
+    setFeatures((prev) => ({ ...prev, [id]: checked }));
+  };
 
   return (
     <section className='flex flex-col gap-3'>
       <h2 className='text-std-20B-150'>この棟で出す機能</h2>
       <SupportText>
-        オフにすると、この棟のカタログとメニューから隠れます。未設定はすべて出します。ここには存在する公式アプリをすべて出します。未起動は利用者のメニューには出ません。監査などの管理者ツールは対象外です。
+        オフにすると、この棟のカタログとメニューから隠れ、実行もできません。未設定はすべて出します。公式アプリに加え、共通チームの公開アプリ（Dify
+        連携など）もここで選べます。未起動の公式アプリは利用者のメニューには出ません。監査などの管理者ツールは対象外です。
       </SupportText>
       <div className='flex flex-col gap-2'>
         {FEATURE_OPTIONS.map((opt) => (
@@ -346,12 +359,23 @@ const FeatureEditor = ({
             <input
               type='checkbox'
               checked={features[opt.id] !== false}
-              onChange={(e) =>
-                setFeatures((prev) => ({ ...prev, [opt.id]: e.target.checked }))
-              }
+              onChange={(e) => toggle(opt.id, e.target.checked)}
             />
             <span>{opt.label}</span>
             <OfficialAppRuntimeStatus id={opt.id} running={running} />
+          </label>
+        ))}
+        {commonApps.length > 0 && (
+          <h3 className='mt-2 text-std-16B-150 text-solid-gray-800'>共通アプリ</h3>
+        )}
+        {commonApps.map((app) => (
+          <label key={app.id} className='flex items-center gap-2 text-dns-16N-130'>
+            <input
+              type='checkbox'
+              checked={features[app.id] !== false}
+              onChange={(e) => toggle(app.id, e.target.checked)}
+            />
+            <span>{app.label}</span>
           </label>
         ))}
       </div>

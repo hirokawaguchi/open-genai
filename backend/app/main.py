@@ -3592,6 +3592,21 @@ def _normalize_exapp_error(
     return _EXAPP_ERROR_STATUS[code], _EXAPP_ERROR_MESSAGES[code], code
 
 
+def _feature_disabled(
+    user_id: str, claims: dict[str, Any], app_def: dict[str, Any]
+) -> JSONResponse | None:
+    """棟の機能設定でオフのアプリは、実行もフォーム取得も止める。"""
+    active = _active_tenant_id(user_id, claims) if user_id else ""
+    if _has_no_tenant(active):
+        return None
+    if teams_store.builtin_feature_enabled(active, _feature_id_of(app_def)):
+        return None
+    return JSONResponse(
+        status_code=403,
+        content={"error": "この棟ではこのアプリを利用できません。"},
+    )
+
+
 @app.post("/exapps/invoke")
 async def invoke_exapp(request: Request) -> JSONResponse:
     """実行要求を、登録された AI アプリの endpoint へプロキシする。"""
@@ -3623,6 +3638,10 @@ async def invoke_exapp(request: Request) -> JSONResponse:
         and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを実行する権限がありません")
+
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
 
     # 禁止ワード/機密情報の入力制限（管理系 exApp はルール設定で語を含むため除外）
     if ex_app_id not in ADMIN_ONLY_EXAPP_IDS:
@@ -3836,6 +3855,10 @@ async def invoke_exapp_stream(request: Request) -> Any:
         and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを実行する権限がありません")
+
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
 
     if ex_app_id not in ADMIN_ONLY_EXAPP_IDS:
         ng = _ngword_denied(request, _texts_from_inputs(inputs), usecase=f"exapp:{ex_app_id}")
@@ -4068,6 +4091,10 @@ async def get_exapp_schema(request: Request) -> JSONResponse:
     ):
         return _forbidden("このアプリを参照する権限がありません")
 
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
+
     endpoint = app_def.get("endpoint", "")
     if endpoint.endswith("/invoke"):
         schema_url = endpoint[: -len("/invoke")] + "/schema"
@@ -4135,6 +4162,10 @@ async def resolve_exapp_schema(request: Request) -> JSONResponse:
         and not teams_store.can_read_team(team_id, user_id)
     ):
         return _forbidden("このアプリを参照する権限がありません")
+
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
 
     endpoint = app_def.get("endpoint", "")
     if endpoint.endswith("/invoke"):
@@ -8508,6 +8539,25 @@ async def set_my_active_tenant(request: Request) -> JSONResponse:
     if err:
         return JSONResponse(status_code=403, content={"error": err})
     return JSONResponse(content={"activeTenantId": tenant_id})
+
+
+@app.get("/tenants/feature-apps")
+async def list_tenant_feature_apps(request: Request) -> JSONResponse:
+    """機能設定のチェックに足す、共通チームの公開アプリ。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    if not _is_system_admin(claims) and not any(
+        t.get("isAdmin") for t in teams_store.list_tenants_for_user(user_id)
+    ):
+        return _forbidden()
+    apps = [
+        app
+        for app in teams_store.list_common_feature_apps()
+        if app["id"] not in ADMIN_ONLY_EXAPP_IDS
+    ]
+    return JSONResponse(content={"apps": apps})
 
 
 @app.get("/tenants")
