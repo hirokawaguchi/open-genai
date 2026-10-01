@@ -243,6 +243,63 @@ def test_visible_exapps_respect_active_tenant(store) -> None:
     assert "別アプリ" not in other_names
 
 
+def test_common_feature_apps_are_published_common_only(store) -> None:
+    deep = store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "Deep Research",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "config": '{"dify_base_url":"http://dify"}',
+            "status": "published",
+        },
+    )
+    store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "下書きアプリ",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "status": "draft",
+        },
+    )
+    home = store.create_team(
+        "企画課", "a@example.com", tenant_id=store.DEFAULT_TENANT_ID
+    )
+    store.create_exapp(
+        home["teamId"],
+        {
+            "exAppName": "課のアプリ",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "status": "published",
+        },
+    )
+    apps = store.list_common_feature_apps()
+    ids = {app["id"] for app in apps}
+    labels = {app["label"] for app in apps}
+    assert deep["exAppId"] in ids
+    assert "Deep Research" in labels
+    assert "下書きアプリ" not in labels
+    assert "課のアプリ" not in labels
+    assert ids.isdisjoint(store.OFFICIAL_CATALOG_EXAPP_IDS)
+
+
+def test_common_app_respects_feature_flag(store) -> None:
+    deep = store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "条例エージェント",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "status": "published",
+        },
+    )
+    tenant = store.create_tenant("川口市", features={deep["exAppId"]: False})
+    assert store.builtin_feature_enabled(tenant["tenantId"], deep["exAppId"]) is False
+    assert store.builtin_feature_enabled(tenant["tenantId"], "notebook") is True
+
+
 def test_builtin_feature_flag(store) -> None:
     other = store.create_tenant(
         "川口市", features={"ssh": False, "procuretech-editor": False}

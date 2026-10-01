@@ -1856,8 +1856,24 @@ def list_knowledge_scopes(
     return scopes
 
 
+def list_common_feature_apps() -> list[dict[str, str]]:
+    """棟の機能設定に足す共通アプリ。公式カタログの ID は除く。
+
+    公開済みだけ。下書きや、チームに置いたアプリは含めない。
+    """
+    official = set(OFFICIAL_CATALOG_EXAPP_IDS)
+    apps: list[dict[str, str]] = []
+    for app in list_team_exapps(COMMON_TEAM_ID):
+        app_id = str(app.get("exAppId") or "")
+        if not app_id or app_id in official or app.get("status") != "published":
+            continue
+        apps.append({"id": app_id, "label": str(app.get("exAppName") or app_id)})
+    apps.sort(key=lambda item: item["label"])
+    return apps
+
+
 def builtin_feature_enabled(tenant_id: str | None, ex_app_id: str) -> bool:
-    """tenants.features で組み込みアプリを隠す。キーが無ければ出す。"""
+    """tenants.features でアプリを隠す。キーが無ければ出す。"""
     if not tenant_id or not ex_app_id:
         return True
     tenant = get_tenant(tenant_id)
