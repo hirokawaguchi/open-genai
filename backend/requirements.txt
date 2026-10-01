@@ -2,7 +2,7 @@ fastapi==0.139.0
 uvicorn[standard]==0.34.0
 httpx==0.28.1
 python3-saml==1.16.0
-PyJWT==2.13.0
+PyJWT==2.15.1
 python-multipart==0.0.31
 pypdf==6.16.2
 python-docx==1.1.2
