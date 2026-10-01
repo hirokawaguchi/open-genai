@@ -11,6 +11,7 @@ export const useChatTitle = (chatTitleFromStore?: string) => {
   const { data: chatApp } = useFetchExApp(COMMON_EXAPPS_TEAM_ID, 'chat');
   const appName = (chatApp?.exAppName || '').trim() || FALLBACK_APP_NAME;
   const description = (chatApp?.description || '').trim();
+  const howToUse = (chatApp?.howToUse || '').trim();
 
   const pageTitle = chatId ? getChatTitle(chatId) || appName : appName;
   const title = chatId ? pageTitle : chatTitleFromStore || appName;
@@ -20,5 +21,6 @@ export const useChatTitle = (chatTitleFromStore?: string) => {
     pageTitle,
     appName,
     description,
+    howToUse,
   };
 };

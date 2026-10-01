@@ -1,11 +1,19 @@
 import type React from 'react';
 import { useCallback, useEffect, useState } from 'react';
+import { PiBookOpenBold } from 'react-icons/pi';
 import { useLocation, useNavigate } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
+import {
+  CustomDialog,
+  CustomDialogBody,
+  CustomDialogHeader,
+  CustomDialogPanel,
+} from '@/components/ui/CustomDialog';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { APP_TITLE } from '@/constants';
+import { ChatHints } from '@/features/chat/components/ChatHints';
 import { ChatHistorySidebar } from '@/features/chat/components/ChatHistorySidebar';
 import { ChatInput } from '@/features/chat/components/ChatInput';
 import { ChatMessage } from '@/features/chat/components/ChatMessage';
@@ -22,6 +30,7 @@ import { useFileUploadable } from '@/features/chat/hooks/useFileUploadable';
 import { useReset } from '@/features/chat/hooks/useReset';
 import { useSetDefaultValues } from '@/features/chat/hooks/useSetDefaultValues';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
+import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useFollow } from '@/hooks/useFollow';
@@ -51,6 +60,7 @@ export const ChatPage = () => {
   const [showSystemContextDialog, setShowSystemContextDialog] = useState(false);
   const [showPromptListDialog, setShowPromptListDialog] = useState(false);
   const [isNotificationDialogOpen, setIsNotificationDialogOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const { systemContextList, onSaveSystemContext, onDeleteSystemContext, onUpdateSystemContext } =
     useSystemContext();
 
@@ -92,7 +102,7 @@ export const ChatPage = () => {
     }
   }, [messages, setContent, shouldAutoSubmit, search, state]);
 
-  const { title, appName = 'チャット', description } = useChatTitle(chatTitle);
+  const { title, appName = 'チャット', description, howToUse } = useChatTitle(chatTitle);
 
   const { accept, fileUploadable } = useFileUploadable();
 
@@ -172,9 +182,9 @@ export const ChatPage = () => {
       <PageTitle title={`${title}${APP_TITLE ? ` | ${APP_TITLE}` : ''}`} />
       <div
         onDragOver={fileUploadable ? handleDragOver : undefined}
-        className='relative mx-auto grid grid-cols-1 grid-rows-[auto_1fr] max-w-(--page-width) min-h-[calc(100vh-var(--header-height))] pt-6 px-6 lg:px-8 lg:pt-8'
+        className='relative mx-auto grid grid-cols-1 grid-rows-[auto_1fr] max-w-(--page-width) min-h-[calc(100vh-var(--header-height))] px-4 py-2 lg:px-6'
       >
-        <div className='lg:mb-3.5'>
+        <div>
           <BreadcrumbsNav
             items={
               chatId
@@ -185,32 +195,49 @@ export const ChatPage = () => {
                   ]
                 : [{ label: 'ホーム', to: '/' }, { label: appName }]
             }
-            className='mb-4'
           />
-          <div className='flex flex-wrap min-h-[calc(38/16*1rem)] justify-between items-start gap-x-2 gap-y-4'>
-            <Title title={title} />
-            {!isEmpty && !loadingMessages && (
+          <div className='mt-1 flex min-w-0 items-center gap-3'>
+            <div className='flex min-w-0 flex-1 items-center gap-3'>
+              <Title title={title} />
+              {!chatId && description && (
+                <p
+                  className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600'
+                  title={description}
+                >
+                  {description}
+                </p>
+              )}
+            </div>
+            <div className='flex shrink-0 items-center gap-2'>
               <Button
-                variant='solid-fill'
-                size='md'
-                className='-mt-1 text-nowrap lg:hidden'
-                onClick={onNewChat}
+                type='button'
+                variant='outline'
+                size='sm'
+                className='inline-flex items-center gap-1'
+                onClick={() => setHelpOpen(true)}
               >
-                新規チャット
+                <PiBookOpenBold aria-hidden={true} className='size-4' />
+                使い方
               </Button>
-            )}
+              {!isEmpty && !loadingMessages && (
+                <Button
+                  variant='solid-fill'
+                  size='sm'
+                  className='text-nowrap lg:hidden'
+                  onClick={onNewChat}
+                >
+                  新規チャット
+                </Button>
+              )}
+            </div>
           </div>
-          {!chatId && description && (
-            <p className='mt-2 text-std-16N-170 text-solid-gray-700'>{description}</p>
-          )}
         </div>
 
-        <div className='flex justify-between gap-10 xl:gap-16'>
+        <div className='mt-3 flex justify-between gap-10 xl:gap-16'>
           <div className='flex min-w-0 flex-1 max-w-[calc(1056/16*1rem)] flex-col'>
             <ChatStickyHeader
               title={title}
               currentSystemContext={currentSystemContext}
-              showHints={isEmpty && !loadingMessages}
               onOpenNotificationDialog={() => setIsNotificationDialogOpen(true)}
               onOpenSystemContextDialog={() => setShowSystemContextDialog(true)}
               onOpenPromptListDialog={() => setShowPromptListDialog(true)}
@@ -247,7 +274,7 @@ export const ChatPage = () => {
           </div>
 
           <div className='hidden shrink-0 lg:block lg:w-56 xl:w-64'>
-            <div className='sticky top-[calc(var(--header-height))] -mt-4 pt-4 pb-2'>
+            <div className='sticky top-[calc(var(--header-height))] pb-2'>
               <div className='grid grid-cols-1 grid-rows-[auto_1fr] max-h-[calc(100vh-var(--header-height)-1.5rem)] gap-6'>
                 <Button variant='solid-fill' size='lg' className='w-full' onClick={onNewChat}>
                   新規チャット
@@ -292,6 +319,21 @@ export const ChatPage = () => {
         isOpen={isNotificationDialogOpen}
         onClose={() => setIsNotificationDialogOpen(false)}
       />
+
+      <CustomDialog isOpen={helpOpen} onClose={() => setHelpOpen(false)}>
+        <CustomDialogPanel className='max-w-2xl'>
+          <CustomDialogHeader hasClose onClose={() => setHelpOpen(false)}>
+            使い方
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            {howToUse ? (
+              <ExAppUsageMarkdownRenderer content={howToUse} size='sm' />
+            ) : (
+              <ChatHints />
+            )}
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
     </>
   );
 };

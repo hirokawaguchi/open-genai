@@ -186,11 +186,11 @@ describe('ChatInput', () => {
   });
 
   describe('textarea rows', () => {
-    it('should have rows=3 on initial chat', () => {
+    it('should have rows=2 on initial chat', () => {
       renderChatInput();
 
       const textarea = screen.getByRole('textbox');
-      expect(textarea.getAttribute('rows')).toBe('3');
+      expect(textarea.getAttribute('rows')).toBe('2');
     });
 
     it('should have rows=1 when chatId is present', () => {

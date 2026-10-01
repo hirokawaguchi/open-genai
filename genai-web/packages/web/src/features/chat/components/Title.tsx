@@ -89,7 +89,7 @@ export const Title = (props: Props) => {
     <>
       {!isEditing && (
         <div className='flex items-start gap-x-1'>
-          <h1 className='flex items-center justify-start text-std-20B-150 h-min min-h-9 text-pretty lg:text-std-24B-150 print:visible print:my-5 print:h-min'>
+          <h1 className='flex items-center justify-start text-std-16B-170 text-pretty print:visible print:my-5 print:text-std-24B-150'>
             {title}
           </h1>
           {!isEmpty && !loadingMessages && chatId && (
@@ -153,7 +153,7 @@ export const Title = (props: Props) => {
           <div className='relative min-w-0 pr-4'>
             <span
               aria-hidden={true}
-              className='invisible flex max-w-full items-center justify-start overflow-hidden text-std-20B-150 min-h-9 text-nowrap lg:text-std-24B-150'
+              className='invisible flex max-w-full items-center justify-start overflow-hidden text-std-16B-170 text-nowrap'
             >
               {tempTitle}
             </span>

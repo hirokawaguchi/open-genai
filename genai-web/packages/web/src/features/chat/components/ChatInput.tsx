@@ -149,7 +149,7 @@ export const ChatInput = (props: Props) => {
       `}
     >
       <form className='w-full' onSubmit={onSubmit} aria-labelledby='chat-input-heading'>
-        <h2 id='chat-input-heading' className='self-start my-1 text-std-16N-170'>
+        <h2 id='chat-input-heading' className='sr-only'>
           {isInitialChat
             ? '調べたいことやお困りごとなど、何でも入力してみましょう'
             : '追加で質問や不明点などあれば返答してみましょう'}
@@ -162,9 +162,13 @@ export const ChatInput = (props: Props) => {
             <AutoResizeTextarea
               id='chat-input'
               className='resize-none'
-              rows={isInitialChat ? 3 : 1}
+              rows={isInitialChat ? 2 : 1}
               required
-              placeholder=''
+              placeholder={
+                isInitialChat
+                  ? '調べたいことやお困りごとなど、何でも入力してみましょう'
+                  : '追加で質問や不明点などあれば返答してみましょう'
+              }
               aria-labelledby='chat-input-heading'
               aria-describedby='chat-input-submit-hint chat-input-error chat-input-file-error'
               onPaste={fileUpload ? handlePaste : undefined}
@@ -207,10 +211,11 @@ export const ChatInput = (props: Props) => {
                     size='md'
                     aria-describedby='chat-input-file-error'
                     className='inline-flex justify-center items-center gap-1 group-data-[has-error=true]/file-upload:border-error-1'
+                    title='4.5MBまで'
                     onClick={handleClickFileUpload}
                   >
                     <AttachmentIcon aria-hidden={true} className='shrink-0' />
-                    添付するファイルを選択（4.5MBまで）
+                    ファイルを添付
                   </Button>
 
                   {uploadedFiles.length > 0 && (
