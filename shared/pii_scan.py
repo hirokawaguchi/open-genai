@@ -29,6 +29,10 @@ MAX_HITS_PER_CATEGORY = int(os.environ.get("PII_MAX_HITS_PER_CATEGORY", "5"))
 CONTEXT_RADIUS = 24
 
 NGWORD_DB_PATH = os.environ.get("NGWORD_DB_PATH", "/data/ngwords.db")
+# 既定の棟。teams_store.DEFAULT_TENANT_ID と一致。
+DEFAULT_TENANT_ID = os.environ.get(
+    "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
+)
 
 # 国内電話（0 始まり、区切り任意）。短すぎる一致を避けるため桁数を見る。
 _PHONE_RE = re.compile(
@@ -73,16 +77,33 @@ def _mask_uuids(text: str) -> str:
     return _UUID_RE.sub("[UUID]", text)
 
 
-def load_pii_settings() -> dict[str, Any]:
-    """ngwords.db のルールから PII 関連フラグを読む（読取専用・失敗時は既定）。"""
+def load_pii_settings(tenant_id: str | None = None) -> dict[str, Any]:
+    """指定した棟のルールから PII 関連フラグを読む（読取専用・失敗時は既定）。
+
+    行が無い棟は既定（警告系は有効）。既定の棟だけは未移行の旧・単一行も参照する。
+    """
     out = dict(_DEFAULT_SETTINGS)
     path = os.environ.get("NGWORD_DB_PATH", NGWORD_DB_PATH)
     if not os.path.exists(path):
         return out
+    tid = (tenant_id or "").strip() or DEFAULT_TENANT_ID
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
         try:
-            row = conn.execute("SELECT rules FROM ngword_rules WHERE id = 1").fetchone()
+            row = None
+            try:
+                row = conn.execute(
+                    "SELECT rules FROM ngword_rules_v2 WHERE tenantId = ?", (tid,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None  # v2 未作成（writer 未更新）。旧表へフォールバック。
+            if (not row or not row[0]) and tid == DEFAULT_TENANT_ID:
+                try:
+                    row = conn.execute(
+                        "SELECT rules FROM ngword_rules WHERE id = 1"
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    row = None
         finally:
             conn.close()
         if not row or not row[0]:

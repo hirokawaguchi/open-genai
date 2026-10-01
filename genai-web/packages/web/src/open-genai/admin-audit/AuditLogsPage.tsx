@@ -12,6 +12,11 @@ import { AUDIT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import { AUDIT_ACTION_OPTIONS, type AuditFilters, type AuditLog } from './types';
 import { useAuditExport, useAuditLogs } from './useAuditLogs';
+import {
+  type AuditViewerCandidate,
+  searchAuditViewerCandidates,
+  useAuditViewers,
+} from './useAuditViewers';
 
 const DEFAULT_FILTERS: AuditFilters = {
   userId: '',
@@ -100,25 +105,14 @@ export const AuditLogsPage = () => {
     />
   );
 
-  if (!isSystemAdminGroup) {
-    return (
-      <LayoutBody>
-        <PageTitle title='監査ログ' />
-        <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-          {header}
-          <p className='text-dns-16N-130 text-error-1' role='alert'>
-            このページの閲覧には管理者権限が必要です。
-          </p>
-        </div>
-      </LayoutBody>
-    );
-  }
-
   return (
     <LayoutBody>
       <PageTitle title='監査ログ' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
+
+        {/* 閲覧者の管理（システム管理者のみ）。棟では分けず、全棟のログを閲覧できる。 */}
+        {isSystemAdminGroup && <AuditViewerManager />}
 
         {/* 絞り込みフォーム */}
         <div className='grid grid-cols-1 gap-4 rounded-8 border border-solid-gray-300 p-4 sm:grid-cols-2 lg:grid-cols-3'>
@@ -307,6 +301,155 @@ export const AuditLogsPage = () => {
         )}
       </div>
     </LayoutBody>
+  );
+};
+
+/**
+ * 監査ログの閲覧者管理（システム管理者のみ）。
+ * ここで許可した利用者は、システム管理者と同じく全棟の監査ログ（本文を含む）を
+ * 閲覧できる。棟では分けない。
+ */
+const AuditViewerManager = () => {
+  const {
+    viewers,
+    isLoading,
+    loadError,
+    submitting,
+    actionError,
+    addViewer,
+    removeViewer,
+  } = useAuditViewers(true);
+  const [query, setQuery] = useState('');
+  const [candidates, setCandidates] = useState<AuditViewerCandidate[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const runSearch = async () => {
+    setSearching(true);
+    setSearchError(null);
+    try {
+      setCandidates(await searchAuditViewerCandidates(query.trim()));
+    } catch {
+      setSearchError('利用者の検索に失敗しました。');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+      <h2 className='text-std-16B-150'>監査ログを閲覧できる利用者</h2>
+      <SupportText>
+        システム管理者のほかに、ここで許可した利用者が監査ログを閲覧できます。棟では分けず、
+        許可された人は全棟のログ（入力・出力の本文を含む）を閲覧できます。取り扱いに注意してください。
+      </SupportText>
+
+      <div className='flex flex-col gap-2'>
+        {isLoading ? (
+          <SupportText>読み込み中...</SupportText>
+        ) : loadError ? (
+          <p className='text-dns-16N-130 text-error-1' role='alert'>
+            {loadError}
+          </p>
+        ) : viewers.length === 0 ? (
+          <SupportText>許可された利用者はいません（システム管理者のみ閲覧できます）。</SupportText>
+        ) : (
+          <ul className='flex flex-col gap-2'>
+            {viewers.map((uid) => (
+              <li
+                key={uid}
+                className='flex flex-wrap items-center justify-between gap-2 rounded-8 border border-solid-gray-300 px-3 py-2'
+              >
+                <span className='break-all'>{uid}</span>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='outline'
+                  aria-disabled={submitting || undefined}
+                  onClick={() => removeViewer(uid)}
+                >
+                  取り消す
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {actionError && (
+        <p className='text-dns-16N-130 text-error-1' role='alert'>
+          {actionError}
+        </p>
+      )}
+
+      <div className='flex flex-col gap-2 border-t border-solid-gray-300 pt-3'>
+        <Label htmlFor='audit-viewer-search' size='sm'>
+          閲覧者を追加（利用者を検索）
+        </Label>
+        <div className='flex flex-wrap items-end gap-2'>
+          <Input
+            id='audit-viewer-search'
+            blockSize='md'
+            placeholder='氏名・メール・ユーザー名'
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void runSearch();
+              }
+            }}
+            className='flex-1'
+          />
+          <Button
+            type='button'
+            variant='outline'
+            size='md'
+            onClick={() => void runSearch()}
+            aria-disabled={searching || undefined}
+          >
+            {searching ? '検索中...' : '検索'}
+          </Button>
+        </div>
+        {searchError && (
+          <p className='text-dns-16N-130 text-error-1' role='alert'>
+            {searchError}
+          </p>
+        )}
+        {candidates.length > 0 && (
+          <ul className='flex flex-col gap-2'>
+            {candidates.map((u) => {
+              const uid = u.email || u.username;
+              const already = viewers.includes((uid || '').toLowerCase());
+              return (
+                <li
+                  key={u.username || u.email}
+                  className='flex flex-wrap items-center justify-between gap-2 rounded-8 border border-solid-gray-300 px-3 py-2'
+                >
+                  <span className='break-all'>
+                    {u.name || `${u.lastName ?? ''} ${u.firstName ?? ''}`.trim() || u.username}
+                    <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>{uid}</span>
+                  </span>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='solid-fill'
+                    aria-disabled={submitting || already || !uid || undefined}
+                    onClick={() => {
+                      if (uid) {
+                        void addViewer(uid);
+                      }
+                    }}
+                  >
+                    {already ? '追加済み' : '許可する'}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 };
 

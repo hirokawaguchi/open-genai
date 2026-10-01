@@ -15,11 +15,12 @@ const errorMessage = (e: unknown, fallback: string): string => {
   return fallback;
 };
 
-/** モデル利用ポリシーの現在値＋利用可能モデル＋対象チームを取得する（管理者限定）。 */
-export const useModelPolicy = () => {
+/** モデル利用ポリシーの現在値＋利用可能モデル＋対象チームを取得する（棟別・管理者限定）。 */
+export const useModelPolicy = (tenantId?: string) => {
+  const params = tenantId ? { tenantId } : undefined;
   const { data, error, isLoading, mutate } = useSWR<ModelPolicyConfig>(
-    MODEL_POLICY_KEY,
-    (key: string) => teamApi.get<ModelPolicyConfig>(key).then((res) => res.data),
+    [MODEL_POLICY_KEY, tenantId ?? ''],
+    () => teamApi.get<ModelPolicyConfig>(MODEL_POLICY_KEY, { params }).then((res) => res.data),
     { revalidateOnFocus: false },
   );
 
@@ -37,17 +38,17 @@ export const useModelPolicy = () => {
   };
 };
 
-/** ポリシーを保存する（modelpolicy-app へプロキシ）。 */
+/** ポリシーを保存する（modelpolicy-app へプロキシ・棟別）。 */
 export const useModelPolicyActions = (mutate: () => Promise<unknown>) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = useCallback(
-    async (policy: ModelPolicy): Promise<boolean> => {
+    async (policy: ModelPolicy, tenantId: string): Promise<boolean> => {
       setSubmitting(true);
       setError(null);
       try {
-        await teamApi.post(MODEL_POLICY_KEY, { policy });
+        await teamApi.post(MODEL_POLICY_KEY, { policy, tenantId });
         await mutate();
         return true;
       } catch (e) {

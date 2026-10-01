@@ -8,11 +8,11 @@ import {
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Label } from '@/components/ui/dads/Label';
+import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { Textarea } from '@/components/ui/dads/Textarea';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
-import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NGWORD_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
@@ -38,8 +38,9 @@ const findInvalidPattern = (text: string): string | null => {
 };
 
 export const NgWordPage = () => {
-  const { isSystemAdminGroup } = useTeamAuth();
-  const { rules, isLoading, forbidden, loadError, mutate } = useNgword();
+  // 編集対象の棟。未選択（空）なら backend が活性棟／既定の棟を返す。
+  const [selectedTenant, setSelectedTenant] = useState('');
+  const { config, rules, isLoading, forbidden, loadError, mutate } = useNgword(selectedTenant);
   const { save, submitting, error, setError } = useNgwordActions(mutate);
 
   const header = (
@@ -47,9 +48,10 @@ export const NgWordPage = () => {
       teamId={ADMIN_EXAPPS_TEAM_ID}
       exAppId={NGWORD_EXAPP_ID}
       fallbackTitle='入力制限（禁止ワード・機密情報）'
-      fallbackDescription='チャット・AIアプリの入力に対する禁止ワード・機密情報の制限を設定します（システム管理者のみ）。有効時、推論前に入力を検査し該当時はブロックします。'
+      fallbackDescription='チャット・AIアプリの入力に対する禁止ワード・機密情報の制限を棟ごとに設定します（システム管理者または棟の管理者）。有効時、推論前に入力を検査し該当時はブロックします。'
       fallbackHowTo={
         <>
+          <p>・設定は棟ごとに保存されます。未設定の棟は制限なしです。</p>
           <p>・「入力制限」を有効にすると、禁止ワード・機密情報を含む入力をブロックします。</p>
           <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
           <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
@@ -60,19 +62,8 @@ export const NgWordPage = () => {
     />
   );
 
-  if (!isSystemAdminGroup) {
-    return (
-      <LayoutBody>
-        <PageTitle title='入力制限（禁止ワード）' />
-        <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-          {header}
-          <p className='text-dns-16N-130 text-error-1' role='alert'>
-            このページの閲覧には管理者権限が必要です。
-          </p>
-        </div>
-      </LayoutBody>
-    );
-  }
+  const tenants = config?.tenants ?? [];
+  const activeTenant = selectedTenant || config?.tenantId || '';
 
   return (
     <LayoutBody>
@@ -80,23 +71,44 @@ export const NgWordPage = () => {
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
 
+        {config && tenants.length > 1 && (
+          <div className='flex max-w-md flex-col gap-1.5'>
+            <Label htmlFor='ngword-tenant'>対象の棟</Label>
+            <Select
+              id='ngword-tenant'
+              value={activeTenant}
+              onChange={(e) => {
+                setSelectedTenant(e.target.value);
+                setError(null);
+              }}
+            >
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
         {isLoading ? (
           <p className='text-std-16N-170 text-solid-gray-600'>読み込み中...</p>
         ) : forbidden ? (
           <p className='text-dns-16N-130 text-error-1' role='alert'>
             このページの閲覧には管理者権限が必要です。
           </p>
-        ) : loadError || !rules ? (
+        ) : loadError || !rules || !config ? (
           <p className='text-dns-16N-130 text-error-1' role='alert'>
             {loadError ?? 'ルールを取得できませんでした。'}
           </p>
         ) : (
           <RulesEditor
+            key={config.tenantId}
             rules={rules}
             submitting={submitting}
             error={error}
             setError={setError}
-            onSave={save}
+            onSave={(r) => save(r, config.tenantId)}
           />
         )}
       </div>
