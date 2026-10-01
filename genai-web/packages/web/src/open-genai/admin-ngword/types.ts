@@ -15,6 +15,16 @@ export type NgWordRules = {
   patterns: string[];
 };
 
+/** 棟（テナント）。棟別に入力制限を設定する。 */
+export type NgWordTenant = {
+  id: string;
+  name: string;
+};
+
 export type NgWordConfig = {
+  /** 現在編集対象の棟。 */
+  tenantId: string;
+  /** 操作できる棟の一覧（システム管理者は全棟、棟管理者は自分の棟）。 */
+  tenants: NgWordTenant[];
   rules: NgWordRules;
 };

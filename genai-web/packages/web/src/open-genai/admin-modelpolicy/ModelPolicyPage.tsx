@@ -10,10 +10,10 @@ import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
+import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { ADMIN_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
-import { useTeamAuth } from '@/features/teams/hooks/useTeamAuth';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { MODELPOLICY_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
@@ -26,8 +26,9 @@ const toggle = (list: string[], value: string): string[] =>
   list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
 export const ModelPolicyPage = () => {
-  const { isSystemAdminGroup } = useTeamAuth();
-  const { config, isLoading, forbidden, loadError, mutate } = useModelPolicy();
+  // 編集対象の棟。未選択（空）なら backend が活性棟／既定の棟を返す。
+  const [selectedTenant, setSelectedTenant] = useState('');
+  const { config, isLoading, forbidden, loadError, mutate } = useModelPolicy(selectedTenant);
   const { save, submitting, error, setError } = useModelPolicyActions(mutate);
 
   const header = (
@@ -35,37 +36,47 @@ export const ModelPolicyPage = () => {
       teamId={ADMIN_EXAPPS_TEAM_ID}
       exAppId={MODELPOLICY_EXAPP_ID}
       fallbackTitle='モデル利用制御'
-      fallbackDescription='利用可能な LLM をチーム単位で管理します（システム管理者のみ）。利用者は所属する各チームの許可モデルの和集合を使えます。'
+      fallbackDescription='利用可能な LLM を棟・チーム単位で管理します（システム管理者または棟の管理者）。利用者は、いま開いている棟で所属する各チームの許可モデルの和集合を使えます。'
       fallbackHowTo={
         <>
+          <p>・設定は棟ごとに保存されます。未設定の棟は制限なし（全モデル利用可）です。</p>
           <p>・「制御」を有効にすると、許可したモデルのみ利用できます（無効の間は全モデル利用可）。</p>
-          <p>・「全ユーザー共通で許可」は全員が使えるモデルです。</p>
-          <p>・「チーム別の追加許可」は各チームに追加で許可するモデルです。</p>
+          <p>・「全ユーザー共通で許可」はその棟の全員が使えるモデルです。</p>
+          <p>・「チーム別の追加許可」はその棟の各チームに追加で許可するモデルです。</p>
           <p>・システム管理者は常に全モデルを利用できます。</p>
         </>
       }
     />
   );
 
-  if (!isSystemAdminGroup) {
-    return (
-      <LayoutBody>
-        <PageTitle title='モデル利用制御' />
-        <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
-          {header}
-          <p className='text-dns-16N-130 text-error-1' role='alert'>
-            このページの閲覧には管理者権限が必要です。
-          </p>
-        </div>
-      </LayoutBody>
-    );
-  }
+  const tenants = config?.tenants ?? [];
+  const activeTenant = selectedTenant || config?.tenantId || '';
 
   return (
     <LayoutBody>
       <PageTitle title='モデル利用制御' />
       <div className='mx-auto flex w-full max-w-(--page-width) flex-col gap-6 p-6 lg:p-8'>
         {header}
+
+        {config && tenants.length > 1 && (
+          <div className='flex max-w-md flex-col gap-1.5'>
+            <Label htmlFor='modelpolicy-tenant'>対象の棟</Label>
+            <Select
+              id='modelpolicy-tenant'
+              value={activeTenant}
+              onChange={(e) => {
+                setSelectedTenant(e.target.value);
+                setError(null);
+              }}
+            >
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
 
         {isLoading ? (
           <p className='text-std-16N-170 text-solid-gray-600'>読み込み中...</p>
@@ -79,11 +90,12 @@ export const ModelPolicyPage = () => {
           </p>
         ) : (
           <PolicyEditor
+            key={config.tenantId}
             config={config}
             submitting={submitting}
             error={error}
             setError={setError}
-            onSave={save}
+            onSave={(policy) => save(policy, config.tenantId)}
           />
         )}
       </div>

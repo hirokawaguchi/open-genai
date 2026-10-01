@@ -14,7 +14,17 @@ export type PolicyTeam = {
   name: string;
 };
 
+/** 棟（テナント）。棟別にモデル利用制御を設定する。 */
+export type PolicyTenant = {
+  id: string;
+  name: string;
+};
+
 export type ModelPolicyConfig = {
+  /** 現在編集対象の棟。 */
+  tenantId: string;
+  /** 操作できる棟の一覧（システム管理者は全棟、棟管理者は自分の棟）。 */
+  tenants: PolicyTenant[];
   policy: ModelPolicy;
   availableModels: string[];
   teams: PolicyTeam[];

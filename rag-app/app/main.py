@@ -1046,9 +1046,12 @@ async def _kb_register_url(scope: str, url: str, tags: list[str]) -> dict[str, A
     return {"url": url, "title": title, "added_chunks": added}
 
 
-async def _apply_pii_for_doc(doc_id: str) -> None:
-    """索引済みドキュメント本文を個人情報検知し pii_* を更新する。"""
-    settings = load_pii_settings()
+async def _apply_pii_for_doc(doc_id: str, tenant_id: str = "") -> None:
+    """索引済みドキュメント本文を個人情報検知し pii_* を更新する。
+
+    検知フラグは登録した棟（tenant_id）の入力制限ルールに従う。
+    """
+    settings = load_pii_settings(tenant_id or None)
     if not settings.get("scan_knowledge_pii", True):
         docstore.set_pii_result(doc_id, pii_status="clear", pii_labels=[])
         return
@@ -1087,6 +1090,7 @@ async def _run_ingest_job(doc_id: str) -> None:
     scope = doc["scope"]
     source = doc["source"]
     tags = list(doc.get("tags") or [])
+    tenant_id = (payload.get("tenant_id") or "").strip()
     docstore.set_ingest_status(doc_id, "processing")
     try:
         kind = (payload.get("kind") or "file").strip().lower()
@@ -1121,7 +1125,7 @@ async def _run_ingest_job(doc_id: str) -> None:
             target_id = info.get("doc_id") or doc_id
 
         docstore.set_ingest_status(target_id, "ready")
-        await _apply_pii_for_doc(target_id)
+        await _apply_pii_for_doc(target_id, tenant_id)
         docstore.delete_ingest_payload(doc_id)
         if target_id != doc_id:
             docstore.delete_ingest_payload(target_id)
@@ -1148,7 +1152,8 @@ def _schedule_ingest_job(doc_id: str) -> None:
 
 
 async def _kb_enqueue_files(
-    scope: str, files: list[dict[str, str]], tags: list[str], mode: str
+    scope: str, files: list[dict[str, str]], tags: list[str], mode: str,
+    tenant_id: str = "",
 ) -> list[dict[str, Any]]:
     """ファイル登録を受け付け、バックグラウンド処理を開始する。"""
     if tags:
@@ -1165,6 +1170,7 @@ async def _kb_enqueue_files(
             mode=mode,
             media_type=media_type,
             content_b64=content_b64,
+            tenant_id=tenant_id,
         )
         _schedule_ingest_job(doc["doc_id"])
         results.append(
@@ -1183,13 +1189,15 @@ async def _kb_enqueue_files(
     return results
 
 
-async def _kb_enqueue_url(scope: str, url: str, tags: list[str]) -> dict[str, Any]:
+async def _kb_enqueue_url(
+    scope: str, url: str, tags: list[str], tenant_id: str = ""
+) -> dict[str, Any]:
     url = (url or "").strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         raise KnowledgeError("http(s):// で始まる URL を指定してください。")
     if tags:
         tagstore.ensure_tags(scope, tags)
-    doc = docstore.enqueue_url(scope=scope, url=url, tags=tags)
+    doc = docstore.enqueue_url(scope=scope, url=url, tags=tags, tenant_id=tenant_id)
     _schedule_ingest_job(doc["doc_id"])
     return {
         "url": url,
@@ -1753,6 +1761,7 @@ async def api_register(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
 ) -> Any:
     """ファイル登録。body: {mode: tree|fulltext, tags: [...], files: [{filename, content, media_type}]}"""
     scope, is_admin, body, err = await _kb_rest_auth(
@@ -1778,7 +1787,7 @@ async def api_register(
     if not files:
         return JSONResponse(status_code=400, content={"error": "登録するファイルを添付してください。"})
     try:
-        infos = await _kb_enqueue_files(scope, files, tags, mode)
+        infos = await _kb_enqueue_files(scope, files, tags, mode, (x_tenant_id or "").strip())
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(e)})
     return {"ok": True, "accepted": True, "scope": scope, "mode": mode, "documents": infos}
@@ -1794,6 +1803,7 @@ async def api_register_url(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
 ) -> Any:
     scope, is_admin, body, err = await _kb_rest_auth(
         request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
@@ -1804,7 +1814,7 @@ async def api_register_url(
         return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
     tags = _parse_tags(body.get("tags"))
     try:
-        r = await _kb_enqueue_url(scope, body.get("url") or "", tags)
+        r = await _kb_enqueue_url(scope, body.get("url") or "", tags, (x_tenant_id or "").strip())
     except KnowledgeError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:  # noqa: BLE001
