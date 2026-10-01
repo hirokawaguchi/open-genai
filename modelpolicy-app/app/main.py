@@ -29,11 +29,22 @@ from .policystore import parse_and_validate, render_policy
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 ADMIN_GROUP = os.environ.get("AUDIT_ADMIN_GROUP", "SystemAdminGroup")
+# 棟（テナント）の管理者であることを示す署名済みマーカー。backend が、対象棟の
+# 管理者だと確認したときだけ x-user-groups に足す（teams_store.TENANT_SCOPE_ADMIN_GROUP と一致）。
+TENANT_ADMIN_GROUP = os.environ.get("TENANT_SCOPE_ADMIN_GROUP", "TenantScopeAdmin")
 POLICY_DB_PATH = os.environ.get("POLICY_DB_PATH", "/data/policy.db")
+# 既定の棟（既存データの居場所）。backend teams_store.DEFAULT_TENANT_ID と一致。
+DEFAULT_TENANT_ID = os.environ.get(
+    "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
+)
 
 app = FastAPI(title="Open GENAI Model Policy App", version="0.1.0")
 
 _DEFAULT_POLICY: dict[str, Any] = {"enabled": False, "default": [], "groups": {}}
+
+
+def _tenant_of(x_tenant_id: str | None) -> str:
+    return (x_tenant_id or "").strip() or DEFAULT_TENANT_ID
 
 
 def _check_key(x_api_key: str | None) -> JSONResponse | None:
@@ -43,8 +54,9 @@ def _check_key(x_api_key: str | None) -> JSONResponse | None:
 
 
 def _is_admin(x_user_groups: str | None) -> bool:
+    """システム管理者、または対象棟の管理者（署名済みマーカー）なら許可。"""
     groups = [g.strip() for g in (x_user_groups or "").split(",") if g.strip()]
-    return ADMIN_GROUP in groups
+    return ADMIN_GROUP in groups or TENANT_ADMIN_GROUP in groups
 
 
 def _connect():
@@ -58,20 +70,43 @@ def _connect():
 
 
 def _init_db() -> None:
+    """棟別ポリシー表を用意し、旧・単一行ポリシーを既定の棟へ移行する。"""
     with _connect() as conn:
+        # 旧: 全体で1行（id=1）。後方互換のため残すが、以後は読み書きしない。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_policy ("
             " id INTEGER PRIMARY KEY CHECK (id = 1),"
             " policy TEXT NOT NULL,"
             " updatedDate TEXT NOT NULL)"
         )
+        # 新: 棟（tenantId）ごとに1行。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_policy_v2 ("
+            " tenantId TEXT PRIMARY KEY,"
+            " policy TEXT NOT NULL,"
+            " updatedDate TEXT NOT NULL)"
+        )
+        # 既存の全体設定は、既定の棟にだけ移す（他の棟は未設定＝制限なしで始める）。
+        has_default = conn.execute(
+            "SELECT 1 FROM model_policy_v2 WHERE tenantId = ?", (DEFAULT_TENANT_ID,)
+        ).fetchone()
+        if not has_default:
+            legacy = conn.execute(
+                "SELECT policy, updatedDate FROM model_policy WHERE id = 1"
+            ).fetchone()
+            if legacy and legacy[0]:
+                conn.execute(
+                    "INSERT INTO model_policy_v2 (tenantId, policy, updatedDate)"
+                    " VALUES (?, ?, ?)",
+                    (DEFAULT_TENANT_ID, legacy[0], legacy[1] or str(int(time.time() * 1000))),
+                )
 
 
-def _read_policy() -> dict[str, Any]:
+def _read_policy(tenant_id: str) -> dict[str, Any]:
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT policy FROM model_policy WHERE id = 1"
+                "SELECT policy FROM model_policy_v2 WHERE tenantId = ?", (tenant_id,)
             ).fetchone()
         if row and row[0]:
             data = json.loads(row[0])
@@ -82,14 +117,14 @@ def _read_policy() -> dict[str, Any]:
     return dict(_DEFAULT_POLICY)
 
 
-def _write_policy(policy: dict[str, Any]) -> None:
+def _write_policy(tenant_id: str, policy: dict[str, Any]) -> None:
     now = str(int(time.time() * 1000))
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO model_policy (id, policy, updatedDate) VALUES (1, ?, ?)"
-            " ON CONFLICT(id) DO UPDATE SET policy = excluded.policy,"
+            "INSERT INTO model_policy_v2 (tenantId, policy, updatedDate) VALUES (?, ?, ?)"
+            " ON CONFLICT(tenantId) DO UPDATE SET policy = excluded.policy,"
             " updatedDate = excluded.updatedDate",
-            (json.dumps(policy, ensure_ascii=False), now),
+            (tenant_id, json.dumps(policy, ensure_ascii=False), now),
         )
 
 
@@ -220,6 +255,7 @@ async def schema(
     x_user_tags: str | None = Header(default=None),
     x_available_models: str | None = Header(default=None),
     x_teams: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
 ) -> Any:
     """現在ポリシーをプレフィルした構造化フォーム定義を返す。"""
     err = _check_key(x_api_key)
@@ -231,7 +267,7 @@ async def schema(
         return {"placeholder": {}}
     models = [m.strip() for m in (x_available_models or "").split(",") if m.strip()]
     id2name, _ = _team_maps(x_teams)
-    return {"placeholder": _build_schema(_read_policy(), models, id2name)}
+    return {"placeholder": _build_schema(_read_policy(_tenant_of(x_tenant_id)), models, id2name)}
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +295,7 @@ def _verify_admin(request: Request) -> JSONResponse | None:
     if not _is_admin(h.get("x-user-groups")):
         return JSONResponse(
             status_code=403,
-            content={"error": "この機能はシステム管理者のみが利用できます（SystemAdminGroup 所属が必要です）"},
+            content={"error": "この機能は管理者のみが利用できます（システム管理者または棟の管理者が必要です）"},
         )
     return None
 
@@ -269,10 +305,12 @@ async def set_policy_api(request: Request) -> Any:
     """構造化ポリシー（{policy:{enabled,default,teams}}）を検証して保存する。
 
     専用ページはチームIDを直接扱うため、チーム名解決は不要（teams は teamId→models）。
+    保存先の棟は backend が付ける x-tenant-id（未指定は既定の棟）。
     """
     err = _verify_admin(request)
     if err:
         return err
+    tenant_id = _tenant_of(request.headers.get("x-tenant-id"))
     body = await request.json()
     raw = body.get("policy")
     if raw is None:
@@ -281,7 +319,7 @@ async def set_policy_api(request: Request) -> Any:
     if verr:
         return JSONResponse(status_code=400, content={"error": verr})
     try:
-        _write_policy(policy)
+        _write_policy(tenant_id, policy)
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": f"ポリシーの保存に失敗しました: {e}"})
     return {"policy": policy}
@@ -298,6 +336,7 @@ async def invoke(
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
     x_teams: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
 ) -> Any:
     err = _check_key(x_api_key)
     if err:
@@ -307,11 +346,12 @@ async def invoke(
     if not _is_admin(x_user_groups):
         return {
             "outputs": (
-                "この機能は**システム管理者のみ**が利用できます"
-                "（SystemAdminGroup 所属が必要です）。"
+                "この機能は**管理者のみ**が利用できます"
+                "（システム管理者または棟の管理者が必要です）。"
             )
         }
 
+    tenant_id = _tenant_of(x_tenant_id)
     id2name, name2id = _team_maps(x_teams)
     body = await request.json()
     inputs = body.get("inputs", body)
@@ -353,7 +393,7 @@ async def invoke(
         if verr:
             return {"outputs": f"設定エラー: {verr}\n\n記入例:\n```json\n{_EXAMPLE}\n```"}
         try:
-            _write_policy(policy)
+            _write_policy(tenant_id, policy)
         except Exception as e:  # noqa: BLE001
             return {"outputs": f"[ポリシーの保存に失敗しました] {e}"}
         note = ""
@@ -368,7 +408,7 @@ async def invoke(
         }
 
     # view（既定）
-    policy = _read_policy()
+    policy = _read_policy(tenant_id)
     return {
         "outputs": (
             render_policy(policy, id2name)

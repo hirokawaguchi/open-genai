@@ -1218,25 +1218,39 @@ def _last_user_text(messages: list[dict[str, Any]]) -> str:
 
 
 def _user_scope_ids(claims: dict[str, Any]) -> list[str]:
-    """モデル利用ポリシー判定に使う利用者スコープ = 所属チームID。"""
+    """モデル利用ポリシー判定に使う利用者スコープ = 開いている棟の所属チームID。"""
     try:
-        return teams_store.list_team_ids_for_user(_user_id(claims))
+        user_id = _user_id(claims)
+        ids = teams_store.list_team_ids_for_user(user_id)
+        active = _active_tenant_id(user_id, claims)
+        return teams_store.filter_team_ids_for_tenant(ids, active)
     except Exception:  # noqa: BLE001
         return []
 
 
 def _model_denied(claims: dict[str, Any], model: Any) -> str | None:
-    """利用ポリシー上、指定モデルが不許可なら理由メッセージを返す（許可なら None）。"""
+    """利用ポリシー上、指定モデルが不許可なら理由メッセージを返す（許可なら None）。
+
+    判定は開いている棟（活性棟）のモデル利用ポリシーで行う。
+    """
     model_id = llm.resolve_model(model if isinstance(model, dict) else None)
     scopes = _user_scope_ids(claims)
-    if policy.is_model_allowed(scopes, _is_system_admin(claims), model_id):
+    tenant_id = _active_tenant_id(_user_id(claims), claims)
+    if policy.is_model_allowed(
+        scopes, _is_system_admin(claims), model_id, tenant_id
+    ):
         return None
     return f"モデル「{model_id}」の利用は許可されていません（管理者にお問い合わせください）。"
 
 
 def _ngword_denied(request: Request, text: str, *, usecase: str = "/chat") -> str | None:
-    """入力が禁止ワード/機密情報に該当すればブロック理由を返し、監査ログに記録する。"""
-    blocked, reason = ngwords.check(text or "")
+    """入力が禁止ワード/機密情報に該当すればブロック理由を返し、監査ログに記録する。
+
+    判定は開いている棟（活性棟）の入力制限ルールで行う。
+    """
+    claims = _claims_from_request(request)
+    tenant_id = _active_tenant_id(_user_id(claims), claims)
+    blocked, reason = ngwords.check(text or "", tenant_id)
     if not blocked:
         return None
     try:
@@ -2484,7 +2498,9 @@ async def predict_stream(request: Request) -> StreamingResponse:
 
 
 # ---------------------------------------------------------------------------
-# 監査ログ参照（システム管理者限定） — 8-(1) 管理者による利用状況/内容の確認
+# 監査ログ参照（システム管理者＋個別許可された閲覧者） — 8-(1)
+# 棟では分けない。閲覧できるのはシステム管理者と、システム管理者が個別に許可した
+# 利用者だけ（いずれも全棟のログを閲覧する）。
 # ---------------------------------------------------------------------------
 def _parse_int(value: str | None) -> int | None:
     try:
@@ -2493,10 +2509,20 @@ def _parse_int(value: str | None) -> int | None:
         return None
 
 
+def _can_view_audit(claims: dict[str, Any]) -> bool:
+    """監査ログを閲覧してよいか（システム管理者、または個別許可された利用者）。"""
+    if _is_system_admin(claims):
+        return True
+    try:
+        return teams_store.is_audit_viewer(_user_id(claims))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.get("/admin/audit-logs")
 async def list_audit_logs(request: Request) -> JSONResponse:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
+    if not _can_view_audit(claims):
         return _forbidden("監査ログの閲覧には管理者権限が必要です")
     qp = request.query_params
     result = audit.query(
@@ -2515,7 +2541,10 @@ async def list_audit_logs(request: Request) -> JSONResponse:
 async def list_allowed_models(request: Request) -> JSONResponse:
     """現在のユーザーが利用可能なモデル ID を返す（unrestricted=true は無制限）。"""
     claims = _claims_from_request(request)
-    allowed = policy.allowed_models(_user_scope_ids(claims), _is_system_admin(claims))
+    tenant_id = _active_tenant_id(_user_id(claims), claims)
+    allowed = policy.allowed_models(
+        _user_scope_ids(claims), _is_system_admin(claims), tenant_id
+    )
     if allowed is None:
         return JSONResponse(content={"unrestricted": True, "models": []})
     return JSONResponse(content={"unrestricted": False, "models": sorted(allowed)})
@@ -2535,27 +2564,73 @@ def _admin_app_url(base_url: str, path: str) -> str:
     return base + path
 
 
-def _admin_app_headers(
-    request: Request, forbid_msg: str
-) -> tuple[JSONResponse | None, dict[str, str]]:
-    claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden(forbid_msg), {}
+def _resolve_admin_tool_tenant(
+    request: Request, claims: dict[str, Any], requested: str | None, forbid_msg: str
+) -> tuple[str | None, bool, JSONResponse | None]:
+    """棟別管理ツール（モデル利用制御／入力制限）の対象棟を決める。
+
+    戻り値 (tenant_id, is_tenant_admin_only, error)。
+    - システム管理者: requested（なければ活性棟／既定の棟）を対象にできる。
+    - 棟の管理者: いま開いている棟だけ。別の棟を指定したら 403。
+    """
     user_id = _user_id(claims)
-    groups_str = ",".join(claims.get("groups") or [])
+    is_sys = _is_system_admin(claims)
+    active = _active_tenant_id(user_id, claims)
+    req = (requested or "").strip()
+    org_shared = (teams_store.TENANT_KIND_ORG, teams_store.TENANT_KIND_SHARED)
+    if is_sys:
+        tid = req or (active if not _has_no_tenant(active) else teams_store.DEFAULT_TENANT_ID)
+        tenant = teams_store.get_tenant(tid)
+        if not tenant or tenant.get("kind") not in org_shared:
+            return None, False, _forbidden("対象の棟が見つかりません")
+        return tid, False, None
+    # 棟の管理者
+    if _has_no_tenant(active):
+        return None, False, _forbidden(forbid_msg)
+    tenant = teams_store.get_tenant(active)
+    if not tenant or tenant.get("kind") not in org_shared:
+        return None, False, _forbidden(forbid_msg)
+    if not teams_store.is_tenant_admin(active, user_id):
+        return None, False, _forbidden(forbid_msg)
+    if req and req != active:
+        return None, False, _forbidden("ほかの棟の設定は変更できません")
+    return active, True, None
+
+
+def _admin_app_headers(
+    request: Request,
+    *,
+    tenant_id: str,
+    tenant_admin_only: bool,
+) -> dict[str, str]:
+    """管理者限定サービスへ送る署名付きヘッダ。
+
+    棟の管理者のときだけ、署名対象のグループに TenantScopeAdmin マーカーを足す。
+    対象棟は x-tenant-id で渡す（内部サービスはこの棟の行だけを読み書きする）。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    groups = [
+        g
+        for g in (claims.get("groups") or [])
+        if g and g != teams_store.TENANT_SCOPE_ADMIN_GROUP
+    ]
+    if tenant_admin_only:
+        groups.append(teams_store.TENANT_SCOPE_ADMIN_GROUP)
+    groups_str = ",".join(groups)
     team_ids = _user_team_ids_str(user_id)
     teams_hdr = _user_teams_header(user_id)
-    headers = {
+    return {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
         "x-user-groups": groups_str,
         "x-user-tags": team_ids,
         "x-user-teams": teams_hdr,
         "x-scope": ADMIN_TEAM_ID,
+        "x-tenant-id": tenant_id,
         **intauth.signed_headers(user_id, groups_str, ADMIN_TEAM_ID, team_ids),
         "Content-Type": "application/json",
     }
-    return None, headers
 
 
 async def _proxy_admin_app(
@@ -2579,34 +2654,73 @@ async def _proxy_admin_app(
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
-def _admin_teams_list() -> list[dict[str, str]]:
-    """設定対象チーム(id+name)の一覧。固定チーム(共通/管理者ツール)は除外。"""
+def _tenant_team_ids(tenant_id: str) -> set[str]:
+    """その棟に属するチームID集合（固定の共通/管理者ツールを除く）。"""
+    try:
+        return {
+            t["teamId"]
+            for t in teams_store.list_teams()
+            if t.get("tenantId") == tenant_id
+            and t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+        }
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _admin_teams_list(tenant_id: str) -> list[dict[str, str]]:
+    """設定対象チーム(id+name)の一覧。対象棟のチームだけ（固定チームは除外）。"""
     try:
         teams = [
             t
             for t in teams_store.list_teams()
-            if t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
+            if t.get("tenantId") == tenant_id
+            and t["teamId"] not in (COMMON_TEAM_ID, ADMIN_TEAM_ID)
         ]
     except Exception:  # noqa: BLE001
         teams = []
     return [{"id": t["teamId"], "name": t["teamName"]} for t in teams]
 
 
+def _manageable_tenants(claims: dict[str, Any]) -> list[dict[str, str]]:
+    """この利用者が棟別管理ツールを操作できる棟の一覧（画面の棟セレクタ用）。"""
+    user_id = _user_id(claims)
+    org_shared = (teams_store.TENANT_KIND_ORG, teams_store.TENANT_KIND_SHARED)
+    try:
+        if _is_system_admin(claims):
+            tenants = teams_store.list_tenants()
+        else:
+            tenants = teams_store.list_tenants_for_user(user_id)
+            tenants = [t for t in tenants if t.get("isAdmin")]
+    except Exception:  # noqa: BLE001
+        tenants = []
+    return [
+        {"id": t["tenantId"], "name": t["tenantName"]}
+        for t in tenants
+        if t.get("kind") in org_shared
+    ]
+
+
 @app.get("/admin/model-policy")
 async def get_model_policy(request: Request) -> JSONResponse:
-    """モデル利用ポリシーの現在値＋設定に必要な選択肢を返す（システム管理者限定）。
+    """モデル利用ポリシーの現在値＋設定に必要な選択肢を返す（棟別・管理者限定）。
 
     書き込みは管理者限定サービス（modelpolicy-app）が担う。backend は読み取り専用で
     ポリシーを参照し、専用ページ用に利用可能モデルID一覧と設定対象チームも併せて返す。
     """
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden("モデル利用ポリシーの閲覧には管理者権限が必要です")
+    tenant_id, _tadmin, err = _resolve_admin_tool_tenant(
+        request, claims, request.query_params.get("tenantId"),
+        "モデル利用ポリシーの閲覧には管理者権限が必要です",
+    )
+    if err:
+        return err
     return JSONResponse(
         content={
-            "policy": policy.get_policy(),
+            "tenantId": tenant_id,
+            "tenants": _manageable_tenants(claims),
+            "policy": policy.get_policy(tenant_id),
             "availableModels": await _available_models_cached(),
-            "teams": _admin_teams_list(),
+            "teams": _admin_teams_list(tenant_id or ""),
         }
     )
 
@@ -2614,10 +2728,27 @@ async def get_model_policy(request: Request) -> JSONResponse:
 @app.post("/admin/model-policy")
 async def set_model_policy(request: Request) -> JSONResponse:
     """モデル利用ポリシーを保存する（単一ライターの modelpolicy-app へプロキシ）。"""
-    err, headers = _admin_app_headers(request, "モデル利用ポリシーの変更には管理者権限が必要です")
+    claims = _claims_from_request(request)
+    body = await request.json()
+    tenant_id, tadmin, err = _resolve_admin_tool_tenant(
+        request, claims, (body or {}).get("tenantId"),
+        "モデル利用ポリシーの変更には管理者権限が必要です",
+    )
     if err:
         return err
-    body = await request.json()
+    # チーム別許可は、その棟のチームに限る（他棟のチームへ許可を漏らさない）。
+    teams = ((body or {}).get("policy") or {}).get("teams") or {}
+    if isinstance(teams, dict) and teams:
+        allowed_team_ids = _tenant_team_ids(tenant_id or "")
+        foreign = [tid for tid in teams if tid not in allowed_team_ids]
+        if foreign:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "この棟に属さないチームには設定できません"},
+            )
+    headers = _admin_app_headers(
+        request, tenant_id=tenant_id or "", tenant_admin_only=tadmin
+    )
     return await _proxy_admin_app(
         "POST", _admin_app_url(MODELPOLICY_APP_URL, "/policy"), headers, body, "モデル利用制御サービス"
     )
@@ -2625,20 +2756,37 @@ async def set_model_policy(request: Request) -> JSONResponse:
 
 @app.get("/admin/ngword")
 async def get_ngword_rules(request: Request) -> JSONResponse:
-    """入力制限ルールの現在値を返す（システム管理者限定・参照のみ）。"""
+    """入力制限ルールの現在値を返す（棟別・管理者限定・参照のみ）。"""
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
-        return _forbidden("入力制限ルールの閲覧には管理者権限が必要です")
-    return JSONResponse(content={"rules": ngwords.get_rules()})
+    tenant_id, _tadmin, err = _resolve_admin_tool_tenant(
+        request, claims, request.query_params.get("tenantId"),
+        "入力制限ルールの閲覧には管理者権限が必要です",
+    )
+    if err:
+        return err
+    return JSONResponse(
+        content={
+            "tenantId": tenant_id,
+            "tenants": _manageable_tenants(claims),
+            "rules": ngwords.get_rules(tenant_id),
+        }
+    )
 
 
 @app.post("/admin/ngword")
 async def set_ngword_rules(request: Request) -> JSONResponse:
     """入力制限ルールを保存する（単一ライターの ngword-app へプロキシ）。"""
-    err, headers = _admin_app_headers(request, "入力制限ルールの変更には管理者権限が必要です")
+    claims = _claims_from_request(request)
+    body = await request.json()
+    tenant_id, tadmin, err = _resolve_admin_tool_tenant(
+        request, claims, (body or {}).get("tenantId"),
+        "入力制限ルールの変更には管理者権限が必要です",
+    )
     if err:
         return err
-    body = await request.json()
+    headers = _admin_app_headers(
+        request, tenant_id=tenant_id or "", tenant_admin_only=tadmin
+    )
     return await _proxy_admin_app(
         "POST", _admin_app_url(NGWORD_APP_URL, "/rules"), headers, body, "入力制限サービス"
     )
@@ -2647,7 +2795,7 @@ async def set_ngword_rules(request: Request) -> JSONResponse:
 @app.get("/admin/audit-logs/export")
 async def export_audit_logs(request: Request) -> Response:
     claims = _claims_from_request(request)
-    if not _is_system_admin(claims):
+    if not _can_view_audit(claims):
         return _forbidden("監査ログのエクスポートには管理者権限が必要です")
     qp = request.query_params
     ts_from = _parse_int(qp.get("from"))
@@ -2661,6 +2809,75 @@ async def export_audit_logs(request: Request) -> Response:
         media_type="application/x-ndjson",
         headers={"Content-Disposition": "attachment; filename=audit-logs.jsonl"},
     )
+
+
+# ---------------------------------------------------------------------------
+# 監査ログの閲覧許可（システム管理者のみが付与・取消できる）
+# 棟では分けない。許可された利用者は全棟のログ（本文を含む）を閲覧できる。
+# ---------------------------------------------------------------------------
+@app.get("/admin/audit-viewers")
+async def list_audit_viewers(request: Request) -> JSONResponse:
+    """監査ログの個別閲覧者の一覧（システム管理者限定）。"""
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログの閲覧者の管理には管理者権限が必要です")
+    return JSONResponse(content={"viewers": teams_store.list_audit_viewers()})
+
+
+@app.post("/admin/audit-viewers")
+async def add_audit_viewer(request: Request) -> JSONResponse:
+    """監査ログの閲覧者を追加する（システム管理者限定）。body: {userId}。"""
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログの閲覧者の管理には管理者権限が必要です")
+    body = await request.json()
+    uid = teams_store.add_audit_viewer((body or {}).get("userId") or "")
+    if not uid:
+        return JSONResponse(
+            status_code=400, content={"error": "利用者ID（メール）を指定してください"}
+        )
+    return JSONResponse(content={"viewers": teams_store.list_audit_viewers()})
+
+
+@app.delete("/admin/audit-viewers/{user_id:path}")
+async def remove_audit_viewer(user_id: str, request: Request) -> JSONResponse:
+    """監査ログの閲覧者を取り消す（システム管理者限定）。"""
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログの閲覧者の管理には管理者権限が必要です")
+    teams_store.remove_audit_viewer(user_id)
+    return JSONResponse(content={"viewers": teams_store.list_audit_viewers()})
+
+
+@app.get("/admin/audit-viewer-candidates")
+async def list_audit_viewer_candidates(request: Request) -> JSONResponse:
+    """閲覧者に指定できる利用者を検索する（システム管理者限定・棟で絞らない）。
+
+    利用者一括管理サービス(usermgmt-app)の全件一覧をそのまま使う。棟のフィルタは
+    かけない（監査ログは棟で分けないため、全棟の利用者から選べる）。
+    """
+    claims = _claims_from_request(request)
+    if not _is_system_admin(claims):
+        return _forbidden("監査ログの閲覧者の管理には管理者権限が必要です")
+    user_id = _user_id(claims)
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": ADMIN_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, ADMIN_TEAM_ID, team_ids),
+    }
+    qp = request.query_params
+    status, payload = await _request_usermgmt(
+        "GET",
+        _usermgmt_app_url("/users"),
+        headers,
+        params={"search": qp.get("search") or "", "limit": qp.get("limit") or 50},
+    )
+    return JSONResponse(status_code=status, content=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -2681,12 +2898,19 @@ def _knowledge_headers(claims: dict[str, Any], scope: str) -> dict[str, str]:
         claims.get("groups") or [], user_id, scope
     )
     team_ids = _user_team_ids_str(user_id)
+    # ナレッジ本文の個人情報検知を、登録先スコープの棟のルールで行わせる。
+    # 共通スコープは既定の棟、チームスコープはそのチームの棟。
+    if scope == COMMON_TEAM_ID:
+        tenant_id = teams_store.DEFAULT_TENANT_ID
+    else:
+        tenant_id = teams_store.tenant_id_of_team(scope) or teams_store.DEFAULT_TENANT_ID
     return {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
         "x-user-groups": groups_str,
         "x-user-tags": team_ids,
         "x-scope": scope,
+        "x-tenant-id": tenant_id,
         **intauth.signed_headers(user_id, groups_str, scope, team_ids),
         "Content-Type": "application/json",
     }
@@ -3065,7 +3289,10 @@ async def put_file(key: str, request: Request) -> dict[str, Any]:
         from shared.docextract import extract_doc_text_full
         import base64 as _b64
 
-        settings = load_pii_settings()
+        # 添付の個人情報警告は、アップロードした利用者が開いている棟のルールで判定する。
+        claims = _claims_from_request(request)
+        tenant_id = _active_tenant_id(_user_id(claims), claims)
+        settings = load_pii_settings(tenant_id)
         if not settings.get("warn_attachments", True):
             return result
         filename = os.path.basename(key) or "file"
@@ -3211,27 +3438,37 @@ async def list_exapps(request: Request) -> list[Any]:
         a for a in candidates if a.get("exAppId") not in RETIRED_SEED_EXAPP_IDS
     ]
     # 管理者限定 exApp（監査ログ参照 等）は非管理者の一覧から隠す。
-    # 利用者一括管理だけは、いま開いている組織棟の管理者にも見せる。
+    # ただし次は例外として非システム管理者にも見せる:
+    #  - 利用者一括管理 / モデル利用制御 / 入力制限: いま開いている棟の管理者
+    #  - 監査ログ参照: システム管理者が個別に許可した閲覧者
     if not is_admin:
         candidates = [
             a for a in candidates if a.get("exAppId") not in ADMIN_ONLY_EXAPP_IDS
         ]
+        extra_admin_app_ids: list[str] = []
         active_tenant = (
             teams_store.get_tenant(active)
             if user_id and active and not _has_no_tenant(active)
             else None
         )
+        # 組織棟または共有棟の管理者には、棟別の管理ツールを見せる。
         if (
             active_tenant
-            and active_tenant.get("kind") == teams_store.TENANT_KIND_ORG
+            and active_tenant.get("kind")
+            in (teams_store.TENANT_KIND_ORG, teams_store.TENANT_KIND_SHARED)
             and teams_store.is_tenant_admin(active, user_id)
         ):
-            app = teams_store.get_exapp(ADMIN_TEAM_ID, "usermgmt")
-            if app and app.get("status") == "published":
-                team = teams_store.get_team(ADMIN_TEAM_ID)
-                candidates.append(
-                    {**app, "teamName": (team or {}).get("teamName") or ""}
-                )
+            extra_admin_app_ids.extend(["usermgmt", "modelpolicy", "ngword"])
+        # 監査ログは棟で分けない。個別に許可された閲覧者にだけ見せる。
+        if user_id and teams_store.is_audit_viewer(user_id):
+            extra_admin_app_ids.append("audit")
+        if extra_admin_app_ids:
+            team = teams_store.get_team(ADMIN_TEAM_ID)
+            team_name = (team or {}).get("teamName") or ""
+            for ex_app_id in extra_admin_app_ids:
+                app = teams_store.get_exapp(ADMIN_TEAM_ID, ex_app_id)
+                if app and app.get("status") == "published":
+                    candidates.append({**app, "teamName": team_name})
     # 組み込みカタログは下書きも含めて返す（メニュー表示の判定用。ヘルス不要）
     seen = {(a["teamId"], a["exAppId"]) for a in candidates}
     for builtin in teams_store.list_builtin_exapps():

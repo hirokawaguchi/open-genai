@@ -22,6 +22,25 @@ def store(tmp_path, monkeypatch):
     return ts
 
 
+def test_audit_viewers_add_list_remove(store) -> None:
+    assert store.list_audit_viewers() == []
+    assert not store.is_audit_viewer("User@Example.com")
+
+    created = store.add_audit_viewer("User@Example.com")
+    assert created is not None
+    # メールは正規化して照合する（大文字小文字を無視）。
+    assert store.is_audit_viewer("user@example.com")
+    assert store.list_audit_viewers() == ["user@example.com"]
+
+    # 重複登録は冪等（例外を投げない）。
+    store.add_audit_viewer("user@example.com")
+    assert store.list_audit_viewers() == ["user@example.com"]
+
+    store.remove_audit_viewer("user@example.com")
+    assert store.list_audit_viewers() == []
+    assert not store.is_audit_viewer("user@example.com")
+
+
 def test_seed_default_and_shared(store) -> None:
     tenants = {t["tenantId"]: t for t in store.list_tenants()}
     assert store.DEFAULT_TENANT_ID in tenants
