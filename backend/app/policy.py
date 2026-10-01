@@ -24,22 +24,42 @@ import time
 from typing import Any
 
 POLICY_DB_PATH = os.environ.get("POLICY_DB_PATH", "/data/policy.db")
+# 既定の棟（大分市役所。既存データの居場所）。teams_store.DEFAULT_TENANT_ID と一致。
+DEFAULT_TENANT_ID = os.environ.get(
+    "DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
+)
 
 _DEFAULT_POLICY: dict[str, Any] = {"enabled": False, "default": [], "groups": {}}
 
-# mtime ベースの簡易キャッシュ（predict 毎の読取を避ける）
-_cache: dict[str, Any] = {"mtime": None, "policy": _DEFAULT_POLICY}
+# mtime ベースの簡易キャッシュ（predict 毎の読取を避ける）。棟ごとに保持する。
+_cache: dict[str, Any] = {"mtime": None, "policies": {}}
 
 
-def _read_policy_from_db() -> dict[str, Any]:
+def _read_policy_from_db(tenant_id: str) -> dict[str, Any]:
+    """棟別ポリシーを読む。行が無ければ無制限（フェイルオープン）。
+
+    既定の棟だけは、未移行の旧・単一行（id=1）も後方互換で参照する。
+    """
     if not os.path.exists(POLICY_DB_PATH):
         return dict(_DEFAULT_POLICY)
     try:
         conn = sqlite3.connect(f"file:{POLICY_DB_PATH}?mode=ro", uri=True, timeout=5)
         try:
-            row = conn.execute(
-                "SELECT policy FROM model_policy WHERE id = 1"
-            ).fetchone()
+            row = None
+            try:
+                row = conn.execute(
+                    "SELECT policy FROM model_policy_v2 WHERE tenantId = ?",
+                    (tenant_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None  # v2 未作成（writer 未更新）。旧表へフォールバック。
+            if (not row or not row[0]) and tenant_id == DEFAULT_TENANT_ID:
+                try:
+                    row = conn.execute(
+                        "SELECT policy FROM model_policy WHERE id = 1"
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    row = None
         finally:
             conn.close()
         if not row or not row[0]:
@@ -52,25 +72,32 @@ def _read_policy_from_db() -> dict[str, Any]:
         return dict(_DEFAULT_POLICY)
 
 
-def get_policy() -> dict[str, Any]:
-    """現在のポリシーを返す（mtime キャッシュ付き）。"""
+def get_policy(tenant_id: str | None = None) -> dict[str, Any]:
+    """指定した棟のポリシーを返す（mtime キャッシュ付き・棟ごと）。"""
+    tid = (tenant_id or "").strip() or DEFAULT_TENANT_ID
     try:
         mtime = os.path.getmtime(POLICY_DB_PATH) if os.path.exists(POLICY_DB_PATH) else None
     except OSError:
         mtime = None
     if mtime != _cache["mtime"]:
-        _cache["policy"] = _read_policy_from_db()
         _cache["mtime"] = mtime
-    return _cache["policy"]
+        _cache["policies"] = {}
+    policies = _cache["policies"]
+    if tid not in policies:
+        policies[tid] = _read_policy_from_db(tid)
+    return policies[tid]
 
 
-def allowed_models(scopes: list[str], is_admin: bool) -> set[str] | None:
+def allowed_models(
+    scopes: list[str], is_admin: bool, tenant_id: str | None = None
+) -> set[str] | None:
     """ユーザーが利用可能なモデル ID 集合。None は「無制限」。
 
     `scopes` は利用者の所属チームID（team-based）。後方互換として旧 `groups`
     （ロール別）マップも併せて参照する（キーが一致した場合のみ加算許可）。
+    判定は開いている棟（tenant_id）のポリシーで行う。
     """
-    policy = get_policy()
+    policy = get_policy(tenant_id)
     if not policy.get("enabled"):
         return None
     if is_admin:
@@ -84,8 +111,10 @@ def allowed_models(scopes: list[str], is_admin: bool) -> set[str] | None:
     return allowed
 
 
-def is_model_allowed(scopes: list[str], is_admin: bool, model_id: str) -> bool:
-    allowed = allowed_models(scopes, is_admin)
+def is_model_allowed(
+    scopes: list[str], is_admin: bool, model_id: str, tenant_id: str | None = None
+) -> bool:
+    allowed = allowed_models(scopes, is_admin, tenant_id)
     if allowed is None:
         return True
     return model_id in allowed

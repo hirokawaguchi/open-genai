@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+
 import pytest
 
 from shared import pii_scan as pii_mod
@@ -8,6 +11,7 @@ from shared.pii_scan import (
     CAT_MYNUMBER,
     CAT_PHONE,
     format_categories,
+    load_pii_settings,
     scan,
 )
 
@@ -57,6 +61,43 @@ def test_scan_person_name_with_ginza() -> None:
     assert "電話番号" in result["categories"]
     assert any(h["category"] == "氏名" and "山田" in h["match"] for h in result["hits"])
     assert any(h["category"] == "電話番号" for h in result["hits"])
+
+
+def test_load_pii_settings_defaults_when_no_db(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NGWORD_DB_PATH", str(tmp_path / "missing.db"))
+    out = load_pii_settings()
+    assert out["check_mynumber"] is True
+    assert out["scan_knowledge_pii"] is True
+
+
+def test_load_pii_settings_per_tenant(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "ngwords.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE ngword_rules_v2 ("
+        " tenantId TEXT PRIMARY KEY, rules TEXT NOT NULL, updatedDate TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO ngword_rules_v2 (tenantId, rules, updatedDate) VALUES (?, ?, ?)",
+        (
+            pii_mod.DEFAULT_TENANT_ID,
+            json.dumps({"scan_knowledge_pii": False, "check_mynumber": False}),
+            "1",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("NGWORD_DB_PATH", str(db_path))
+
+    # 既定の棟は保存した設定（無効）を読む。
+    default_out = load_pii_settings(pii_mod.DEFAULT_TENANT_ID)
+    assert default_out["scan_knowledge_pii"] is False
+    assert default_out["check_mynumber"] is False
+
+    # 行の無い棟は既定（有効）に戻る。
+    other_out = load_pii_settings("00000000-0000-0000-0000-00000000ffff")
+    assert other_out["scan_knowledge_pii"] is True
+    assert other_out["check_mynumber"] is True
 
 
 def test_scan_rejects_ner_false_positives() -> None:

@@ -156,6 +156,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
             """
         )
         _migrate_org_columns(conn)
+        _migrate_audit_viewers(conn)
         # 共通チーム / 管理者ツール チーム（いずれもシステム管理下の固定チーム）
         for fixed_id, fixed_name in (
             (COMMON_TEAM_ID, "共通アプリ"),
@@ -302,6 +303,70 @@ def _migrate_app_settings(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migrate_audit_viewers(conn: sqlite3.Connection) -> None:
+    """監査ログを閲覧してよい利用者（システム管理者が個別に追加する）表。
+
+    棟では分けない。ここに載った ID は、システム管理者と同じく全棟の監査ログを
+    閲覧できる（入力・出力の本文を含む）。付与・取消はシステム管理者だけが行う。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_viewers (
+            userId TEXT PRIMARY KEY,
+            createdDate TEXT NOT NULL
+        )
+        """
+    )
+
+
+def list_audit_viewers() -> list[str]:
+    """監査ログの個別閲覧を許可された利用者 ID（古い順）。"""
+    with _lock, _connect() as conn:
+        _migrate_audit_viewers(conn)
+        rows = conn.execute(
+            "SELECT userId FROM audit_viewers ORDER BY createdDate ASC, userId ASC"
+        ).fetchall()
+    return [r["userId"] for r in rows]
+
+
+def is_audit_viewer(user_id: str) -> bool:
+    """この利用者が監査ログの個別閲覧を許可されているか。"""
+    uid = normalize_email(user_id)
+    if not uid:
+        return False
+    with _lock, _connect() as conn:
+        _migrate_audit_viewers(conn)
+        r = conn.execute(
+            "SELECT 1 FROM audit_viewers WHERE userId = ? LIMIT 1", (uid,)
+        ).fetchone()
+    return bool(r)
+
+
+def add_audit_viewer(user_id: str) -> str | None:
+    """監査ログの閲覧者を追加する。正規化後の ID を返す（空なら None）。"""
+    uid = normalize_email(user_id)
+    if not uid:
+        return None
+    with _lock, _connect() as conn:
+        _migrate_audit_viewers(conn)
+        conn.execute(
+            "INSERT INTO audit_viewers (userId, createdDate) VALUES (?, ?)"
+            " ON CONFLICT(userId) DO NOTHING",
+            (uid, _now()),
+        )
+    return uid
+
+
+def remove_audit_viewer(user_id: str) -> None:
+    """監査ログの閲覧者を取り消す。"""
+    uid = normalize_email(user_id)
+    if not uid:
+        return
+    with _lock, _connect() as conn:
+        _migrate_audit_viewers(conn)
+        conn.execute("DELETE FROM audit_viewers WHERE userId = ?", (uid,))
 
 
 def normalize_recommended_exapp_ids(ids: list[str] | None) -> list[str]:

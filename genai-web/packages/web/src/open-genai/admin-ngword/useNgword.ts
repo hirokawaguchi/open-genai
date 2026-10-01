@@ -15,17 +15,19 @@ const errorMessage = (e: unknown, fallback: string): string => {
   return fallback;
 };
 
-/** 入力制限ルールの現在値を取得する（管理者限定）。 */
-export const useNgword = () => {
+/** 入力制限ルールの現在値を取得する（棟別・管理者限定）。 */
+export const useNgword = (tenantId?: string) => {
+  const params = tenantId ? { tenantId } : undefined;
   const { data, error, isLoading, mutate } = useSWR<NgWordConfig>(
-    NGWORD_KEY,
-    (key: string) => teamApi.get<NgWordConfig>(key).then((res) => res.data),
+    [NGWORD_KEY, tenantId ?? ''],
+    () => teamApi.get<NgWordConfig>(NGWORD_KEY, { params }).then((res) => res.data),
     { revalidateOnFocus: false },
   );
 
   const forbidden = error instanceof ApiError && error.status === 403;
 
   return {
+    config: data,
     rules: data?.rules,
     isLoading,
     forbidden,
@@ -37,17 +39,17 @@ export const useNgword = () => {
   };
 };
 
-/** ルールを保存する（ngword-app へプロキシ）。 */
+/** ルールを保存する（ngword-app へプロキシ・棟別）。 */
 export const useNgwordActions = (mutate: () => Promise<unknown>) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = useCallback(
-    async (rules: NgWordRules): Promise<boolean> => {
+    async (rules: NgWordRules, tenantId: string): Promise<boolean> => {
       setSubmitting(true);
       setError(null);
       try {
-        await teamApi.post(NGWORD_KEY, { rules });
+        await teamApi.post(NGWORD_KEY, { rules, tenantId });
         await mutate();
         return true;
       } catch (e) {

@@ -100,10 +100,17 @@ def init_db() -> None:
               media_type TEXT NOT NULL DEFAULT '',
               content_b64 TEXT NOT NULL DEFAULT '',
               url TEXT NOT NULL DEFAULT '',
+              tenant_id TEXT NOT NULL DEFAULT '',
               FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
             )
             """
         )
+        # 既存 DB には tenant_id 列を後から足す（PII 検知を棟のルールで行うため）。
+        pcols = {r["name"] for r in conn.execute("PRAGMA table_info(ingest_payloads)")}
+        if "tenant_id" not in pcols:
+            conn.execute(
+                "ALTER TABLE ingest_payloads ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tree_nodes (
@@ -483,6 +490,7 @@ def enqueue_file(
     mode: str,
     media_type: str,
     content_b64: str,
+    tenant_id: str = "",
 ) -> dict[str, Any]:
     """非同期登録用に stub 行と payload を作成し queued で返す。"""
     now = _now()
@@ -522,10 +530,11 @@ def enqueue_file(
             )
         conn.execute(
             """
-            INSERT INTO ingest_payloads (doc_id, kind, mode, media_type, content_b64, url)
-            VALUES (?, 'file', ?, ?, ?, '')
+            INSERT INTO ingest_payloads
+              (doc_id, kind, mode, media_type, content_b64, url, tenant_id)
+            VALUES (?, 'file', ?, ?, ?, '', ?)
             """,
-            (doc_id, kind, media_type or "", content_b64 or ""),
+            (doc_id, kind, media_type or "", content_b64 or "", tenant_id or ""),
         )
     doc = get_doc(doc_id, scope)
     return doc or {"doc_id": doc_id, "scope": scope, "source": source}
@@ -536,6 +545,7 @@ def enqueue_url(
     scope: str,
     url: str,
     tags: list[str] | None,
+    tenant_id: str = "",
 ) -> dict[str, Any]:
     """URL 登録を queued で受け付ける。"""
     now = _now()
@@ -572,10 +582,11 @@ def enqueue_url(
             )
         conn.execute(
             """
-            INSERT INTO ingest_payloads (doc_id, kind, mode, media_type, content_b64, url)
-            VALUES (?, 'url', 'fulltext', '', '', ?)
+            INSERT INTO ingest_payloads
+              (doc_id, kind, mode, media_type, content_b64, url, tenant_id)
+            VALUES (?, 'url', 'fulltext', '', '', ?, ?)
             """,
-            (doc_id, url),
+            (doc_id, url, tenant_id or ""),
         )
     doc = get_doc(doc_id, scope)
     return doc or {"doc_id": doc_id, "scope": scope, "source": source}
