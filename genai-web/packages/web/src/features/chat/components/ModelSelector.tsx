@@ -1,10 +1,10 @@
 import { CustomSelect } from '@/components/ui/CustomSelect';
 import { useSelectedModel } from '@/hooks/useSelectedModel';
-import { findModelDisplayNameByModelId, MODELS } from '@/models';
+import { findModelDisplayNameByModelId } from '@/models';
 
 export const ModelSelector = () => {
-  const { selectedModelId, setSelectedModelId } = useSelectedModel();
-  const { modelIds: availableModels } = MODELS;
+  const { selectedModelId, setSelectedModelId, availableModelIds } = useSelectedModel();
+  const availableModels = availableModelIds;
 
   return (
     <div className='mt-0 flex w-fit items-end justify-start'>

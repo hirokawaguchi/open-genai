@@ -10,6 +10,7 @@ import { RecommendedGovAI } from '@/features/landing/types';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { useRecommendedNavItems } from '@/layout/navItems';
 import { PinnedAppsSection } from '@/open-genai/app-pins/PinnedAppsSection';
+import { NoticeBanner } from '@/open-genai/notices/NoticesPage';
 import { LandingForm } from './components/LandingForm';
 
 export const LandingPage = () => {
@@ -29,6 +30,7 @@ export const LandingPage = () => {
     <LayoutBody>
       <PageTitle title={APP_TITLE || 'トップページ'} />
       <div className='mx-auto px-6 max-w-(--page-width) lg:px-8 pb-24'>
+        <NoticeBanner />
         {TOP_CHAT_SYSTEM_PROMPT && <LandingForm />}
 
         <ErrorBoundary fallbackRender={() => null}>

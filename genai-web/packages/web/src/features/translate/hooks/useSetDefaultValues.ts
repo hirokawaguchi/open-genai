@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
-import { MODELS } from '@/models';
+import { useSelectedModel } from '@/hooks/useSelectedModel';
 import { LANGUAGES } from '../constants';
 import { useTranslateStore } from '../stores/useTranslateStore';
 import { TranslatePageQueryParams } from '../types';
@@ -12,7 +12,7 @@ export const useSetDefaultValues = () => {
   const { setSentence, setAdditionalContext, setLanguage } = useTranslateStore();
   const { usecase, chatId } = useUsecasePath();
   const { getModelId, setModelId } = useChat(usecase, chatId);
-  const { modelIds: availableModels } = MODELS;
+  const { availableModelIds: availableModels } = useSelectedModel();
 
   useEffect(() => {
     const modelId = getModelId();

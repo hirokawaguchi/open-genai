@@ -17,6 +17,7 @@ def _mod(**env: str):
         "OPERATOR_SAML_SOURCE_IPS",
         "OPERATOR_LOGIN_HOSTS",
         "OPERATOR_USERS",
+        "LGWAN_PORTAL_LOGIN",
     )
     for key in keys:
         os.environ.pop(key, None)
@@ -97,6 +98,19 @@ def test_lgwan_from_acs_url_when_public_url_missing() -> None:
     dest = mod.login_destination(_req("app.example.lg.jp"))
     assert dest.kind == "saml"
     assert dest.relay == "https://app.example.lg.jp"
+
+
+def test_lgwan_portal_login_keeps_saml_choice() -> None:
+    mod = _mod(**ENV, LGWAN_PORTAL_LOGIN="1")
+    dest = mod.login_destination(_req("app.example.lg.jp"))
+    assert dest.kind == "portal_and_saml"
+    assert dest.relay == "https://app.example.lg.jp"
+    saml_req = _req("app.example.lg.jp")
+    saml_req.query_params = {"method": "saml"}
+    saml = mod.login_destination(saml_req)
+    assert saml.kind == "saml"
+    portal = mod.login_destination(_req("portal.example.jp"))
+    assert portal.kind == "portal"
 
 
 def test_public_host_uses_saml() -> None:

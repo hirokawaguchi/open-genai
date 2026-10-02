@@ -75,6 +75,16 @@ def is_lgwan_request(request: Any) -> bool:
     return bool(lgwan) and host == lgwan
 
 
+def _login_method(request: Any) -> str:
+    params = getattr(request, "query_params", None)
+    if params is None:
+        return ""
+    getter = getattr(params, "get", None)
+    if getter is None:
+        return ""
+    return str(getter("method") or "").strip().lower()
+
+
 def login_destination(request: Any) -> LoginDest:
     if portal_login.enabled(request):
         return LoginDest(kind="portal")
@@ -100,6 +110,8 @@ def login_destination(request: Any) -> LoginDest:
             and host not in ops_login.operator_hosts()
         ):
             return LoginDest(kind="redirect", url=f"{lgwan}/api/auth/login")
+        if portal_login.lgwan_portal_enabled() and _login_method(request) != "saml":
+            return LoginDest(kind="portal_and_saml", relay=lgwan)
         return LoginDest(kind="saml", relay=lgwan)
 
     return LoginDest(kind="blank")
