@@ -52,6 +52,7 @@ from . import (
     objstore,
     access_split,
     artifact_delivery,
+    notices,
     ops_login,
     portal_login,
     policy,
@@ -1719,6 +1720,8 @@ def _saml_script_name(request: Request) -> str:
 @app.get("/auth/login")
 async def auth_login(request: Request) -> Response:
     dest = access_split.login_destination(request)
+    if dest.kind == "portal_and_saml":
+        return HTMLResponse(content=portal_login.combined_login_form(request))
     if dest.kind == "portal":
         return HTMLResponse(content=portal_login.login_form(request))
     if dest.kind == "ops" or ops_login.enabled(request):
@@ -1897,14 +1900,16 @@ async def auth_ops(request: Request) -> Response:
 
 @app.post("/auth/portal")
 async def auth_portal(request: Request) -> Response:
-    """インターネット入口専用ログイン。Host 不一致は 404。権限は Keycloak の所属グループ。"""
-    if not portal_login.enabled(request):
+    """インターネット入口、または庁内ホストの ID/パスワード。Host 不一致は 404。"""
+    on_lgwan = portal_login.lgwan_portal_enabled() and access_split.is_lgwan_request(request)
+    if not portal_login.enabled(request) and not on_lgwan:
         return JSONResponse(status_code=404, content={"error": "not found"})
     error, location, _user, ident = await portal_login.handle_post(
         request, mint_token=auth.mint_token, audit=audit
     )
     if error or not location:
-        body = portal_login.login_form(
+        form = portal_login.combined_login_form if on_lgwan else portal_login.login_form
+        body = form(
             request, error=error or "ログインに失敗しました。", ident=ident
         )
         return HTMLResponse(status_code=401, content=body)
@@ -2535,6 +2540,99 @@ async def list_audit_logs(request: Request) -> JSONResponse:
         offset=_parse_int(qp.get("offset")) or 0,
     )
     return JSONResponse(content=result)
+
+
+def _notice_email(claims: dict[str, Any]) -> str:
+    return str(claims.get("email") or claims.get("sub") or "").strip().lower()
+
+
+def _can_post_tenant_notice(user_id: str, tenant_id: str, is_sys: bool) -> bool:
+    if _has_no_tenant(tenant_id):
+        return False
+    tenant = teams_store.get_tenant(tenant_id)
+    if not tenant or tenant.get("kind") not in (
+        teams_store.TENANT_KIND_ORG,
+        teams_store.TENANT_KIND_SHARED,
+    ):
+        return False
+    if is_sys:
+        return True
+    return bool(teams_store.is_tenant_admin(tenant_id, user_id))
+
+
+@app.get("/notices")
+async def list_notices(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    tenant_id = _active_tenant_id(user_id, claims)
+    is_sys = _is_system_admin(claims)
+    try:
+        items = notices.list_visible(tenant_id, _notice_email(claims) or user_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": f"お知らせを読めませんでした: {exc}"})
+    return JSONResponse(
+        content={
+            "items": items,
+            "canPostAll": is_sys,
+            "canPostTenant": _can_post_tenant_notice(user_id, tenant_id, is_sys),
+        }
+    )
+
+
+@app.post("/notices")
+async def create_notice(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    body = await request.json()
+    scope = str((body or {}).get("scope") or "").strip()
+    text = str((body or {}).get("body") or "")
+    tenant_id = _active_tenant_id(user_id, claims)
+    is_sys = _is_system_admin(claims)
+    if scope == "all":
+        if not is_sys:
+            return JSONResponse(status_code=403, content={"error": "全体へのお知らせはシステム管理者だけが書けます"})
+    elif scope == "tenant":
+        if not _can_post_tenant_notice(user_id, tenant_id, is_sys):
+            return JSONResponse(status_code=403, content={"error": "この棟へのお知らせは書けません"})
+    else:
+        return JSONResponse(status_code=400, content={"error": "お知らせの宛先が不正です"})
+    try:
+        created = notices.create_notice(
+            scope=scope,
+            tenant_id=tenant_id if scope == "tenant" else "",
+            body=text,
+            author_id=user_id,
+        )
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    return JSONResponse(content=created)
+
+
+@app.delete("/notices/{notice_id}")
+async def delete_notice(notice_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    current = notices.get_notice(notice_id)
+    if not current:
+        return JSONResponse(status_code=404, content={"error": "お知らせが見つかりません"})
+    is_sys = _is_system_admin(claims)
+    tenant_id = _active_tenant_id(user_id, claims)
+    if current["scope"] == "all":
+        if not is_sys:
+            return JSONResponse(status_code=403, content={"error": "このお知らせは削除できません"})
+    elif not (
+        current["tenantId"] == tenant_id
+        and _can_post_tenant_notice(user_id, tenant_id, is_sys)
+    ):
+        return JSONResponse(status_code=403, content={"error": "このお知らせは削除できません"})
+    notices.delete_notice(notice_id)
+    return JSONResponse(content={"ok": True})
 
 
 @app.get("/models/allowed")

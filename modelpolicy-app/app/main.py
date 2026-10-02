@@ -300,6 +300,32 @@ def _verify_admin(request: Request) -> JSONResponse | None:
     return None
 
 
+@app.post("/internal/policy")
+async def set_policy_internal(request: Request) -> Any:
+    """サイトの自動処理が棟ポリシーを書く。ブラウザからは呼ばない。
+
+    共有の API キーだけを見る。利用者の署名は要らない。
+    """
+    err = _check_key(request.headers.get("x-api-key"))
+    if err:
+        return err
+    body = await request.json()
+    tenant_id = str((body or {}).get("tenantId") or "").strip()
+    if not tenant_id:
+        return JSONResponse(status_code=400, content={"error": "tenantId が指定されていません"})
+    raw = (body or {}).get("policy")
+    if raw is None:
+        return JSONResponse(status_code=400, content={"error": "policy が指定されていません"})
+    policy, verr = parse_and_validate(json.dumps(raw, ensure_ascii=False))
+    if verr:
+        return JSONResponse(status_code=400, content={"error": verr})
+    try:
+        _write_policy(tenant_id, policy)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": f"ポリシーの保存に失敗しました: {e}"})
+    return {"policy": policy}
+
+
 @app.post("/policy")
 async def set_policy_api(request: Request) -> Any:
     """構造化ポリシー（{policy:{enabled,default,teams}}）を検証して保存する。

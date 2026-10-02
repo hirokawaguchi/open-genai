@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { useSelectedModel } from '@/hooks/useSelectedModel';
 import { MODELS } from '@/models';
 import { useGenerateImageStore } from '../stores/useGenerateImageStore';
 import { GenerateImagePageQueryParams } from '../types';
@@ -11,7 +12,8 @@ export const useSetDefaultValues = () => {
   const { usecase, chatId } = useUsecasePath();
   const { imageGenModelId, setChatContent, setImageGenModelId } = useGenerateImageStore();
   const { getModelId, setModelId } = useChat(usecase, chatId);
-  const { modelIds, imageGenModelIds } = MODELS;
+  const { availableModelIds: modelIds } = useSelectedModel();
+  const { imageGenModelIds } = MODELS;
 
   const modelId = getModelId();
 

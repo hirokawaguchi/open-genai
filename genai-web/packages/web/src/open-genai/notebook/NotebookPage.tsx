@@ -1098,11 +1098,6 @@ export const NotebookPage = () => {
                 <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>
               </div>
             )}
-            {config?.llm?.model && (
-              <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
-                利用モデル: {config.llm.model}
-              </p>
-            )}
           </CustomDialogBody>
         </CustomDialogPanel>
       </CustomDialog>

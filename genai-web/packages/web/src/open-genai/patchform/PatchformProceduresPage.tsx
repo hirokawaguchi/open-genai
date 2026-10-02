@@ -18,7 +18,6 @@ import {
   extractPatchformFile,
   readExportBundleFile,
   usePatchformAssist,
-  usePatchformConfig,
   usePatchformList,
   usePatchformProcedureActions,
   usePatchformProcedures,
@@ -34,7 +33,6 @@ export const PatchformProceduresPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const pane = searchParams.get('tab') === 'new' ? 'new' : 'list';
-  const { config } = usePatchformConfig();
   const { forms, mutate: mutateForms } = usePatchformList();
   const { procedures, isLoading, loadError, mutate } = usePatchformProcedures();
   const {
@@ -495,7 +493,6 @@ export const PatchformProceduresPage = () => {
           <p className='text-center text-std-16B-150 text-solid-gray-700'>または</p>
 
           <PatchformGuideAssist
-            model={config?.llm?.model}
             readingFile={readingFile}
             guideFileName={guideFileName}
             guideText={guideText}

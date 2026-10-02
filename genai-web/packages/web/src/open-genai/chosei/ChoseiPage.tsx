@@ -195,7 +195,7 @@ export const ChoseiPage = () => {
                     placeholder='例: 来週の火・水・木の午後2時から1時間ずつ'
                   />
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    モデル: {config?.llm?.model || '（未設定）'}。生成後に下の候補を確認・編集できます。
+                    生成後に下の候補を確認・編集できます。
                   </p>
                   {(assistError || nlNotes) && (
                     <p

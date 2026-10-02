@@ -619,6 +619,10 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'GLM 5.2（Ollama Cloud）',
   },
+  'glm-5.3-flash:cloud': {
+    flags: MODEL_FEATURE.TEXT_DOC_IMAGE,
+    displayName: 'GLM 5.3 Flash（Ollama Cloud・画像対応）',
+  },
 };
 
 export const BEDROCK_TEXT_MODELS = Object.keys(modelMetadata).filter(
