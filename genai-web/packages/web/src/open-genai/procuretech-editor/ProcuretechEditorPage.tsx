@@ -1223,6 +1223,12 @@ export const ProcuretechEditorPage = () => {
   const [diagramError, setDiagramError] = useState<string | null>(null);
   const diagramRunRef = useRef(0);
   const diagramLockRef = useRef(false);
+  // 開いた時点の選択範囲。置換と「後ろに挿入」の位置に使う。
+  const diagramTargetRef = useRef<{ start: number; end: number; hasSelection: boolean }>({
+    start: 0,
+    end: 0,
+    hasSelection: false,
+  });
   const diagramBusy = diagramStep !== null;
 
   // AI 文書校正（編集アシスト）モーダルの状態。
@@ -1660,8 +1666,13 @@ export const ProcuretechEditorPage = () => {
 
   const onOpenDiagram = useCallback((state: ExecuteState, api: TextAreaTextApi) => {
     insertApiRef.current = api;
-    const selectedText = (state.selectedText ?? '').trim();
-    setDiagramDesc(selectedText);
+    const sel = state.selection;
+    const selectedText = state.selectedText ?? '';
+    const hasSelection = selectedText.trim().length > 0 && sel != null;
+    diagramTargetRef.current = hasSelection
+      ? { start: sel?.start ?? 0, end: sel?.end ?? 0, hasSelection: true }
+      : { start: 0, end: 0, hasSelection: false };
+    setDiagramDesc(selectedText.trim());
     setDiagramPreview(null);
     setDiagramStep(null);
     setDiagramError(null);
@@ -1762,11 +1773,24 @@ export const ProcuretechEditorPage = () => {
     }
   };
 
-  // プレビューした Mermaid をカーソル位置へ挿入する。画像化は書き出し時。
-  const onInsertDiagram = () => {
+  // プレビューした Mermaid を、選択の置換か直後への挿入で本文へ入れる。画像化は書き出し時。
+  const onInsertDiagram = (mode: 'replace' | 'insert') => {
     const preview = diagramPreview;
     if (!preview || diagramBusy) return;
-    insertAtCursor(`\n\n\`\`\`mermaid\n${preview.code}\n\`\`\`\n`);
+    const fence = `\n\n\`\`\`mermaid\n${preview.code}\n\`\`\`\n`;
+    const target = diagramTargetRef.current;
+    if (target.hasSelection) {
+      setDraft((cur) => {
+        const doc = cur ?? '';
+        const before = doc.slice(0, target.start);
+        const after = doc.slice(target.end);
+        const selected = doc.slice(target.start, target.end);
+        const mid = mode === 'replace' ? fence : `${selected}${fence}`;
+        return before + mid + after;
+      });
+    } else {
+      insertAtCursor(fence);
+    }
     setDiagramOpen(false);
     setDiagramDesc('');
     setDiagramPreview(null);
@@ -2583,7 +2607,10 @@ export const ProcuretechEditorPage = () => {
                     <MermaidRenderer code={diagramPreview.code} />
                   </div>
                   <span className='text-dns-14N-130 text-solid-gray-500'>
-                    この図をカーソル位置へ挿入します。挿入後に図の形を直すことはできません。
+                    {diagramTargetRef.current.hasSelection
+                      ? '選択した文章をこの図に置き換えるか、文章の後ろに図を挿入できます。'
+                      : 'この図をカーソル位置へ挿入します。'}
+                    挿入後に図の形を直すことはできません。
                   </span>
                 </div>
               )}
@@ -2598,13 +2625,32 @@ export const ProcuretechEditorPage = () => {
                   キャンセル
                 </Button>
                 {diagramPreview && !diagramBusy && (
-                  <Button type='button' variant='outline' size='md' onClick={onGenerateDiagram}>
-                    再生成
-                  </Button>
+                  <>
+                    {diagramTargetRef.current.hasSelection && (
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='md'
+                        onClick={() => onInsertDiagram('insert')}
+                      >
+                        後ろに挿入
+                      </Button>
+                    )}
+                    <Button type='button' variant='outline' size='md' onClick={onGenerateDiagram}>
+                      再生成
+                    </Button>
+                  </>
                 )}
                 {diagramPreview ? (
-                  <Button type='button' variant='solid-fill' size='md' onClick={onInsertDiagram}>
-                    挿入
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    onClick={() =>
+                      onInsertDiagram(diagramTargetRef.current.hasSelection ? 'replace' : 'insert')
+                    }
+                  >
+                    {diagramTargetRef.current.hasSelection ? '選択を置換' : '挿入'}
                   </Button>
                 ) : (
                   <LoadingButton
