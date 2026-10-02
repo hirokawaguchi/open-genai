@@ -26,6 +26,7 @@ import {
   PiTreeStructure,
   PiUploadSimple,
 } from 'react-icons/pi';
+import { Link } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -36,6 +37,7 @@ import {
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
 import { Input } from '@/components/ui/dads/Input';
+import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
@@ -45,12 +47,16 @@ import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { MERMAID_DIAGRAM_TYPES } from '@/features/generate-diagram/constants';
 import type { MermaidDiagramType } from '@/features/generate-diagram/types';
-import { extractDiagramCode } from '@/features/generate-diagram/utils/extractDiagram';
+import {
+  extractDiagramCode,
+  normalizeDiagramCode,
+} from '@/features/generate-diagram/utils/extractDiagram';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PROCURETECH_EDITOR_EXAPP_ID } from '@/layout/navItems';
 import { predict } from '@/lib/chatApi';
 import { findModelByModelId, resolveSelectedModelId } from '@/models';
 import { getPrompter } from '@/prompts';
+import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import {
   baseName,
   composeFormatOf,
@@ -64,6 +70,7 @@ import {
   rewriteImageSources,
   triggerDownload,
 } from './format';
+import { bindEditorImeTabGuard } from './imeTab';
 import type {
   EditorComposeFormat,
   EditorComposeResult,
@@ -214,6 +221,79 @@ const DIAGRAM_TYPE_OPTIONS: { value: 'AI' | MermaidDiagramType; label: string }[
     ([value, label]) => ({ value, label }),
   ),
 ];
+
+// 図生成モーダルで見せる作業手順。ダイアグラムアプリの「種類の判定 → Mermaid」に、
+// 文書へ入れるための画像化を足している。
+type DiagramStep = 'prompt' | 'mermaid' | 'image' | 'insert';
+const DIAGRAM_PIPELINE: {
+  id: Exclude<DiagramStep, 'insert'>;
+  active: string;
+  done: string;
+  pending: string;
+}[] = [
+  {
+    id: 'prompt',
+    active: 'プロンプトを作成しています',
+    done: 'プロンプトを作成しました',
+    pending: 'プロンプトを作成します',
+  },
+  {
+    id: 'mermaid',
+    active: 'Mermaid図を作成しています',
+    done: 'Mermaid図を作成しました',
+    pending: 'Mermaid図を作成します',
+  },
+  {
+    id: 'image',
+    active: '画像形式に変換しています',
+    done: '画像形式に変換しました',
+    pending: '画像形式に変換します',
+  },
+];
+
+const resolveMermaidType = (raw: string): MermaidDiagramType => {
+  const cand = (raw.match(/<output>(.*?)<\/output>/i)?.[1] ?? '').toLowerCase().trim();
+  const keys = Object.keys(MERMAID_DIAGRAM_TYPES) as MermaidDiagramType[];
+  return keys.find((k) => k === cand || cand.includes(k) || k.includes(cand)) ?? 'flowchart';
+};
+
+const DiagramPipeline = ({ step }: { step: DiagramStep | 'ready' }) => {
+  const index =
+    step === 'ready' || step === 'insert'
+      ? DIAGRAM_PIPELINE.length
+      : DIAGRAM_PIPELINE.findIndex((item) => item.id === step);
+  return (
+    <ol className='flex flex-col gap-2' aria-live='polite'>
+      {DIAGRAM_PIPELINE.map((item, i) => {
+        const done = i < index;
+        const active = i === index;
+        return (
+          <li
+            key={item.id}
+            className={`flex min-h-10 items-center rounded-6 px-3 py-2 ${
+              done
+                ? 'bg-blue-50 text-solid-gray-800'
+                : active
+                  ? 'bg-solid-gray-50 text-solid-gray-800'
+                  : 'border border-solid-gray-200 text-solid-gray-500'
+            }`}
+          >
+            {active ? (
+              <ProgressIndicator label={item.active} />
+            ) : (
+              <span>{done ? item.done : item.pending}</span>
+            )}
+          </li>
+        );
+      })}
+      {step === 'insert' && (
+        <li className='flex min-h-10 items-center rounded-6 bg-solid-gray-50 px-3 py-2'>
+          <ProgressIndicator label='本文へ挿入しています' />
+        </li>
+      )}
+    </ol>
+  );
+};
 
 type ViewMode = 'split' | 'edit' | 'preview';
 
@@ -1145,12 +1225,18 @@ export const ProcuretechEditorPage = () => {
   // 画像挿入モーダルの状態（既存のプロジェクト画像から選択 or 新規アップロード）。
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
 
-  // AI 図生成モーダルの状態。
+  // AI 図生成モーダルの状態。プレビュー確定まで本文へは入れない。
   const [diagramOpen, setDiagramOpen] = useState(false);
   const [diagramDesc, setDiagramDesc] = useState('');
   const [diagramType, setDiagramType] = useState<'AI' | MermaidDiagramType>('AI');
-  const [diagramBusy, setDiagramBusy] = useState(false);
+  const [diagramStep, setDiagramStep] = useState<DiagramStep | null>(null);
+  const [diagramPreview, setDiagramPreview] = useState<{ dataUrl: string; alt: string } | null>(
+    null,
+  );
   const [diagramError, setDiagramError] = useState<string | null>(null);
+  const diagramRunRef = useRef(0);
+  const diagramLockRef = useRef(false);
+  const diagramBusy = diagramStep !== null;
 
   // AI 文書校正（編集アシスト）モーダルの状態。
   const [aiEditOpen, setAiEditOpen] = useState(false);
@@ -1251,6 +1337,14 @@ export const ProcuretechEditorPage = () => {
       preview.removeEventListener('scroll', onPreviewScroll);
     };
   }, [viewMode, isMarkdown]);
+
+  // 日本語変換の予測候補を Tab で選ぶとき、エディタのインデントに渡さない。
+  useEffect(() => {
+    const root = editorWrapRef.current;
+    if (!root || !isEditable || fileLoading) return;
+    if (isMarkdown && viewMode === 'preview') return;
+    return bindEditorImeTabGuard(root);
+  }, [fileLoading, isEditable, isMarkdown, selectedPath, viewMode]);
 
   // 生成ステータスのポーリング（成功時に ExApp 側が結果 zip を取り込む）。
   // generation 全体を依存にしない（進捗更新のたびに interval がリセットされると待ち画像取得が遅れる）。
@@ -1577,8 +1671,12 @@ export const ProcuretechEditorPage = () => {
     imageInputRef.current?.click();
   }, []);
 
-  const onOpenDiagram = useCallback((api: TextAreaTextApi) => {
+  const onOpenDiagram = useCallback((state: ExecuteState, api: TextAreaTextApi) => {
     insertApiRef.current = api;
+    const selectedText = (state.selectedText ?? '').trim();
+    setDiagramDesc(selectedText);
+    setDiagramPreview(null);
+    setDiagramStep(null);
     setDiagramError(null);
     setDiagramOpen(true);
   }, []);
@@ -1609,23 +1707,29 @@ export const ProcuretechEditorPage = () => {
     setImagePickerOpen(false);
   };
 
-  // 既存「ダイアグラムを生成」と同じ genU predict + プロンプトで Mermaid を生成し、
-  // ```mermaid ブロックとして本文へ挿入する（プレビューは Markdown 側で図描画）。
+  // 既存「ダイアグラムを生成」と同じ genU predict + プロンプトで Mermaid を作り、
+  // PNG にしてモーダルで見せる。本文への挿入は確認後（図の修正はしない）。
   const onGenerateDiagram = async () => {
     const desc = diagramDesc.trim();
-    if (!desc) return;
+    if (!desc || diagramLockRef.current) return;
     const modelId = resolveSelectedModelId();
     const model = modelId ? findModelByModelId(modelId) : undefined;
     if (!modelId || !model) {
       setDiagramError('利用可能な生成 AI モデルがありません。管理者に確認してください。');
       return;
     }
-    setDiagramBusy(true);
+    const run = diagramRunRef.current + 1;
+    diagramRunRef.current = run;
+    diagramLockRef.current = true;
+    const alive = () => diagramRunRef.current === run;
+    let stage: DiagramStep = 'prompt';
+    setDiagramStep(stage);
+    setDiagramPreview(null);
     setDiagramError(null);
     try {
       const prompter = getPrompter(modelId);
-      let type: MermaidDiagramType | 'AI' = diagramType;
-      if (type === 'AI') {
+      let type: MermaidDiagramType = diagramType === 'AI' ? 'flowchart' : diagramType;
+      if (diagramType === 'AI') {
         const selReq: PredictRequest = {
           model,
           id: 'procuretech-editor-diagram',
@@ -1635,10 +1739,11 @@ export const ProcuretechEditorPage = () => {
           ],
         };
         const sel = await predict(selReq);
-        const cand = (sel.match(/<output>(.*?)<\/output>/i)?.[1] ?? '').toLowerCase().trim();
-        const keys = Object.keys(MERMAID_DIAGRAM_TYPES) as MermaidDiagramType[];
-        type = keys.find((k) => k === cand || cand.includes(k) || k.includes(cand)) ?? 'flowchart';
+        if (!alive()) return;
+        type = resolveMermaidType(sel);
       }
+      stage = 'mermaid';
+      setDiagramStep(stage);
       const req: PredictRequest = {
         model,
         id: 'procuretech-editor-diagram',
@@ -1651,18 +1756,62 @@ export const ProcuretechEditorPage = () => {
         ],
       };
       const res = await predict(req);
-      const code = extractDiagramCode(res);
+      if (!alive()) return;
+      const code = normalizeDiagramCode(extractDiagramCode(res));
       if (!code) {
         setDiagramError('図を生成できませんでした。説明を具体的にして再度お試しください。');
+        setDiagramStep(null);
         return;
       }
-      insertAtCursor(`\n\n\`\`\`mermaid\n${code}\n\`\`\`\n`);
+      stage = 'image';
+      setDiagramStep(stage);
+      const dataUrl = await mermaidToPngDataUrl(code, 2);
+      if (!alive()) return;
+      setDiagramPreview({ dataUrl, alt: MERMAID_DIAGRAM_TYPES[type] });
+      setDiagramStep(null);
+    } catch (_e) {
+      if (!alive()) return;
+      setDiagramError(
+        stage === 'image'
+          ? '図は作成できましたが、画像に変換できませんでした。説明を具体的にして再度お試しください。'
+          : '図の生成中にエラーが発生しました。時間をおいて再度お試しください。',
+      );
+      setDiagramStep(null);
+    } finally {
+      if (diagramRunRef.current === run) diagramLockRef.current = false;
+    }
+  };
+
+  // プレビューした PNG をプロジェクトの images/ へ保存し、カーソル位置へ画像として挿入する。
+  const onInsertDiagram = async () => {
+    const preview = diagramPreview;
+    if (!preview || !projectId || diagramLockRef.current) return;
+    diagramLockRef.current = true;
+    setDiagramStep('insert');
+    setDiagramError(null);
+    try {
+      const f = await actions.uploadFile(projectId, {
+        filename: `ai-diagram-${Date.now()}.png`,
+        content_b64: preview.dataUrl,
+        dir: 'images',
+      });
+      if (!f) {
+        setDiagramError('画像の保存に失敗しました。時間をおいて再度お試しください。');
+        setDiagramStep(null);
+        return;
+      }
+      await mutateProject();
+      mutateProjects();
+      insertAtCursor(`\n\n${markdownImage(preview.alt, f.rel_path)}\n`);
       setDiagramOpen(false);
       setDiagramDesc('');
+      setDiagramPreview(null);
+      setDiagramStep(null);
     } catch (_e) {
-      setDiagramError('図の生成中にエラーが発生しました。時間をおいて再度お試しください。');
+      setDiagramError('画像の挿入に失敗しました。時間をおいて再度お試しください。');
+      setDiagramStep(null);
     } finally {
-      setDiagramBusy(false);
+      diagramLockRef.current = false;
     }
   };
 
@@ -1778,9 +1927,12 @@ export const ProcuretechEditorPage = () => {
     const diagramCommand: ICommand = {
       name: 'ai-diagram',
       keyCommand: 'ai-diagram',
-      buttonProps: { 'aria-label': 'AI で図を生成', title: 'AI で図（Mermaid）を生成して挿入' },
+      buttonProps: {
+        'aria-label': 'AI で図を生成',
+        title: '選択した文章から図を作り、確認してから画像として挿入',
+      },
       icon: <PiTreeStructure style={{ width: 16, height: 16 }} />,
-      execute: (_state, api) => onOpenDiagram(api),
+      execute: (state, api) => onOpenDiagram(state, api),
     };
     return [
       headingGroup,
@@ -2397,13 +2549,16 @@ export const ProcuretechEditorPage = () => {
         </CustomDialogPanel>
       </CustomDialog>
 
-      {/* AI 図（Mermaid）生成モーダル。 */}
+      {/* AI 図生成モーダル。選択範囲を説明へ転記し、画像化してから挿入する。 */}
       <CustomDialog
         isOpen={diagramOpen}
         onClose={() => (diagramBusy ? undefined : setDiagramOpen(false))}
       >
-        <CustomDialogPanel className='max-w-xl'>
-          <CustomDialogHeader hasClose onClose={() => setDiagramOpen(false)}>
+        <CustomDialogPanel className='max-w-3xl!'>
+          <CustomDialogHeader
+            hasClose={!diagramBusy}
+            onClose={() => (diagramBusy ? undefined : setDiagramOpen(false))}
+          >
             <span className='inline-flex items-center gap-2'>
               <PiTreeStructure className='size-6 text-solid-gray-700' />
               AI で図を生成（Mermaid）
@@ -2411,6 +2566,18 @@ export const ProcuretechEditorPage = () => {
           </CustomDialogHeader>
           <CustomDialogBody>
             <div className='flex flex-col gap-3'>
+              <p className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-3 py-2 text-dns-14N-130 text-solid-gray-700'>
+                説明から図を作り、画像として本文へ挿入します。できた図をこの画面で修正することはできません。
+                図を編集したり作り込んだりする場合は
+                {isUseCaseEnabled('diagram') ? (
+                  <Link to='/diagram' className='mx-1 text-blue-900 underline'>
+                    ダイアグラムを生成
+                  </Link>
+                ) : (
+                  <span className='mx-1'>ダイアグラムを生成</span>
+                )}
+                を使ってください。
+              </p>
               <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
                 図の種類
                 <select
@@ -2436,15 +2603,33 @@ export const ProcuretechEditorPage = () => {
                   placeholder='例）調達の申請から契約締結までの承認フローを図にして。差し戻しの分岐も含める。'
                   className='rounded-8 border border-solid-gray-300 px-3 py-2 text-std-16N-170'
                 />
+                <span className='text-solid-gray-500'>
+                  編集画面で範囲を選んでから開くと、その文章がここに入ります。
+                </span>
               </label>
+              {(diagramStep || diagramPreview) && <DiagramPipeline step={diagramStep ?? 'ready'} />}
               {diagramError && (
                 <p className='rounded-8 border border-error-2 bg-error-3 px-3 py-2 text-dns-14N-130 text-error-1'>
                   {diagramError}
                 </p>
               )}
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                生成された Mermaid はカーソル位置に挿入され、プレビューに図として表示されます。
-              </p>
+              {diagramPreview && (
+                <div className='flex flex-col gap-1'>
+                  <span className='text-dns-14N-130 text-solid-gray-700'>
+                    プレビュー（{diagramPreview.alt}）
+                  </span>
+                  <div className='max-h-[40dvh] overflow-auto rounded-8 border border-solid-gray-300 bg-white p-3'>
+                    <img
+                      src={diagramPreview.dataUrl}
+                      alt={diagramPreview.alt}
+                      className='mx-auto max-w-full'
+                    />
+                  </div>
+                  <span className='text-dns-14N-130 text-solid-gray-500'>
+                    この画像をカーソル位置へ挿入します。挿入後に図の形を直すことはできません。
+                  </span>
+                </div>
+              )}
               <div className='mt-1 flex items-center justify-end gap-2'>
                 <Button
                   type='button'
@@ -2455,18 +2640,36 @@ export const ProcuretechEditorPage = () => {
                 >
                   キャンセル
                 </Button>
-                <Button
-                  type='button'
-                  variant='solid-fill'
-                  size='md'
-                  disabled={diagramBusy || !diagramDesc.trim()}
-                  onClick={onGenerateDiagram}
-                >
-                  <span className='inline-flex items-center gap-1 whitespace-nowrap'>
-                    <PiMagicWand className='size-4' />
-                    {diagramBusy ? '生成中…' : '生成して挿入'}
-                  </span>
-                </Button>
+                {diagramPreview && !diagramBusy && (
+                  <Button type='button' variant='outline' size='md' onClick={onGenerateDiagram}>
+                    再生成
+                  </Button>
+                )}
+                {diagramPreview ? (
+                  <LoadingButton
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    loading={diagramStep === 'insert'}
+                    onClick={onInsertDiagram}
+                  >
+                    {diagramStep === 'insert' ? '挿入中' : '挿入'}
+                  </LoadingButton>
+                ) : (
+                  <LoadingButton
+                    type='button'
+                    variant='solid-fill'
+                    size='md'
+                    loading={diagramBusy}
+                    disabled={!diagramDesc.trim()}
+                    onClick={onGenerateDiagram}
+                  >
+                    <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                      {!diagramBusy && <PiMagicWand className='size-4' />}
+                      {diagramBusy ? '作成中' : '生成'}
+                    </span>
+                  </LoadingButton>
+                )}
               </div>
             </div>
           </CustomDialogBody>
