@@ -41,8 +41,8 @@ export const ImageComposer = ({
   onSend,
 }: Props) => {
   const fileRef = useRef<HTMLInputElement>(null);
-  const { selectedModelId, setSelectedModelId } = useSelectedModel();
-  const { modelIds, imageGenModelIds } = MODELS;
+  const { selectedModelId, setSelectedModelId, availableModelIds: modelIds } = useSelectedModel();
+  const { imageGenModelIds } = MODELS;
   const {
     imageGenModelId,
     setImageGenModelId,

@@ -37,8 +37,26 @@ def enabled(request: Any) -> bool:
     return request_host(request) in hosts
 
 
+def lgwan_portal_enabled() -> bool:
+    """庁内ホストでも ID/パスワード欄を出す。未設定のサイトは SAML へ即時に飛ぶ。"""
+    raw = (os.environ.get("LGWAN_PORTAL_LOGIN") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def app_home() -> str:
     return (os.environ.get("FRONTEND_URL") or os.environ.get("PUBLIC_URL") or "").rstrip("/")
+
+
+def _success_home(request: Any) -> str:
+    """庁内の ID/パスワード成功後は、開いていた庁内ホストへ戻す。"""
+    if lgwan_portal_enabled():
+        from . import access_split
+
+        if access_split.is_lgwan_request(request):
+            public = access_split.lgwan_public()
+            if public:
+                return public
+    return app_home()
 
 
 def _kc_url() -> str:
@@ -210,6 +228,49 @@ def login_form(request: Any, *, error: str = "", ident: str = "") -> str:
 """
 
 
+def combined_login_form(request: Any, *, error: str = "", ident: str = "") -> str:
+    """庁内ホスト用。ID/パスワードと、従来の SAML 開始を同じ画面に出す。"""
+    del request
+    title = (os.environ.get("APP_TITLE") or os.environ.get("VITE_APP_TITLE") or "Open GENAI").strip()
+    title = title or "Open GENAI"
+    err_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>ログイン | {html.escape(title)}</title>
+  <style>
+    body {{ margin: 0; font-family: sans-serif; background: #fff; color: #333; }}
+    .wrap {{ max-width: 22rem; margin: 4rem auto; padding: 0 1rem; }}
+    h1 {{ font-size: 1.1rem; font-weight: 700; letter-spacing: .04em; }}
+    label {{ display: block; margin: 1rem 0 .3rem; font-size: .9rem; }}
+    input {{ width: 100%; box-sizing: border-box; padding: .5rem .6rem; border: 1px solid #ccc; }}
+    button, .alt {{ display: block; width: 100%; box-sizing: border-box; margin-top: 1.2rem; padding: .7rem; border: 0; background: #0066cc; color: #fff; font-size: 1rem; text-align: center; text-decoration: none; cursor: pointer; }}
+    .alt {{ background: #fff; color: #0066cc; border: 1px solid #0066cc; }}
+    .err {{ color: #b00020; font-size: .9rem; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{html.escape(title)}</h1>
+    <p>ログイン</p>
+    {err_html}
+    <form method="post" action="/api/auth/portal" autocomplete="on">
+      <label for="ident">メールアドレス</label>
+      <input id="ident" name="ident" type="text" required value="{html.escape(ident)}" />
+      <label for="password">パスワード</label>
+      <input id="password" name="password" type="password" required />
+      <button type="submit">メールアドレスでログイン</button>
+    </form>
+    <a class="alt" href="/api/auth/login?method=saml">庁内アカウントでログイン</a>
+  </div>
+</body>
+</html>
+"""
+
+
 async def handle_post(
     request: Any,
     *,
@@ -219,7 +280,7 @@ async def handle_post(
     form = await request.form()
     ident = str(form.get("ident") or form.get("email") or "")
     password = str(form.get("password") or "")
-    home = app_home()
+    home = _success_home(request)
     if not home:
         parsed = urlparse(str(request.url))
         home = f"{parsed.scheme}://{request_host(request)}"

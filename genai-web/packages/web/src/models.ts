@@ -47,7 +47,20 @@ const imageGenModels = [
 
 export const MODEL_ID_STORAGE_KEY = 'modelId_v20260218';
 
-export const availableTextModelIds = (): string[] => [...bedrockModelIds, ...endpointNames];
+/** null は制限なし。配列のときはカタログとの積集合だけを選ばせる。 */
+let allowedModelFilter: Set<string> | null = null;
+
+export const setAllowedModelFilter = (models: string[] | null) => {
+  allowedModelFilter = models === null ? null : new Set(models);
+};
+
+export const availableTextModelIds = (): string[] => {
+  const catalog = [...bedrockModelIds, ...endpointNames];
+  if (!allowedModelFilter) {
+    return catalog;
+  }
+  return catalog.filter((modelId) => allowedModelFilter?.has(modelId));
+};
 
 export const findModelByModelId = (modelId: string) => {
   const model = textModels.find((m) => m.modelId === modelId);

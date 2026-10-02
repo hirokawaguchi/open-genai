@@ -26,6 +26,7 @@ import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
 import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
 import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
 import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
+import { NoticesPage } from '@/open-genai/notices/NoticesPage';
 import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
@@ -177,6 +178,7 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'history', element: <ChatHistoryPage /> },
     // 本人のアカウント設定（表示名・パスワード変更）。
     { path: 'settings', element: <SettingsPage /> },
+    { path: 'notices', element: <NoticesPage /> },
     { path: 'tenants', element: <TenantsPage /> },
     { path: 'admin/recommended', element: <RecommendedAppsPage /> },
     ...optionalUseCaseRoutes.flatMap((routes) => routes ?? []),
