@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from shared.llm_fallback import post_chat, primary_endpoint
+
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434").rstrip(
     "/"
 )
@@ -70,14 +72,10 @@ async def chat(
     payload.update(_extra_body())
     if extra:
         payload.update(extra)
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        res = await client.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
-            json=payload,
-            headers=_headers(),
-        )
-        res.raise_for_status()
-        data = res.json()
+    res = await post_chat(
+        primary_endpoint(OPENAI_BASE_URL, OPENAI_API_KEY), payload, REQUEST_TIMEOUT
+    )
+    data = res.json()
     choices = data.get("choices") or [{}]
     text = _message_text(choices[0].get("message") or {})
     if not text:

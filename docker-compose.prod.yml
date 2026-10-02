@@ -67,6 +67,9 @@ services:
       - TITLE_MODE=${TITLE_MODE:-heuristic}
       # 複数 OpenAI 互換プロバイダ併用（JSON）。未設定なら OPENAI_* 単一。
       - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       # LLM_PROVIDERS の api_key_env から参照されるプロバイダ別キー
       - SAKURA_API_KEY=${SAKURA_API_KEY:-}
       - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
@@ -294,6 +297,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - QDRANT_URL=http://qdrant:6333
       # 埋め込みモデルは差し替え可能。既定は Ollama 上の mxbai-embed-large(1024 次元)。
       # モデルを変えると次元が変わるため QDRANT_COLLECTION を分け、再インデックスが必要。
@@ -436,7 +443,9 @@ services:
   # ホストポートは公開しない。外部ゲストは別プロキシで /public のみ露出すること。
   chosei-app:
     profiles: ["chosei"]
-    build: ./chosei-app
+    build:
+      context: .
+      dockerfile: chosei-app/Dockerfile
     container_name: open-genai-chosei-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -448,6 +457,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       # 通常チャットと同じ思考オフ。空なら chosei-app 既定 (enable_thinking:false)
       - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
@@ -465,7 +478,8 @@ services:
   doccheck-app:
     profiles: ["doccheck"]
     build:
-      context: ./doccheck-app
+      context: .
+      dockerfile: doccheck-app/Dockerfile
       args:
         # amd64 本番で本家を使う場合は DOCCHECK_INSTALL_PADDLEOCR=1
         INSTALL_PADDLEOCR: ${DOCCHECK_INSTALL_PADDLEOCR:-0}
@@ -478,7 +492,7 @@ services:
       - DOCCHECK_PUBLIC_ENDPOINT=${DOCCHECK_PUBLIC_ENDPOINT:-}
       # paddleocr: 本家優先（未導入/arm64→RapidOCR）。hybrid はさらに Vision フォールバック
       - DOCCHECK_OCR_ENGINE=${DOCCHECK_OCR_ENGINE:-paddleocr}
-      - DOCCHECK_VISION_MODEL=${DOCCHECK_VISION_MODEL:-gemma3:27b}
+      - DOCCHECK_VISION_MODEL=${DOCCHECK_VISION_MODEL:-gemma4:cloud}
       - DOCCHECK_PADDLE_MIN_CONF=${DOCCHECK_PADDLE_MIN_CONF:-0.50}
       - DOCCHECK_PADDLEOCR_FORCE=${DOCCHECK_PADDLEOCR_FORCE:-0}
       - DOCCHECK_PADDLEOCR_LANG=${DOCCHECK_PADDLEOCR_LANG:-japan}
@@ -487,6 +501,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
@@ -515,8 +533,12 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PATCHFORM_MODEL=${PATCHFORM_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
-      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma3:12b}}
+      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma4:cloud}}
       - PATCHFORM_ENCRYPT_KEY=${PATCHFORM_ENCRYPT_KEY:-}
       - PATCHFORM_FILES_DIR=/data/files
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
@@ -567,7 +589,9 @@ services:
   # 庁内利用のみ（backend → 本サービス）。ホストポートは公開しない。
   procuretech-navigator-app:
     profiles: ["procuretech-navigator"]
-    build: ./procuretech-navigator-app
+    build:
+      context: .
+      dockerfile: procuretech-navigator-app/Dockerfile
     container_name: open-genai-procuretech-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -578,6 +602,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
@@ -592,7 +620,9 @@ services:
   # 標準: Markdown エディタ。案件フォルダ内の生成文書を編集・保存し、文書へ合成する。
   # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
   procuretech-editor-app:
-    build: ./procuretech-editor-app
+    build:
+      context: .
+      dockerfile: procuretech-editor-app/Dockerfile
     container_name: open-genai-procuretech-editor-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -619,6 +649,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
@@ -641,6 +675,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
       - GENERATE_PPTX_REVIEW=${GENERATE_PPTX_REVIEW:-1}
@@ -668,6 +706,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}

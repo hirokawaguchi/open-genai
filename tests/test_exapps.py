@@ -25,11 +25,11 @@ def test_ngrules_parse_and_validate_rejects_invalid_regex() -> None:
 def test_policystore_parse_and_validate_accepts_team_policy() -> None:
     policystore = load_service_module("modelpolicy-app/app/policystore.py")
     policy, error = policystore.parse_and_validate(
-        '{"enabled": true, "default": ["gpt-oss:20b"], "teams": {"team-a": ["gemma3:27b"]}}'
+        '{"enabled": true, "default": ["gpt-oss:20b"], "teams": {"team-a": ["model-b"]}}'
     )
     assert error is None
     assert policy is not None
-    assert policy["teams"]["team-a"] == ["gemma3:27b"]
+    assert policy["teams"]["team-a"] == ["model-b"]
 
 
 def test_policystore_parse_and_validate_rejects_invalid_default() -> None:

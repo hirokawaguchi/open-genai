@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from shared.docextract import extract_doc_text_full
+from shared.llm_fallback import Endpoint, iter_chat_lines, post_chat
 
 from .doc_mapreduce import CHAT_DOC_INLINE_CHARS, condense_document
 
@@ -155,6 +156,15 @@ def _provider_for(model_id: str) -> Provider:
     return _MODEL_INDEX.get(model_id, _DEFAULT_PROVIDER)
 
 
+def _endpoint(provider: Provider) -> Endpoint:
+    return Endpoint(
+        base_url=provider.base_url,
+        headers=provider.headers(),
+        params=dict(provider.query),
+        extra_body=dict(provider.extra_body),
+    )
+
+
 # 画像生成アシスタントは JSON のみを期待する。Qwen が会話文を返すと UI が落ちる。
 IMAGE_PROMPT_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -281,15 +291,8 @@ async def _complete(
     payload = _chat_payload(
         provider, model_id, messages, stream=False, temperature=temperature
     )
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        res = await client.post(
-            f"{provider.base_url}/chat/completions",
-            json=payload,
-            headers=provider.headers(),
-            params=provider.query or None,
-        )
-        res.raise_for_status()
-        data = res.json()
+    res = await post_chat(_endpoint(provider), payload, REQUEST_TIMEOUT)
+    data = res.json()
     choices = data.get("choices") or [{}]
     message = choices[0].get("message") or {}
     return _assistant_visible_text(message)
@@ -384,15 +387,8 @@ async def chat_once(
     payload = _chat_payload(
         provider, model_id, openai_messages, stream=False, extra=extra
     )
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        res = await client.post(
-            f"{provider.base_url}/chat/completions",
-            json=payload,
-            headers=provider.headers(),
-            params=provider.query or None,
-        )
-        res.raise_for_status()
-        data = res.json()
+    res = await post_chat(_endpoint(provider), payload, REQUEST_TIMEOUT)
+    data = res.json()
     choices = data.get("choices") or [{}]
     message = choices[0].get("message") or {}
     answer = _assistant_visible_text(message)
@@ -457,46 +453,40 @@ async def chat_stream(
         provider, model_id, openai_messages, stream=True, extra=extra
     )
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            async with client.stream(
-                "POST",
-                f"{provider.base_url}/chat/completions",
-                json=payload,
-                headers=provider.headers(),
-                params=provider.query or None,
-            ) as res:
-                if res.status_code != 200:
-                    body = (await res.aread()).decode("utf-8", "ignore")
-                    yield json.dumps(
-                        {"text": f"[LLM エラー {res.status_code}] {body}", "stopReason": "error"},
-                        ensure_ascii=False,
-                    ) + "\n"
-                    return
+        finish_reason = "stop"
+        async for line in iter_chat_lines(_endpoint(provider), payload, REQUEST_TIMEOUT):
+            line = line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            payload_str = line[len("data:") :].strip()
+            if payload_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload_str)
+            except json.JSONDecodeError:
+                continue
+            choice = (chunk.get("choices") or [{}])[0]
+            delta = choice.get("delta") or {}
+            text = _assistant_visible_text(delta)
+            if text:
+                yield json.dumps({"text": text}, ensure_ascii=False) + "\n"
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
 
-                finish_reason = "stop"
-                async for line in res.aiter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    payload_str = line[len("data:") :].strip()
-                    if payload_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload_str)
-                    except json.JSONDecodeError:
-                        continue
-                    choice = (chunk.get("choices") or [{}])[0]
-                    delta = choice.get("delta") or {}
-                    text = _assistant_visible_text(delta)
-                    if text:
-                        yield json.dumps({"text": text}, ensure_ascii=False) + "\n"
-                    if choice.get("finish_reason"):
-                        finish_reason = choice["finish_reason"]
-
-                yield json.dumps(
-                    {"text": "", "stopReason": finish_reason or "stop"},
-                    ensure_ascii=False,
-                ) + "\n"
+        yield json.dumps(
+            {"text": "", "stopReason": finish_reason or "stop"},
+            ensure_ascii=False,
+        ) + "\n"
+    except httpx.HTTPStatusError as e:
+        body = (e.response.text or "")[:500]
+        yield json.dumps(
+            {
+                "text": f"[LLM エラー {e.response.status_code}] {body}",
+                "stopReason": "error",
+            },
+            ensure_ascii=False,
+        ) + "\n"
+        return
     except httpx.HTTPError as e:
         yield json.dumps(
             {

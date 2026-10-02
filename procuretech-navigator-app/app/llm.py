@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from shared.llm_fallback import iter_chat_lines, post_chat, primary_endpoint
+
 OLLAMA_BASE_URL = os.environ.get(
     "OLLAMA_BASE_URL", "http://host.docker.internal:11434"
 ).rstrip("/")
@@ -72,14 +74,10 @@ async def chat(
         "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
     payload.update(_extra_body())
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        res = await client.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
-            json=payload,
-            headers=_headers(),
-        )
-        res.raise_for_status()
-        data = res.json()
+    res = await post_chat(
+        primary_endpoint(OPENAI_BASE_URL, OPENAI_API_KEY), payload, REQUEST_TIMEOUT
+    )
+    data = res.json()
     choices = data.get("choices") or [{}]
     text = _message_text(choices[0].get("message") or {})
     if not text:
@@ -109,26 +107,20 @@ async def chat_stream(
         "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
     payload.update(_extra_body())
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        async with client.stream(
-            "POST",
-            f"{OPENAI_BASE_URL}/chat/completions",
-            json=payload,
-            headers=_headers(),
-        ) as res:
-            res.raise_for_status()
-            async for line in res.aiter_lines():
-                line = line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data_str = line[len("data:") :].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                choices = obj.get("choices") or [{}]
-                piece = _delta_text(choices[0].get("delta") or {})
-                if piece:
-                    yield piece
+    async for line in iter_chat_lines(
+        primary_endpoint(OPENAI_BASE_URL, OPENAI_API_KEY), payload, REQUEST_TIMEOUT
+    ):
+        line = line.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        data_str = line[len("data:") :].strip()
+        if data_str == "[DONE]":
+            break
+        try:
+            obj = json.loads(data_str)
+        except json.JSONDecodeError:
+            continue
+        choices = obj.get("choices") or [{}]
+        piece = _delta_text(choices[0].get("delta") or {})
+        if piece:
+            yield piece

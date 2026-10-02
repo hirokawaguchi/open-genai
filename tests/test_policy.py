@@ -25,7 +25,7 @@ def policy_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
                 {
                     "enabled": True,
                     "default": ["gpt-oss:20b"],
-                    "teams": {"team-a": ["gemma3:27b"]},
+                    "teams": {"team-a": ["model-b"]},
                 }
             ),
             "1",
@@ -42,7 +42,7 @@ def policy_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 def test_allowed_models_merges_default_and_team(policy_db) -> None:
     allowed = policy.allowed_models(["team-a"], is_admin=False)
-    assert allowed == {"gpt-oss:20b", "gemma3:27b"}
+    assert allowed == {"gpt-oss:20b", "model-b"}
 
 
 def test_is_model_allowed_allows_admin_even_when_restricted(policy_db) -> None:
@@ -69,7 +69,7 @@ def policy_db_v2(tmp_path, monkeypatch: pytest.MonkeyPatch):
         (
             policy.DEFAULT_TENANT_ID,
             json.dumps(
-                {"enabled": True, "default": ["gpt-oss:20b"], "teams": {"team-a": ["gemma3:27b"]}}
+                {"enabled": True, "default": ["gpt-oss:20b"], "teams": {"team-a": ["model-b"]}}
             ),
             "1",
         ),
@@ -87,7 +87,7 @@ def test_default_tenant_uses_its_own_policy(policy_db_v2) -> None:
     allowed = policy.allowed_models(
         ["team-a"], is_admin=False, tenant_id=policy.DEFAULT_TENANT_ID
     )
-    assert allowed == {"gpt-oss:20b", "gemma3:27b"}
+    assert allowed == {"gpt-oss:20b", "model-b"}
 
 
 def test_other_tenant_is_unrestricted_when_no_row(policy_db_v2) -> None:
@@ -107,4 +107,4 @@ def test_default_tenant_falls_back_to_legacy_single_row(policy_db) -> None:
     allowed = policy.allowed_models(
         ["team-a"], is_admin=False, tenant_id=policy.DEFAULT_TENANT_ID
     )
-    assert allowed == {"gpt-oss:20b", "gemma3:27b"}
+    assert allowed == {"gpt-oss:20b", "model-b"}

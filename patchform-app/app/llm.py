@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from shared.llm_fallback import post_chat, primary_endpoint
+
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434").rstrip(
     "/"
 )
@@ -22,7 +24,7 @@ PATCHFORM_MODEL = (
 PATCHFORM_VISION_MODEL = (
     os.environ.get("PATCHFORM_VISION_MODEL")
     or os.environ.get("DOCCHECK_VISION_MODEL")
-    or "gemma3:12b"
+    or "gemma4:cloud"
 )
 REQUEST_TIMEOUT = float(os.environ.get("PATCHFORM_LLM_TIMEOUT", "120"))
 DEFAULT_MAX_TOKENS = int(os.environ.get("PATCHFORM_LLM_MAX_TOKENS", "2048"))
@@ -39,14 +41,10 @@ RETRY_MAX_TOKENS = int(os.environ.get("PATCHFORM_LLM_RETRY_MAX_TOKENS", "8192"))
 
 
 async def _post_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        res = await client.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
-            json=payload,
-            headers=_headers(),
-        )
-        res.raise_for_status()
-        return res.json()
+    res = await post_chat(
+        primary_endpoint(OPENAI_BASE_URL, OPENAI_API_KEY), payload, REQUEST_TIMEOUT
+    )
+    return res.json()
 
 
 def _parse_choice(data: dict[str, Any]) -> tuple[str, str]:

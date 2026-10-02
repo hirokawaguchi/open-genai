@@ -5,11 +5,13 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY requirements.txt ./
+# ビルドコンテキストはリポジトリルート（shared/llm_fallback を共有するため）
+COPY procuretech-navigator-app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY materials ./materials
+COPY shared ./shared
+COPY procuretech-navigator-app/app ./app
+COPY procuretech-navigator-app/materials ./materials
 
 EXPOSE 8014
 

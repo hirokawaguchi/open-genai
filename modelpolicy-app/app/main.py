@@ -144,8 +144,8 @@ async def health() -> dict[str, Any]:
 _EXAMPLE = (
     '{\n'
     '  "enabled": true,\n'
-    '  "default": ["gpt-oss:20b"],\n'
-    '  "teams": {"<teamId>": ["gemma3:27b"]}\n'
+    '  "default": ["<modelId>"],\n'
+    '  "teams": {"<teamId>": ["<modelId>"]}\n'
     '}'
 )
 

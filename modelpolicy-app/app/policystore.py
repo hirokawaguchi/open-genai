@@ -3,8 +3,8 @@
 ポリシー JSON（チーム基準）:
     {
       "enabled": true,
-      "default": ["gpt-oss:20b"],
-      "teams": {"<teamId>": ["gemma3:27b"]}
+      "default": ["<modelId>"],
+      "teams": {"<teamId>": ["<modelId>"]}
     }
 - 旧 `groups`（ロール別）も後方互換で受理・保持する。
 """

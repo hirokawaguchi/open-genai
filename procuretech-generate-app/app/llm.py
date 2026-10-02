@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from shared.llm_fallback import post_chat_sync, primary_endpoint
+
 OLLAMA_BASE_URL = os.environ.get(
     "OLLAMA_BASE_URL", "http://host.docker.internal:11434"
 ).rstrip("/")
@@ -114,14 +116,10 @@ def chat(
         "max_tokens": max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
     payload.update(_extra_body())
-    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-        res = client.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
-            json=payload,
-            headers=_headers(),
-        )
-        res.raise_for_status()
-        data = res.json()
+    res = post_chat_sync(
+        primary_endpoint(OPENAI_BASE_URL, OPENAI_API_KEY), payload, REQUEST_TIMEOUT
+    )
+    data = res.json()
     choices = data.get("choices") or [{}]
     text = _message_text(choices[0].get("message") or {})
     if not text:
