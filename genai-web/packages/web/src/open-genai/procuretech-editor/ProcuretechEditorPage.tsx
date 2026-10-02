@@ -41,6 +41,7 @@ import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import { MermaidRenderer } from '@/features/exapp/components/MermaidRenderer';
 import { useDownloadArtifactCarrier } from '@/features/exapp/hooks/useDownloadArtifactCarrier';
 import { useFetchExApp } from '@/features/exapp/hooks/useFetchExApp';
 import { mermaidToPngDataUrl } from '@/features/exapp/utils/mermaid';
@@ -222,11 +223,10 @@ const DIAGRAM_TYPE_OPTIONS: { value: 'AI' | MermaidDiagramType; label: string }[
   ),
 ];
 
-// 図生成モーダルで見せる作業手順。ダイアグラムアプリの「種類の判定 → Mermaid」に、
-// 文書へ入れるための画像化を足している。
-type DiagramStep = 'prompt' | 'mermaid' | 'image' | 'insert';
+// 図生成モーダルで見せる作業手順。画像化は書き出し時に行う。
+type DiagramStep = 'prompt' | 'mermaid';
 const DIAGRAM_PIPELINE: {
-  id: Exclude<DiagramStep, 'insert'>;
+  id: DiagramStep;
   active: string;
   done: string;
   pending: string;
@@ -243,12 +243,6 @@ const DIAGRAM_PIPELINE: {
     done: 'Mermaid図を作成しました',
     pending: 'Mermaid図を作成します',
   },
-  {
-    id: 'image',
-    active: '画像形式に変換しています',
-    done: '画像形式に変換しました',
-    pending: '画像形式に変換します',
-  },
 ];
 
 const resolveMermaidType = (raw: string): MermaidDiagramType => {
@@ -259,7 +253,7 @@ const resolveMermaidType = (raw: string): MermaidDiagramType => {
 
 const DiagramPipeline = ({ step }: { step: DiagramStep | 'ready' }) => {
   const index =
-    step === 'ready' || step === 'insert'
+    step === 'ready'
       ? DIAGRAM_PIPELINE.length
       : DIAGRAM_PIPELINE.findIndex((item) => item.id === step);
   return (
@@ -286,11 +280,6 @@ const DiagramPipeline = ({ step }: { step: DiagramStep | 'ready' }) => {
           </li>
         );
       })}
-      {step === 'insert' && (
-        <li className='flex min-h-10 items-center rounded-6 bg-solid-gray-50 px-3 py-2'>
-          <ProgressIndicator label='本文へ挿入しています' />
-        </li>
-      )}
     </ol>
   );
 };
@@ -1230,9 +1219,7 @@ export const ProcuretechEditorPage = () => {
   const [diagramDesc, setDiagramDesc] = useState('');
   const [diagramType, setDiagramType] = useState<'AI' | MermaidDiagramType>('AI');
   const [diagramStep, setDiagramStep] = useState<DiagramStep | null>(null);
-  const [diagramPreview, setDiagramPreview] = useState<{ dataUrl: string; alt: string } | null>(
-    null,
-  );
+  const [diagramPreview, setDiagramPreview] = useState<{ code: string; alt: string } | null>(null);
   const [diagramError, setDiagramError] = useState<string | null>(null);
   const diagramRunRef = useRef(0);
   const diagramLockRef = useRef(false);
@@ -1708,7 +1695,7 @@ export const ProcuretechEditorPage = () => {
   };
 
   // 既存「ダイアグラムを生成」と同じ genU predict + プロンプトで Mermaid を作り、
-  // PNG にしてモーダルで見せる。本文への挿入は確認後（図の修正はしない）。
+  // モーダルで見せてから ```mermaid として挿入する。PNG 化は書き出し時。
   const onGenerateDiagram = async () => {
     const desc = diagramDesc.trim();
     if (!desc || diagramLockRef.current) return;
@@ -1763,56 +1750,27 @@ export const ProcuretechEditorPage = () => {
         setDiagramStep(null);
         return;
       }
-      stage = 'image';
-      setDiagramStep(stage);
-      const dataUrl = await mermaidToPngDataUrl(code, 2);
       if (!alive()) return;
-      setDiagramPreview({ dataUrl, alt: MERMAID_DIAGRAM_TYPES[type] });
+      setDiagramPreview({ code, alt: MERMAID_DIAGRAM_TYPES[type] });
       setDiagramStep(null);
     } catch (_e) {
       if (!alive()) return;
-      setDiagramError(
-        stage === 'image'
-          ? '図は作成できましたが、画像に変換できませんでした。説明を具体的にして再度お試しください。'
-          : '図の生成中にエラーが発生しました。時間をおいて再度お試しください。',
-      );
+      setDiagramError('図の生成中にエラーが発生しました。時間をおいて再度お試しください。');
       setDiagramStep(null);
     } finally {
       if (diagramRunRef.current === run) diagramLockRef.current = false;
     }
   };
 
-  // プレビューした PNG をプロジェクトの images/ へ保存し、カーソル位置へ画像として挿入する。
-  const onInsertDiagram = async () => {
+  // プレビューした Mermaid をカーソル位置へ挿入する。画像化は書き出し時。
+  const onInsertDiagram = () => {
     const preview = diagramPreview;
-    if (!preview || !projectId || diagramLockRef.current) return;
-    diagramLockRef.current = true;
-    setDiagramStep('insert');
-    setDiagramError(null);
-    try {
-      const f = await actions.uploadFile(projectId, {
-        filename: `ai-diagram-${Date.now()}.png`,
-        content_b64: preview.dataUrl,
-        dir: 'images',
-      });
-      if (!f) {
-        setDiagramError('画像の保存に失敗しました。時間をおいて再度お試しください。');
-        setDiagramStep(null);
-        return;
-      }
-      await mutateProject();
-      mutateProjects();
-      insertAtCursor(`\n\n${markdownImage(preview.alt, f.rel_path)}\n`);
-      setDiagramOpen(false);
-      setDiagramDesc('');
-      setDiagramPreview(null);
-      setDiagramStep(null);
-    } catch (_e) {
-      setDiagramError('画像の挿入に失敗しました。時間をおいて再度お試しください。');
-      setDiagramStep(null);
-    } finally {
-      diagramLockRef.current = false;
-    }
+    if (!preview || diagramBusy) return;
+    insertAtCursor(`\n\n\`\`\`mermaid\n${preview.code}\n\`\`\`\n`);
+    setDiagramOpen(false);
+    setDiagramDesc('');
+    setDiagramPreview(null);
+    setDiagramStep(null);
   };
 
   // --- AI 文書校正（編集アシスト） ---------------------------------------
@@ -1929,7 +1887,7 @@ export const ProcuretechEditorPage = () => {
       keyCommand: 'ai-diagram',
       buttonProps: {
         'aria-label': 'AI で図を生成',
-        title: '選択した文章から図を作り、確認してから画像として挿入',
+        title: '選択した文章から図を作り、確認してから Mermaid として挿入',
       },
       icon: <PiTreeStructure style={{ width: 16, height: 16 }} />,
       execute: (state, api) => onOpenDiagram(state, api),
@@ -2567,7 +2525,10 @@ export const ProcuretechEditorPage = () => {
           <CustomDialogBody>
             <div className='flex flex-col gap-3'>
               <p className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-3 py-2 text-dns-14N-130 text-solid-gray-700'>
-                説明から図を作り、画像として本文へ挿入します。できた図をこの画面で修正することはできません。
+                説明から Mermaid
+                図を作り、本文へ挿入します。編集画面のプレビューに図として表示され、Word / HTML /
+                PowerPoint
+                へ書き出すときに画像へ変換して埋め込みます。できた図をこの画面で修正することはできません。
                 図を編集したり作り込んだりする場合は
                 {isUseCaseEnabled('diagram') ? (
                   <Link to='/diagram' className='mx-1 text-blue-900 underline'>
@@ -2619,14 +2580,10 @@ export const ProcuretechEditorPage = () => {
                     プレビュー（{diagramPreview.alt}）
                   </span>
                   <div className='max-h-[40dvh] overflow-auto rounded-8 border border-solid-gray-300 bg-white p-3'>
-                    <img
-                      src={diagramPreview.dataUrl}
-                      alt={diagramPreview.alt}
-                      className='mx-auto max-w-full'
-                    />
+                    <MermaidRenderer code={diagramPreview.code} />
                   </div>
                   <span className='text-dns-14N-130 text-solid-gray-500'>
-                    この画像をカーソル位置へ挿入します。挿入後に図の形を直すことはできません。
+                    この図をカーソル位置へ挿入します。挿入後に図の形を直すことはできません。
                   </span>
                 </div>
               )}
@@ -2646,15 +2603,9 @@ export const ProcuretechEditorPage = () => {
                   </Button>
                 )}
                 {diagramPreview ? (
-                  <LoadingButton
-                    type='button'
-                    variant='solid-fill'
-                    size='md'
-                    loading={diagramStep === 'insert'}
-                    onClick={onInsertDiagram}
-                  >
-                    {diagramStep === 'insert' ? '挿入中' : '挿入'}
-                  </LoadingButton>
+                  <Button type='button' variant='solid-fill' size='md' onClick={onInsertDiagram}>
+                    挿入
+                  </Button>
                 ) : (
                   <LoadingButton
                     type='button'
