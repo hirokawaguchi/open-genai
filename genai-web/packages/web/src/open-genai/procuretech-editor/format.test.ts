@@ -6,6 +6,8 @@ import {
   extractImageSources,
   formatBytes,
   isVisualComposeFormat,
+  markdownImage,
+  resolveProjectImagePath,
   rewriteImageSources,
 } from './format';
 
@@ -59,6 +61,38 @@ describe('procuretech-editor/format', () => {
         '![h](https://x/y.png) ![d](data:image/png;base64,AAA) ![abs](/files/z.png) ![rel](images/r.png)';
       expect(extractImageSources(md)).toEqual(['images/r.png']);
     });
+    it('空白・山括弧・%20 のファイル名を取り出す', () => {
+      const md = [
+        '![a](スクリーンショット 1.png)',
+        '![b](<images/図 2.png>)',
+        '![c](images/a%20b.png)',
+      ].join('\n');
+      expect(extractImageSources(md).sort()).toEqual(
+        ['images/a b.png', 'images/図 2.png', 'スクリーンショット 1.png'].sort(),
+      );
+    });
+  });
+
+  describe('resolveProjectImagePath', () => {
+    const paths = ['images/a.png', 'docs/図 1.png'];
+    it('案件ルートからのパスをそのまま解決する', () => {
+      expect(resolveProjectImagePath('images/a.png', '手順.md', paths)).toBe('images/a.png');
+    });
+    it('開いている Markdown からの相対パスを解決する', () => {
+      expect(resolveProjectImagePath('./図 1.png', 'docs/手順.md', paths)).toBe('docs/図 1.png');
+    });
+    it('無いパスは null', () => {
+      expect(resolveProjectImagePath('missing.png', '手順.md', paths)).toBeNull();
+    });
+  });
+
+  describe('markdownImage', () => {
+    it('空白や括弧を含むパスは山括弧で囲む', () => {
+      expect(markdownImage('図', 'images/a.png')).toBe('![図](images/a.png)');
+      expect(markdownImage('図', 'スクリーンショット 1.png')).toBe(
+        '![図](<スクリーンショット 1.png>)',
+      );
+    });
   });
 
   describe('rewriteImageSources', () => {
@@ -70,6 +104,12 @@ describe('procuretech-editor/format', () => {
     it('外部 URL は書き換えない', () => {
       const md = '![h](https://x/y.png)';
       expect(rewriteImageSources(md, { 'https://x/y.png': 'nope' })).toBe(md);
+    });
+    it('空白を含むパスも URL へ置換する', () => {
+      const md = '![図](スクリーンショット 1.png)';
+      expect(rewriteImageSources(md, { 'スクリーンショット 1.png': 'https://s3/a' })).toBe(
+        '![図](https://s3/a)',
+      );
     });
   });
 

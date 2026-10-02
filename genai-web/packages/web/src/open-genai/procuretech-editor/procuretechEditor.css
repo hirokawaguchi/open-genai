@@ -1,12 +1,31 @@
 /* @uiw/react-md-editor のツールバーを大きく見やすくする（.pte-md でスコープ） */
 .pte-md .w-md-editor-toolbar {
-  padding: 6px 8px;
+  padding: 4px 6px;
+  /* 右側の AI文書校正だけ次の行へ落ちて1行分空かないようにする。 */
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.pte-md .w-md-editor-toolbar > ul {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.pte-md .w-md-editor-toolbar > ul:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.pte-md .w-md-editor-toolbar > ul:last-child {
+  flex: 0 0 auto;
 }
 
 .pte-md .w-md-editor-toolbar ul > li > button {
-  height: 34px;
-  min-width: 34px;
-  padding: 0 10px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -6,6 +6,7 @@ import base64
 import html
 import io
 import re
+import urllib.parse
 from datetime import datetime
 from typing import Any
 
@@ -33,9 +34,10 @@ from app.dads import (
     style_run,
 )
 
-# 画像のみの行（ブロック画像）。
-_IMAGE_LINE_RE = re.compile(r"^!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)$")
-_INLINE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+# 画像記法。(...) 内側は空白・<>・%エンコードを後段で解釈する。
+# 空白を弾くと `[text](file name.png)` がリンクになり、画像が埋まらない。
+_IMAGE_LINE_RE = re.compile(r"^!\[[^\]]*\]\(([^)\n]*)\)$")
+_INLINE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]*)\)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
 _ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
@@ -48,7 +50,7 @@ _TASK_RE = re.compile(r"^\[([ xX])\]\s+(.*)$")
 _TABLE_LINE_RE = re.compile(r"^\s*\|.+\|\s*$")
 _TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
 _INLINE_RE = re.compile(
-    r"!\[(?P<img_alt>[^\]]*)\]\(\s*<?(?P<img_src>[^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)"
+    r"!\[(?P<img_alt>[^\]]*)\]\((?P<img_inner>[^)\n]*)\)"
     r"|`(?P<code>[^`]+)`"
     r"|\*\*(?P<bold>.+?)\*\*"
     r"|__(?P<bold2>.+?)__"
@@ -182,8 +184,28 @@ def normalize_format(raw: Any) -> str:
     return fmt if fmt in SUPPORTED_FORMATS else "docx"
 
 
+def image_rel(inner: str) -> str:
+    """画像記法の (...) 内側から、assets のキーになる相対パスを取り出す。"""
+    body = (inner or "").strip()
+    titled = re.match(r'^(.*)\s+"([^"]*)"\s*$', body)
+    if titled:
+        body = titled.group(1).strip()
+    if len(body) >= 2 and body.startswith("<") and body.endswith(">"):
+        body = body[1:-1].strip()
+    try:
+        src = urllib.parse.unquote(body)
+    except Exception:  # noqa: BLE001
+        src = body
+    if src.startswith("./"):
+        src = src[2:]
+    # 外部 URL のスラッシュは畳まない（https:// を相対パスにしない）。
+    if "://" in src or src.startswith("data:") or src.startswith("#"):
+        return src
+    return src.replace("\\", "/").lstrip("/")
+
+
 def _rel_of(path: str) -> str:
-    return path.replace("\\", "/").lstrip("/")
+    return image_rel(path)
 
 
 def _join_sections(sections: list[dict[str, Any]]) -> str:
@@ -283,8 +305,8 @@ def _inline_html(text: str, assets: dict[str, bytes]) -> str:
         if m.start() > last:
             out.append(html.escape(text[last : m.start()]))
         g = m.groupdict()
-        if g.get("img_src"):
-            rel = _rel_of(g["img_src"])
+        if g.get("img_alt") is not None:
+            rel = image_rel(g.get("img_inner") or "")
             data = assets.get(rel)
             alt = html.escape(g.get("img_alt") or "")
             if data:
@@ -917,8 +939,8 @@ def _add_inline_runs(
         if m.start() > last:
             style_run(paragraph.add_run(text[last : m.start()]), size=size, color=color)
         g = m.groupdict()
-        if g.get("img_src"):
-            rel = _rel_of(g["img_src"])
+        if g.get("img_alt") is not None:
+            rel = image_rel(g.get("img_inner") or "")
             data = assets.get(rel)
             if data:
                 try:

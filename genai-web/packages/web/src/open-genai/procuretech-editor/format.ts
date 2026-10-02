@@ -58,26 +58,106 @@ export const fileToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-// Markdown 画像記法 `![alt](src "title")` を alt / src / title に分解する。
-const MD_IMAGE_RE = /!\[([^\]]*)\]\(\s*([^)\s]+)((?:\s+"[^"]*")?)\s*\)/g;
+const imagePattern = (): RegExp => /!\[([^\]]*)\]\(([^)\n]*)\)/g;
 
 /** src が外部 URL / data URI / 絶対パスかどうか（＝書き換え対象外）。 */
 const isExternalSrc = (src: string): boolean =>
   /^(https?:)?\/\//.test(src) || src.startsWith('data:') || src.startsWith('/');
 
+const safeDecode = (src: string): string => {
+  try {
+    return decodeURI(src);
+  } catch {
+    return src;
+  }
+};
+
+/** `..` と `./` を畳んだ相対パス。先頭の `/` は付けない。 */
+const normalizeRel = (path: string): string => {
+  const parts: string[] = [];
+  for (const seg of path.replace(/\\/g, '/').split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return parts.join('/');
+};
+
+type ParsedImage = { src: string; title: string };
+
+/**
+ * 画像記法の `(...)` 内側からパスと title を取り出す。
+ * `path`、`<path with spaces>`、`path%20name.png`、末尾の `"title"` に対応する。
+ */
+const parseImageInner = (inner: string): ParsedImage | null => {
+  let body = inner.trim();
+  if (!body) return null;
+  let title = '';
+  const titled = body.match(/^(.*)\s+"([^"]*)"\s*$/);
+  if (titled) {
+    body = titled[1].trim();
+    title = titled[2];
+  }
+  if (body.startsWith('<') && body.endsWith('>') && body.length >= 2) {
+    body = body.slice(1, -1).trim();
+  }
+  if (!body) return null;
+  const decoded = safeDecode(body);
+  // URL は `/` を畳む前に判定する（https:// が https:/ になると相対パス扱いになる）。
+  if (isExternalSrc(decoded)) {
+    return { src: decoded, title };
+  }
+  const src = normalizeRel(decoded);
+  return src ? { src, title } : null;
+};
+
 /**
  * Markdown 本文から、案件フォルダ内の相対パス画像 src の一覧を重複なく取り出す。
- * 外部 URL・data URI・絶対パスは除外する。
+ * 空白を含むファイル名、`<>` 囲み、%エンコードも対象。外部 URL・data URI・絶対パスは除外する。
  */
 export const extractImageSources = (md: string): string[] => {
   const set = new Set<string>();
-  for (const m of md.matchAll(MD_IMAGE_RE)) {
-    const src = decodeURI(m[2]);
-    if (!isExternalSrc(src)) {
-      set.add(src);
+  for (const m of md.matchAll(imagePattern())) {
+    const parsed = parseImageInner(m[2]);
+    if (parsed && !isExternalSrc(parsed.src)) {
+      set.add(parsed.src);
     }
   }
   return [...set];
+};
+
+/**
+ * 本文中の画像 src を、開いている Markdown からの相対で案件内ファイルへ解決する。
+ * 見つからなければ null。
+ */
+export const resolveProjectImagePath = (
+  src: string,
+  markdownRel: string,
+  paths: readonly string[],
+): string | null => {
+  const set = new Set(paths);
+  const normalized = normalizeRel(safeDecode(src));
+  if (!normalized || isExternalSrc(normalized)) return null;
+  if (set.has(normalized)) return normalized;
+  const dir = dirOf(markdownRel);
+  if (dir) {
+    const joined = normalizeRel(`${dir}/${normalized}`);
+    if (set.has(joined)) return joined;
+  }
+  return null;
+};
+
+/**
+ * 本文へ挿入する画像記法。空白や括弧を含むパスは `<>` で囲み、
+ * プレビューと書き出しがリンクではなく画像として扱うようにする。
+ */
+export const markdownImage = (alt: string, relPath: string): string => {
+  const safeAlt = alt.replace(/[[\]]/g, '');
+  const dest = /[\s()]/.test(relPath) ? `<${relPath}>` : relPath;
+  return `![${safeAlt}](${dest})`;
 };
 
 /**
@@ -86,12 +166,15 @@ export const extractImageSources = (md: string): string[] => {
  * マップに無い src はそのまま残す。
  */
 export const rewriteImageSources = (md: string, map: Record<string, string>): string =>
-  md.replace(MD_IMAGE_RE, (whole, alt: string, src: string, title: string) => {
-    if (isExternalSrc(src)) {
+  md.replace(imagePattern(), (whole, alt: string, inner: string) => {
+    const parsed = parseImageInner(inner);
+    if (!parsed || isExternalSrc(parsed.src)) {
       return whole;
     }
-    const url = map[decodeURI(src)];
-    return url ? `![${alt}](${url}${title})` : whole;
+    const url = map[parsed.src];
+    if (!url) return whole;
+    const title = parsed.title ? ` "${parsed.title}"` : '';
+    return `![${alt}](${url}${title})`;
   });
 
 /** URL からブラウザのダウンロードを起動する。 */

@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import urllib.parse
 import uuid
 import zipfile
 from typing import Any
@@ -530,6 +531,15 @@ async def upload_file(
         except excel.ExcelError as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
     kind = _kind_of(rel)
+    # 画像の追加はエディタの「画像を挿入」に限る（images/ 配下）。
+    # ファイル管理から同じ階層へ置くと、空白入りのファイル名がリンクになってしまう。
+    if kind == "image" and not rel.startswith("images/"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "画像は images フォルダに保存してください。エディタの「画像を挿入」から追加できます。",
+            },
+        )
     existing = store.get_file(project_id, uid, rel)
     s3_key = existing["s3_key"] if existing else store.build_s3_key(uid, project_id, rel)
     if not objstore.put_bytes(s3_key, data):
@@ -1277,18 +1287,123 @@ async def put_composition(
     return JSONResponse(content={"saved": True, "composition": composition})
 
 
-# Markdown 本文中の画像参照 `![alt](path)` を抽出する（http/https/data: は除外）。
-_IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+# Markdown 画像記法。空白・<>・%エンコードを後段で解釈するため、(...) 内側をそのまま取る。
+_IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]*)\)")
 
 
-def _extract_image_refs(content: str) -> list[str]:
-    refs: list[str] = []
-    for m in _IMAGE_REF_RE.finditer(content or ""):
-        p = (m.group(1) or "").strip()
-        if not p or "://" in p or p.startswith("data:") or p.startswith("#"):
+def _normalize_rel(path: str) -> str:
+    parts: list[str] = []
+    for seg in path.replace("\\", "/").split("/"):
+        if seg in ("", "."):
             continue
-        refs.append(p.lstrip("/"))
-    return refs
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(seg)
+    return "/".join(parts)
+
+
+def _parse_image_inner(inner: str) -> tuple[str, str] | None:
+    """(...) 内側から (相対パス, title) を取り出す。外部 URL はパスを空で返す。"""
+    body = (inner or "").strip()
+    if not body:
+        return None
+    title = ""
+    titled = re.match(r'^(.*)\s+"([^"]*)"\s*$', body)
+    if titled:
+        body = titled.group(1).strip()
+        title = titled.group(2)
+    if len(body) >= 2 and body.startswith("<") and body.endswith(">"):
+        body = body[1:-1].strip()
+    if not body:
+        return None
+    try:
+        src = urllib.parse.unquote(body)
+    except Exception:  # noqa: BLE001
+        src = body
+    if src.startswith("./"):
+        src = src[2:]
+    # URL は `/` を畳む前に返す（https:// が https:/ になると相対パスになる）。
+    if _is_external_image(src):
+        return src, title
+    return _normalize_rel(src), title
+
+
+def _is_external_image(src: str) -> bool:
+    return (
+        not src
+        or "://" in src
+        or src.startswith("data:")
+        or src.startswith("/")
+        or src.startswith("#")
+    )
+
+
+def _resolve_image_rel(
+    src: str, md_rel: str, files_by_rel: dict[str, dict[str, Any]]
+) -> str | None:
+    """本文中の画像パスを案件内の画像ファイルへ解決する。"""
+    if _is_external_image(src):
+        return None
+    cands = [src]
+    parent = md_rel.rsplit("/", 1)[0] if "/" in md_rel else ""
+    if parent:
+        cands.append(_normalize_rel(f"{parent}/{src}"))
+    for cand in cands:
+        f = files_by_rel.get(cand)
+        if f and f.get("kind") == "image":
+            return cand
+    return None
+
+
+def _markdown_image_dest(rel: str) -> str:
+    """空白・括弧を含むパスは pandoc がリンクにしないよう山括弧で囲む。"""
+    if any(ch in rel for ch in " \t()"):
+        return f"<{rel}>"
+    return rel
+
+
+def _rewrite_image_refs(
+    content: str, md_rel: str, files_by_rel: dict[str, dict[str, Any]]
+) -> tuple[str, list[str]]:
+    """視覚形式へ渡す本文の画像パスを案件内パスへ揃え、参照一覧を返す。"""
+    refs: list[str] = []
+
+    def repl(m: re.Match[str]) -> str:
+        parsed = _parse_image_inner(m.group(2))
+        if parsed is None:
+            return m.group(0)
+        src, title = parsed
+        rel = _resolve_image_rel(src, md_rel, files_by_rel)
+        if rel is None:
+            return m.group(0)
+        if rel not in refs:
+            refs.append(rel)
+        title_part = f' "{title}"' if title else ""
+        return f"![{m.group(1)}]({_markdown_image_dest(rel)}{title_part})"
+
+    return _IMAGE_REF_RE.sub(repl, content or ""), refs
+
+
+def _prepare_sections_for_compose(
+    sections: list[dict[str, str]],
+    files_by_rel: dict[str, dict[str, Any]],
+    *,
+    embed_images: bool,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """合成 API へ渡す section（filename/content のみ）と、埋め込む画像パスを返す。"""
+    out: list[dict[str, str]] = []
+    refs: list[str] = []
+    for sec in sections:
+        content = sec.get("content") or ""
+        if embed_images:
+            content, found = _rewrite_image_refs(content, sec.get("rel_path") or "", files_by_rel)
+            for rel in found:
+                if rel not in refs:
+                    refs.append(rel)
+        out.append({"filename": sec.get("filename") or "section.md", "content": content})
+    return out, refs
 
 
 def _collect_output_sections(
@@ -1326,7 +1441,11 @@ def _collect_output_sections(
                 content = data.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-        sections.append({"filename": f["rel_path"].rsplit("/", 1)[-1], "content": content})
+        sections.append({
+            "filename": f["rel_path"].rsplit("/", 1)[-1],
+            "content": content,
+            "rel_path": f["rel_path"],
+        })
     return sections
 
 
@@ -1435,6 +1554,7 @@ async def _run_compose_job(
             used_names.add(name)
             return name
 
+        image_rels: list[str] = []
         for o in composition.get("outputs", []):
             if o.get("enabled") is False:
                 continue
@@ -1454,7 +1574,12 @@ async def _run_compose_job(
                 sections = _collect_output_sections(o, files_by_key, files_by_id, use_overrides)
                 if not sections:
                     continue
-                payload = {"name": name, "format": fmt, "sections": sections}
+                embed = fmt in generate.VISUAL_COMPOSE_FORMATS
+                clean, rels = _prepare_sections_for_compose(
+                    sections, files_by_rel, embed_images=embed
+                )
+                image_rels.extend(rels)
+                payload = {"name": name, "format": fmt, "sections": clean}
                 if fmt in generate.GENERIC_COMPOSE_FORMATS:
                     generic_md.append(payload)
                 else:
@@ -1462,19 +1587,15 @@ async def _run_compose_job(
                 included_names.append(name)
 
         assets: dict[str, bytes] = {}
-        for o in theme_md + generic_md:
-            if o.get("format") not in generate.VISUAL_COMPOSE_FORMATS:
+        for rel in image_rels:
+            if rel in assets:
                 continue
-            for sec in o["sections"]:
-                for rel in _extract_image_refs(sec.get("content", "")):
-                    if rel in assets:
-                        continue
-                    f = files_by_rel.get(rel)
-                    if f is None:
-                        continue
-                    data = objstore.get_bytes(f["s3_key"])
-                    if data is not None:
-                        assets[rel] = data
+            f = files_by_rel.get(rel)
+            if f is None:
+                continue
+            data = objstore.get_bytes(f["s3_key"])
+            if data is not None:
+                assets[rel] = data
         for f in files:
             rel = str(f.get("rel_path") or "").replace("\\", "/").lstrip("/")
             name = rel.rsplit("/", 1)[-1].lower()

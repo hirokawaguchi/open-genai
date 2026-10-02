@@ -27,6 +27,7 @@ from app.pptx_catalog import (
 )
 from app.compose_formats import _TABLE_LINE_RE, parse_gfm_table
 from app.pptx_check import title_fail_codes
+from app.compose_formats import image_rel
 from app.pptx_layouts import validate_deck
 
 log = logging.getLogger("procuretech-generate")
@@ -35,7 +36,7 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.*)$")
 _NUMBERED_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.*)$")
 _LABEL_RE = re.compile(r"^\*\*(.+?)\*\*\s*[:：]?\s*(.*)$")
-_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*<?([^)>\s]+)>?")
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\n]*)\)")
 _NUMBER_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?\s*%|[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)")
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)```", re.I)
 
@@ -217,7 +218,7 @@ def parse_source_blocks(name: str, sections: list[dict[str, Any]]) -> list[Sourc
                     current.tables.append(parsed)
             images = list(_IMAGE_RE.finditer(stripped))
             for im in images:
-                rel = _rel_of(im.group(2))
+                rel = image_rel(im.group(2))
                 if not _is_waiting_image(rel):
                     current.images.append(rel)
             if images and _IMAGE_RE.sub("", stripped).strip() == "":

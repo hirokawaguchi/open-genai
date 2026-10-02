@@ -31,6 +31,19 @@ def test_markdown_to_txt_strips_and_placeholders():
     assert "・ 項目1" in body
 
 
+def test_spaced_image_path_embeds_instead_of_link():
+    """空白入りのファイル名はハイパーリンクにせず画像として埋める。"""
+    name = "スクリーンショット 1.png"
+    sections = [{"filename": "a.md", "content": f"本文\n\n![図]({name})\n"}]
+    html = markdown_to_html("文書", sections, {name: b"PNG"}).decode("utf-8")
+    assert "<img " in html
+    assert "data:image/png;base64," in html
+    assert "<a " not in html
+    bracketed = [{"filename": "a.md", "content": f"![図](<{name}>)\n"}]
+    html2 = markdown_to_html("文書", bracketed, {name: b"PNG"}).decode("utf-8")
+    assert "data:image/png;base64," in html2
+
+
 def test_markdown_to_html_embeds_css_and_data_uri():
     html = markdown_to_html("文書", SECTIONS, {"images/z.png": b"PNG"}).decode("utf-8")
     assert "<style>" in html

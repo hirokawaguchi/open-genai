@@ -59,6 +59,8 @@ import {
   fileToBase64,
   formatBytes,
   isVisualComposeFormat,
+  markdownImage,
+  resolveProjectImagePath,
   rewriteImageSources,
   triggerDownload,
 } from './format';
@@ -152,7 +154,7 @@ const insertTable: ICommand = {
   },
 };
 
-// AI 文書構成（編集アシスト）で選べる操作。テーマ非依存の汎用機能。
+// AI 文書校正（編集アシスト）で選べる操作。テーマ非依存の汎用機能。
 type AiEditAction = 'expand' | 'summarize' | 'format' | 'rewrite';
 const AI_EDIT_ACTIONS: {
   value: AiEditAction;
@@ -381,6 +383,8 @@ const FileManagerModal = ({
           </div>
           <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
             ファイル名をクリックするとエディタで開きます。リネーム・複製・削除はここで行います。
+            画像はここからは追加できません。エディタの画像ボタンから挿入すると images
+            フォルダに保存されます。
           </p>
         </CustomDialogBody>
       </CustomDialogPanel>
@@ -1148,7 +1152,7 @@ export const ProcuretechEditorPage = () => {
   const [diagramBusy, setDiagramBusy] = useState(false);
   const [diagramError, setDiagramError] = useState<string | null>(null);
 
-  // AI 文書構成（編集アシスト）モーダルの状態。
+  // AI 文書校正（編集アシスト）モーダルの状態。
   const [aiEditOpen, setAiEditOpen] = useState(false);
   const [aiEditAction, setAiEditAction] = useState<AiEditAction>('rewrite');
   const [aiEditInstruction, setAiEditInstruction] = useState('');
@@ -1336,7 +1340,7 @@ export const ProcuretechEditorPage = () => {
     }
   };
 
-  const onSave = async () => {
+  const onSave = useCallback(async () => {
     if (!selected || !projectId || !isEditable) return;
     const res = await actions.saveFile(projectId, selected.rel_path, draft);
     if (res) {
@@ -1345,7 +1349,22 @@ export const ProcuretechEditorPage = () => {
       window.setTimeout(() => setSavedNotice(false), 2000);
       mutateProject();
     }
-  };
+  }, [actions, draft, isEditable, mutateProject, projectId, selected]);
+
+  // ブラウザの「ページを保存」ではなく、開いているファイルを保存する。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== 's') return;
+      if (activeTab !== EDIT_TAB || !isEditable) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isDirty || actions.submitting) return;
+      void onSave();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [actions.submitting, activeTab, isDirty, isEditable, onSave]);
 
   const onCreateProject = async () => {
     const name = newProjectName.trim();
@@ -1413,12 +1432,22 @@ export const ProcuretechEditorPage = () => {
 
   const onUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0 || !projectId) return;
-    for (const file of Array.from(fileList)) {
+    const picked = Array.from(fileList);
+    const images = picked.filter((file) => /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name));
+    const docs = picked.filter((file) => !images.includes(file));
+    if (images.length > 0) {
+      window.alert(
+        '画像はファイル管理からは追加できません。エディタの画像ボタンから挿入してください（images フォルダに保存されます）。',
+      );
+    }
+    for (const file of docs) {
       const content_b64 = await fileToBase64(file);
       await actions.uploadFile(projectId, { filename: file.name, content_b64 });
     }
-    mutateProject();
-    mutateProjects();
+    if (docs.length > 0) {
+      mutateProject();
+      mutateProjects();
+    }
   };
 
   const onRenamePath = async (path: string) => {
@@ -1568,7 +1597,7 @@ export const ProcuretechEditorPage = () => {
       await mutateProject();
       mutateProjects();
       const alt = baseName(f.rel_path).replace(/\.[^.]+$/, '');
-      insertAtCursor(`![${alt}](${f.rel_path})`);
+      insertAtCursor(markdownImage(alt, f.rel_path));
       setImagePickerOpen(false);
     }
   };
@@ -1576,7 +1605,7 @@ export const ProcuretechEditorPage = () => {
   // 既にプロジェクト内にある画像を本文へ挿入する（相対パスで参照）。
   const onInsertExistingImage = (f: EditorFile) => {
     const alt = baseName(f.rel_path).replace(/\.[^.]+$/, '');
-    insertAtCursor(`![${alt}](${f.rel_path})`);
+    insertAtCursor(markdownImage(alt, f.rel_path));
     setImagePickerOpen(false);
   };
 
@@ -1637,7 +1666,7 @@ export const ProcuretechEditorPage = () => {
     }
   };
 
-  // --- AI 文書構成（編集アシスト） ---------------------------------------
+  // --- AI 文書校正（編集アシスト） ---------------------------------------
   // ツールバーの AI ボタン実行時に、選択範囲（無ければ本文全体）を対象として控える。
   const onOpenAiEdit = useCallback(
     (state: ExecuteState, api: TextAreaTextApi) => {
@@ -1775,34 +1804,48 @@ export const ProcuretechEditorPage = () => {
     ];
   }, [onOpenImagePicker, onOpenDiagram]);
 
-  // 右側の追加コマンド：AI 文書構成（選択＝その部分、未選択＝本文全体を編集）。
+  // ツールバー右端：AI 文書校正（選択＝その部分、未選択＝本文全体を編集）。
+  // 左のアイコン列と同じ行に置く（別行に落ちるとエディタが1行分狭くなる）。
   const editorExtraCommands = useMemo<ICommand[]>(() => {
     const aiEditCommand: ICommand = {
       name: 'ai-edit',
       keyCommand: 'ai-edit',
       buttonProps: {
-        'aria-label': 'AI 文書構成',
-        title: 'AI 文書構成（選択部分／本文全体を加筆・要約・整形・リライト）',
+        'aria-label': 'AI文書校正',
+        title: 'AI文書校正（選択部分／本文全体を加筆・要約・整形・リライト）',
       },
-      icon: <PiMagicWand style={{ width: 16, height: 16 }} />,
+      icon: (
+        <span className='inline-flex items-center gap-1 whitespace-nowrap text-[13px] leading-none'>
+          <PiMagicWand style={{ width: 16, height: 16 }} />
+          AI文書校正
+        </span>
+      ),
       execute: (state, api) => onOpenAiEdit(state, api),
     };
     return [aiEditCommand];
   }, [onOpenAiEdit]);
 
+  const imagePaths = useMemo(
+    () => files.filter((f) => f.kind === 'image').map((f) => f.rel_path),
+    [files],
+  );
+
   // プレビューに現れる相対パス画像の presigned URL を必要に応じて取得・キャッシュする。
   useEffect(() => {
     if (!projectId) return;
-    const need = extractImageSources(draft).filter(
-      (p) => !imageUrls[p] && files.some((f) => f.rel_path === p && f.kind === 'image'),
-    );
+    const need = extractImageSources(draft).filter((p) => {
+      if (imageUrls[p]) return false;
+      return resolveProjectImagePath(p, selectedPath ?? '', imagePaths) != null;
+    });
     if (need.length === 0) return;
     let cancelled = false;
     (async () => {
       const entries = await Promise.all(
         need.map(async (p) => {
+          const rel = resolveProjectImagePath(p, selectedPath ?? '', imagePaths);
+          if (!rel) return [p, ''] as const;
           try {
-            const c = await fetchFileContent(projectId, p);
+            const c = await fetchFileContent(projectId, rel);
             return [p, c.download_url ?? ''] as const;
           } catch {
             return [p, ''] as const;
@@ -1818,7 +1861,7 @@ export const ProcuretechEditorPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [draft, files, projectId, imageUrls]);
+  }, [draft, imagePaths, imageUrls, projectId, selectedPath]);
 
   // プロジェクト内の画像ファイル一覧（画像選択モーダル用）。
   const projectImages = useMemo(() => files.filter((f) => f.kind === 'image'), [files]);
@@ -2144,6 +2187,7 @@ export const ProcuretechEditorPage = () => {
                   size='sm'
                   disabled={!isEditable || !isDirty || actions.submitting}
                   onClick={onSave}
+                  title='保存（Ctrl+S）'
                 >
                   <span className='inline-flex items-center gap-1 whitespace-nowrap'>
                     <PiFloppyDisk className='size-4' />
@@ -2429,7 +2473,7 @@ export const ProcuretechEditorPage = () => {
         </CustomDialogPanel>
       </CustomDialog>
 
-      {/* AI 文書構成（編集アシスト）モーダル。選択部分／本文全体を対象に加筆・要約等。 */}
+      {/* AI 文書校正（編集アシスト）モーダル。選択部分／本文全体を対象に加筆・要約等。 */}
       <CustomDialog
         isOpen={aiEditOpen}
         onClose={() => (aiEditBusy ? undefined : setAiEditOpen(false))}
@@ -2438,7 +2482,7 @@ export const ProcuretechEditorPage = () => {
           <CustomDialogHeader hasClose onClose={() => setAiEditOpen(false)}>
             <span className='inline-flex items-center gap-2'>
               <PiMagicWand className='size-6 text-solid-gray-700' />
-              AI 文書構成
+              AI文書校正
             </span>
           </CustomDialogHeader>
           <CustomDialogBody>

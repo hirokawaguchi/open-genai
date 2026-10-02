@@ -404,18 +404,34 @@ def test_upload_binary_and_download_url(client):
     content_b64 = base64.b64encode(b"PNGDATA").decode()
     res = client.post(
         f"/projects/{p['id']}/files/upload",
-        json={"filename": "図.png", "content_b64": content_b64},
+        json={"filename": "図.png", "content_b64": content_b64, "dir": "images"},
         headers=USER_A,
     )
     assert res.status_code == 200, res.text
     assert res.json()["file"]["kind"] == "image"
+    assert res.json()["file"]["rel_path"] == "images/図.png"
     got = client.get(
         f"/projects/{p['id']}/files/content",
-        params={"path": "図.png"},
+        params={"path": "images/図.png"},
         headers=USER_A,
     ).json()
     assert got["download_url"].startswith("https://dl/")
     assert "content" not in got
+
+
+def test_upload_image_outside_images_dir_rejected(client):
+    """画像は images/ 以外（ファイル管理の直置き）を拒否する。"""
+    p = _create_project(client)
+    res = client.post(
+        f"/projects/{p['id']}/files/upload",
+        json={
+            "filename": "shot.png",
+            "content_b64": base64.b64encode(b"PNG").decode(),
+        },
+        headers=USER_A,
+    )
+    assert res.status_code == 400
+    assert "images" in res.json()["error"]
 
 
 def test_rename_duplicate_delete(client):
@@ -808,6 +824,67 @@ def test_compose_overrides_and_embeds_image(client, monkeypatch):
     # 参照画像が assets として渡る
     assert captured["assets"] is not None
     assert captured["assets"]["images/pic.png"] == b"PNGDATA"
+
+
+def test_compose_embeds_image_with_spaces(client, monkeypatch):
+    """空白を含むファイル名でも assets に載せ、本文は山括弧付きの画像記法にする。"""
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+
+    files = client.get(f"/projects/{p['id']}/files", headers=USER_A).json()["files"]
+    bg_id = next(f["id"] for f in files if f["rel_path"] == "section1.md")
+    name = "スクリーンショット 1.png"
+    client.post(
+        f"/projects/{p['id']}/files/upload",
+        json={
+            "filename": name,
+            "content_b64": base64.b64encode(b"PNGDATA").decode(),
+            "dir": "images",
+        },
+        headers=USER_A,
+    )
+
+    captured = {}
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
+        captured["outputs"] = outputs
+        captured["assets"] = assets
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("out.docx", b"DOCX")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
+        raise generate.ExcelSkip("テスト: スキップ")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    override = f"# 背景\n\n![図](images/{name})\n"
+    body = _compose_until_done(client, p["id"], {"overrides": {bg_id: override}})
+    assert body["status"] == "success", body
+    spec = next(o for o in captured["outputs"] if o["name"] == "調達仕様書")
+    assert spec["sections"][0]["content"] == f"# 背景\n\n![図](<images/{name}>)\n"
+    assert captured["assets"][f"images/{name}"] == b"PNGDATA"
+
+
+def test_rewrite_root_image_with_spaces():
+    """同じ階層に既にある空白入り画像も、山括弧付きの参照へ揃える。"""
+    from app.main import _rewrite_image_refs
+
+    rel = "スクリーンショット 1.png"
+    content, refs = _rewrite_image_refs(
+        f"![図]({rel})\n",
+        "手順.md",
+        {rel: {"kind": "image"}},
+    )
+    assert refs == [rel]
+    assert content == f"![図](<{rel}>)\n"
 
 
 def test_download_input_template(client, monkeypatch, _mem_objstore):
