@@ -4,7 +4,6 @@ import { FilePickButton } from './runtime/FilePickButton';
 import type { AssistProcedurePreview, AssistProcedureResult, FormVisibility } from './types';
 
 type Props = {
-  model?: string;
   readingFile: boolean;
   guideFileName: string;
   guideText: string;
@@ -26,7 +25,6 @@ type Props = {
 };
 
 export const PatchformGuideAssist = ({
-  model,
   readingFile,
   guideFileName,
   guideText,
@@ -123,7 +121,7 @@ export const PatchformGuideAssist = ({
         ) : null}
       </div>
       <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
-        候補の作成に使います: {model || '（未設定）'}。うまく作れないときはひな型を使います。
+        うまく作れないときはひな型を使います。
       </p>
       {error ? (
         <p className='mt-2 text-error-1' role='alert'>

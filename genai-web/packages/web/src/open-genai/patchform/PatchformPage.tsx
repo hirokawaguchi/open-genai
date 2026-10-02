@@ -496,7 +496,7 @@ export const PatchformPage = () => {
                     placeholder='例: 子ども医療費助成の申請。申請者・住所・振込先が必要'
                   />
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    モデル: {config?.llm?.model || '（未設定）'}。失敗時はテンプレートにフォールバックします。
+                    失敗時はテンプレートにフォールバックします。
                   </p>
                   {(assistError || aiNotes) && (
                     <p

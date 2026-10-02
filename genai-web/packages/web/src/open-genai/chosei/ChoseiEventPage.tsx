@@ -331,8 +331,7 @@ export const ChoseiEventPage = () => {
                   ? formatDateTime(recommendation.recommended_date_time)
                   : '（候補なし）'}
                 <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>
-                  （{recommendation.source === 'llm' ? 'LLM' : '簡易集計'}
-                  {recommendation.model ? ` / ${recommendation.model}` : ''}）
+                  （{recommendation.source === 'llm' ? 'LLM' : '簡易集計'}）
                 </span>
               </p>
               <p className='mt-2 whitespace-pre-wrap text-dns-14N-130 text-solid-gray-700'>
