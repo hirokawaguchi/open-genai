@@ -8,8 +8,8 @@
 ポリシー JSON の形:
     {
       "enabled": true,
-      "default": ["gpt-oss:20b"],              # 全ユーザー共通で許可
-      "teams": {"<teamId>": ["gemma3:27b"]}    # チーム別に追加許可（所属チームで判定）
+      "default": ["<modelId>"],                 # 全ユーザー共通で許可
+      "teams": {"<teamId>": ["<modelId>"]}     # チーム別に追加許可（所属チームで判定）
     }
 - 判定は利用者の所属チーム(teamId)で行う。旧 `groups`（ロール別）も後方互換で併用。
 - システム管理者(SystemAdminGroup) は常に全モデル許可。

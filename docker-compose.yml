@@ -41,6 +41,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - OPENAI_PROVIDER_API_KEY=${OPENAI_PROVIDER_API_KEY:-}
       - DB_PATH=/data/open-genai.db
       # --- 監査ログ（8-(1)）/ チャット履歴ユーザー別分離（6-(8)）---
@@ -218,6 +221,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-open_genai_rag}
       - EMBED_MODEL=${EMBED_MODEL:-mxbai-embed-large}
@@ -447,7 +454,9 @@ services:
   # 本番の外部公開は /public のみを別プロキシで露出すること（proxy/chosei.public.conf.example）。
   chosei-app:
     profiles: ["chosei"]
-    build: ./chosei-app
+    build:
+      context: .
+      dockerfile: chosei-app/Dockerfile
     container_name: open-genai-chosei-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -459,6 +468,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - CHOSEI_MODEL=${CHOSEI_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - CHOSEI_EXTRA_BODY=${CHOSEI_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
@@ -477,7 +490,8 @@ services:
   doccheck-app:
     profiles: ["doccheck"]
     build:
-      context: ./doccheck-app
+      context: .
+      dockerfile: doccheck-app/Dockerfile
       args:
         # amd64 本番で本家 PaddleOCR を入れる場合: DOCCHECK_INSTALL_PADDLEOCR=1
         INSTALL_PADDLEOCR: ${DOCCHECK_INSTALL_PADDLEOCR:-0}
@@ -492,7 +506,7 @@ services:
       # paddleocr / paddle / vision / tesseract / none も可
       # 本家は amd64 + INSTALL_PADDLEOCR=1 時。未導入/arm64 は RapidOCR に自動フォールバック
       - DOCCHECK_OCR_ENGINE=${DOCCHECK_OCR_ENGINE:-hybrid}
-      - DOCCHECK_VISION_MODEL=${DOCCHECK_VISION_MODEL:-gemma3:27b}
+      - DOCCHECK_VISION_MODEL=${DOCCHECK_VISION_MODEL:-gemma4:cloud}
       - DOCCHECK_PADDLE_MIN_CONF=${DOCCHECK_PADDLE_MIN_CONF:-0.50}
       - DOCCHECK_PADDLEOCR_FORCE=${DOCCHECK_PADDLEOCR_FORCE:-0}
       - DOCCHECK_PADDLEOCR_LANG=${DOCCHECK_PADDLEOCR_LANG:-japan}
@@ -501,6 +515,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
@@ -530,8 +548,12 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PATCHFORM_MODEL=${PATCHFORM_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
-      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma3:12b}}
+      - PATCHFORM_VISION_MODEL=${PATCHFORM_VISION_MODEL:-${DOCCHECK_VISION_MODEL:-gemma4:cloud}}
       - PATCHFORM_ENCRYPT_KEY=${PATCHFORM_ENCRYPT_KEY:-}
       - PATCHFORM_FILES_DIR=/data/files
       - PATCHFORM_MAX_UPLOAD_BYTES=${PATCHFORM_MAX_UPLOAD_BYTES:-10485760}
@@ -591,7 +613,9 @@ services:
   # 庁内利用のみ（backend → 本サービス）。外部公開面は持たない。
   procuretech-navigator-app:
     profiles: ["procuretech-navigator"]
-    build: ./procuretech-navigator-app
+    build:
+      context: .
+      dockerfile: procuretech-navigator-app/Dockerfile
     container_name: open-genai-procuretech-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -602,6 +626,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       # 通常チャットと同じ思考オフ。空なら procuretech-app 既定 (enable_thinking:false)
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
@@ -617,7 +645,9 @@ services:
   # 標準: Markdown エディタ（案件フォルダ内の生成文書を編集・保存し、文書へ合成する）
   # ファイル本体は S3 互換ストレージ（SeaweedFS）に保存する。庁内利用のみ。
   procuretech-editor-app:
-    build: ./procuretech-editor-app
+    build:
+      context: .
+      dockerfile: procuretech-editor-app/Dockerfile
     container_name: open-genai-procuretech-editor-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -651,6 +681,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
     volumes:
@@ -676,6 +710,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - GENERATE_PPTX_LLM=${GENERATE_PPTX_LLM:-1}
       - GENERATE_PPTX_REVIEW=${GENERATE_PPTX_REVIEW:-1}
@@ -719,6 +757,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - PROCURETECH_MODEL=${PROCURETECH_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
@@ -758,7 +800,9 @@ services:
   # プレイヤーの命令は決定的ルールで解決し、敵対大名の手だけ LLM が決める（失敗時は簡易 AI）。
   sengoku-app:
     profiles: ["sengoku"]
-    build: ./sengoku-app
+    build:
+      context: .
+      dockerfile: sengoku-app/Dockerfile
     container_name: open-genai-sengoku-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -768,6 +812,10 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LLM_FALLBACK_COOLDOWN=${LLM_FALLBACK_COOLDOWN:-30}
+      - LLM_FALLBACK_PRIMARY_TIMEOUT=${LLM_FALLBACK_PRIMARY_TIMEOUT:-30}
       - SENGOKU_MODEL=${SENGOKU_MODEL:-${DEFAULT_MODEL:-gpt-oss:20b}}
       - SENGOKU_EXTRA_BODY=${SENGOKU_EXTRA_BODY:-}
       - SENGOKU_LLM_TIMEOUT=${SENGOKU_LLM_TIMEOUT:-90}

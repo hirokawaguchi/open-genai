@@ -5,10 +5,12 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY requirements.txt ./
+# ビルドコンテキストはリポジトリルート（shared/llm_fallback を共有するため）
+COPY procuretech-editor-app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY shared ./shared
+COPY procuretech-editor-app/app ./app
 
 EXPOSE 8015
 

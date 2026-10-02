@@ -581,11 +581,6 @@ export const modelMetadata: Record<string, ModelMetadata> = {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'Gemma 2 9B (ローカル)',
   },
-  'gemma3:27b': {
-    // gemma3 はマルチモーダル。画像 + ドキュメント添付に対応（動画はローカル未対応）。
-    flags: { text: true, doc: true, image: true, video: false },
-    displayName: 'Gemma 3 27B (ローカル・画像対応)',
-  },
   'gpt-oss:20b': {
     flags: MODEL_FEATURE.TEXT_DOC,
     displayName: 'gpt-oss 20B (ローカル)',

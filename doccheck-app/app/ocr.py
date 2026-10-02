@@ -38,7 +38,7 @@ OCR_NORMALIZE = os.environ.get("DOCCHECK_OCR_NORMALIZE", "1").strip().lower() no
 VISION_MODEL = (
     os.environ.get("DOCCHECK_VISION_MODEL")
     or os.environ.get("DOCCHECK_DEFAULT_VISION_MODEL")
-    or "gemma3:27b"
+    or "gemma4:cloud"
 )
 VISION_CONFIDENCE = float(os.environ.get("DOCCHECK_VISION_CONFIDENCE", "0.55"))
 PADDLE_MIN_CONF = float(os.environ.get("DOCCHECK_PADDLE_MIN_CONF", "0.50"))
@@ -535,7 +535,7 @@ def _ocr_vision(
     is_handwriting: bool = True,
 ) -> tuple[str, float]:
     """OpenAI 互換の vision モデルで読取（失敗時は空）。"""
-    import httpx
+    from shared.llm_fallback import post_chat_sync, primary_endpoint
 
     base = (
         os.environ.get("OPENAI_BASE_URL")
@@ -581,19 +581,8 @@ def _ocr_vision(
         "temperature": 0,
     }
     try:
-        with httpx.Client(timeout=180.0) as client:
-            res = client.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            if res.status_code >= 400:
-                print(
-                    f"[doccheck-ocr] vision HTTP {res.status_code}: "
-                    f"{res.text[:300]} (model={model})"
-                )
-                return "", 0.0
-            data = res.json()
+        res = post_chat_sync(primary_endpoint(base, api_key), payload, 180.0)
+        data = res.json()
         text = (
             data.get("choices", [{}])[0]
             .get("message", {})

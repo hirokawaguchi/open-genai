@@ -206,7 +206,7 @@ OpenAI 互換 API（既定は Ollama）でフォーム定義の作成・修正�
 | `PATCHFORM_PUBLIC_PORT` | 開発時ホスト公開ポート | `8012` |
 | `PATCHFORM_RETENTION_DAYS` | 既定の保持日数 | `365` |
 | `PATCHFORM_MODEL` | アシスト用モデル | `qwen2.5:7b` |
-| `PATCHFORM_VISION_MODEL` | 画像認識用 Vision モデル | `gemma3:12b` |
+| `PATCHFORM_VISION_MODEL` | 画像認識用 Vision モデル | 未設定時は `gemma4:cloud` |
 | `PATCHFORM_ENCRYPT_KEY` | マイナンバー暗号化鍵（Fernet）。未設定時は内部署名鍵から導出 | |
 | `PATCHFORM_FILES_DIR` | 添付の保存先 | `/data/files` |
 | `PATCHFORM_MAX_UPLOAD_BYTES` | 1件あたりの上限 | `10485760`（10MB） |

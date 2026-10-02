@@ -5,10 +5,12 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-COPY requirements.txt ./
+# ビルドコンテキストはリポジトリルート（shared/llm_fallback を共有するため）
+COPY sengoku-app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY shared ./shared
+COPY sengoku-app/app ./app
 
 EXPOSE 8019
 

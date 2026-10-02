@@ -111,7 +111,7 @@ LGWAN から外部 URL に届かない場合は、公開 URL を別端末へ持�
 | `hybrid`（開発既定） | PP-OCR（本家→RapidOCR）→ 低信頼なら Vision |
 | `paddleocr`（本番推奨） | **本家 PaddleOCR 優先**。未導入・arm64 は RapidOCR にフォールバック |
 | `paddle` / `rapidocr` | RapidOCR（ONNX）のみ |
-| `vision` | Vision LLM のみ（既定 `gemma3:27b`） |
+| `vision` | Vision LLM のみ（モデルは `DOCCHECK_VISION_MODEL`） |
 | `tesseract` / `none` | 印刷向け / OCR なし |
 
 ### 本家 PaddleOCR（AMD64）
@@ -148,7 +148,7 @@ docker compose --profile doccheck up -d doccheck-app
 | `DOCCHECK_PUBLIC_PORT` | 開発時ホスト公開ポート | `8011` |
 | `DOCCHECK_OCR_ENGINE` | `hybrid` / `paddleocr` / `paddle` / `vision` / … | `hybrid` |
 | `DOCCHECK_INSTALL_PADDLEOCR` | ビルド時に本家を入れる（`1`） | `0` |
-| `DOCCHECK_VISION_MODEL` | Vision LLM モデル名 | `gemma3:27b` |
+| `DOCCHECK_VISION_MODEL` | Vision LLM モデル名 | 未設定時は `gemma4:cloud` |
 | `DOCCHECK_PADDLE_MIN_CONF` | hybrid 時の PP-OCR 最低信頼度 | `0.50` |
 | `DOCCHECK_PADDLEOCR_FORCE` | arm64 でも本家を試す | `0` |
 | `DOCCHECK_PADDLEOCR_LANG` | 本家の言語コード | `japan` |

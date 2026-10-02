@@ -23,16 +23,18 @@ RUN apt-get update \
         libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-COPY requirements-paddleocr.txt ./
+# ビルドコンテキストはリポジトリルート（shared/llm_fallback を共有するため）
+COPY doccheck-app/requirements.txt ./
+COPY doccheck-app/requirements-paddleocr.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_PADDLEOCR" = "1" ]; then \
          pip install --no-cache-dir -r requirements-paddleocr.txt; \
        fi
 
-COPY app ./app
-COPY public ./public
-COPY samples ./samples
+COPY shared ./shared
+COPY doccheck-app/app ./app
+COPY doccheck-app/public ./public
+COPY doccheck-app/samples ./samples
 
 EXPOSE 8011
 
