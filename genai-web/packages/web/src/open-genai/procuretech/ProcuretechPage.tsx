@@ -769,11 +769,6 @@ export const ProcuretechPage = () => {
                 ))}
               </div>
             )}
-            {config?.llm?.model && (
-              <p className='mt-3 text-dns-14N-130 text-solid-gray-600'>
-                利用モデル: {config.llm.model}
-              </p>
-            )}
           </CustomDialogBody>
         </CustomDialogPanel>
       </CustomDialog>

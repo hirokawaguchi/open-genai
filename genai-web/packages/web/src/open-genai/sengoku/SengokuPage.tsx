@@ -240,7 +240,6 @@ export const SengokuPage = () => {
         <SengokuBoard
           game={game}
           colors={colors}
-          modelName={config?.llm?.model}
           upkeepPerTroop={config?.meta?.params?.upkeep_per_troop ?? 0.5}
           isObserver={isObserver}
           autoPlay={autoPlay}
@@ -365,11 +364,6 @@ export const SengokuPage = () => {
               >
                 観戦モードで見る（AIのみ・人間は指揮しない）
               </Button>
-              {config?.llm?.model && (
-                <span className='text-dns-14N-130 text-solid-gray-600'>
-                  大名の軍師（AI モデル）: {config.llm.model}
-                </span>
-              )}
             </div>
             {error && (
               <p className='text-dns-16N-130 text-error-1' role='alert'>
@@ -386,7 +380,6 @@ export const SengokuPage = () => {
 type BoardProps = {
   game: GameState;
   colors: Record<HouseId, string>;
-  modelName?: string;
   upkeepPerTroop: number;
   isObserver: boolean;
   autoPlay: boolean;
@@ -510,11 +503,6 @@ const SengokuBoard = (props: BoardProps) => {
                 収入 +{playerIncome} / 兵糧 −{playerUpkeep}（兵 {playerTroops}）
               </span>
             </>
-          )}
-          {props.modelName && (
-            <span className='text-dns-14N-130 text-solid-gray-500'>
-              軍師AI: {props.modelName}
-            </span>
           )}
         </div>
         <Button
