@@ -2650,7 +2650,10 @@ export const ProcuretechEditorPage = () => {
                       onInsertDiagram(diagramTargetRef.current.hasSelection ? 'replace' : 'insert')
                     }
                   >
-                    {diagramTargetRef.current.hasSelection ? '選択を置換' : '挿入'}
+                    <span className='inline-flex items-center gap-1 whitespace-nowrap'>
+                      <PiMagicWand className='size-4' />
+                      {diagramTargetRef.current.hasSelection ? '選択を置換' : '挿入'}
+                    </span>
                   </Button>
                 ) : (
                   <LoadingButton
