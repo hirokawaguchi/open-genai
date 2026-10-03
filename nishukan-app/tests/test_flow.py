@@ -12,9 +12,9 @@ from app.main import app
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("JIGYO_DB_PATH", str(tmp_path / "jigyo.db"))
+    monkeypatch.setenv("NISHUKAN_DB_PATH", str(tmp_path / "nishukan.db"))
     monkeypatch.setenv("INTERNAL_SIGNING_SECRET", "")
-    monkeypatch.setattr(store, "DB_PATH", str(tmp_path / "jigyo.db"))
+    monkeypatch.setattr(store, "DB_PATH", str(tmp_path / "nishukan.db"))
     store.init_db()
     return store
 
@@ -41,7 +41,7 @@ def test_editor_cannot_place_in_box_or_complete(db):
     project = db.create_project(admin, {"teamId": "team-1", "key": "DX", "name": "更改", "mode": "plan"})
     db.add_member(admin, project["id"], "editor@example.jp", "editor")
     editor = access("editor@example.jp", admin=False)
-    with pytest.raises(store.JigyoError) as raised:
+    with pytest.raises(store.NishukanError) as raised:
         db.create_issue(
             editor,
             {
@@ -68,9 +68,9 @@ def test_editor_cannot_place_in_box_or_complete(db):
         },
     )
     assert placed["timeboxStart"] == "2026-10-05"
-    with pytest.raises(store.JigyoError):
+    with pytest.raises(store.NishukanError):
         db.update_issue(editor, placed["id"], {"status": "done"})
-    with pytest.raises(store.JigyoError):
+    with pytest.raises(store.NishukanError):
         db.update_issue(editor, issue["id"], {"complete": True})
     done = db.update_issue(admin, placed["id"], {"complete": True})
     assert done["status"] == "done"
@@ -132,7 +132,7 @@ def test_arrival_is_idempotent_and_receipt_key_is_the_same_operation(db):
     external = db.arrive(template["id"], receipt_key=issued["receiptKey"], event_id="evt-2")
     assert external["templateId"] == template["id"]
     db.revoke_receipt_key(admin, template["id"])
-    with pytest.raises(store.JigyoError) as raised:
+    with pytest.raises(store.NishukanError) as raised:
         db.arrive(template["id"], receipt_key=issued["receiptKey"], event_id="evt-3")
     assert raised.value.status == 401
 
@@ -192,7 +192,7 @@ def test_inherited_viewer_cannot_press_a_template(db):
         "tenant-1",
         {"team-1": {"teamId": "team-1", "teamName": "市民課", "admin": False, "member": True, "inherited": True}},
     )
-    with pytest.raises(store.JigyoError) as raised:
+    with pytest.raises(store.NishukanError) as raised:
         db.arrive(template["id"], access=parent)
     assert raised.value.status == 403
 
@@ -251,7 +251,7 @@ def test_http_arrival_uses_the_same_api_as_the_button(db):
         headers={
             "x-api-key": "local-rag-key",
             "x-user-id": "staff@example.jp",
-            "x-jigyo-access": raw,
+            "x-nishukan-access": raw,
             "x-scope": hashlib.sha256(raw.encode()).hexdigest(),
         },
         json={},
@@ -269,7 +269,7 @@ def test_quarter_size_completion_while_unfiled_and_project_move(db):
     assert issue["timeboxStart"] is None
     renamed = db.update_issue(admin, issue["id"], {"title": "体制案"})
     assert renamed["title"] == "体制案"
-    with pytest.raises(store.JigyoError) as empty_title:
+    with pytest.raises(store.NishukanError) as empty_title:
         db.update_issue(admin, issue["id"], {"title": "  "})
     assert empty_title.value.status == 400
     saved = db.update_issue(
@@ -286,10 +286,10 @@ def test_quarter_size_completion_while_unfiled_and_project_move(db):
     )
     assert placed["size"] == 0.25
     assert placed["timeboxStart"] == "2026-10-05"
-    with pytest.raises(store.JigyoError) as raised:
+    with pytest.raises(store.NishukanError) as raised:
         db.update_issue(admin, issue["id"], {"completionText": "後から変える"})
     assert raised.value.status == 400
-    with pytest.raises(store.JigyoError):
+    with pytest.raises(store.NishukanError):
         db.update_issue(admin, issue["id"], {"size": 0.1})
     moved = db.update_issue(admin, issue["id"], {"projectId": project["id"]})
     assert moved["projectKey"] == "DX"
@@ -365,10 +365,10 @@ def test_project_and_template_can_be_renamed_and_removed(db):
     assert renamed["name"] == "庁内DX"
     assert renamed["key"] == "DX2"
     db.create_issue(admin, {"projectId": project["id"], "title": "下書き"})
-    with pytest.raises(store.JigyoError) as blocked:
+    with pytest.raises(store.NishukanError) as blocked:
         db.update_project(admin, project["id"], {"mode": "routine"})
     assert blocked.value.status == 400
-    with pytest.raises(store.JigyoError) as kept:
+    with pytest.raises(store.NishukanError) as kept:
         db.delete_project(admin, project["id"])
     assert kept.value.status == 400
     empty = db.create_project(admin, {"teamId": "team-1", "key": "WIN", "name": "窓口", "mode": "routine"})

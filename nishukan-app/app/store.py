@@ -19,7 +19,7 @@ from typing import Any
 
 from app.holidays import holidays_between
 
-DB_PATH = os.environ.get("JIGYO_DB_PATH", "/data/jigyo.db")
+DB_PATH = os.environ.get("NISHUKAN_DB_PATH", "/data/nishukan.db")
 UNDO_SECONDS = 600
 # 1 は 1人の1日。0.25 はおよそ2時間。0.5 は半日。
 SIZES = frozenset({0.25, 0.5, 1, 2, 3, 5, 8})
@@ -33,7 +33,7 @@ ROLES = frozenset({"admin", "editor", "viewer"})
 _lock = threading.Lock()
 
 
-class JigyoError(Exception):
+class NishukanError(Exception):
     def __init__(self, status: int, message: str) -> None:
         self.status = status
         self.message = message
@@ -201,7 +201,7 @@ def _parse_date(value: str | None) -> date | None:
     try:
         return date.fromisoformat(value[:10])
     except ValueError as e:
-        raise JigyoError(400, "日付の形式が正しくありません") from e
+        raise NishukanError(400, "日付の形式が正しくありません") from e
 
 
 class Access:
@@ -213,7 +213,7 @@ class Access:
     def team(self, team_id: str) -> dict[str, Any]:
         row = self.teams.get(team_id)
         if not row:
-            raise JigyoError(403, "このチームを見る権限がありません")
+            raise NishukanError(403, "このチームを見る権限がありません")
         return row
 
     def can_read(self, team_id: str) -> bool:
@@ -231,7 +231,7 @@ def parse_access(payload: dict[str, Any]) -> Access:
     user_id = str(payload.get("userId") or "").strip().lower()
     tenant_id = str(payload.get("tenantId") or "").strip()
     if not user_id or not tenant_id:
-        raise JigyoError(401, "利用者情報が見つかりません")
+        raise NishukanError(401, "利用者情報が見つかりません")
     teams: dict[str, dict[str, Any]] = {}
     for row in payload.get("teams") or []:
         tid = str(row.get("teamId") or "")
@@ -265,7 +265,7 @@ def _is_chief(conn: sqlite3.Connection, access: Access, team_id: str) -> bool:
 
 def _require_chief(conn: sqlite3.Connection, access: Access, team_id: str) -> None:
     if not _is_chief(conn, access, team_id):
-        raise JigyoError(403, "所属長だけが決められます")
+        raise NishukanError(403, "所属長だけが決められます")
 
 
 def _unfiled_project(conn: sqlite3.Connection, team_id: str, tenant_id: str) -> sqlite3.Row:
@@ -291,7 +291,7 @@ def _project(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
         "SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL", (project_id,)
     ).fetchone()
     if not row:
-        raise JigyoError(404, "事業が見つかりません")
+        raise NishukanError(404, "事業が見つかりません")
     return row
 
 
@@ -300,7 +300,7 @@ def _issue(conn: sqlite3.Connection, issue_id: str) -> sqlite3.Row:
         "SELECT * FROM issues WHERE id = ? AND deleted_at IS NULL", (issue_id,)
     ).fetchone()
     if not row:
-        raise JigyoError(404, "課題が見つかりません")
+        raise NishukanError(404, "課題が見つかりません")
     return row
 
 
@@ -345,15 +345,15 @@ def _next_number(conn: sqlite3.Connection, project_id: str) -> int:
 def _size(value: Any, *, required: bool) -> int | float | None:
     if value is None or value == "":
         if required:
-            raise JigyoError(400, "規模を選んでください")
+            raise NishukanError(400, "規模を選んでください")
         return None
     try:
         number = float(value)
     except (TypeError, ValueError) as e:
-        raise JigyoError(400, "規模は 0.25、0.5、1、2、3、5、8 です") from e
+        raise NishukanError(400, "規模は 0.25、0.5、1、2、3、5、8 です") from e
     quarters = round(number * 4)
     if quarters / 4 not in SIZES:
-        raise JigyoError(400, "規模は 0.25、0.5、1、2、3、5、8 です")
+        raise NishukanError(400, "規模は 0.25、0.5、1、2、3、5、8 です")
     canonical = quarters / 4
     return int(canonical) if canonical == int(canonical) else canonical
 
@@ -361,20 +361,20 @@ def _size(value: Any, *, required: bool) -> int | float | None:
 def _priority(value: Any, *, required: bool) -> str | None:
     if not value:
         if required:
-            raise JigyoError(400, "優先度を選んでください")
+            raise NishukanError(400, "優先度を選んでください")
         return None
     if value not in PRIORITIES:
-        raise JigyoError(400, "優先度が正しくありません")
+        raise NishukanError(400, "優先度が正しくありません")
     return str(value)
 
 
 def set_chief(access: Access, team_id: str, chief_user_id: str) -> dict[str, Any]:
     access.team(team_id)
     if not access.is_admin(team_id):
-        raise JigyoError(403, "所属長の任命はチームの管理者が行います")
+        raise NishukanError(403, "所属長の任命はチームの管理者が行います")
     chief = chief_user_id.strip().lower()
     if not chief:
-        raise JigyoError(400, "所属長の利用者 ID を入力してください")
+        raise NishukanError(400, "所属長の利用者 ID を入力してください")
     with _lock, _connect() as conn:
         _settings(conn, team_id, access.tenant_id)
         conn.execute(
@@ -396,13 +396,13 @@ def set_headcount(access: Access, team_id: str, headcount: Any) -> dict[str, Any
     access.team(team_id)
     with _lock, _connect() as conn:
         if not access.is_admin(team_id) and not _is_chief(conn, access, team_id):
-            raise JigyoError(403, "人数はチームの管理者か所属長が置きます")
+            raise NishukanError(403, "人数はチームの管理者か所属長が置きます")
         try:
             count = int(headcount)
         except (TypeError, ValueError) as e:
-            raise JigyoError(400, "人数は1人以上の整数です") from e
+            raise NishukanError(400, "人数は1人以上の整数です") from e
         if count < 1 or count > 200:
-            raise JigyoError(400, "人数は1人以上の整数です")
+            raise NishukanError(400, "人数は1人以上の整数です")
         _settings(conn, team_id, access.tenant_id)
         conn.execute(
             "UPDATE team_settings SET headcount = ?, updated_at = ? WHERE team_id = ?",
@@ -422,9 +422,9 @@ def _leave_amount(value: Any) -> int | float:
     try:
         number = float(value)
     except (TypeError, ValueError) as e:
-        raise JigyoError(400, "休暇の規模を入力してください") from e
+        raise NishukanError(400, "休暇の規模を入力してください") from e
     if number < 0 or number > 500:
-        raise JigyoError(400, "休暇の規模を入力してください")
+        raise NishukanError(400, "休暇の規模を入力してください")
     quarters = round(number * 4) / 4
     return int(quarters) if quarters == int(quarters) else quarters
 
@@ -432,7 +432,7 @@ def _leave_amount(value: Any) -> int | float:
 def set_vacation(access: Access, team_id: str, timebox_start: str, size: Any) -> dict[str, Any]:
     start = _parse_date(timebox_start)
     if not start:
-        raise JigyoError(400, "期枠を指定してください")
+        raise NishukanError(400, "期枠を指定してください")
     amount = _leave_amount(size)
     with _lock, _connect() as conn:
         access.team(team_id)
@@ -495,18 +495,18 @@ def create_project(access: Access, body: dict[str, Any]) -> dict[str, Any]:
     team_id = str(body.get("teamId") or "")
     access.team(team_id)
     if not access.is_admin(team_id):
-        raise JigyoError(403, "事業の作成はチームの管理者が行います")
+        raise NishukanError(403, "事業の作成はチームの管理者が行います")
     mode = body.get("mode")
     if mode not in {"plan", "routine"}:
-        raise JigyoError(400, "進め方は計画か定常です")
+        raise NishukanError(400, "進め方は計画か定常です")
     name = str(body.get("name") or "").strip()
     key = str(body.get("key") or "").strip().upper()
     if not name or not key:
-        raise JigyoError(400, "名前と記号を入力してください")
+        raise NishukanError(400, "名前と記号を入力してください")
     if not key.isalnum():
-        raise JigyoError(400, "記号は英数字だけにしてください")
+        raise NishukanError(400, "記号は英数字だけにしてください")
     if key == UNFILED_KEY:
-        raise JigyoError(400, "この記号は使えません")
+        raise NishukanError(400, "この記号は使えません")
     now = _now()
     project_id = str(uuid.uuid4())
     with _lock, _connect() as conn:
@@ -529,7 +529,7 @@ def create_project(access: Access, body: dict[str, Any]) -> dict[str, Any]:
                 ),
             )
         except sqlite3.IntegrityError as e:
-            raise JigyoError(409, "同じ記号の事業があります") from e
+            raise NishukanError(409, "同じ記号の事業があります") from e
         conn.execute(
             "INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, 'admin')",
             (project_id, access.user_id),
@@ -567,14 +567,14 @@ def _project_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
 
 def add_member(access: Access, project_id: str, user_id: str, role: str) -> dict[str, Any]:
     if role not in ROLES:
-        raise JigyoError(400, "役割は管理者、編集、閲覧です")
+        raise NishukanError(400, "役割は管理者、編集、閲覧です")
     user_id = user_id.strip().lower()
     if not user_id:
-        raise JigyoError(400, "利用者 ID を入力してください")
+        raise NishukanError(400, "利用者 ID を入力してください")
     with _lock, _connect() as conn:
         project = _project(conn, project_id)
         if not access.is_admin(project["team_id"]):
-            raise JigyoError(403, "メンバーの変更はチームの管理者が行います")
+            raise NishukanError(403, "メンバーの変更はチームの管理者が行います")
         conn.execute(
             "INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)"
             " ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role",
@@ -591,18 +591,18 @@ def create_template(access: Access, body: dict[str, Any]) -> dict[str, Any]:
     mode = body.get("completionMode")
     checks = body.get("checks") or []
     if not name or not completion:
-        raise JigyoError(400, "名前と完了条件を入力してください")
+        raise NishukanError(400, "名前と完了条件を入力してください")
     if mode not in COMPLETION_MODES:
-        raise JigyoError(400, "完了の決め方を選んでください")
+        raise NishukanError(400, "完了の決め方を選んでください")
     if not isinstance(checks, list):
-        raise JigyoError(400, "確認項目の形式が正しくありません")
+        raise NishukanError(400, "確認項目の形式が正しくありません")
     labels = [str(x).strip() for x in checks if str(x).strip()]
     if mode == "objective" and not labels:
-        raise JigyoError(400, "客観評価には確認項目が必要です")
+        raise NishukanError(400, "客観評価には確認項目が必要です")
     with _lock, _connect() as conn:
         project = _project(conn, project_id)
         if project["mode"] != "routine":
-            raise JigyoError(400, "定型は定常の事業に登録します")
+            raise NishukanError(400, "定型は定常の事業に登録します")
         _require_chief(conn, access, project["team_id"])
         now = _now()
         template_id = str(uuid.uuid4())
@@ -647,27 +647,27 @@ def update_project(access: Access, project_id: str, body: dict[str, Any]) -> dic
     with _lock, _connect() as conn:
         project = _project(conn, project_id)
         if project["key"] == UNFILED_KEY:
-            raise JigyoError(400, "この事業は直せません")
+            raise NishukanError(400, "この事業は直せません")
         if not access.is_admin(project["team_id"]):
-            raise JigyoError(403, "事業の修正はチームの管理者が行います")
+            raise NishukanError(403, "事業の修正はチームの管理者が行います")
         name = str(body.get("name") if "name" in body else project["name"]).strip()
         key = str(body.get("key") if "key" in body else project["key"]).strip().upper()
         mode = body.get("mode") if "mode" in body else project["mode"]
         if not name or not key:
-            raise JigyoError(400, "名前と記号を入力してください")
+            raise NishukanError(400, "名前と記号を入力してください")
         if not key.isalnum() or key == UNFILED_KEY:
-            raise JigyoError(400, "記号は英数字だけにしてください")
+            raise NishukanError(400, "記号は英数字だけにしてください")
         if mode not in {"plan", "routine"}:
-            raise JigyoError(400, "進め方は計画か定常です")
+            raise NishukanError(400, "進め方は計画か定常です")
         if mode != project["mode"] and _live_on_project(conn, project_id):
-            raise JigyoError(400, "作業や定型が残っているあいだは、進め方を変えられません")
+            raise NishukanError(400, "作業や定型が残っているあいだは、進め方を変えられません")
         try:
             conn.execute(
                 "UPDATE projects SET name = ?, key = ?, mode = ?, updated_at = ? WHERE id = ?",
                 (name, key, mode, _now(), project_id),
             )
         except sqlite3.IntegrityError as e:
-            raise JigyoError(409, "同じ記号の事業があります") from e
+            raise NishukanError(409, "同じ記号の事業があります") from e
         _hist(conn, project["team_id"], access.user_id, "project", f"{key} {name}")
         return _project_dict(conn, _project(conn, project_id))
 
@@ -676,11 +676,11 @@ def delete_project(access: Access, project_id: str) -> dict[str, Any]:
     with _lock, _connect() as conn:
         project = _project(conn, project_id)
         if project["key"] == UNFILED_KEY:
-            raise JigyoError(400, "この事業は消せません")
+            raise NishukanError(400, "この事業は消せません")
         if not access.is_admin(project["team_id"]):
-            raise JigyoError(403, "事業を消せるのはチームの管理者です")
+            raise NishukanError(403, "事業を消せるのはチームの管理者です")
         if _live_on_project(conn, project_id):
-            raise JigyoError(400, "作業や定型が残っている事業は消せません。名前は直せます")
+            raise NishukanError(400, "作業や定型が残っている事業は消せません。名前は直せます")
         now = _now()
         conn.execute(
             "UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ?",
@@ -696,7 +696,7 @@ def update_template(access: Access, template_id: str, body: dict[str, Any]) -> d
             "SELECT * FROM templates WHERE id = ? AND deleted_at IS NULL", (template_id,)
         ).fetchone()
         if not row:
-            raise JigyoError(404, "定型が見つかりません")
+            raise NishukanError(404, "定型が見つかりません")
         _require_chief(conn, access, row["team_id"])
         name = str(body.get("name") if "name" in body else row["name"]).strip()
         completion = str(
@@ -704,22 +704,22 @@ def update_template(access: Access, template_id: str, body: dict[str, Any]) -> d
         ).strip()
         mode = body.get("completionMode") if "completionMode" in body else row["completion_mode"]
         if not name or not completion:
-            raise JigyoError(400, "名前と完了条件を入力してください")
+            raise NishukanError(400, "名前と完了条件を入力してください")
         if mode not in COMPLETION_MODES:
-            raise JigyoError(400, "完了の決め方を選んでください")
+            raise NishukanError(400, "完了の決め方を選んでください")
         if "checks" in body:
             raw_checks = body.get("checks") or []
             if not isinstance(raw_checks, list):
-                raise JigyoError(400, "確認項目の形式が正しくありません")
+                raise NishukanError(400, "確認項目の形式が正しくありません")
             labels = [str(item).strip() for item in raw_checks if str(item).strip()]
         else:
             labels = json.loads(row["checks_json"] or "[]")
         if mode == "objective" and not labels:
-            raise JigyoError(400, "客観評価には確認項目が必要です")
+            raise NishukanError(400, "客観評価には確認項目が必要です")
         project_id = str(body.get("projectId") or row["project_id"])
         project = _project(conn, project_id)
         if project["team_id"] != row["team_id"] or project["mode"] != "routine":
-            raise JigyoError(400, "定型は同じチームの定常の事業に置きます")
+            raise NishukanError(400, "定型は同じチームの定常の事業に置きます")
         size = _size(body.get("size"), required=True) if "size" in body else row["size"]
         conn.execute(
             "UPDATE templates SET project_id = ?, name = ?, size = ?, completion_text = ?,"
@@ -746,7 +746,7 @@ def delete_template(access: Access, template_id: str) -> dict[str, Any]:
             "SELECT * FROM templates WHERE id = ? AND deleted_at IS NULL", (template_id,)
         ).fetchone()
         if not row:
-            raise JigyoError(404, "定型が見つかりません")
+            raise NishukanError(404, "定型が見つかりません")
         _require_chief(conn, access, row["team_id"])
         now = _now()
         conn.execute(
@@ -780,7 +780,7 @@ def issue_receipt_key(access: Access, template_id: str) -> dict[str, Any]:
             "SELECT * FROM templates WHERE id = ? AND deleted_at IS NULL", (template_id,)
         ).fetchone()
         if not row:
-            raise JigyoError(404, "定型が見つかりません")
+            raise NishukanError(404, "定型が見つかりません")
         _require_chief(conn, access, row["team_id"])
         conn.execute(
             "UPDATE templates SET key_hash = ?, key_hint = ?, updated_at = ? WHERE id = ?",
@@ -796,7 +796,7 @@ def revoke_receipt_key(access: Access, template_id: str) -> dict[str, Any]:
             "SELECT * FROM templates WHERE id = ? AND deleted_at IS NULL", (template_id,)
         ).fetchone()
         if not row:
-            raise JigyoError(404, "定型が見つかりません")
+            raise NishukanError(404, "定型が見つかりません")
         _require_chief(conn, access, row["team_id"])
         conn.execute(
             "UPDATE templates SET key_hash = NULL, key_hint = NULL, updated_at = ? WHERE id = ?",
@@ -883,14 +883,14 @@ def arrive(
             "SELECT * FROM templates WHERE id = ? AND deleted_at IS NULL", (template_id,)
         ).fetchone()
         if not row:
-            raise JigyoError(404, "定型が見つかりません")
+            raise NishukanError(404, "定型が見つかりません")
         if access is not None:
             if not access.is_member(row["team_id"]):
-                raise JigyoError(403, "このチームの定型は押せません")
+                raise NishukanError(403, "このチームの定型は押せません")
             actor = access.user_id
         else:
             if not row["key_hash"] or not receipt_key or _hash_key(receipt_key) != row["key_hash"]:
-                raise JigyoError(401, "受付鍵が正しくありません")
+                raise NishukanError(401, "受付鍵が正しくありません")
             actor = "receipt"
         if event_id:
             existing = conn.execute(
@@ -941,12 +941,12 @@ def undo_issue(access: Access, issue_id: str) -> dict[str, Any]:
         row = _issue(conn, issue_id)
         project = _project(conn, row["project_id"])
         if row["created_by"] != access.user_id and not _is_chief(conn, access, project["team_id"]):
-            raise JigyoError(403, "取り消せるのは押した本人か所属長です")
+            raise NishukanError(403, "取り消せるのは押した本人か所属長です")
         created = datetime.strptime(row["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc
         )
         if (datetime.now(timezone.utc) - created).total_seconds() > UNDO_SECONDS:
-            raise JigyoError(409, "押した直後だけ取り消せます")
+            raise NishukanError(409, "押した直後だけ取り消せます")
         comments = conn.execute(
             "SELECT 1 FROM comments WHERE issue_id = ?", (issue_id,)
         ).fetchone()
@@ -954,7 +954,7 @@ def undo_issue(access: Access, issue_id: str) -> dict[str, Any]:
             "SELECT 1 FROM checks WHERE issue_id = ? AND done = 1", (issue_id,)
         ).fetchone()
         if comments or done_check or row["status"] != "todo":
-            raise JigyoError(409, "手を付けた課題は取り消せません")
+            raise NishukanError(409, "手を付けた課題は取り消せません")
         conn.execute(
             "UPDATE issues SET deleted_at = ?, updated_at = ? WHERE id = ?",
             (_now(), _now(), issue_id),
@@ -967,26 +967,26 @@ def create_issue(access: Access, body: dict[str, Any]) -> dict[str, Any]:
     project_id = str(body.get("projectId") or "")
     kind = body.get("kind") or "work"
     if kind not in KINDS:
-        raise JigyoError(400, "種別が正しくありません")
+        raise NishukanError(400, "種別が正しくありません")
     with _lock, _connect() as conn:
         if project_id:
             project = _project(conn, project_id)
         else:
             if kind == "leave":
-                raise JigyoError(400, "休みを入れる事業を指定してください")
+                raise NishukanError(400, "休みを入れる事業を指定してください")
             team_id = str(body.get("teamId") or "")
             if not team_id:
-                raise JigyoError(400, "事業かチームを指定してください")
+                raise NishukanError(400, "事業かチームを指定してください")
             access.team(team_id)
             project = _unfiled_project(conn, team_id, access.tenant_id)
         access.team(project["team_id"])
         chief = _is_chief(conn, access, project["team_id"])
         if kind == "leave":
             if not chief:
-                raise JigyoError(403, "休みの課題は所属長が入れます")
+                raise NishukanError(403, "休みの課題は所属長が入れます")
             box = str(body.get("timeboxStart") or "")
             if not box:
-                raise JigyoError(400, "期枠を指定してください")
+                raise NishukanError(400, "期枠を指定してください")
             title = str(body.get("title") or "").strip() or (
                 "有給" if body.get("leaveName") else "休み"
             )
@@ -1012,32 +1012,32 @@ def create_issue(access: Access, body: dict[str, Any]) -> dict[str, Any]:
             _hist(conn, project["team_id"], access.user_id, "leave", title, issue_id)
             return _issue_dict(conn, _issue(conn, issue_id))
         if project["mode"] != "plan":
-            raise JigyoError(400, "定常の課題は定型のボタンから起こします")
+            raise NishukanError(400, "定常の課題は定型のボタンから起こします")
         if project["key"] == UNFILED_KEY:
             if (
                 not access.is_member(project["team_id"])
                 and not access.is_admin(project["team_id"])
                 and not chief
             ):
-                raise JigyoError(403, "このチームの課題は作れません")
+                raise NishukanError(403, "このチームの課題は作れません")
         elif not _can_edit_project(conn, access, project):
-            raise JigyoError(403, "この事業の課題は編集できません")
+            raise NishukanError(403, "この事業の課題は編集できません")
         title = str(body.get("title") or "").strip()
         if not title:
-            raise JigyoError(400, "題名を入力してください")
+            raise NishukanError(400, "題名を入力してください")
         completion = str(body.get("completionText") or "").strip()
         completion_mode = body.get("completionMode") or None
         timebox = body.get("timeboxStart") or None
         priority = body.get("priority") or None
         if any([completion, completion_mode, timebox, priority, body.get("size")]):
             if not chief:
-                raise JigyoError(403, "期枠、優先度、完了条件は所属長が決めます")
+                raise NishukanError(403, "期枠、優先度、完了条件は所属長が決めます")
         if timebox and (not completion or completion_mode not in COMPLETION_MODES):
-            raise JigyoError(400, "期枠に入れるには完了条件と決め方が必要です")
+            raise NishukanError(400, "期枠に入れるには完了条件と決め方が必要です")
         checks = body.get("checks") or []
         labels = [str(x).strip() for x in checks if str(x).strip()] if isinstance(checks, list) else []
         if completion_mode == "objective" and timebox and not labels:
-            raise JigyoError(400, "客観評価には確認項目が必要です")
+            raise NishukanError(400, "客観評価には確認項目が必要です")
         issue_id = _insert_issue(
             conn,
             project=project,
@@ -1071,22 +1071,22 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
         row = _issue(conn, issue_id)
         project = _project(conn, row["project_id"])
         if row["kind"] == "leave":
-            raise JigyoError(400, "休みの課題は状態を変えません")
+            raise NishukanError(400, "休みの課題は状態を変えません")
         chief = _is_chief(conn, access, project["team_id"])
         unfiled = project["key"] == UNFILED_KEY
         if not _can_edit_project(conn, access, project) and not (
             row["template_id"] and access.is_member(project["team_id"])
         ) and not (unfiled and access.is_member(project["team_id"])):
-            raise JigyoError(403, "この課題は編集できません")
+            raise NishukanError(403, "この課題は編集できません")
         fields: list[str] = []
         values: list[Any] = []
         if any(key in body for key in ("title", "body", "kind", "dueDate", "startDate", "projectId")):
             if not _can_edit_project(conn, access, project) and not access.is_member(project["team_id"]):
-                raise JigyoError(403, "この課題は編集できません")
+                raise NishukanError(403, "この課題は編集できません")
         if "title" in body:
             title = str(body.get("title") or "").strip()
             if not title:
-                raise JigyoError(400, "名称を入力してください")
+                raise NishukanError(400, "名称を入力してください")
             fields.append("title = ?")
             values.append(title)
         if "body" in body:
@@ -1104,9 +1104,9 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
         if "status" in body:
             status = body["status"]
             if status == "done":
-                raise JigyoError(403, "完了は自己判断では決められません")
+                raise NishukanError(403, "完了は自己判断では決められません")
             if status not in WORK_STATUSES:
-                raise JigyoError(400, "状態が正しくありません")
+                raise NishukanError(400, "状態が正しくありません")
             fields.append("status = ?")
             values.append(status)
             _hist(conn, project["team_id"], access.user_id, "status", status, issue_id)
@@ -1118,12 +1118,12 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
                 else _unfiled_project(conn, project["team_id"], project["tenant_id"])
             )
             if target["team_id"] != project["team_id"]:
-                raise JigyoError(400, "同じチームの事業に付けられます")
+                raise NishukanError(400, "同じチームの事業に付けられます")
             if row["template_id"]:
                 if target["mode"] != "routine":
-                    raise JigyoError(400, "定常の課題は定常の事業に付けます")
+                    raise NishukanError(400, "定常の課題は定常の事業に付けます")
             elif target["mode"] != "plan":
-                raise JigyoError(400, "計画の課題は計画の事業に付けます")
+                raise NishukanError(400, "計画の課題は計画の事業に付けます")
             if target["id"] != row["project_id"]:
                 fields.append("project_id = ?")
                 values.append(target["id"])
@@ -1135,11 +1135,11 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
         chief_fields = ("priority", "timeboxStart", "completionText", "completionMode", "size", "checks")
         if any(key in body for key in chief_fields):
             if not chief:
-                raise JigyoError(403, "期枠、優先度、完了条件は所属長が決めます")
+                raise NishukanError(403, "期枠、優先度、完了条件は所属長が決めます")
             if row["timebox_start"] and any(
                 key in body for key in ("completionText", "completionMode", "checks")
             ):
-                raise JigyoError(400, "完了条件は期枠未定のあいだだけ書けます")
+                raise NishukanError(400, "完了条件は期枠未定のあいだだけ書けます")
             if "priority" in body:
                 fields.append("priority = ?")
                 values.append(_priority(body.get("priority"), required=False))
@@ -1153,20 +1153,20 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
             if "completionMode" in body:
                 mode = body.get("completionMode")
                 if mode not in COMPLETION_MODES:
-                    raise JigyoError(400, "完了の決め方が正しくありません")
+                    raise NishukanError(400, "完了の決め方が正しくありません")
                 fields.append("completion_mode = ?")
                 values.append(mode)
             if "checks" in body:
                 raw_checks = body.get("checks") or []
                 if not isinstance(raw_checks, list):
-                    raise JigyoError(400, "確認項目の形式が正しくありません")
+                    raise NishukanError(400, "確認項目の形式が正しくありません")
                 pending_checks = [str(item).strip() for item in raw_checks if str(item).strip()]
             if "timeboxStart" in body:
                 box = body.get("timeboxStart") or None
                 text = str(body["completionText"]).strip() if "completionText" in body else row["completion_text"]
                 mode = body.get("completionMode") if "completionMode" in body else row["completion_mode"]
                 if box and (not text or mode not in COMPLETION_MODES):
-                    raise JigyoError(400, "期枠に入れるには完了条件と決め方が必要です")
+                    raise NishukanError(400, "期枠に入れるには完了条件と決め方が必要です")
                 if box and mode == "objective":
                     count = (
                         len(pending_checks)
@@ -1176,15 +1176,15 @@ def update_issue(access: Access, issue_id: str, body: dict[str, Any]) -> dict[st
                         ).fetchone()["n"]
                     )
                     if not count:
-                        raise JigyoError(400, "客観評価には確認項目が必要です")
+                        raise NishukanError(400, "客観評価には確認項目が必要です")
                 fields.append("timebox_start = ?")
                 values.append(box)
                 _hist(conn, project["team_id"], access.user_id, "timebox", str(box), issue_id)
         if "complete" in body:
             if not chief or row["completion_mode"] != "chief":
-                raise JigyoError(403, "この課題の完了は所属長の判定ではありません")
+                raise NishukanError(403, "この課題の完了は所属長の判定ではありません")
             if not row["completion_text"]:
-                raise JigyoError(400, "完了条件がありません")
+                raise NishukanError(400, "完了条件がありません")
             fields.append("status = ?")
             values.append("done")
             fields.append("done_at = ?")
@@ -1216,14 +1216,14 @@ def set_check(access: Access, issue_id: str, check_id: str, done: bool) -> dict[
         row = _issue(conn, issue_id)
         project = _project(conn, row["project_id"])
         if row["completion_mode"] != "objective":
-            raise JigyoError(400, "確認項目は客観評価の課題にだけあります")
+            raise NishukanError(400, "確認項目は客観評価の課題にだけあります")
         if not _can_edit_project(conn, access, project) and not access.is_member(project["team_id"]):
-            raise JigyoError(403, "確認項目を記録できません")
+            raise NishukanError(403, "確認項目を記録できません")
         check = conn.execute(
             "SELECT * FROM checks WHERE id = ? AND issue_id = ?", (check_id, issue_id)
         ).fetchone()
         if not check:
-            raise JigyoError(404, "確認項目が見つかりません")
+            raise NishukanError(404, "確認項目が見つかりません")
         conn.execute(
             "UPDATE checks SET done = ?, done_by = ?, done_at = ? WHERE id = ?",
             (1 if done else 0, access.user_id if done else None, _now() if done else None, check_id),
@@ -1248,14 +1248,14 @@ def set_check(access: Access, issue_id: str, check_id: str, done: bool) -> dict[
 def add_comment(access: Access, issue_id: str, body: str) -> dict[str, Any]:
     text = body.strip()
     if not text:
-        raise JigyoError(400, "コメントを入力してください")
+        raise NishukanError(400, "コメントを入力してください")
     with _lock, _connect() as conn:
         row = _issue(conn, issue_id)
         project = _project(conn, row["project_id"])
         if not access.can_read(project["team_id"]):
-            raise JigyoError(403, "この課題は見られません")
+            raise NishukanError(403, "この課題は見られません")
         if not access.is_member(project["team_id"]) and not _can_edit_project(conn, access, project):
-            raise JigyoError(403, "コメントはチームのメンバーが書けます")
+            raise NishukanError(403, "コメントはチームのメンバーが書けます")
         conn.execute(
             "INSERT INTO comments (id, issue_id, author, body, created_at) VALUES (?, ?, ?, ?, ?)",
             (str(uuid.uuid4()), issue_id, access.user_id, text, _now()),
@@ -1370,7 +1370,7 @@ def apply_holidays(access: Access, team_id: str, timebox_start: str, project_id:
     del project_id, size
     start = _parse_date(timebox_start)
     if not start:
-        raise JigyoError(400, "期枠を指定してください")
+        raise NishukanError(400, "期枠を指定してください")
     with _lock, _connect() as conn:
         access.team(team_id)
         settings = _settings(conn, team_id, access.tenant_id)

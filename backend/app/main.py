@@ -149,7 +149,7 @@ SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
 
 # 二週間の仕事（Compose profiles: ["nishukan"]）。実 API は /nishukan/* プロキシ。
-JIGYO_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
+NISHUKAN_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
@@ -620,14 +620,14 @@ CHOSEI_SEED: dict[str, Any] = {
 }
 
 # 二週間の仕事（共通アプリ）。UI は専用ページ /nishukan。未起動時は /health 失敗で一覧非表示。
-JIGYO_SEED: dict[str, Any] = {
-    "exAppId": "jigyo",
+NISHUKAN_SEED: dict[str, Any] = {
+    "exAppId": "nishukan",
     "teamId": COMMON_TEAM_ID,
     "exAppName": "二週間の仕事",
     "endpoint": (
-        JIGYO_APP_URL
-        if JIGYO_APP_URL.endswith("/invoke")
-        else JIGYO_APP_URL.rstrip("/") + "/invoke"
+        NISHUKAN_APP_URL
+        if NISHUKAN_APP_URL.endswith("/invoke")
+        else NISHUKAN_APP_URL.rstrip("/") + "/invoke"
     ),
     "apiKey": RAG_API_KEY,
     "config": "",
@@ -957,7 +957,7 @@ EXAPP_SEEDS = [
     NGWORD_SEED,
     PROMPT_SEED,
     CHOSEI_SEED,
-    JIGYO_SEED,
+    NISHUKAN_SEED,
     DOCCHECK_SEED,
     PATCHFORM_SEED,
     DOCMAKER_SEED,
@@ -1079,6 +1079,27 @@ def _migrate_procuretech_exapp_id() -> None:
             },
         )
     teams_store.reassign_exapp_refs(COMMON_TEAM_ID, old_id, new_id)
+
+
+def _migrate_jigyo_exapp_id() -> None:
+    """登録 ID を jigyo から nishukan へ付け替える。台帳データは引き継がない。"""
+    old_id = "jigyo"
+    new_id = NISHUKAN_SEED["exAppId"]
+    old = teams_store.get_exapp(COMMON_TEAM_ID, old_id)
+    if not old:
+        return
+    if teams_store.get_exapp(COMMON_TEAM_ID, new_id):
+        teams_store.update_exapp(
+            COMMON_TEAM_ID,
+            new_id,
+            {
+                "exAppName": old.get("exAppName"),
+                "description": old.get("description"),
+                "howToUse": old.get("howToUse"),
+            },
+        )
+    teams_store.reassign_exapp_refs(COMMON_TEAM_ID, old_id, new_id)
+    teams_store.delete_exapp(COMMON_TEAM_ID, old_id)
 
 
 def _migrate_hearing_to_notebook() -> None:
@@ -1632,6 +1653,10 @@ def _startup() -> None:
         _migrate_procuretech_exapp_id()
     except Exception as e:  # noqa: BLE001
         print(f"[startup] 情報化企画書ナビ ID の移行に失敗: {e}")
+    try:
+        _migrate_jigyo_exapp_id()
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] 二週間の仕事 ID の移行に失敗: {e}")
     try:
         _migrate_hearing_to_notebook()
     except Exception as e:  # noqa: BLE001
@@ -4488,16 +4513,16 @@ async def _proxy_chosei(
     return JSONResponse(status_code=res.status_code, content=payload)
 
 
-def _jigyo_app_url(path: str) -> str:
-    if JIGYO_APP_URL.endswith("/invoke"):
-        base = JIGYO_APP_URL[: -len("/invoke")]
+def _nishukan_app_url(path: str) -> str:
+    if NISHUKAN_APP_URL.endswith("/invoke"):
+        base = NISHUKAN_APP_URL[: -len("/invoke")]
     else:
-        base = JIGYO_APP_URL.rstrip("/")
+        base = NISHUKAN_APP_URL.rstrip("/")
     return base + path
 
 
-def _jigyo_access_payload(user_id: str, claims: dict[str, Any]) -> dict[str, Any]:
-    """活性棟のチームだけを、事業台帳へ渡す。"""
+def _nishukan_access_payload(user_id: str, claims: dict[str, Any]) -> dict[str, Any]:
+    """活性棟のチームだけを、二週間の仕事へ渡す。"""
     tenant_id = _active_tenant_id(user_id, claims)
     teams: list[dict[str, Any]] = []
     if _is_system_admin(claims):
@@ -4546,14 +4571,14 @@ def _jigyo_access_payload(user_id: str, claims: dict[str, Any]) -> dict[str, Any
     return {"userId": user_id, "tenantId": tenant_id, "teams": teams}
 
 
-def _jigyo_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+def _nishukan_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
     if not user_id:
         return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
     raw = base64.b64encode(
         json.dumps(
-            _jigyo_access_payload(user_id, claims),
+            _nishukan_access_payload(user_id, claims),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -4568,13 +4593,13 @@ def _jigyo_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str
         "x-user-groups": groups_str,
         "x-user-tags": team_ids,
         "x-scope": scope,
-        "x-jigyo-access": raw,
+        "x-nishukan-access": raw,
         **intauth.signed_headers(user_id, groups_str, scope, team_ids),
     }
     return None, headers
 
 
-async def _proxy_jigyo(
+async def _proxy_nishukan(
     method: str, url: str, headers: dict[str, str], body: bytes | None
 ) -> JSONResponse:
     try:
@@ -4606,8 +4631,8 @@ async def _proxy_jigyo(
     "/nishukan/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
 )
-async def jigyo_proxy(path: str, request: Request) -> JSONResponse:
-    url = _jigyo_app_url("/" + path)
+async def nishukan_proxy(path: str, request: Request) -> JSONResponse:
+    url = _nishukan_app_url("/" + path)
     if request.url.query:
         url += "?" + str(request.url.query)
     body = await request.body()
@@ -4617,12 +4642,12 @@ async def jigyo_proxy(path: str, request: Request) -> JSONResponse:
             "x-receipt-key": request.headers.get("x-receipt-key", ""),
             "content-type": "application/json",
         }
-        return await _proxy_jigyo(request.method, url, headers, body)
-    err, headers = _jigyo_headers(request)
+        return await _proxy_nishukan(request.method, url, headers, body)
+    err, headers = _nishukan_headers(request)
     if err:
         return err
     headers["content-type"] = "application/json"
-    return await _proxy_jigyo(request.method, url, headers, body)
+    return await _proxy_nishukan(request.method, url, headers, body)
 
 
 @app.get("/chosei/config")

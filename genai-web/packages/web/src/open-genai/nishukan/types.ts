@@ -1,18 +1,18 @@
-export type JigyoCheck = {
+export type NishukanCheck = {
   id: string;
   label: string;
   done: boolean;
   doneBy?: string | null;
 };
 
-export type JigyoComment = {
+export type NishukanComment = {
   id: string;
   author: string;
   body: string;
   createdAt: string;
 };
 
-export type JigyoIssue = {
+export type NishukanIssue = {
   id: string;
   projectId: string;
   projectKey: string;
@@ -34,11 +34,11 @@ export type JigyoIssue = {
   templateName?: string;
   dueDate: string | null;
   createdAt: string;
-  checks: JigyoCheck[];
-  comments: JigyoComment[];
+  checks: NishukanCheck[];
+  comments: NishukanComment[];
 };
 
-export type JigyoTemplate = {
+export type NishukanTemplate = {
   id: string;
   teamId: string;
   projectId: string;
@@ -52,7 +52,7 @@ export type JigyoTemplate = {
   keyHint: string | null;
 };
 
-export type JigyoProject = {
+export type NishukanProject = {
   id: string;
   teamId: string;
   key: string;
@@ -62,16 +62,16 @@ export type JigyoProject = {
   status: string;
 };
 
-export type JigyoBox = {
+export type NishukanBox = {
   start: string;
   end: string;
   size: number;
   forecastSize?: number;
   routineReserve?: number;
-  issues?: JigyoIssue[];
+  issues?: NishukanIssue[];
 };
 
-export type JigyoHome = {
+export type NishukanHome = {
   enabled?: boolean;
   error?: string;
   userId?: string;
@@ -82,18 +82,18 @@ export type JigyoHome = {
   chiefUserId?: string | null;
   headcount?: number | null;
   teams?: { teamId: string; teamName: string; admin: boolean; member: boolean }[];
-  projects?: JigyoProject[];
-  templates?: JigyoTemplate[];
-  boxes?: { previous: JigyoBox; current: JigyoBox; next: JigyoBox };
+  projects?: NishukanProject[];
+  templates?: NishukanTemplate[];
+  boxes?: { previous: NishukanBox; current: NishukanBox; next: NishukanBox };
   pace?: number;
-  planIssues?: JigyoIssue[];
-  leaveIssues?: JigyoIssue[];
+  planIssues?: NishukanIssue[];
+  leaveIssues?: NishukanIssue[];
   routine?: {
     templateId: string;
     name: string;
     count: number;
     openCount: number;
     size: number;
-    issues: JigyoIssue[];
+    issues: NishukanIssue[];
   }[];
 };
