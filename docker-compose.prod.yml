@@ -98,6 +98,8 @@ services:
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
+      # 二週間の仕事（profiles: ["jigyo"] で起動。未起動時は専用ページが案内を表示）
+      - JIGYO_APP_URL=${JIGYO_APP_URL:-http://jigyo-app:8020/invoke}
       - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
@@ -744,6 +746,24 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 二週間の仕事（`COMPOSE_PROFILES=jigyo` または `--profile jigyo`）
+  # ホストポートは公開しない。画面と受付鍵は backend からのみ到達する。
+  jigyo-app:
+    profiles: ["jigyo"]
+    build:
+      context: .
+      dockerfile: jigyo-app/Dockerfile
+    container_name: open-genai-jigyo-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - JIGYO_DB_PATH=/data/jigyo.db
+    volumes:
+      - jigyo_app_data:/data
+    expose:
+      - "8020"
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -791,3 +811,4 @@ volumes:
   # ノートブック用。既存環境のボリューム名を維持する。
   procuretech_hearing_app_data:
   ssh_app_data:
+  jigyo_app_data:

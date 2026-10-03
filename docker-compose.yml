@@ -70,6 +70,8 @@ services:
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
+      # 二週間の仕事（profiles: ["jigyo"] で起動。未起動時は専用ページが案内を表示）
+      - JIGYO_APP_URL=${JIGYO_APP_URL:-http://jigyo-app:8020/invoke}
       - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-http://localhost:8010}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
@@ -828,6 +830,24 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 二週間の仕事 (`docker compose --profile jigyo up -d`)
+  # 画面と受付鍵は、backend の /nishukan/* を通る。
+  jigyo-app:
+    profiles: ["jigyo"]
+    build:
+      context: .
+      dockerfile: jigyo-app/Dockerfile
+    container_name: open-genai-jigyo-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - JIGYO_DB_PATH=/data/jigyo.db
+    volumes:
+      - jigyo_app_data:/data
+    ports:
+      - "${JIGYO_PORT:-8020}:8020"
+    restart: unless-stopped
+
   # ダイアグラム編集 UI。図の中身は backend の /diagrams に保存し、ここは編集画面だけを出す。
   # ホストへポートは出さず、proxy の /drawio/ からのみ届く。
   drawio:
@@ -860,3 +880,4 @@ volumes:
   procuretech_hearing_app_data:
   ssh_app_data:
   sengoku_app_data:
+  jigyo_app_data:

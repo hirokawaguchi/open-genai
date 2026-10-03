@@ -15,6 +15,7 @@ const FOOTER_HIDDEN_PATHS = [
   '/image',
   '/apps',
   '/notebook',
+  '/nishukan',
   '/procuretech-editor',
   '/procuretech-navigator',
   '/sengoku',
