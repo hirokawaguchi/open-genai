@@ -8,6 +8,7 @@ import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
   useDoccheckAvailable,
+  useJigyoAvailable,
   useNotebookAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
@@ -94,6 +95,12 @@ export const SENGOKU_PATH = '/sengoku';
 /** 戦国国取り exApp の識別子（専用ページへ振り替える対象） */
 export const SENGOKU_EXAPP_ID = 'sengoku';
 
+/** 二週間の仕事は汎用 exApp フォームではなく専用ページで提供する */
+export const JIGYO_PATH = '/nishukan';
+
+/** 二週間の仕事 exApp の識別子（専用ページへ振り替える対象） */
+export const JIGYO_EXAPP_ID = 'jigyo';
+
 /** 旧ヒアリングシート ID（ピン留めの振り替え用） */
 export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
 
@@ -139,6 +146,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
+  const jigyoAvailable = useJigyoAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -284,6 +292,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (jigyoAvailable && listed(JIGYO_EXAPP_ID)) {
+      items.push({
+        label: nameOf(JIGYO_EXAPP_ID, '二週間の仕事'),
+        to: JIGYO_PATH,
+        description: descOf(
+          JIGYO_EXAPP_ID,
+          'チームの仕事を２週間単位で区切り、その中で何をどこまでやるかを管理します。',
+        ),
+      });
+    }
+
     if (sshAvailable && listed(SSH_EXAPP_ID)) {
       items.push({
         label: nameOf(SSH_EXAPP_ID, 'SSH 端末'),
@@ -338,6 +357,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     notebookAvailable,
     sshAvailable,
     sengokuAvailable,
+    jigyoAvailable,
     registryApps,
     catalogLoaded,
     running,
@@ -393,6 +413,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 戦国国取りは専用ページへ振り替える
   if (item.app.value === SENGOKU_EXAPP_ID) {
     return SENGOKU_PATH;
+  }
+  if (item.app.value === JIGYO_EXAPP_ID) {
+    return JIGYO_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

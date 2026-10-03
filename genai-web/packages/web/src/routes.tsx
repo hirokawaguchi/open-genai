@@ -33,6 +33,7 @@ import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
 import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
+import { JigyoPage } from '@/open-genai/jigyo/JigyoPage';
 import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
 import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
@@ -103,6 +104,9 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'chosei/events/:eventId', element: <ChoseiEventPage /> },
     { path: 'chosei/events/:eventId/edit', element: <ChoseiEditPage /> },
     { path: 'apps/:teamId/chosei', element: <Navigate to='/chosei' replace /> },
+    { path: 'nishukan', element: <JigyoPage /> },
+    { path: 'jigyo', element: <Navigate to='/nishukan' replace /> },
+    { path: 'apps/:teamId/jigyo', element: <Navigate to='/nishukan' replace /> },
     // 書類領域分割チェックは専用ページへ（Compose profiles: ["doccheck"]）。
     { path: 'doccheck', element: <DoccheckPage /> },
     { path: 'apps/:teamId/doccheck', element: <Navigate to='/doccheck' replace /> },

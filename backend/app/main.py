@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import hashlib
 import hmac
 import html
 import io
@@ -86,6 +87,8 @@ PUBLIC_PATH_PREFIXES = (
     "/docs",
     "/openapi.json",
     "/redoc",
+    # 定型の受付鍵だけで呼ぶ。画面のボタンはログイン側の /nishukan/templates/.../arrivals。
+    "/nishukan/arrivals/",
 )
 
 
@@ -144,6 +147,9 @@ SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 # 戦国国取り（Compose profiles: ["sengoku"] でオプション起動。お遊びのシミュレーションゲーム）。
 # 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
+
+# 二週間の仕事（Compose profiles: ["jigyo"]）。実 API は /nishukan/* プロキシ。
+JIGYO_APP_URL = os.environ.get("JIGYO_APP_URL", "http://jigyo-app:8020/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
@@ -613,6 +619,31 @@ CHOSEI_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 二週間の仕事（共通アプリ）。UI は専用ページ /nishukan。未起動時は /health 失敗で一覧非表示。
+JIGYO_SEED: dict[str, Any] = {
+    "exAppId": "jigyo",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "二週間の仕事",
+    "endpoint": (
+        JIGYO_APP_URL
+        if JIGYO_APP_URL.endswith("/invoke")
+        else JIGYO_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "チームの仕事を２週間単位で区切り、その中で何をどこまでやるかを管理します。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「二週間の仕事」で、チームの所属長・事業・定型を登録します。\n"
+        "- 計画の課題を期枠へ入れるのは所属長です。完了は確認項目が揃ったときか、所属長の判定です。\n"
+        "- 定常は定型のボタンを一つ押すと今期枠に入ります。外部システムは受付鍵で同じ API を呼びます。\n"
+        "- 有効化: `docker compose --profile jigyo up -d` または `COMPOSE_PROFILES=jigyo`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 # 書類領域分割チェック（共通アプリ）。UI は専用ページ /doccheck。
 DOCCHECK_SEED: dict[str, Any] = {
     "exAppId": "doccheck",
@@ -926,6 +957,7 @@ EXAPP_SEEDS = [
     NGWORD_SEED,
     PROMPT_SEED,
     CHOSEI_SEED,
+    JIGYO_SEED,
     DOCCHECK_SEED,
     PATCHFORM_SEED,
     DOCMAKER_SEED,
@@ -4454,6 +4486,143 @@ async def _proxy_chosei(
     except ValueError:
         payload = {"error": "日程調整サービスから不正な応答を受け取りました"}
     return JSONResponse(status_code=res.status_code, content=payload)
+
+
+def _jigyo_app_url(path: str) -> str:
+    if JIGYO_APP_URL.endswith("/invoke"):
+        base = JIGYO_APP_URL[: -len("/invoke")]
+    else:
+        base = JIGYO_APP_URL.rstrip("/")
+    return base + path
+
+
+def _jigyo_access_payload(user_id: str, claims: dict[str, Any]) -> dict[str, Any]:
+    """活性棟のチームだけを、事業台帳へ渡す。"""
+    tenant_id = _active_tenant_id(user_id, claims)
+    teams: list[dict[str, Any]] = []
+    if _is_system_admin(claims):
+        for team in teams_store.list_teams_in_tenant(tenant_id):
+            if team["teamId"] in (teams_store.COMMON_TEAM_ID, teams_store.ADMIN_TEAM_ID):
+                continue
+            teams.append(
+                {
+                    "teamId": team["teamId"],
+                    "teamName": team["teamName"],
+                    "admin": True,
+                    "member": True,
+                    "inherited": False,
+                }
+            )
+        return {"userId": user_id, "tenantId": tenant_id, "teams": teams}
+    member_ids = {t["teamId"] for t in teams_store.list_teams_for_member(user_id)}
+    for team in teams_store.list_teams_for_member(user_id):
+        full = teams_store.get_team(team["teamId"])
+        if not full or full.get("tenantId") != tenant_id:
+            continue
+        teams.append(
+            {
+                "teamId": team["teamId"],
+                "teamName": team["teamName"],
+                "admin": teams_store.is_team_admin(team["teamId"], user_id),
+                "member": True,
+                "inherited": False,
+            }
+        )
+    for team in teams_store.list_inherited_teams_for_user(user_id):
+        if team["teamId"] in member_ids:
+            continue
+        full = teams_store.get_team(team["teamId"])
+        if not full or full.get("tenantId") != tenant_id:
+            continue
+        teams.append(
+            {
+                "teamId": team["teamId"],
+                "teamName": team["teamName"],
+                "admin": False,
+                "member": True,
+                "inherited": True,
+            }
+        )
+    return {"userId": user_id, "tenantId": tenant_id, "teams": teams}
+
+
+def _jigyo_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    raw = base64.b64encode(
+        json.dumps(
+            _jigyo_access_payload(user_id, claims),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).decode("ascii")
+    scope = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": scope,
+        "x-jigyo-access": raw,
+        **intauth.signed_headers(user_id, groups_str, scope, team_ids),
+    }
+    return None, headers
+
+
+async def _proxy_jigyo(
+    method: str, url: str, headers: dict[str, str], body: bytes | None
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.request(
+                method, url, headers=headers, content=body if body else None
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "二週間の仕事に接続できませんでした。"
+                    "有効化するには `docker compose --profile jigyo up -d` "
+                    "または `COMPOSE_PROFILES=jigyo` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "二週間の仕事から不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.api_route(
+    "/nishukan/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def jigyo_proxy(path: str, request: Request) -> JSONResponse:
+    url = _jigyo_app_url("/" + path)
+    if request.url.query:
+        url += "?" + str(request.url.query)
+    body = await request.body()
+    if path.startswith("arrivals/"):
+        headers = {
+            "x-api-key": RAG_API_KEY,
+            "x-receipt-key": request.headers.get("x-receipt-key", ""),
+            "content-type": "application/json",
+        }
+        return await _proxy_jigyo(request.method, url, headers, body)
+    err, headers = _jigyo_headers(request)
+    if err:
+        return err
+    headers["content-type"] = "application/json"
+    return await _proxy_jigyo(request.method, url, headers, body)
 
 
 @app.get("/chosei/config")
