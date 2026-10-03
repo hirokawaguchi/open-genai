@@ -440,6 +440,7 @@ export const NishukanPage = () => {
                   dueDate: null,
                   createdAt: '',
                   checks: [],
+                  comments: [],
                 });
               }}
             >

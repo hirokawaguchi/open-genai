@@ -114,7 +114,11 @@ export const useNishukanActions = () => {
           .then((r) => r.data),
       ),
     comment: (issueId: string, body: string) =>
-      run(() => teamApi.post(`nishukan/issues/${issueId}/comments`, { body }).then((r) => r.data)),
+      run(() =>
+        teamApi
+          .post<NishukanIssue>(`nishukan/issues/${issueId}/comments`, { body })
+          .then((r) => r.data),
+      ),
     holidays: (teamId: string, body: Record<string, unknown>) =>
       run(() => teamApi.post(`nishukan/teams/${teamId}/holidays`, body).then((r) => r.data)),
     receiptKey: (templateId: string) =>
