@@ -70,8 +70,8 @@ services:
       - PROMPT_APP_URL=${PROMPT_APP_URL:-http://prompt-app:8009/invoke}
       # 日程調整（profiles: ["chosei"] で起動。未起動時は専用ページが案内を表示）
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
-      # 二週間の仕事（profiles: ["jigyo"] で起動。未起動時は専用ページが案内を表示）
-      - JIGYO_APP_URL=${JIGYO_APP_URL:-http://jigyo-app:8020/invoke}
+      # 二週間の仕事（profiles: ["nishukan"] で起動。未起動時は専用ページが案内を表示）
+      - NISHUKAN_APP_URL=${NISHUKAN_APP_URL:-http://nishukan-app:8020/invoke}
       - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-http://localhost:8010}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
@@ -830,14 +830,14 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-  # 任意: 二週間の仕事 (`docker compose --profile jigyo up -d`)
+  # 任意: 二週間の仕事 (`docker compose --profile nishukan up -d`)
   # 画面と受付鍵は、backend の /nishukan/* を通る。
-  jigyo-app:
-    profiles: ["jigyo"]
+  nishukan-app:
+    profiles: ["nishukan"]
     build:
       context: .
       dockerfile: jigyo-app/Dockerfile
-    container_name: open-genai-jigyo-app
+    container_name: open-genai-nishukan-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
