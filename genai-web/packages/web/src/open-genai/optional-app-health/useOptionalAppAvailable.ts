@@ -49,4 +49,4 @@ export const useSshAvailable = (): boolean => useOptionalAppAvailable('ssh/confi
 
 export const useSengokuAvailable = (): boolean => useOptionalAppAvailable('sengoku/config');
 
-export const useJigyoAvailable = (): boolean => useOptionalAppAvailable('nishukan/config');
+export const useNishukanAvailable = (): boolean => useOptionalAppAvailable('nishukan/config');

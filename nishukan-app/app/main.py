@@ -14,7 +14,7 @@ from app import intauth, store
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 
-app = FastAPI(title="jigyo-app", docs_url=None, redoc_url=None)
+app = FastAPI(title="nishukan-app", docs_url=None, redoc_url=None)
 
 
 @app.on_event("startup")
@@ -22,7 +22,7 @@ def on_startup() -> None:
     store.init_db()
 
 
-def _error(exc: store.JigyoError) -> JSONResponse:
+def _error(exc: store.NishukanError) -> JSONResponse:
     return JSONResponse(status_code=exc.status, content={"error": exc.message})
 
 
@@ -34,13 +34,13 @@ def _verify_user(
     x_user_ts: str | None,
     x_user_sig: str | None,
     x_user_tags: str | None,
-    x_jigyo_access: str | None,
+    x_nishukan_access: str | None,
 ) -> JSONResponse | store.Access:
     if (x_api_key or "") != API_KEY:
         return JSONResponse(status_code=401, content={"error": "認証が必要です"})
     if not intauth.verify(x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags):
         return JSONResponse(status_code=401, content={"error": "認証が必要です"})
-    encoded = x_jigyo_access or ""
+    encoded = x_nishukan_access or ""
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     if not x_scope or digest != x_scope:
         return JSONResponse(status_code=401, content={"error": "認証が必要です"})
@@ -50,7 +50,7 @@ def _verify_user(
         return JSONResponse(status_code=401, content={"error": "認証が必要です"})
     try:
         return store.parse_access(payload)
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -68,10 +68,10 @@ def config(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
@@ -88,16 +88,16 @@ def home(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.home(access, teamId))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -112,16 +112,16 @@ def put_chief(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.set_chief(access, team_id, str(body.get("userId") or "")))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -136,16 +136,16 @@ def put_headcount(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.set_headcount(access, team_id, body.get("headcount")))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -160,10 +160,10 @@ def put_vacation(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
@@ -176,7 +176,7 @@ def put_vacation(
                 body.get("size"),
             )
         )
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -190,16 +190,16 @@ def post_project(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.create_project(access, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -214,16 +214,16 @@ def patch_project(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.update_project(access, project_id, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -237,16 +237,16 @@ def delete_project(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.delete_project(access, project_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -261,10 +261,10 @@ def post_member(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
@@ -274,7 +274,7 @@ def post_member(
                 access, project_id, str(body.get("userId") or ""), str(body.get("role") or "")
             )
         )
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -288,16 +288,16 @@ def post_template(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.create_template(access, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -312,16 +312,16 @@ def patch_template(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.update_template(access, template_id, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -335,16 +335,16 @@ def delete_template(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.delete_template(access, template_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -358,16 +358,16 @@ def post_receipt_key(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.issue_receipt_key(access, template_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -381,16 +381,16 @@ def delete_receipt_key(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.revoke_receipt_key(access, template_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -405,10 +405,10 @@ async def post_arrival(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
@@ -422,7 +422,7 @@ async def post_arrival(
                 title=body.get("title"),
             )
         )
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -445,7 +445,7 @@ async def post_arrival_with_key(
                 title=body.get("title"),
             )
         )
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -459,16 +459,16 @@ def delete_issue(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.undo_issue(access, issue_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -482,16 +482,16 @@ def post_issue(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.create_issue(access, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -505,16 +505,16 @@ def get_issue(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.get_issue(access, issue_id))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -529,16 +529,16 @@ def patch_issue(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.update_issue(access, issue_id, body))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -554,16 +554,16 @@ def post_check(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.set_check(access, issue_id, check_id, bool(body.get("done"))))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -578,16 +578,16 @@ def post_comment(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
     try:
         return JSONResponse(content=store.add_comment(access, issue_id, str(body.get("body") or "")))
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 
@@ -602,10 +602,10 @@ def post_holidays(
     x_user_ts: str | None = Header(default=None),
     x_user_sig: str | None = Header(default=None),
     x_user_tags: str | None = Header(default=None),
-    x_jigyo_access: str | None = Header(default=None),
+    x_nishukan_access: str | None = Header(default=None),
 ) -> JSONResponse:
     access = _verify_user(
-        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_jigyo_access
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags, x_nishukan_access
     )
     if isinstance(access, JSONResponse):
         return access
@@ -619,7 +619,7 @@ def post_holidays(
                 body.get("size"),
             )
         )
-    except store.JigyoError as e:
+    except store.NishukanError as e:
         return _error(e)
 
 

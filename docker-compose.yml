@@ -836,16 +836,16 @@ services:
     profiles: ["nishukan"]
     build:
       context: .
-      dockerfile: jigyo-app/Dockerfile
+      dockerfile: nishukan-app/Dockerfile
     container_name: open-genai-nishukan-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
-      - JIGYO_DB_PATH=/data/jigyo.db
+      - NISHUKAN_DB_PATH=/data/nishukan.db
     volumes:
-      - jigyo_app_data:/data
+      - nishukan_app_data:/data
     ports:
-      - "${JIGYO_PORT:-8020}:8020"
+      - "${NISHUKAN_PORT:-8020}:8020"
     restart: unless-stopped
 
   # ダイアグラム編集 UI。図の中身は backend の /diagrams に保存し、ここは編集画面だけを出す。
@@ -880,4 +880,4 @@ volumes:
   procuretech_hearing_app_data:
   ssh_app_data:
   sengoku_app_data:
-  jigyo_app_data:
+  nishukan_app_data:

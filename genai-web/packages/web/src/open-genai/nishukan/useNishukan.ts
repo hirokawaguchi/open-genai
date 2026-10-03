@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
-import type { JigyoHome, JigyoIssue } from './types';
+import type { NishukanHome, NishukanIssue } from './types';
 
 const errorMessage = (e: unknown, fallback: string): string => {
   if (e instanceof ApiError) {
@@ -13,7 +13,7 @@ const errorMessage = (e: unknown, fallback: string): string => {
   return fallback;
 };
 
-export const useJigyoConfig = () => {
+export const useNishukanConfig = () => {
   const { data, isLoading } = useSWR<{ enabled?: boolean; error?: string }>(
     'nishukan/config',
     async () => {
@@ -36,13 +36,13 @@ export const useJigyoConfig = () => {
   };
 };
 
-export const useJigyoHome = (teamId: string | null, enabled = true) => {
+export const useNishukanHome = (teamId: string | null, enabled = true) => {
   const key = !enabled
     ? null
     : teamId
       ? `nishukan/home?teamId=${encodeURIComponent(teamId)}`
       : 'nishukan/home';
-  const { data, error, isLoading, mutate } = useSWR<JigyoHome>(key, teamApiFetcher, {
+  const { data, error, isLoading, mutate } = useSWR<NishukanHome>(key, teamApiFetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -54,7 +54,7 @@ export const useJigyoHome = (teamId: string | null, enabled = true) => {
   };
 };
 
-export const useJigyoActions = () => {
+export const useNishukanActions = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -98,19 +98,19 @@ export const useJigyoActions = () => {
     arrive: (templateId: string, title?: string) =>
       run(() =>
         teamApi
-          .post<JigyoIssue>(`nishukan/templates/${templateId}/arrivals`, title ? { title } : {})
+          .post<NishukanIssue>(`nishukan/templates/${templateId}/arrivals`, title ? { title } : {})
           .then((r) => r.data),
       ),
     undo: (issueId: string) =>
       run(() => teamApi.delete(`nishukan/issues/${issueId}`).then((r) => r.data)),
     createIssue: (body: Record<string, unknown>) =>
-      run(() => teamApi.post<JigyoIssue>('nishukan/issues', body).then((r) => r.data)),
+      run(() => teamApi.post<NishukanIssue>('nishukan/issues', body).then((r) => r.data)),
     updateIssue: (issueId: string, body: Record<string, unknown>) =>
-      run(() => teamApi.patch<JigyoIssue>(`nishukan/issues/${issueId}`, body).then((r) => r.data)),
+      run(() => teamApi.patch<NishukanIssue>(`nishukan/issues/${issueId}`, body).then((r) => r.data)),
     setCheck: (issueId: string, checkId: string, done: boolean) =>
       run(() =>
         teamApi
-          .post<JigyoIssue>(`nishukan/issues/${issueId}/checks/${checkId}`, { done })
+          .post<NishukanIssue>(`nishukan/issues/${issueId}/checks/${checkId}`, { done })
           .then((r) => r.data),
       ),
     comment: (issueId: string, body: string) =>

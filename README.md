@@ -83,7 +83,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `ngword-app/` | 禁止語・個人情報検知の設定（管理者限定 exApp。添付警告／ナレッジ検知／NER トグル） |
 | `prompt-app/` | プロンプトテンプレートカタログ（標準／個人／グループ共有） |
 | `chosei-app/` | 日程調整（オプション・`profiles: ["chosei"]`。詳細は [`docs/chosei.md`](docs/chosei.md)） |
-| `jigyo-app/` | 二週間の仕事（オプション・`profiles: ["nishukan"]`。詳細は [`docs/jigyo.md`](docs/jigyo.md)） |
+| `nishukan-app/` | 二週間の仕事（オプション・`profiles: ["nishukan"]`。詳細は [`docs/nishukan.md`](docs/nishukan.md)） |
 | `doccheck-app/` | 書類領域分割チェック（オプション・`profiles: ["doccheck"]`。詳細は [`docs/doccheck.md`](docs/doccheck.md)） |
 | `patchform-app/` | フォーム（オプション・`profiles: ["patchform"]`。詳細は [`docs/patchform.md`](docs/patchform.md)） |
 | `procedure-mcp/` | 手続きマスタ MCP（`profiles: ["patchform"]`。公開済みのみ。詳細は [`docs/procedure-mcp.md`](docs/procedure-mcp.md)） |

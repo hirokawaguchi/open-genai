@@ -13,9 +13,9 @@ import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsa
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { JIGYO_EXAPP_ID } from '@/layout/navItems';
-import type { JigyoHome, JigyoIssue, JigyoProject } from './types';
-import { useJigyoActions, useJigyoConfig, useJigyoHome } from './useJigyo';
+import { NISHUKAN_EXAPP_ID } from '@/layout/navItems';
+import type { NishukanHome, NishukanIssue, NishukanProject } from './types';
+import { useNishukanActions, useNishukanConfig, useNishukanHome } from './useNishukan';
 
 const fieldClass = 'w-full rounded-4 border border-solid-gray-420 bg-white px-3 py-2 text-std-16N-170';
 const SIZE_OPTIONS = ['0.25', '0.5', '1', '2', '3', '5', '8'];
@@ -46,7 +46,7 @@ const STATUS: { id: string; label: string }[] = [
 
 const statusLabel = (id: string) => STATUS.find((s) => s.id === id)?.label ?? id;
 
-const scheduleBlock = (issue: JigyoIssue): string | null => {
+const scheduleBlock = (issue: NishukanIssue): string | null => {
   if (!issue.completionText.trim() || (issue.completionMode !== 'chief' && issue.completionMode !== 'objective')) {
     return '完了条件を書いてから、未着手へ移せます。';
   }
@@ -56,8 +56,8 @@ const scheduleBlock = (issue: JigyoIssue): string | null => {
   return null;
 };
 
-const routinePiles = (issues: JigyoIssue[], names: Map<string, string>) => {
-  const groups = new Map<string, JigyoIssue[]>();
+const routinePiles = (issues: NishukanIssue[], names: Map<string, string>) => {
+  const groups = new Map<string, NishukanIssue[]>();
   for (const issue of issues) {
     const key = issue.templateId || issue.title;
     const list = groups.get(key) ?? [];
@@ -174,18 +174,18 @@ const HelpDialog = ({
  * 二週間の仕事。Compose profiles: ["nishukan"] 未起動時は有効化手順を案内する。
  * 課題は個人に割り当てない。期枠と優先度と完了の判定は所属長が行う。
  */
-export const JigyoPage = () => {
+export const NishukanPage = () => {
   const { documentTitle, title, description, howToUse } = useRegisteredAppMeta(
     COMMON_EXAPPS_TEAM_ID,
-    JIGYO_EXAPP_ID,
+    NISHUKAN_EXAPP_ID,
     '二週間の仕事',
     'チームの仕事を２週間単位で区切り、その中で何をどこまでやるかを管理します。',
   );
-  const { isLoading: configLoading, unavailable, error: configError } = useJigyoConfig();
+  const { isLoading: configLoading, unavailable, error: configError } = useNishukanConfig();
   const [teamId, setTeamId] = useState<string | null>(null);
-  const { home, isLoading, loadError, mutate } = useJigyoHome(teamId, !unavailable);
-  const actions = useJigyoActions();
-  const [selected, setSelected] = useState<JigyoIssue | null>(null);
+  const { home, isLoading, loadError, mutate } = useNishukanHome(teamId, !unavailable);
+  const actions = useNishukanActions();
+  const [selected, setSelected] = useState<NishukanIssue | null>(null);
   const [receiptKey, setReceiptKey] = useState<string | null>(null);
   const [pane, setPane] = useState<Pane>('board');
   const [boxFocus, setBoxFocus] = useState<'previous' | 'current' | 'next'>('current');
@@ -227,10 +227,10 @@ export const JigyoPage = () => {
     );
   }
 
-  const data = home as JigyoHome;
+  const data = home as NishukanHome;
   const currentStart = data.boxes?.current.start ?? '';
   const focusStart = data.boxes?.[boxFocus].start ?? '';
-  const inFocus = (issues: JigyoIssue[] | undefined) =>
+  const inFocus = (issues: NishukanIssue[] | undefined) =>
     (issues ?? []).filter((issue) => issue.timeboxStart === focusStart);
   const planInBox = inFocus(data.planIssues);
   const undecided = (data.planIssues ?? []).filter((issue) => !issue.timeboxStart);
@@ -249,7 +249,7 @@ export const JigyoPage = () => {
       };
     })
     .filter((group) => group.count > 0);
-  const sizeOf = (issues: JigyoIssue[]) => issues.reduce((sum, issue) => sum + (issue.size ?? 0), 0);
+  const sizeOf = (issues: NishukanIssue[]) => issues.reduce((sum, issue) => sum + (issue.size ?? 0), 0);
   const planSize = sizeOf(planInBox);
   const routineSize = routineInBox.reduce((sum, group) => sum + group.size, 0);
   const leaveSize = sizeOf(leaveInBox);
@@ -269,7 +269,7 @@ export const JigyoPage = () => {
       : leaveImpact;
 
   const hasTeam = Boolean(data.teamId && data.boxes);
-  const dropPlan = async (issue: JigyoIssue, columnId: string) => {
+  const dropPlan = async (issue: NishukanIssue, columnId: string) => {
     if (!issue.timeboxStart) {
       if (columnId !== 'todo' || !data.isChief || !focusStart) return;
       if (scheduleBlock(issue)) {
@@ -314,7 +314,7 @@ export const JigyoPage = () => {
           <div className='flex items-center gap-2'>
             {data.teams && data.teams.length > 1 && (
               <select
-                id='jigyo-team'
+                id='nishukan-team'
                 aria-label='チーム'
                 className={compactField}
                 value={data.teamId ?? ''}
@@ -522,11 +522,11 @@ export const JigyoPage = () => {
                   }
                 }}
               >
-                <Label htmlFor='jigyo-vacation-size' size='sm'>
+                <Label htmlFor='nishukan-vacation-size' size='sm'>
                   規模
                 </Label>
                 <input
-                  id='jigyo-vacation-size'
+                  id='nishukan-vacation-size'
                   type='number'
                   min={0}
                   step={0.25}
@@ -988,8 +988,8 @@ const IssuePanel = ({
   acceptLabel,
   templateName = '',
 }: {
-  issue: JigyoIssue;
-  projects: JigyoProject[];
+  issue: NishukanIssue;
+  projects: NishukanProject[];
   isChief: boolean;
   currentStart: string;
   busy: boolean;
@@ -1083,11 +1083,11 @@ const IssuePanel = ({
           作業
         </CustomDialogHeader>
         <CustomDialogBody className='min-h-0 flex-1 overflow-y-auto'>
-          <Label htmlFor='jigyo-issue-title' size='sm'>
+          <Label htmlFor='nishukan-issue-title' size='sm'>
             名称
           </Label>
           <input
-            id='jigyo-issue-title'
+            id='nishukan-issue-title'
             className={`${fieldClass} text-std-20B-150`}
             value={title}
             placeholder={draftRoutine ? 'この1件の名称' : 'この作業の名称'}
@@ -1115,11 +1115,11 @@ const IssuePanel = ({
               </p>
               {isChief ? (
                 <>
-                  <Label htmlFor='jigyo-accept-done' size='sm'>
+                  <Label htmlFor='nishukan-accept-done' size='sm'>
                     完了条件
                   </Label>
                   <textarea
-                    id='jigyo-accept-done'
+                    id='nishukan-accept-done'
                     className={fieldClass}
                     rows={3}
                     value={doneText}
@@ -1128,11 +1128,11 @@ const IssuePanel = ({
                     onBlur={saveCompletion}
                     placeholder='何がそろえば終わりか'
                   />
-                  <Label htmlFor='jigyo-accept-mode' size='sm'>
+                  <Label htmlFor='nishukan-accept-mode' size='sm'>
                     決め方
                   </Label>
                   <select
-                    id='jigyo-accept-mode'
+                    id='nishukan-accept-mode'
                     className={fieldClass}
                     value={doneMode}
                     onChange={(e) => {
@@ -1151,11 +1151,11 @@ const IssuePanel = ({
                   </select>
                   {doneMode === 'objective' && (
                     <>
-                      <Label htmlFor='jigyo-accept-checks' size='sm'>
+                      <Label htmlFor='nishukan-accept-checks' size='sm'>
                         確認項目（1行に1つ）
                       </Label>
                       <textarea
-                        id='jigyo-accept-checks'
+                        id='nishukan-accept-checks'
                         className={fieldClass}
                         rows={3}
                         value={checkText}
@@ -1165,10 +1165,10 @@ const IssuePanel = ({
                     </>
                   )}
                   <div className='flex flex-col items-start gap-2'>
-                    <Label htmlFor='jigyo-accept-size' size='sm'>
+                    <Label htmlFor='nishukan-accept-size' size='sm'>
                       今期枠で行うときの規模
                     </Label>
-                    <select id='jigyo-accept-size' className={compactField} value={placeSize} onChange={(e) => setPlaceSize(e.target.value)}>
+                    <select id='nishukan-accept-size' className={compactField} value={placeSize} onChange={(e) => setPlaceSize(e.target.value)}>
                       {SIZE_OPTIONS.map((n) => (
                         <option key={n} value={n}>
                           {n}
@@ -1236,11 +1236,11 @@ const IssuePanel = ({
           )}
           {!unscheduled && issue.id && isChief && issue.kind !== 'leave' && (
             <div className='mt-4 flex flex-col items-start gap-2'>
-              <Label htmlFor='jigyo-revise-size' size='sm'>
+              <Label htmlFor='nishukan-revise-size' size='sm'>
                 規模
               </Label>
               <select
-                id='jigyo-revise-size'
+                id='nishukan-revise-size'
                 className={compactField}
                 value={reviseSize}
                 onChange={(e) => {
@@ -1259,11 +1259,11 @@ const IssuePanel = ({
           )}
           {issue.kind !== 'leave' && (
             <div className='mt-4 flex flex-col gap-2'>
-              <Label htmlFor='jigyo-project-choice' size='sm'>
+              <Label htmlFor='nishukan-project-choice' size='sm'>
                 事業
               </Label>
               <select
-                id='jigyo-project-choice'
+                id='nishukan-project-choice'
                 className={`${compactField} min-w-48`}
                 disabled={draftRoutine}
                 value={projectChoice}
@@ -1285,11 +1285,11 @@ const IssuePanel = ({
             </div>
           )}
           <div className='mt-4 flex flex-col gap-2'>
-            <Label htmlFor='jigyo-note' size='sm'>
+            <Label htmlFor='nishukan-note' size='sm'>
               メモ
             </Label>
             <textarea
-              id='jigyo-note'
+              id='nishukan-note'
               className={fieldClass}
               rows={6}
               value={note}
@@ -1334,10 +1334,10 @@ const IssuePanel = ({
               setComment('');
             }}
           >
-            <Label htmlFor='jigyo-comment' size='sm'>
+            <Label htmlFor='nishukan-comment' size='sm'>
               コメント
             </Label>
-            <textarea id='jigyo-comment' className={fieldClass} rows={2} value={comment} onChange={(e) => setComment(e.target.value)} />
+            <textarea id='nishukan-comment' className={fieldClass} rows={2} value={comment} onChange={(e) => setComment(e.target.value)} />
             <div>
               <Button type='submit' variant='outline' size='sm' aria-disabled={busy || !issue.id || !comment.trim()}>
                 書く
@@ -1371,7 +1371,7 @@ const Setup = ({
   onHeadcount,
   onReceipt,
 }: {
-  home: JigyoHome;
+  home: NishukanHome;
   busy: boolean;
   receiptKey: string | null;
   onChief: (userId: string) => void;
@@ -1465,11 +1465,11 @@ const Setup = ({
             <p className='m-0 text-std-16N-170 text-solid-gray-700'>
               同時に働ける人数です。祝日が1日あると、その日は全員が休むものとして、人数ぶんの規模が期枠から引かれます。5人なら、祝日1日で規模5です。いまの人数は {home.headcount ?? '未設定'} です。
             </p>
-            <Label htmlFor='jigyo-headcount' size='sm'>
+            <Label htmlFor='nishukan-headcount' size='sm'>
               チームの人数
             </Label>
             <input
-              id='jigyo-headcount'
+              id='nishukan-headcount'
               type='number'
               min={1}
               className={fieldClass}
@@ -1488,11 +1488,11 @@ const Setup = ({
               <p className='m-0 text-std-16N-170 text-solid-gray-700'>
                 今期枠にどの作業を入れるか、規模、完了の判定を決める人です。チームに一人だけ任命します。いまの所属長は {home.chiefUserId || '未設定'} です。
               </p>
-              <Label htmlFor='jigyo-chief' size='sm'>
+              <Label htmlFor='nishukan-chief' size='sm'>
                 利用者 ID
               </Label>
               <p className='m-0 text-dns-14N-130 text-solid-gray-600'>ログインに使っている ID を書きます。</p>
-              <input id='jigyo-chief' className={fieldClass} value={chief} onChange={(e) => setChief(e.target.value)} />
+              <input id='nishukan-chief' className={fieldClass} value={chief} onChange={(e) => setChief(e.target.value)} />
               <div>
                 <Button type='submit' variant='outline' size='sm' aria-disabled={busy || !chief.trim()}>
                   任命する
@@ -1519,29 +1519,29 @@ const Setup = ({
                         if (await onUpdateProject(project.id, projectDraft)) setEditingProject(null);
                       })}
                     >
-                      <Label htmlFor={`jigyo-edit-project-name-${project.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-project-name-${project.id}`} size='sm'>
                         名前
                       </Label>
                       <input
-                        id={`jigyo-edit-project-name-${project.id}`}
+                        id={`nishukan-edit-project-name-${project.id}`}
                         className={fieldClass}
                         value={projectDraft.name}
                         onChange={(e) => setProjectDraft({ ...projectDraft, name: e.target.value })}
                       />
-                      <Label htmlFor={`jigyo-edit-project-key-${project.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-project-key-${project.id}`} size='sm'>
                         記号
                       </Label>
                       <input
-                        id={`jigyo-edit-project-key-${project.id}`}
+                        id={`nishukan-edit-project-key-${project.id}`}
                         className={fieldClass}
                         value={projectDraft.key}
                         onChange={(e) => setProjectDraft({ ...projectDraft, key: e.target.value })}
                       />
-                      <Label htmlFor={`jigyo-edit-project-mode-${project.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-project-mode-${project.id}`} size='sm'>
                         進め方
                       </Label>
                       <select
-                        id={`jigyo-edit-project-mode-${project.id}`}
+                        id={`nishukan-edit-project-mode-${project.id}`}
                         className={fieldClass}
                         value={projectDraft.mode}
                         onChange={(e) => setProjectDraft({ ...projectDraft, mode: e.target.value })}
@@ -1611,21 +1611,21 @@ const Setup = ({
             )}
           >
             <h2 className='m-0 text-std-16B-170'>事業を作る</h2>
-            <Label htmlFor='jigyo-project-name' size='sm'>
+            <Label htmlFor='nishukan-project-name' size='sm'>
               名前
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>取り組みの名前です。画面の事業の選択に出ます。</p>
-            <input id='jigyo-project-name' className={fieldClass} value={projectName} onChange={(e) => setProjectName(e.target.value)} />
-            <Label htmlFor='jigyo-project-key' size='sm'>
+            <input id='nishukan-project-name' className={fieldClass} value={projectName} onChange={(e) => setProjectName(e.target.value)} />
+            <Label htmlFor='nishukan-project-key' size='sm'>
               記号
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>事業を短く示す印です。カードには出ません。</p>
-            <input id='jigyo-project-key' className={fieldClass} value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
-            <Label htmlFor='jigyo-project-mode' size='sm'>
+            <input id='nishukan-project-key' className={fieldClass} value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
+            <Label htmlFor='nishukan-project-mode' size='sm'>
               進め方
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>計画は期枠で進める仕事、定常は繰り返し来る仕事のまとまりです。定型は定常の事業に作ります。</p>
-            <select id='jigyo-project-mode' className={fieldClass} value={projectMode} onChange={(e) => setProjectMode(e.target.value)}>
+            <select id='nishukan-project-mode' className={fieldClass} value={projectMode} onChange={(e) => setProjectMode(e.target.value)}>
               <option value='plan'>計画</option>
               <option value='routine'>定常</option>
             </select>
@@ -1665,11 +1665,11 @@ const Setup = ({
                         if (saved) setEditingTemplate(null);
                       })}
                     >
-                      <Label htmlFor={`jigyo-edit-template-project-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-project-${template.id}`} size='sm'>
                         定常の事業
                       </Label>
                       <select
-                        id={`jigyo-edit-template-project-${template.id}`}
+                        id={`nishukan-edit-template-project-${template.id}`}
                         className={fieldClass}
                         value={templateDraft.projectId}
                         onChange={(e) => setTemplateDraft({ ...templateDraft, projectId: e.target.value })}
@@ -1680,20 +1680,20 @@ const Setup = ({
                           </option>
                         ))}
                       </select>
-                      <Label htmlFor={`jigyo-edit-template-name-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-name-${template.id}`} size='sm'>
                         分類の名前
                       </Label>
                       <input
-                        id={`jigyo-edit-template-name-${template.id}`}
+                        id={`nishukan-edit-template-name-${template.id}`}
                         className={fieldClass}
                         value={templateDraft.name}
                         onChange={(e) => setTemplateDraft({ ...templateDraft, name: e.target.value })}
                       />
-                      <Label htmlFor={`jigyo-edit-template-size-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-size-${template.id}`} size='sm'>
                         規模
                       </Label>
                       <select
-                        id={`jigyo-edit-template-size-${template.id}`}
+                        id={`nishukan-edit-template-size-${template.id}`}
                         className={fieldClass}
                         value={templateDraft.size}
                         onChange={(e) => setTemplateDraft({ ...templateDraft, size: e.target.value })}
@@ -1704,20 +1704,20 @@ const Setup = ({
                           </option>
                         ))}
                       </select>
-                      <Label htmlFor={`jigyo-edit-template-done-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-done-${template.id}`} size='sm'>
                         完了条件
                       </Label>
                       <input
-                        id={`jigyo-edit-template-done-${template.id}`}
+                        id={`nishukan-edit-template-done-${template.id}`}
                         className={fieldClass}
                         value={templateDraft.completionText}
                         onChange={(e) => setTemplateDraft({ ...templateDraft, completionText: e.target.value })}
                       />
-                      <Label htmlFor={`jigyo-edit-template-mode-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-mode-${template.id}`} size='sm'>
                         決め方
                       </Label>
                       <select
-                        id={`jigyo-edit-template-mode-${template.id}`}
+                        id={`nishukan-edit-template-mode-${template.id}`}
                         className={fieldClass}
                         value={templateDraft.completionMode}
                         onChange={(e) => setTemplateDraft({ ...templateDraft, completionMode: e.target.value })}
@@ -1725,11 +1725,11 @@ const Setup = ({
                         <option value='objective'>客観評価</option>
                         <option value='chief'>所属長の判定</option>
                       </select>
-                      <Label htmlFor={`jigyo-edit-template-checks-${template.id}`} size='sm'>
+                      <Label htmlFor={`nishukan-edit-template-checks-${template.id}`} size='sm'>
                         確認項目
                       </Label>
                       <textarea
-                        id={`jigyo-edit-template-checks-${template.id}`}
+                        id={`nishukan-edit-template-checks-${template.id}`}
                         className={fieldClass}
                         rows={3}
                         value={templateDraft.checks}
@@ -1818,11 +1818,11 @@ const Setup = ({
             {routine.length === 0 && (
               <p className='m-0 text-std-16N-170 text-solid-gray-700'>先に、進め方を定常にした事業を作っておきます。事業を作れるのはチームの管理者です。</p>
             )}
-            <Label htmlFor='jigyo-template-project' size='sm'>
+            <Label htmlFor='nishukan-template-project' size='sm'>
               定常の事業
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>この分類を置く事業です。</p>
-            <select id='jigyo-template-project' className={fieldClass} value={templateProject} onChange={(e) => setTemplateProject(e.target.value)}>
+            <select id='nishukan-template-project' className={fieldClass} value={templateProject} onChange={(e) => setTemplateProject(e.target.value)}>
               <option value=''>選ぶ</option>
               {routine.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -1830,40 +1830,40 @@ const Setup = ({
                 </option>
               ))}
             </select>
-            <Label htmlFor='jigyo-template-name' size='sm'>
+            <Label htmlFor='nishukan-template-name' size='sm'>
               分類の名前
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>ボタンに出る名前です。1件ごとの名称は、ボタンを押したあとに書きます。</p>
-            <input id='jigyo-template-name' className={fieldClass} value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
-            <Label htmlFor='jigyo-template-size' size='sm'>
+            <input id='nishukan-template-name' className={fieldClass} value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
+            <Label htmlFor='nishukan-template-size' size='sm'>
               規模
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>この分類の初期の規模です。1は1人の1日、最小は0.25です。1件ごとに後から変えられます。</p>
-            <select id='jigyo-template-size' className={fieldClass} value={templateSize} onChange={(e) => setTemplateSize(e.target.value)}>
+            <select id='nishukan-template-size' className={fieldClass} value={templateSize} onChange={(e) => setTemplateSize(e.target.value)}>
               {SIZE_OPTIONS.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
             </select>
-            <Label htmlFor='jigyo-template-done' size='sm'>
+            <Label htmlFor='nishukan-template-done' size='sm'>
               完了条件
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>この分類の仕事が終わったと言える状態です。新しい1件にコピーされます。</p>
-            <input id='jigyo-template-done' className={fieldClass} value={templateDone} onChange={(e) => setTemplateDone(e.target.value)} />
-            <Label htmlFor='jigyo-template-mode' size='sm'>
+            <input id='nishukan-template-done' className={fieldClass} value={templateDone} onChange={(e) => setTemplateDone(e.target.value)} />
+            <Label htmlFor='nishukan-template-mode' size='sm'>
               決め方
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>客観評価は確認項目が揃ったら完了です。所属長の判定は、所属長が完了にします。</p>
-            <select id='jigyo-template-mode' className={fieldClass} value={templateMode} onChange={(e) => setTemplateMode(e.target.value)}>
+            <select id='nishukan-template-mode' className={fieldClass} value={templateMode} onChange={(e) => setTemplateMode(e.target.value)}>
               <option value='objective'>客観評価</option>
               <option value='chief'>所属長の判定</option>
             </select>
-            <Label htmlFor='jigyo-template-checks' size='sm'>
+            <Label htmlFor='nishukan-template-checks' size='sm'>
               確認項目
             </Label>
             <p className='m-0 text-dns-14N-130 text-solid-gray-600'>客観評価のときに、揃ったかを見る項目です。1行に1つ書きます。</p>
-            <textarea id='jigyo-template-checks' className={fieldClass} rows={3} value={templateCheck} onChange={(e) => setTemplateCheck(e.target.value)} />
+            <textarea id='nishukan-template-checks' className={fieldClass} rows={3} value={templateCheck} onChange={(e) => setTemplateCheck(e.target.value)} />
             <div>
               <Button type='submit' variant='outline' size='sm' aria-disabled={busy}>
                 登録する

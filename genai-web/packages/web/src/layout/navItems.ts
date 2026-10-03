@@ -8,7 +8,7 @@ import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
   useDoccheckAvailable,
-  useJigyoAvailable,
+  useNishukanAvailable,
   useNotebookAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
@@ -96,10 +96,10 @@ export const SENGOKU_PATH = '/sengoku';
 export const SENGOKU_EXAPP_ID = 'sengoku';
 
 /** 二週間の仕事は汎用 exApp フォームではなく専用ページで提供する */
-export const JIGYO_PATH = '/nishukan';
+export const NISHUKAN_PATH = '/nishukan';
 
 /** 二週間の仕事 exApp の識別子（専用ページへ振り替える対象） */
-export const JIGYO_EXAPP_ID = 'jigyo';
+export const NISHUKAN_EXAPP_ID = 'nishukan';
 
 /** 旧ヒアリングシート ID（ピン留めの振り替え用） */
 export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
@@ -146,7 +146,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
-  const jigyoAvailable = useJigyoAvailable();
+  const nishukanAvailable = useNishukanAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -292,12 +292,12 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
-    if (jigyoAvailable && listed(JIGYO_EXAPP_ID)) {
+    if (nishukanAvailable && listed(NISHUKAN_EXAPP_ID)) {
       items.push({
-        label: nameOf(JIGYO_EXAPP_ID, '二週間の仕事'),
-        to: JIGYO_PATH,
+        label: nameOf(NISHUKAN_EXAPP_ID, '二週間の仕事'),
+        to: NISHUKAN_PATH,
         description: descOf(
-          JIGYO_EXAPP_ID,
+          NISHUKAN_EXAPP_ID,
           'チームの仕事を２週間単位で区切り、その中で何をどこまでやるかを管理します。',
         ),
       });
@@ -357,7 +357,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     notebookAvailable,
     sshAvailable,
     sengokuAvailable,
-    jigyoAvailable,
+    nishukanAvailable,
     registryApps,
     catalogLoaded,
     running,
@@ -414,8 +414,8 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   if (item.app.value === SENGOKU_EXAPP_ID) {
     return SENGOKU_PATH;
   }
-  if (item.app.value === JIGYO_EXAPP_ID) {
-    return JIGYO_PATH;
+  if (item.app.value === NISHUKAN_EXAPP_ID) {
+    return NISHUKAN_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {
