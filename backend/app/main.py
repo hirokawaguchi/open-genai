@@ -148,8 +148,8 @@ SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 # 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
 
-# 二週間の仕事（Compose profiles: ["jigyo"]）。実 API は /nishukan/* プロキシ。
-JIGYO_APP_URL = os.environ.get("JIGYO_APP_URL", "http://jigyo-app:8020/invoke")
+# 二週間の仕事（Compose profiles: ["nishukan"]）。実 API は /nishukan/* プロキシ。
+JIGYO_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
@@ -638,7 +638,7 @@ JIGYO_SEED: dict[str, Any] = {
         "- 専用ページ「二週間の仕事」で、チームの所属長・事業・定型を登録します。\n"
         "- 計画の課題を期枠へ入れるのは所属長です。完了は確認項目が揃ったときか、所属長の判定です。\n"
         "- 定常は定型のボタンを一つ押すと今期枠に入ります。外部システムは受付鍵で同じ API を呼びます。\n"
-        "- 有効化: `docker compose --profile jigyo up -d` または `COMPOSE_PROFILES=jigyo`。\n"
+        "- 有効化: `docker compose --profile nishukan up -d` または `COMPOSE_PROFILES=nishukan`。\n"
     ),
     "copyable": False,
     "status": "published",
@@ -4588,8 +4588,8 @@ async def _proxy_jigyo(
             content={
                 "error": (
                     "二週間の仕事に接続できませんでした。"
-                    "有効化するには `docker compose --profile jigyo up -d` "
-                    "または `COMPOSE_PROFILES=jigyo` を設定してください。"
+                    "有効化するには `docker compose --profile nishukan up -d` "
+                    "または `COMPOSE_PROFILES=nishukan` を設定してください。"
                     f"（詳細: {e}）"
                 ),
                 "enabled": False,

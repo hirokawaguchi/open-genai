@@ -171,7 +171,7 @@ const HelpDialog = ({
 );
 
 /**
- * 二週間の仕事。Compose profiles: ["jigyo"] 未起動時は有効化手順を案内する。
+ * 二週間の仕事。Compose profiles: ["nishukan"] 未起動時は有効化手順を案内する。
  * 課題は個人に割り当てない。期枠と優先度と完了の判定は所属長が行う。
  */
 export const JigyoPage = () => {
@@ -221,7 +221,7 @@ export const JigyoPage = () => {
         <p className='text-dns-16N-130 text-solid-gray-800' role='alert'>
           {loadError ||
             configError ||
-            '二週間の仕事はまだ有効になっていません。`docker compose --profile jigyo up -d` で起動してください。'}
+            '二週間の仕事はまだ有効になっていません。`docker compose --profile nishukan up -d` で起動してください。'}
         </p>
       </Shell>
     );
