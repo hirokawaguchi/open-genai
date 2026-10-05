@@ -141,7 +141,10 @@ export const DiagramWorkspacePage = () => {
     };
   }, []);
 
-  const showDiagram = (diagram: SavedDiagram) => {
+  const paneFor = (diagram: SavedDiagram): Pane =>
+    xmlLooksConverted(diagram.drawioXml || '') ? 'edit' : 'draft';
+
+  const showDiagram = (diagram: SavedDiagram, nextPane: Pane) => {
     nonceRef.current += 1;
     setCurrent(diagram);
     setInstruction(diagram.instruction || '');
@@ -153,13 +156,14 @@ export const DiagramWorkspacePage = () => {
     });
     setSaveState('');
     setNotice('');
-    setPane('edit');
+    setPane(nextPane);
   };
 
   const openSaved = async (diagramId: string) => {
     setBusy(true);
     try {
-      showDiagram(await getDiagram(diagramId));
+      const diagram = await getDiagram(diagramId);
+      showDiagram(diagram, paneFor(diagram));
     } catch (error: unknown) {
       setNotice(errorText(error, '図を開けませんでした'));
     } finally {
@@ -181,7 +185,7 @@ export const DiagramWorkspacePage = () => {
       });
       setDiagrams((prev) => [toSummary(diagram), ...prev]);
       setNewName('');
-      showDiagram(diagram);
+      showDiagram(diagram, 'draft');
     } catch (error: unknown) {
       setNotice(errorText(error, '図を作成できませんでした'));
     } finally {
@@ -205,7 +209,7 @@ export const DiagramWorkspacePage = () => {
         drawioXml: source.drawioXml || BLANK_DRAWIO_XML,
       });
       setDiagrams((prev) => [toSummary(diagram), ...prev]);
-      showDiagram(diagram);
+      showDiagram(diagram, paneFor(diagram));
     } catch (error: unknown) {
       setNotice(errorText(error, '図を複製できませんでした'));
     } finally {
@@ -728,7 +732,9 @@ export const DiagramWorkspacePage = () => {
           </CustomDialogHeader>
           <CustomDialogBody>
             <div className='space-y-3 text-std-16N-170 text-solid-gray-800'>
-              <p>図一覧で名前を付けて作成します。名前の変更、複製、削除も一覧で行います。</p>
+              <p>
+                図一覧で名前を付けて作成すると、下書きタブが開きます。名前の変更、複製、削除も一覧で行います。図がまだ無いときは「開く」も下書きを開きます。
+              </p>
               <p>
                 「下書き」タブで図の種類を選び、サンプルを文章欄へ入れられます。文章を書き換えても図はまだ変わりません。「この文章で下書きを作る」を押すと、その文章から図を作り直して「編集」タブに移ります。
               </p>
