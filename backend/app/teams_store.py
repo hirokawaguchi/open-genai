@@ -2094,6 +2094,71 @@ def create_exapp_history(data: dict[str, Any]) -> dict[str, Any]:
     return _row_to_history(r)
 
 
+def update_exapp_history(
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    *,
+    user_id: str,
+    tenant_id: str,
+    outputs: str | None = None,
+    status: str | None = None,
+    progress: str | None = None,
+    artifacts: Any = None,
+    update_artifacts: bool = False,
+) -> dict[str, Any] | None:
+    """実行履歴の状態と出力を更新する。本人・同一棟の1件だけを対象にする。"""
+    tenant_id = _scope_tenant_id(tenant_id)
+    sets: list[str] = []
+    params: list[Any] = []
+    if outputs is not None:
+        sets.append("outputs = ?")
+        params.append(outputs)
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if progress is not None:
+        sets.append("progress = ?")
+        params.append(progress)
+    if update_artifacts:
+        sets.append("artifacts = ?")
+        params.append(
+            json.dumps(artifacts, ensure_ascii=False) if artifacts is not None else None
+        )
+    if not sets:
+        return get_exapp_history(
+            team_id, ex_app_id, created_date, user_id, tenant_id
+        )
+    params.extend([team_id, ex_app_id, created_date, user_id, tenant_id])
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            f"UPDATE exapp_histories SET {', '.join(sets)}"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+            " AND userId = ? AND tenantId = ?",
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+        r = conn.execute(
+            "SELECT * FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+            " AND userId = ? AND tenantId = ?",
+            (team_id, ex_app_id, created_date, user_id, tenant_id),
+        ).fetchone()
+    return _row_to_history(r) if r else None
+
+
+def fail_in_progress_exapp_histories(ex_app_id: str, message: str) -> int:
+    """残った受付中・処理中の履歴をエラーにする。再起動で消えたジョブ向け。"""
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            "UPDATE exapp_histories SET status = 'ERROR', progress = '', outputs = ?"
+            " WHERE exAppId = ? AND status IN ('IN_PROGRESS', 'ACCEPTED')",
+            (message, ex_app_id),
+        )
+        return int(cur.rowcount)
+
+
 def list_exapp_histories(
     team_id: str,
     ex_app_id: str,

@@ -336,6 +336,14 @@ KNOWLEDGE_SEED = _builtin_seed(
 
 # 文字起こし(Whisper) AI アプリ
 WHISPER_APP_URL = os.environ.get("WHISPER_APP_URL", "http://whisper-app:8002/invoke")
+# 受け付けてすぐ返し、本体はバックグラウンドで待つ。前段が応答待ちを数十秒で切るため。
+WHISPER_JOB_TIMEOUT = 3600.0
+WHISPER_PROGRESS = "文字起こしを実行しています。完了まで数分かかることがあります。"
+WHISPER_ACCEPTED_MESSAGE = (
+    "文字起こしを開始しました。この画面のまま待つか、あとで利用履歴を開いてください。"
+)
+WHISPER_INTERRUPTED_MESSAGE = "処理が中断されました。再度実行してください。"
+_whisper_tasks: set[asyncio.Task[None]] = set()
 # アップロード欄の表示は audio/* / video/* で代表的な案内に縮約する。
 # 拡張子は使い方の表にある形式を落とさないためのフォールバック。
 _WHISPER_ACCEPT = (
@@ -1644,6 +1652,14 @@ def _startup() -> None:
     security_warn.warn_insecure_defaults()
     storage.init_db()
     teams_store.init_db(seed_exapps=EXAPP_SEEDS)
+    try:
+        n = teams_store.fail_in_progress_exapp_histories(
+            "whisper", WHISPER_INTERRUPTED_MESSAGE
+        )
+        if n:
+            print(f"[startup] 中断した文字起こしをエラーにしました: {n}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] 中断した文字起こしの整理に失敗: {e}")
     # リネーム前の未編集シード文言（例: 旧「情報化企画書エディタ」）を現行シードへ揃える。
     try:
         _reconcile_stale_seed_labels()
@@ -3762,6 +3778,188 @@ def _feature_disabled(
     )
 
 
+def _spawn_whisper_task(coro: Any) -> None:
+    """バックグラウンドの文字起こしを、応答後も回収されないように保持する。"""
+    task = asyncio.create_task(coro)
+    _whisper_tasks.add(task)
+    task.add_done_callback(_whisper_tasks.discard)
+
+
+async def _finish_whisper_job(
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    inputs: dict[str, Any],
+    team_id: str,
+    ex_app_id: str,
+    created: str,
+    user_id: str,
+    tenant_id: str,
+    session_id: str,
+    started: str,
+    audit_input: str,
+    audit_user: dict[str, Any],
+) -> None:
+    """文字起こしの完了を待ち、同じ履歴行を完了またはエラーへ更新する。"""
+    outputs = ""
+    status_code = 502
+    try:
+        async with httpx.AsyncClient(timeout=WHISPER_JOB_TIMEOUT) as client:
+            res = await client.post(
+                endpoint, json={"inputs": inputs}, headers=headers
+            )
+        if res.status_code != 200:
+            data: dict[str, Any] = {}
+            raw_body = ""
+            try:
+                parsed = res.json()
+                if isinstance(parsed, dict):
+                    data = parsed
+            except Exception:  # noqa: BLE001
+                raw_body = (res.text or "")[:1000]
+            print(
+                f"[whisper] 文字起こし呼び出し失敗 status={res.status_code} "
+                f"error_code={data.get('error_code')} body={raw_body or data}"
+            )
+            status_code, outputs, _error_code = _normalize_exapp_error(
+                data.get("error_code"), http_status=res.status_code
+            )
+            job_status = "ERROR"
+        else:
+            data = res.json()
+            raw_outputs = data.get("outputs", "")
+            outputs = (
+                raw_outputs
+                if isinstance(raw_outputs, str)
+                else json.dumps(raw_outputs, ensure_ascii=False)
+            )
+            status_code = 200
+            job_status = "COMPLETED"
+    except httpx.HTTPError as e:
+        print(f"[whisper] 文字起こし接続失敗: {e!r}")
+        status_code, outputs, _error_code = _normalize_exapp_error("CONNECTION")
+        job_status = "ERROR"
+    except Exception as e:  # noqa: BLE001
+        print(f"[whisper] 文字起こしの完了処理に失敗: {e}")
+        status_code, outputs, _error_code = _normalize_exapp_error("WORKFLOW_ERROR")
+        job_status = "ERROR"
+
+    try:
+        teams_store.update_exapp_history(
+            team_id,
+            ex_app_id,
+            created,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            outputs=outputs,
+            status=job_status,
+            progress="",
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[whisper] 履歴の更新に失敗: {e}")
+    try:
+        audit.record(
+            None,
+            action="exapp.invoke",
+            teamId=team_id,
+            exAppId=ex_app_id,
+            session_id=session_id or None,
+            status=status_code,
+            input_text=audit_input,
+            output_text=outputs,
+            user_id=audit_user.get("user_id") or "",
+            user_email=audit_user.get("user_email") or "",
+            user_name=audit_user.get("user_name") or "",
+            groups=audit_user.get("groups") or [],
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[whisper] 監査ログの記録に失敗: {e}")
+    ended = _now_iso()
+    print(
+        f"[whisper] 文字起こし終了 status={job_status} "
+        f"started={started} ended={ended} createdDate={created}"
+    )
+
+
+async def _accept_whisper_invoke(
+    *,
+    user_id: str,
+    claims: dict[str, Any],
+    team_id: str,
+    ex_app_id: str,
+    app_def: dict[str, Any],
+    inputs: dict[str, Any],
+    session_id: str,
+    started: str,
+    invoke_headers: dict[str, str],
+) -> JSONResponse:
+    """文字起こしを履歴へ受け付け、応答を返してから本体を走らせる。"""
+    team = teams_store.get_team(team_id)
+    active = _active_tenant_id(user_id, claims)
+    try:
+        if _has_no_tenant(active):
+            raise ValueError("棟が指定されていません")
+        saved = teams_store.create_exapp_history(
+            {
+                "teamId": team_id,
+                "teamName": team["teamName"] if team else "",
+                "exAppId": ex_app_id,
+                "exAppName": app_def.get("exAppName", ""),
+                "userId": user_id,
+                "tenantId": active,
+                "inputs": history_inputs(inputs),
+                "outputs": "",
+                "status": "IN_PROGRESS",
+                "progress": WHISPER_PROGRESS,
+                "sessionId": session_id or None,
+            }
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[whisper] 履歴の受付に失敗: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "文字起こしの受付に失敗しました。時間をおいて再度お試しください。"},
+        )
+
+    created = str(saved["createdDate"])
+    audit_input = (
+        json.dumps(_redact_for_audit(inputs), ensure_ascii=False) if inputs else ""
+    )
+    _spawn_whisper_task(
+        _finish_whisper_job(
+            endpoint=app_def["endpoint"],
+            headers=invoke_headers,
+            inputs=inputs if isinstance(inputs, dict) else {},
+            team_id=team_id,
+            ex_app_id=ex_app_id,
+            created=created,
+            user_id=user_id,
+            tenant_id=active,
+            session_id=session_id,
+            started=started,
+            audit_input=audit_input,
+            audit_user={
+                "user_id": user_id,
+                "user_email": claims.get("email") or "",
+                "user_name": claims.get("name") or "",
+                "groups": list(claims.get("groups") or []),
+            },
+        )
+    )
+    print(f"[whisper] 文字起こしを受け付けました createdDate={created}")
+    return JSONResponse(
+        content={
+            "outputs": WHISPER_ACCEPTED_MESSAGE,
+            "status": "IN_PROGRESS",
+            "createdDate": created,
+            "timestamps": {
+                "processingStartedAt": started,
+                "processingEndedAt": started,
+            },
+        }
+    )
+
+
 @app.post("/exapps/invoke")
 async def invoke_exapp(request: Request) -> JSONResponse:
     """実行要求を、登録された AI アプリの endpoint へプロキシする。"""
@@ -3830,6 +4028,20 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     # モデル制御は保存時にチーム名→IDの解決・表示に全チーム(id+name)を使う
     if ex_app_id == "modelpolicy":
         _invoke_headers["x-teams"] = _all_teams_header()
+
+    # 文字起こしは完了まで数分〜十数分かかる。応答を待たずに受け付ける。
+    if ex_app_id == "whisper":
+        return await _accept_whisper_invoke(
+            user_id=user_id,
+            claims=claims,
+            team_id=team_id,
+            ex_app_id=ex_app_id,
+            app_def=app_def,
+            inputs=inputs if isinstance(inputs, dict) else {},
+            session_id=session_id,
+            started=started,
+            invoke_headers=_invoke_headers,
+        )
 
     def _persist_invoke(
         *,

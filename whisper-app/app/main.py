@@ -10,6 +10,7 @@ Amazon Transcribe + S3 への依存を、ローカルの faster-whisper で置�
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import tempfile
@@ -27,6 +28,8 @@ app = FastAPI(title="Open GENAI Whisper App", version="0.1.0")
 
 _model = None
 _model_error: str | None = None
+# モデルと展開した音声でメモリを使うため、文字起こしは1本ずつ行う。
+_transcribe_lock = asyncio.Lock()
 
 
 def _get_model():
@@ -107,11 +110,25 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(raw)
         tmp_path = tmp.name
+    del raw
 
+    async with _transcribe_lock:
+        try:
+            outputs = await asyncio.to_thread(_transcribe_file, tmp_path, lang_arg)
+            return {"outputs": outputs}
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+def _transcribe_file(tmp_path: str, lang_arg: str | None) -> str:
+    """同期の文字起こし。イベントループを止めないようスレッドから呼ぶ。"""
     try:
         model = _get_model()
     except Exception as e:  # noqa: BLE001
-        return {"outputs": f"[文字起こしモデルの読み込みに失敗しました] {e}"}
+        return f"[文字起こしモデルの読み込みに失敗しました] {e}"
 
     try:
         segments, info = model.transcribe(tmp_path, language=lang_arg, vad_filter=True)
@@ -122,15 +139,9 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
             lines.append(f"[{start} - {end}] {seg.text.strip()}")
         transcript = "\n".join(lines) if lines else "（音声から文字を検出できませんでした）"
         detected = getattr(info, "language", lang_arg or "auto")
-        outputs = f"**検出言語**: {detected}\n\n{transcript}"
-        return {"outputs": outputs}
+        return f"**検出言語**: {detected}\n\n{transcript}"
     except Exception as e:  # noqa: BLE001
-        return {"outputs": f"[文字起こし中にエラーが発生しました] {e}"}
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+        return f"[文字起こし中にエラーが発生しました] {e}"
 
 
 def _fmt_ts(seconds: float) -> str:
