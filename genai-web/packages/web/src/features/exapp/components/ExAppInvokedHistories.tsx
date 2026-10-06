@@ -26,6 +26,20 @@ export const ExAppInvokedHistories = (props: Props) => {
     };
   }, [mutate]);
 
+  const hasPending = histories.some(
+    (history) => history.status === 'IN_PROGRESS' || history.status === 'ACCEPTED',
+  );
+
+  useEffect(() => {
+    if (!hasPending) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      void mutate();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [hasPending, mutate]);
+
   const { listRef, loadMoreWithFocus } = useFocusNewItemOnLoadMore<HTMLDivElement>({
     itemsLength: histories.length,
     focusSelector: 'summary',

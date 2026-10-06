@@ -26,6 +26,9 @@ export type InvokeExAppResponse = {
     processingStartedAt: string;
   };
   usageMetadata?: UsageMetadata[];
+  // 文字起こしなど、完了を待たずに受け付ける実行で付く。
+  status?: ExAppInvokeStatus;
+  createdDate?: string;
 };
 
 export type Artifact = {

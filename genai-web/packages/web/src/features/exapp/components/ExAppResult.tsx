@@ -17,8 +17,10 @@ export const ExAppResult = (props: Props) => {
   const { shouldShowConversationHistory } = props;
   const { exAppResponse, requestLoading, error } = useExAppInvokeStore();
   const copyTextRef = useRef<HTMLDivElement>(null);
+  const waiting =
+    exAppResponse?.status === 'IN_PROGRESS' || exAppResponse?.status === 'ACCEPTED';
   const isInitial = !requestLoading && !error && !exAppResponse;
-  const showResult = !requestLoading && !error && exAppResponse !== null;
+  const showResult = !requestLoading && !waiting && !error && exAppResponse !== null;
 
   return (
     <>
@@ -41,7 +43,7 @@ export const ExAppResult = (props: Props) => {
 
         <ExAppArtifactDownloads artifacts={exAppResponse?.artifacts} />
 
-        {requestLoading && <ProgressIndicator className='my-0.5' />}
+        {(requestLoading || waiting) && <ProgressIndicator className='my-0.5' />}
 
         {showResult && (
           <div className='-mb-2 flex w-full justify-end'>
