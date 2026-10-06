@@ -24,6 +24,7 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
 import { useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
 import { formatNotebookMarkdown, stripCitationMarks, usedCitations } from './formatMarkdown';
 import { NotebookChat } from './NotebookChat';
@@ -333,6 +334,7 @@ export const NotebookPage = () => {
     if (!sessionId || !chatDraft.trim()) return;
     const q = chatDraft.trim();
     const prev = detail;
+    const localId = `local-${newId()}`;
     setChatDraft('');
     if (detail) {
       await mutateDetail(
@@ -341,7 +343,7 @@ export const NotebookPage = () => {
           messages: [
             ...(detail.messages ?? []),
             {
-              id: `local-${crypto.randomUUID()}`,
+              id: localId,
               role: 'user',
               content: q,
               created_at: new Date().toISOString(),
