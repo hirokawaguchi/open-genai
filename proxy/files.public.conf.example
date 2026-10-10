@@ -24,6 +24,9 @@ server {
     # ssl_certificate_key /path/to/privkey.pem;
 
     location /open-genai/ {
+        # 署名のない一覧と GET/HEAD は拒否する。受取 URL の X-Amz-Signature と
+        # UI サーバの Authorization は通す。署名の正しさは SeaweedFS が判定する。
+        include /etc/nginx/s3-require-signature.conf;
         limit_except GET HEAD {
             allow 192.0.2.10;  # UI サーバ（backend）の IP
             deny all;
@@ -39,6 +42,7 @@ server {
     }
 
     location = /open-genai {
+        include /etc/nginx/s3-require-signature.conf;
         limit_except GET HEAD {
             allow 192.0.2.10;
             deny all;

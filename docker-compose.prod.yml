@@ -163,6 +163,9 @@ services:
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
       # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
       - APP_JWT_TTL=${APP_JWT_TTL:-43200}
+      # ログイン後の API 回数（アカウント単位）。0 で無効。既定は 1 分に 300 件。
+      - API_ACCOUNT_RATE_LIMIT=${API_ACCOUNT_RATE_LIMIT:-300}
+      - API_ACCOUNT_RATE_WINDOW_SEC=${API_ACCOUNT_RATE_WINDOW_SEC:-60}
       # 起動時の既定パスワード警告用（Keycloak 本体の認証とは別。backend が検知して案内する）
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD を設定してください}
       - FILES_URL_SECRET=${FILES_URL_SECRET:-}
