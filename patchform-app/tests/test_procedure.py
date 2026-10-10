@@ -220,7 +220,9 @@ def test_review_stays_on_its_slot() -> None:
     assert cert["formal"][0]["result"] == "fail"
     assert cert["formal"][1]["result"] == "unknown"
     assert cert["content"][0]["text"] == "勤務先名が読める"
-    assert snap["cross"] == [{"id": "same", "text": "氏名が一致する"}]
+    assert cert["content"][0]["finding"]["result"] == "unknown"
+    assert snap["cross"][0]["text"] == "氏名が一致する"
+    assert snap["cross"][0]["finding"]["source"] == ""
 
     other = procedure.review_snapshot(mapping, {"who": "保護者の病気"}, [])
     assert [s["slot_id"] for s in other["slots"]] == ["yoshiki:guide"]

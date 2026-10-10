@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -566,7 +567,7 @@ def review_snapshot(
                 "formal": [
                     _formal_result(cid, slot_id, group) for cid in rev.get("formal") or []
                 ],
-                "content": list(rev.get("content") or []),
+                "content": [_snapshot_line(line) for line in rev.get("content") or []],
             }
         )
 
@@ -576,7 +577,7 @@ def review_snapshot(
             if not cid or cid in seen_cross:
                 continue
             seen_cross.add(cid)
-            cross_out.append({"id": cid, "text": line.get("text") or ""})
+            cross_out.append(_snapshot_line(line))
 
     block = mapping.get("review") if isinstance(mapping.get("review"), dict) else {}
     for rev in block.get("slots") or []:
@@ -595,3 +596,182 @@ def review_snapshot(
                 _take_slot(rev)
         _take_cross(rule.get("cross") or [])
     return {"slots": slots_out, "cross": cross_out}
+
+
+def _snapshot_line(line: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(line.get("id") or ""),
+        "text": str(line.get("text") or ""),
+        "finding": {"result": "unknown", "detail": "", "source": ""},
+    }
+
+
+def review_needs_clerk(snap: dict[str, Any]) -> bool:
+    """形式が揃っていない、または確認文がある。受付が目を通す。"""
+    for slot in snap.get("slots") or []:
+        if not isinstance(slot, dict):
+            continue
+        for formal in slot.get("formal") or []:
+            if isinstance(formal, dict) and formal.get("result") != "pass":
+                return True
+        if slot.get("content"):
+            return True
+    return bool(snap.get("cross"))
+
+
+def open_finding_lines(snap: dict[str, Any]) -> list[dict[str, str]]:
+    """職員がまだ確定していない確認文。"""
+    out: list[dict[str, str]] = []
+    for line in _walk_lines(snap):
+        current = line.get("finding") if isinstance(line.get("finding"), dict) else {}
+        if current.get("source") == "staff":
+            continue
+        out.append({"id": str(line.get("id") or ""), "text": str(line.get("text") or "")})
+    return out
+
+
+def _walk_lines(snap: dict[str, Any]):
+    for slot in snap.get("slots") or []:
+        if isinstance(slot, dict):
+            for line in slot.get("content") or []:
+                if isinstance(line, dict):
+                    yield line
+    for line in snap.get("cross") or []:
+        if isinstance(line, dict):
+            yield line
+
+
+def set_line_finding(
+    snap: dict[str, Any], line_id: str, result: str, detail: str, source: str
+) -> bool:
+    """確認文の所見だけを書く。本文は変えない。"""
+    for line in _walk_lines(snap):
+        if str(line.get("id") or "") != line_id:
+            continue
+        line["finding"] = {
+            "result": result,
+            "detail": detail[:200],
+            "source": source,
+        }
+        return True
+    return False
+
+
+def merge_model_findings(
+    snap: dict[str, Any], rows: list[Any], *, source: str = "model"
+) -> int:
+    """所見を足す。職員が確定した行は残す。"""
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rid = str(row.get("id") or "")
+        result = str(row.get("result") or "")
+        if rid and result in ("pass", "fail", "unknown"):
+            by_id[rid] = row
+    changed = 0
+    for line in _walk_lines(snap):
+        current = line.get("finding") if isinstance(line.get("finding"), dict) else {}
+        if current.get("source") == "staff":
+            continue
+        row = by_id.get(str(line.get("id") or ""))
+        if not row:
+            continue
+        line["finding"] = {
+            "result": row["result"],
+            "detail": str(row.get("detail") or "")[:200],
+            "source": source if source in ("model", "dify") else "model",
+        }
+        changed += 1
+    return changed
+
+
+ROUTE_STEPS = (
+    {"id": "desk", "label": "受付確認"},
+    {"id": "section", "label": "担当課"},
+    {"id": "confirm", "label": "確定"},
+)
+_ROUTE_IDS = tuple(step["id"] for step in ROUTE_STEPS)
+
+
+def default_handling() -> dict[str, Any]:
+    return {
+        "route": [
+            {"id": "desk", "label": "受付確認", "role": "受付"},
+            {"id": "section", "label": "担当課", "role": "担当課"},
+            {"id": "confirm", "label": "確定", "role": "受付"},
+        ],
+        "exit": "ledger",
+        "statuses": ["受理", "処理中", "完了"],
+    }
+
+
+def normalize_handling(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """確定前の3段と、確定後の行き先。段の名前は固定で、役割名だけを書く。"""
+    if raw is None or raw == "" or raw == {}:
+        return default_handling(), None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            return None, "確定前の経路を読めません"
+    if not isinstance(raw, dict):
+        return None, "確定前の経路を読めません"
+    roles: dict[str, str] = {}
+    for step in raw.get("route") or []:
+        if not isinstance(step, dict):
+            continue
+        sid = str(step.get("id") or "")
+        role = str(step.get("role") or "").strip()
+        if sid in _ROUTE_IDS and role:
+            roles[sid] = role[:40]
+    route = []
+    for step in default_handling()["route"]:
+        route.append({**step, "role": roles.get(step["id"], step["role"])})
+    exit_to = str(raw.get("exit") or "ledger").strip()
+    if exit_to not in ("ledger", "external"):
+        return None, "確定後の行き先が不正です"
+    statuses: list[str] = []
+    given = raw.get("statuses")
+    source = given if isinstance(given, list) and given else default_handling()["statuses"]
+    for item in source:
+        text = str(item or "").strip()
+        if text and text not in statuses:
+            statuses.append(text[:40])
+    if not statuses:
+        return None, "台帳の状態を1つ以上書いてください"
+    return {"route": route, "exit": exit_to, "statuses": statuses[:12]}, None
+
+
+def route_step(stage: str, status: str, action: str) -> tuple[str, str, str | None]:
+    """進む、戻す、差戻し。受理は最後の段からだけ。"""
+    action = (action or "").strip()
+    if action not in ("advance", "back", "return"):
+        return status, stage, "操作が不正です"
+    if status == "受理":
+        return status, stage, "確定済みです"
+    if status == "差戻し":
+        if action == "advance":
+            return "確認中", "desk", None
+        if action == "return":
+            return status, stage, "すでに差戻しです"
+        return status, stage, "これより前はありません"
+    if status == "未確認":
+        if action == "advance":
+            return "確認中", "desk", None
+        if action == "return":
+            return "差戻し", "", None
+        return status, stage, "これより前はありません"
+    if status != "確認中":
+        return status, stage, "提出後に進めます"
+    current = stage if stage in _ROUTE_IDS else "desk"
+    index = _ROUTE_IDS.index(current)
+    if action == "return":
+        return "差戻し", "", None
+    if action == "back":
+        if index == 0:
+            return status, current, "これより前はありません"
+        return "確認中", _ROUTE_IDS[index - 1], None
+    if index == len(_ROUTE_IDS) - 1:
+        return "受理", "confirm", None
+    return "確認中", _ROUTE_IDS[index + 1], None

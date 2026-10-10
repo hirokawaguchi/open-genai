@@ -78,6 +78,20 @@ export const PatchformProcedureEditPage = () => {
   const [description, setDescription] = useState('');
   const [guideFormId, setGuideFormId] = useState('');
   const [notifyEmails, setNotifyEmails] = useState('');
+  const [deskRole, setDeskRole] = useState('受付');
+  const [sectionRole, setSectionRole] = useState('担当課');
+  const [confirmRole, setConfirmRole] = useState('受付');
+  const [exitTo, setExitTo] = useState<'ledger' | 'external'>('ledger');
+  const [ledgerStatuses, setLedgerStatuses] = useState('受理\n処理中\n完了');
+  const [endpointUrl, setEndpointUrl] = useState('');
+  const [endpointKey, setEndpointKey] = useState('');
+  const [keySet, setKeySet] = useState(false);
+  const [sendMynumber, setSendMynumber] = useState(false);
+  const [reviewEngine, setReviewEngine] = useState<'openai' | 'dify'>('openai');
+  const [difyBaseUrl, setDifyBaseUrl] = useState('');
+  const [difyKey, setDifyKey] = useState('');
+  const [difyKeySet, setDifyKeySet] = useState(false);
+  const [difyStub, setDifyStub] = useState(false);
   const [ruleMap, setRuleMap] = useState<Map<string, ProcedureRule>>(new Map());
   const [bundleReview, setBundleReview] = useState<ProcedureReview>({ slots: [], cross: [] });
   const [pane, setPane] = useState<'edit' | 'preview'>('edit');
@@ -116,6 +130,22 @@ export const PatchformProcedureEditPage = () => {
     setDescription(procedure.description || '');
     setGuideFormId(procedure.guide_form_id);
     setNotifyEmails((procedure.notify_emails || []).join('\n'));
+    const roleOf = (id: string, fallback: string) =>
+      procedure.handling?.route?.find((step) => step.id === id)?.role || fallback;
+    setDeskRole(roleOf('desk', '受付'));
+    setSectionRole(roleOf('section', '担当課'));
+    setConfirmRole(roleOf('confirm', '受付'));
+    setExitTo(procedure.handling?.exit === 'external' ? 'external' : 'ledger');
+    setLedgerStatuses((procedure.handling?.statuses || ['受理', '処理中', '完了']).join('\n'));
+    setEndpointUrl(procedure.delivery?.url || '');
+    setEndpointKey('');
+    setKeySet(Boolean(procedure.delivery?.key_set));
+    setSendMynumber(Boolean(procedure.delivery?.send_mynumber));
+    setReviewEngine(procedure.review_call?.engine === 'dify' ? 'dify' : 'openai');
+    setDifyBaseUrl(procedure.review_call?.base_url || '');
+    setDifyKey('');
+    setDifyKeySet(Boolean(procedure.review_call?.key_set));
+    setDifyStub(Boolean(procedure.review_call?.stub));
     setRuleMap(rulesToMap(procedure.mapping?.rules || []));
     setBundleReview(procedure.mapping?.review || { slots: [], cross: [] });
   }, [procedure]);
@@ -185,6 +215,29 @@ export const PatchformProcedureEditPage = () => {
         .split(/[\n,、;]+/)
         .map((addr) => addr.trim())
         .filter(Boolean),
+      handling: {
+        route: [
+          { id: 'desk', label: '受付確認', role: deskRole.trim() || '受付' },
+          { id: 'section', label: '担当課', role: sectionRole.trim() || '担当課' },
+          { id: 'confirm', label: '確定', role: confirmRole.trim() || '受付' },
+        ],
+        exit: exitTo,
+        statuses: ledgerStatuses
+          .split(/[\n,、]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      },
+      delivery: {
+        url: endpointUrl.trim(),
+        send_mynumber: sendMynumber,
+        ...(endpointKey.trim() ? { key: endpointKey.trim() } : {}),
+      },
+      review_call: {
+        engine: reviewEngine,
+        base_url: difyBaseUrl.trim(),
+        stub: reviewEngine === 'dify' && difyStub,
+        ...(difyKey.trim() ? { api_key: difyKey.trim() } : {}),
+      },
     });
     if (saved) await mutate();
   };
@@ -457,6 +510,170 @@ export const PatchformProcedureEditPage = () => {
                 ) : null}
               </div>
             </div>
+            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+              <h2 className='text-std-18B-160'>所見の呼び出し</h2>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                この手続きの確認文への所見を、どこで書くかです。合否は職員が押します。
+              </p>
+              <fieldset className='flex flex-col gap-2'>
+                <legend className='text-dns-14N-130'>呼び出し先</legend>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-review-engine'
+                    checked={reviewEngine === 'openai'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setReviewEngine('openai')}
+                  />
+                  OpenAI 互換
+                </label>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-review-engine'
+                    checked={reviewEngine === 'dify'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setReviewEngine('dify')}
+                  />
+                  Dify
+                </label>
+              </fieldset>
+              {reviewEngine === 'dify' && (
+                <div className='flex flex-col gap-3'>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    Dify の API ベース
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={difyBaseUrl}
+                      disabled={!procedure.can_edit}
+                      placeholder='https://api.dify.ai/v1'
+                      onChange={(e) => setDifyBaseUrl(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    API キー
+                    <input
+                      type='password'
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={difyKey}
+                      disabled={!procedure.can_edit}
+                      placeholder={difyKeySet ? '設定済み。変えるときだけ入力' : ''}
+                      autoComplete='new-password'
+                      onChange={(e) => setDifyKey(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='checkbox'
+                      checked={difyStub}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setDifyStub(e.target.checked)}
+                    />
+                    接続せず、スタブで所見を返す
+                  </label>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    ワークフローは、確認文の id ごとに pass、fail、unknown と短い detail を findings として返します。ファイルを渡して文章で返すワークフローとは、入出力が違います。鍵は保存後に画面へ戻しません。
+                  </p>
+                </div>
+              )}
+            </section>
+            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+              <h2 className='text-std-18B-160'>確定前の経路</h2>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                提出後は、受付確認、担当課、確定の順です。進む、戻す、差戻しができます。確定すると、台帳の行になるか、受け口へ送られます。
+              </p>
+              <div className='grid gap-3 md:grid-cols-3'>
+                {(
+                  [
+                    ['受付確認', deskRole, setDeskRole],
+                    ['担当課', sectionRole, setSectionRole],
+                    ['確定', confirmRole, setConfirmRole],
+                  ] as const
+                ).map(([label, value, setValue]) => (
+                  <label key={label} className='flex flex-col gap-1 text-dns-14N-130'>
+                    {label}の役割
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={value}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
+              <fieldset className='flex flex-col gap-2'>
+                <legend className='text-dns-14N-130'>確定した後</legend>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-exit'
+                    checked={exitTo === 'ledger'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setExitTo('ledger')}
+                  />
+                  台帳で担当と状態を進める
+                </label>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-exit'
+                    checked={exitTo === 'external'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setExitTo('external')}
+                  />
+                  既存システムへ渡す
+                </label>
+              </fieldset>
+              {exitTo === 'external' && (
+                <div className='flex flex-col gap-3'>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    受け口の URL
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={endpointUrl}
+                      disabled={!procedure.can_edit}
+                      placeholder='https://example.lg.jp/intake'
+                      onChange={(e) => setEndpointUrl(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    受け口の鍵
+                    <input
+                      type='password'
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={endpointKey}
+                      disabled={!procedure.can_edit}
+                      placeholder={keySet ? '設定済み。変えるときだけ入力' : ''}
+                      autoComplete='new-password'
+                      onChange={(e) => setEndpointKey(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='checkbox'
+                      checked={sendMynumber}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setSendMynumber(e.target.checked)}
+                    />
+                    マイナンバーを含めて送る
+                  </label>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    確定すると、記入済みの項目をこの URL へ送ります。送れなかったときは、申請の画面から同じ版で送り直せます。鍵は保存後に画面へ戻しません。
+                  </p>
+                </div>
+              )}
+              {exitTo === 'ledger' && (
+                <label className='flex flex-col gap-1 text-dns-14N-130'>
+                  台帳の状態（1行に1つ。最初の行が確定時の状態）
+                  <textarea
+                    className='min-h-24 rounded-4 border border-solid-gray-420 px-3 py-2'
+                    value={ledgerStatuses}
+                    disabled={!procedure.can_edit}
+                    onChange={(e) => setLedgerStatuses(e.target.value)}
+                  />
+                </label>
+              )}
+            </section>
             <ProcedureSlotEditor
               fields={fields}
               styleForms={styleForms}

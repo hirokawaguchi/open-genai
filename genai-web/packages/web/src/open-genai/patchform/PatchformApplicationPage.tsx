@@ -22,7 +22,7 @@ import { usePatchformRoutes } from './routes';
 import { answerRows } from './runtime/formatAnswer';
 import { downloadApplicationReceipt } from './runtime/receipt';
 import { omitsNavigation } from './types';
-import type { ApplicationItem } from './types';
+import type { ApplicationItem, ReviewLine } from './types';
 import {
   usePatchformApplication,
   usePatchformApplicationItems,
@@ -34,6 +34,52 @@ import {
 } from './usePatchform';
 
 const OTHER_ATTACH_SLOT = 'attach:__other__';
+
+const findingLabel = (result?: string) =>
+  result === 'pass' ? '満たしている' : result === 'fail' ? '満たしていない' : '人が確認';
+
+function ReviewLineRow({
+  line,
+  busy,
+  onPick,
+}: {
+  line: ReviewLine;
+  busy: boolean;
+  onPick: (id: string, result: 'pass' | 'fail' | 'unknown') => void;
+}) {
+  const source =
+    line.finding?.source === 'staff'
+      ? '職員が確定'
+      :     line.finding?.source === 'model'
+        ? '所見'
+        : line.finding?.source === 'dify'
+          ? 'Dify'
+          : '';
+  return (
+    <div className='mt-2 rounded-8 bg-solid-gray-50 p-2'>
+      <p className='text-std-16N-170'>{line.text}</p>
+      <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+        {source ? `${source} · ` : ''}
+        {findingLabel(line.finding?.result)}
+        {line.finding?.detail ? `（${line.finding.detail}）` : ''}
+      </p>
+      <div className='mt-2 flex flex-wrap gap-2'>
+        {(['pass', 'fail', 'unknown'] as const).map((result) => (
+          <Button
+            key={result}
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={busy}
+            onClick={() => onPick(line.id, result)}
+          >
+            {findingLabel(result)}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const statusLabel: Record<string, string> = {
   none: '未充足',
@@ -90,7 +136,15 @@ export const PatchformApplicationPage = () => {
     busy,
     error: itemError,
   } = usePatchformApplicationItems();
-  const { setStatus, busy: statusBusy } = usePatchformProjectActions();
+  const {
+    setStatus,
+    moveRoute,
+    resendDelivery,
+    setReviewFinding,
+    generateReviewFindings,
+    busy: statusBusy,
+    error: reviewError,
+  } = usePatchformProjectActions();
   const { downloadItemFile, downloadItemTemplate } = usePatchformRuntime();
   const notice = application?.notice;
   const [catalogPick, setCatalogPick] = useState('');
@@ -198,6 +252,30 @@ export const PatchformApplicationPage = () => {
     if (!aid) return;
     if (!window.confirm('この内容で提出済みにします。よろしいですか？')) return;
     const updated = await setStatus(aid, '提出済');
+    if (updated) await mutate(updated, { revalidate: false });
+  };
+
+  const onRoute = async (action: 'advance' | 'back' | 'return') => {
+    if (!aid) return;
+    const updated = await moveRoute(aid, action);
+    if (updated) await mutate(updated, { revalidate: false });
+  };
+
+  const onResend = async () => {
+    if (!aid) return;
+    const updated = await resendDelivery(aid);
+    if (updated) await mutate(updated, { revalidate: false });
+  };
+
+  const onFinding = async (lineId: string, result: 'pass' | 'fail' | 'unknown') => {
+    if (!aid) return;
+    const updated = await setReviewFinding(aid, lineId, result);
+    if (updated) await mutate(updated, { revalidate: false });
+  };
+
+  const onGenerateFindings = async () => {
+    if (!aid) return;
+    const updated = await generateReviewFindings(aid);
     if (updated) await mutate(updated, { revalidate: false });
   };
 
@@ -515,8 +593,29 @@ export const PatchformApplicationPage = () => {
               <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
                 <h2 className='text-std-18B-160'>審査項目</h2>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  提出した時点の基準です。手続きをあとから直しても、この申請の項目は変わりません。
+                  提出した時点の基準です。手続きをあとから直しても、この申請の項目は変わりません。確認が残る申請は、受付が確認中になります。
                 </p>
+                <div>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    disabled={statusBusy}
+                    onClick={() => void onGenerateFindings()}
+                  >
+                    所見を出す
+                  </Button>
+                  {procedure?.review_call?.label ? (
+                    <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>
+                      呼び出しは{procedure.review_call.label}です。
+                    </p>
+                  ) : null}
+                </div>
+                {reviewError && (
+                  <p className='text-error-1' role='alert'>
+                    {reviewError}
+                  </p>
+                )}
                 {application.review.slots.map((slot) => (
                   <div key={slot.slot_id} className='rounded-8 border border-solid-gray-200 p-3'>
                     <h3 className='text-std-16B-150'>{slot.title || slot.slot_id}</h3>
@@ -538,24 +637,131 @@ export const PatchformApplicationPage = () => {
                         ))}
                       </ul>
                     )}
-                    {slot.content.length > 0 && (
-                      <ul className='mt-2 list-disc pl-5 text-std-16N-170'>
-                        {slot.content.map((line) => (
-                          <li key={line.id}>{line.text}</li>
-                        ))}
-                      </ul>
-                    )}
+                    {slot.content.map((line) => (
+                      <ReviewLineRow
+                        key={line.id}
+                        line={line}
+                        busy={statusBusy}
+                        onPick={(id, result) => void onFinding(id, result)}
+                      />
+                    ))}
                   </div>
                 ))}
                 {application.review.cross.length > 0 && (
                   <div>
                     <h3 className='text-std-16B-150'>枠をまたぐ確認</h3>
-                    <ul className='mt-1 list-disc pl-5 text-std-16N-170'>
-                      {application.review.cross.map((line) => (
-                        <li key={line.id}>{line.text}</li>
-                      ))}
-                    </ul>
+                    {application.review.cross.map((line) => (
+                      <ReviewLineRow
+                        key={line.id}
+                        line={line}
+                        busy={statusBusy}
+                        onPick={(id, result) => void onFinding(id, result)}
+                      />
+                    ))}
                   </div>
+                )}
+              </section>
+            )}
+            {readOnly && submitted && application?.route && (
+              <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                <h2 className='text-std-18B-160'>受付の経路</h2>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  {application.route.steps.map((step) => step.label).join(' → ')}
+                  。最後の「進む」で確定し、
+                  {application.route.exit === 'external'
+                    ? '既存システムへ送ります。'
+                    : '台帳に残します。'}
+                </p>
+                {application.reception_status === '受理' ? (
+                  application.ledger_id ? (
+                    <p>
+                      <Link
+                        to={`/patchform/ledger/${application.ledger_id}`}
+                        className='text-blue-900 underline-offset-2 hover:underline'
+                      >
+                        台帳の行を開く
+                      </Link>
+                    </p>
+                  ) : application.route.exit === 'external' ? (
+                    <div className='flex flex-col gap-2'>
+                      <p className='text-std-16N-170'>
+                        {application.delivery?.state === 'sent'
+                          ? `送りました。${
+                              application.delivery.receipt_no
+                                ? ` 受付番号 ${application.delivery.receipt_no}`
+                                : ''
+                            }`
+                          : application.delivery?.state === 'failed'
+                            ? `送れませんでした。${application.delivery.detail || ''}`
+                            : application.delivery?.state === 'pending'
+                              ? '送っています。'
+                              : 'まだ送っていません。'}
+                      </p>
+                      <div>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          disabled={statusBusy}
+                          onClick={() => void onResend()}
+                        >
+                          送り直す
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className='text-std-16N-170'>確定しました。</p>
+                  )
+                ) : (
+                  <>
+                    <p className='text-std-16N-170'>
+                      {application.reception_status === '差戻し'
+                        ? '差戻し'
+                        : `${
+                            application.route.steps.find(
+                              (step) => step.id === (application.reception_stage || 'desk'),
+                            )?.label || '受付確認'
+                          } · ${
+                            application.route.steps.find(
+                              (step) => step.id === (application.reception_stage || 'desk'),
+                            )?.role || ''
+                          }`}
+                    </p>
+                    <div className='flex flex-wrap gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        disabled={statusBusy}
+                        onClick={() => void onRoute('advance')}
+                      >
+                        進む
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        disabled={statusBusy}
+                        onClick={() => void onRoute('back')}
+                      >
+                        戻す
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        disabled={statusBusy}
+                        onClick={() => void onRoute('return')}
+                      >
+                        差戻し
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {reviewError && (
+                  <p className='text-error-1' role='alert'>
+                    {reviewError}
+                  </p>
                 )}
               </section>
             )}

@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,7 +20,7 @@ os.environ["PATCHFORM_SEED"] = ""
 
 from fastapi.testclient import TestClient
 
-from app import assist, store
+from app import assist, ledger, review_engine, spec, store
 from app.main import app
 
 
@@ -35,6 +38,11 @@ def _setup() -> tuple[TestClient, str]:
     os.close(fd)
     files_dir = tempfile.mkdtemp(prefix="pf-files-")
     os.environ["PATCHFORM_FILES_DIR"] = files_dir
+    ledger_fd, ledger_path = tempfile.mkstemp(suffix="-ledger.db")
+    os.close(ledger_fd)
+    os.environ["PATCHFORM_LEDGER_DB_PATH"] = ledger_path
+    os.environ["PATCHFORM_LEDGER_FILES_DIR"] = tempfile.mkdtemp(prefix="pf-ledger-")
+    ledger.reset_connection()
     store.reset_connection()
     store.DB_PATH = path
     store.init_db()
@@ -50,6 +58,16 @@ def _teardown(path: str) -> None:
     files_dir = os.environ.pop("PATCHFORM_FILES_DIR", "")
     if files_dir:
         shutil.rmtree(files_dir, ignore_errors=True)
+    ledger.reset_connection()
+    ledger_path = os.environ.pop("PATCHFORM_LEDGER_DB_PATH", "")
+    if ledger_path:
+        try:
+            os.remove(ledger_path)
+        except OSError:
+            pass
+    ledger_files = os.environ.pop("PATCHFORM_LEDGER_FILES_DIR", "")
+    if ledger_files:
+        shutil.rmtree(ledger_files, ignore_errors=True)
 
 
 def _form(title: str, options: list[str] | None = None) -> dict:
@@ -1100,7 +1118,7 @@ def test_procedure_archive_and_restore() -> None:
         _teardown(path)
 
 
-def test_procedure_review_roundtrip_and_freeze() -> None:
+def test_procedure_review_roundtrip_and_freeze(monkeypatch) -> None:
     client, path = _setup()
     try:
         guide = _create_form(client, "一時預かり案内", ["子ども", "保護者の病気"])
@@ -1157,8 +1175,12 @@ def test_procedure_review_roundtrip_and_freeze() -> None:
             json={"status": "提出済"},
         )
         assert res.status_code == 200, res.text
-        frozen = res.json()["review"]
+        body = res.json()
+        assert body["reception_status"] == "確認中"
+        assert body["reception_stage"] == "desk"
+        frozen = body["review"]
         assert frozen["cross"][0]["text"] == "氏名が一致する"
+        assert frozen["cross"][0]["finding"]["result"] == "unknown"
         cert = next(s for s in frozen["slots"] if s["slot_id"] == "attach:勤務証明書")
         assert cert["formal"][0]["result"] == "fail"
         assert cert["content"][0]["text"] == "勤務先名が読める"
@@ -1194,6 +1216,81 @@ def test_procedure_review_roundtrip_and_freeze() -> None:
         kept = next(s for s in again["slots"] if s["slot_id"] == "attach:勤務証明書")
         assert kept["content"][0]["text"] == "勤務先名が読める"
         assert again["cross"][0]["text"] == "氏名が一致する"
+
+        res = client.post(
+            f"/applications/{opened['id']}/review-finding",
+            headers=_headers(),
+            json={"id": "work", "result": "pass"},
+        )
+        assert res.status_code == 200, res.text
+        marked = next(
+            s for s in res.json()["review"]["slots"] if s["slot_id"] == "attach:勤務証明書"
+        )
+        assert marked["content"][0]["text"] == "勤務先名が読める"
+        assert marked["content"][0]["finding"]["source"] == "staff"
+        assert marked["content"][0]["finding"]["result"] == "pass"
+
+        async def _fake_chat(messages, **kwargs):
+            return (
+                '{"findings":['
+                '{"id":"work","result":"fail","detail":"上書きしない"},'
+                '{"id":"same","result":"unknown","detail":"氏名の欄がありません"}'
+                "]}"
+            )
+
+        monkeypatch.setattr("app.llm.chat", _fake_chat)
+        res = client.post(
+            f"/applications/{opened['id']}/review-findings",
+            headers=_headers(),
+        )
+        assert res.status_code == 200, res.text
+        reviewed = res.json()["review"]
+        kept = next(s for s in reviewed["slots"] if s["slot_id"] == "attach:勤務証明書")
+        assert kept["content"][0]["finding"]["source"] == "staff"
+        assert kept["content"][0]["finding"]["result"] == "pass"
+        assert reviewed["cross"][0]["finding"]["source"] == "model"
+        assert reviewed["cross"][0]["finding"]["detail"] == "氏名の欄がありません"
+        assert reviewed["cross"][0]["text"] == "氏名が一致する"
+
+        monkeypatch.setenv("PATCHFORM_REVIEW_ENGINE", "dify")
+        res = client.post(
+            f"/applications/{opened['id']}/review-findings",
+            headers=_headers(),
+        )
+        assert res.status_code == 200, res.text
+        still = res.json()["review"]
+        assert still["cross"][0]["finding"]["source"] == "model"
+        assert still["cross"][0]["finding"]["detail"] == "氏名の欄がありません"
+
+        secret = "dify-procedure-key"
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={
+                "review_call": {
+                    "engine": "dify",
+                    "base_url": "https://dify.example.lg.jp/v1",
+                    "api_key": secret,
+                    "stub": True,
+                }
+            },
+        )
+        assert res.status_code == 200, res.text
+        assert secret not in res.text
+        assert res.json()["review_call"]["engine"] == "dify"
+        assert res.json()["review_call"]["stub"] is True
+        assert res.json()["review_call"]["key_set"] is True
+        res = client.post(
+            f"/applications/{opened['id']}/review-findings",
+            headers=_headers(),
+        )
+        assert res.status_code == 200, res.text
+        stubbed = res.json()["review"]
+        kept = next(s for s in stubbed["slots"] if s["slot_id"] == "attach:勤務証明書")
+        assert kept["content"][0]["finding"]["source"] == "staff"
+        assert kept["content"][0]["finding"]["result"] == "pass"
+        assert stubbed["cross"][0]["finding"]["source"] == "dify"
+        assert stubbed["cross"][0]["finding"]["detail"] == "Dify のスタブです。人が確認します。"
     finally:
         _teardown(path)
 
@@ -1289,6 +1386,341 @@ def test_yoshiki_submit_stays_on_its_application() -> None:
         assert res.status_code == 200, res.text
         assert res.json()["applications"] == []
     finally:
+        _teardown(path)
+
+
+def test_ledger_answer_blocks_use_field_labels() -> None:
+    blocks = store._ledger_answer_blocks(
+        [
+            {
+                "title": "アンケート",
+                "definition": {
+                    "components": [
+                        {"id": "name", "type": "user_info_composite", "label": "氏名"},
+                        {"id": "satisfaction", "type": "rating", "label": "満足度"},
+                        {
+                            "id": "event",
+                            "type": "select",
+                            "label": "区分",
+                            "properties": {"options": ["子ども"]},
+                        },
+                        {"id": "note", "type": "textarea", "label": "ご意見"},
+                    ]
+                },
+                "answers": {
+                    "name": {"last_name": "山田", "first_name": "花子"},
+                    "satisfaction": 1.0,
+                    "event": "子ども",
+                    "note": "",
+                },
+            }
+        ]
+    )
+    lines = {line["label"]: line["value"] for line in blocks[0]["lines"]}
+    assert lines == {"氏名": "山田 花子", "満足度": "1 / 5", "区分": "子ども"}
+
+
+def test_route_confirm_opens_one_ledger_row() -> None:
+    client, path = _setup()
+    try:
+        guide = _create_form(client, "経路案内", ["子ども"])
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "経路手続き", "guide_form_id": guide["id"]},
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        reception = _reception_of(client, guide["id"])
+        res = client.post(
+            f"/forms/{reception['id']}/submissions",
+            headers=_headers(),
+            json={"answers": {"name": "山田", "event": "子ども"}, "submitter_name": "山田"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        res = client.post(
+            f"/applications/{opened['id']}/status",
+            headers=_headers(),
+            json={"status": "提出済"},
+        )
+        assert res.status_code == 200, res.text
+        app_id = opened["id"]
+        res = client.post(
+            f"/applications/{app_id}/reception",
+            headers=_headers(),
+            json={"reception_status": "受理"},
+        )
+        assert res.status_code == 400, res.text
+
+        seen: list[tuple[str, str]] = []
+        for _ in range(4):
+            res = client.post(
+                f"/applications/{app_id}/route",
+                headers=_headers(),
+                json={"action": "advance"},
+            )
+            assert res.status_code == 200, res.text
+            seen.append((res.json()["reception_status"], res.json()["reception_stage"]))
+        assert seen == [
+            ("確認中", "desk"),
+            ("確認中", "section"),
+            ("確認中", "confirm"),
+            ("受理", "confirm"),
+        ]
+        ledger_id = res.json()["ledger_id"]
+        assert ledger_id
+        res = client.get(f"/ledger/{ledger_id}", headers=_headers())
+        assert res.status_code == 200, res.text
+        labeled = [
+            f"{line['label']}={line['value']}"
+            for block in res.json()["snapshot"]["answers"]
+            for line in block["lines"]
+        ]
+        assert "氏名=山田" in labeled
+        assert "事由=子ども" in labeled
+
+        ldb = sqlite3.connect(os.environ["PATCHFORM_LEDGER_DB_PATH"])
+        ldb.execute(
+            "UPDATE ledger_rows SET snapshot_json = ? WHERE id = ?",
+            (
+                json.dumps(
+                    {
+                        "answers": [
+                            {"title": "案内", "lines": ["name.last_name: 山田", "event: 子ども"]}
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                ledger_id,
+            ),
+        )
+        ldb.commit()
+        ldb.close()
+        res = client.get(f"/ledger/{ledger_id}", headers=_headers())
+        assert res.status_code == 200, res.text
+        shown = json.dumps(res.json()["snapshot"]["answers"], ensure_ascii=False)
+        assert "last_name" not in shown
+        assert "氏名" in shown
+
+        res = client.post(
+            f"/applications/{app_id}/route",
+            headers=_headers(),
+            json={"action": "advance"},
+        )
+        assert res.status_code == 400, res.text
+
+        res = client.get("/ledger", headers=_headers())
+        assert res.status_code == 200, res.text
+        assert len(res.json()["rows"]) == 1
+        assert res.json()["rows"][0]["status"] == "受理"
+        assert res.json()["rows"][0]["assignee"] == "担当課"
+
+        res = client.post(
+            f"/ledger/{ledger_id}",
+            headers=_headers(),
+            json={"assignee": "山田", "status": "処理中", "comment": "確認した"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "処理中"
+        assert res.json()["assignee"] == "山田"
+        assert any(ev["action"] == "状態を変えた" for ev in res.json()["events"])
+
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={"handling": {"exit": "external", "statuses": ["受理"]}},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["handling"]["exit"] == "external"
+    finally:
+        _teardown(path)
+
+
+def _valid_mynumber() -> str:
+    first11 = "12345678901"
+    total = 0
+    for i in range(1, 12):
+        digit = int(first11[11 - i])
+        weight = i + 1 if i <= 6 else i - 5
+        total += digit * weight
+    check = total % 11
+    return first11 + str(0 if check <= 1 else 11 - check)
+
+
+class _DeliveryCapture:
+    def __init__(self) -> None:
+        self.hits: list[dict] = []
+        self.status = 500
+
+
+class _DeliveryHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length)
+        capture: _DeliveryCapture = self.server.capture  # type: ignore[attr-defined]
+        capture.hits.append(
+            {
+                "idem": self.headers.get("Idempotency-Key"),
+                "auth": self.headers.get("Authorization"),
+                "body": json.loads(raw.decode("utf-8")),
+            }
+        )
+        code = capture.status
+        payload = (
+            b'{"receipt_no":"R-9"}' if code < 300 else b'{"error":"no"}'
+        )
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, fmt: str, *args) -> None:
+        return
+
+
+def test_dify_outputs_parse_as_findings() -> None:
+    rows = review_engine.rows_from_dify(
+        {"outputs": '{"findings":[{"id":"a","result":"pass","detail":"読める"}]}'}
+    )
+    assert rows == [{"id": "a", "result": "pass", "detail": "読める"}]
+    rows = review_engine.rows_from_dify(
+        {"outputs": {"findings": [{"id": "b", "result": "unknown", "detail": ""}]}}
+    )
+    assert rows[0]["id"] == "b"
+
+
+def test_external_delivery_retries_same_revision() -> None:
+    capture = _DeliveryCapture()
+    httpd = HTTPServer(("127.0.0.1", 0), _DeliveryHandler)
+    httpd.capture = capture  # type: ignore[attr-defined]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    port = httpd.server_address[1]
+    secret = "delivery-secret-value"
+    client, path = _setup()
+    try:
+        mn = _valid_mynumber()
+        assert spec.mynumber_check_digit_ok(mn)
+        definition = _form("投入案内", ["子ども"])
+        definition["components"].append(
+            {"id": "mn", "type": "mynumber", "label": "個人番号", "required": True}
+        )
+        res = client.post(
+            "/forms",
+            headers=_headers(),
+            json={"title": "投入案内", "visibility": "internal", "definition": definition},
+        )
+        assert res.status_code == 201, res.text
+        guide = res.json()
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "投入手続き", "guide_form_id": guide["id"]},
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={
+                "handling": {"exit": "external"},
+                "delivery": {
+                    "url": f"http://127.0.0.1:{port}/intake",
+                    "key": secret,
+                    "send_mynumber": False,
+                },
+            },
+        )
+        assert res.status_code == 200, res.text
+        assert secret not in res.text
+        assert res.json()["delivery"]["key_set"] is True
+        assert res.json()["delivery"]["send_mynumber"] is False
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={"delivery": {"url": "javascript:alert(1)"}},
+        )
+        assert res.status_code == 400, res.text
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        reception = _reception_of(client, guide["id"])
+        res = client.post(
+            f"/forms/{reception['id']}/submissions",
+            headers=_headers(),
+            json={
+                "answers": {"name": "山田", "event": "子ども", "mn": mn},
+                "submitter_name": "山田",
+            },
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        res = client.post(
+            f"/applications/{opened['id']}/status",
+            headers=_headers(),
+            json={"status": "提出済"},
+        )
+        assert res.status_code == 200, res.text
+        app_id = opened["id"]
+        for _ in range(4):
+            res = client.post(
+                f"/applications/{app_id}/route",
+                headers=_headers(),
+                json={"action": "advance"},
+            )
+            assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["reception_status"] == "受理"
+        assert body["ledger_id"] in (None, "")
+        assert body["delivery"]["state"] == "failed"
+        assert body["delivery"]["attempts"] == 1
+        assert mn not in res.text
+        assert len(capture.hits) == 1
+        assert "山田" in json.dumps(capture.hits[0]["body"], ensure_ascii=False)
+        assert mn not in json.dumps(capture.hits[0]["body"], ensure_ascii=False)
+        assert capture.hits[0]["auth"] == f"Bearer {secret}"
+        assert capture.hits[0]["idem"] == f"{app_id}:1"
+        res = client.get("/ledger", headers=_headers())
+        assert res.json()["rows"] == []
+
+        capture.status = 200
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={"delivery": {"send_mynumber": True}},
+        )
+        assert res.status_code == 200, res.text
+        assert secret not in res.text
+        assert res.json()["delivery"]["key_set"] is True
+        assert res.json()["delivery"]["url"] == f"http://127.0.0.1:{port}/intake"
+        res = client.post(f"/applications/{app_id}/delivery", headers=_headers())
+        assert res.status_code == 200, res.text
+        sent = res.json()
+        assert sent["delivery"]["state"] == "sent"
+        assert sent["delivery"]["receipt_no"] == "R-9"
+        assert sent["delivery"]["attempts"] == 2
+        assert sent["delivery"]["revision"] == 1
+        assert mn not in res.text
+        assert len(capture.hits) == 2
+        assert capture.hits[1]["idem"] == f"{app_id}:1"
+        assert capture.hits[1]["auth"] == f"Bearer {secret}"
+        assert mn in json.dumps(capture.hits[1]["body"], ensure_ascii=False)
+        actions = [ev["action"] for ev in sent["events"]]
+        assert "既存システムへ送れなかった" in actions
+        assert "既存システムへ送った" in actions
+    finally:
+        httpd.shutdown()
         _teardown(path)
 
 
