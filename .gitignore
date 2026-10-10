@@ -68,6 +68,7 @@ deletion-report-*.txt
 !/docs/chosei.md
 !/docs/doccheck.md
 !/docs/patchform.md
+!/docs/patchform-kmap.md
 !/docs/spark.md
 !/docs/procuretech-generate-contract.md
 !/docs/procuretech-editor.md

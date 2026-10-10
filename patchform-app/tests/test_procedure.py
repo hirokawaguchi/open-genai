@@ -153,10 +153,85 @@ def test_option_label_and_value() -> None:
     assert procedure.mapping_warnings(mapping, definition) == []
 
 
+def test_review_stays_on_its_slot() -> None:
+    mapping, err = procedure.normalize_mapping(
+        {
+            "rules": [
+                {
+                    "component_id": "who",
+                    "option": "子ども",
+                    "form_ids": ["form-a"],
+                    "prepare": ["勤務証明書"],
+                    "reviews": [
+                        {
+                            "slot_id": "attach:勤務証明書",
+                            "formal": ["file_present", "not-a-check", "pdf_or_image"],
+                            "content": [{"id": "name", "text": "勤務先名が読める"}],
+                        },
+                        {
+                            "slot_id": "attach:診断書",
+                            "formal": ["file_present"],
+                            "content": [{"text": "これは残さない"}],
+                        },
+                    ],
+                    "cross": [{"id": "same", "text": "氏名が一致する"}],
+                }
+            ],
+            "review": {
+                "slots": [
+                    {
+                        "slot_id": "yoshiki:guide",
+                        "formal": ["file_present"],
+                        "content": [{"id": "g", "text": "案内の氏名がある"}],
+                    }
+                ],
+                "cross": [],
+            },
+        }
+    )
+    assert err is None
+    rule = mapping["rules"][0]
+    assert rule["reviews"] == [
+        {
+            "slot_id": "attach:勤務証明書",
+            "formal": ["file_present", "pdf_or_image"],
+            "content": [{"id": "name", "text": "勤務先名が読める"}],
+        }
+    ]
+    assert rule["cross"] == [{"id": "same", "text": "氏名が一致する"}]
+    assert mapping["review"]["slots"][0]["slot_id"] == "yoshiki:guide"
+
+    snap = procedure.review_snapshot(
+        mapping,
+        {"who": "子ども"},
+        [
+            {
+                "slot_id": "attach:勤務証明書",
+                "title": "勤務証明書",
+                "kind": "attach",
+                "file_id": "",
+                "mime": "",
+                "status": "none",
+            }
+        ],
+    )
+    assert [s["slot_id"] for s in snap["slots"]] == ["yoshiki:guide", "attach:勤務証明書"]
+    cert = snap["slots"][1]
+    assert cert["formal"][0]["result"] == "fail"
+    assert cert["formal"][1]["result"] == "unknown"
+    assert cert["content"][0]["text"] == "勤務先名が読める"
+    assert snap["cross"] == [{"id": "same", "text": "氏名が一致する"}]
+
+    other = procedure.review_snapshot(mapping, {"who": "保護者の病気"}, [])
+    assert [s["slot_id"] for s in other["slots"]] == ["yoshiki:guide"]
+    assert other["cross"] == []
+
+
 if __name__ == "__main__":
     test_resolve_union_and_dedupe()
     test_resolve_checkbox()
     test_mapping_warnings()
     test_normalize_answers_label_and_free_text()
     test_option_label_and_value()
+    test_review_stays_on_its_slot()
     print("ok")

@@ -511,6 +511,54 @@ export const PatchformApplicationPage = () => {
                 )}
               </section>
             )}
+            {readOnly && application?.review && (application.review.slots.length > 0 || application.review.cross.length > 0) && (
+              <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                <h2 className='text-std-18B-160'>審査項目</h2>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  提出した時点の基準です。手続きをあとから直しても、この申請の項目は変わりません。
+                </p>
+                {application.review.slots.map((slot) => (
+                  <div key={slot.slot_id} className='rounded-8 border border-solid-gray-200 p-3'>
+                    <h3 className='text-std-16B-150'>{slot.title || slot.slot_id}</h3>
+                    {slot.formal.length > 0 && (
+                      <ul className='mt-2 flex flex-col gap-1'>
+                        {slot.formal.map((line) => (
+                          <li key={line.id} className='text-std-16N-170'>
+                            <span className='text-solid-gray-600'>
+                              {line.result === 'pass'
+                                ? '満たしている'
+                                : line.result === 'fail'
+                                  ? '満たしていない'
+                                  : '人が確認'}
+                            </span>
+                            {' · '}
+                            {line.label}
+                            {line.detail ? `（${line.detail}）` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {slot.content.length > 0 && (
+                      <ul className='mt-2 list-disc pl-5 text-std-16N-170'>
+                        {slot.content.map((line) => (
+                          <li key={line.id}>{line.text}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+                {application.review.cross.length > 0 && (
+                  <div>
+                    <h3 className='text-std-16B-150'>枠をまたぐ確認</h3>
+                    <ul className='mt-1 list-disc pl-5 text-std-16N-170'>
+                      {application.review.cross.map((line) => (
+                        <li key={line.id}>{line.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
             <section className='flex flex-col gap-2'>
               <div className='flex flex-wrap items-baseline justify-between gap-2'>
                 <h2 className='text-std-18B-160'>提出書類一覧</h2>

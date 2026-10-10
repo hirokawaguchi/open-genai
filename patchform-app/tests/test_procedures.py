@@ -1100,6 +1100,198 @@ def test_procedure_archive_and_restore() -> None:
         _teardown(path)
 
 
+def test_procedure_review_roundtrip_and_freeze() -> None:
+    client, path = _setup()
+    try:
+        guide = _create_form(client, "一時預かり案内", ["子ども", "保護者の病気"])
+        form = _create_form(client, "利用申込書")
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={
+                "name": "一時預かり",
+                "guide_form_id": guide["id"],
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "子ども",
+                            "form_ids": [form["id"]],
+                            "prepare": ["勤務証明書"],
+                            "reviews": [
+                                {
+                                    "slot_id": "attach:勤務証明書",
+                                    "formal": ["file_present"],
+                                    "content": [{"id": "work", "text": "勤務先名が読める"}],
+                                }
+                            ],
+                            "cross": [{"id": "same", "text": "氏名が一致する"}],
+                        }
+                    ]
+                },
+            },
+        )
+        assert res.status_code == 201, res.text
+        proc = res.json()
+        rule = proc["mapping"]["rules"][0]
+        assert rule["reviews"][0]["content"][0]["text"] == "勤務先名が読める"
+        assert proc["formal_checks"][0]["id"] == "file_present"
+
+        res = client.post(
+            f"/procedures/{proc['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        reception = _reception_of(client, guide["id"])
+        res = client.post(
+            f"/forms/{reception['id']}/submissions",
+            headers=_headers(),
+            json={"answers": {"name": "山田", "event": "子ども"}, "submitter_name": "山田"},
+        )
+        assert res.status_code == 201, res.text
+        opened = res.json()["application"]
+        res = client.post(
+            f"/applications/{opened['id']}/status",
+            headers=_headers(),
+            json={"status": "提出済"},
+        )
+        assert res.status_code == 200, res.text
+        frozen = res.json()["review"]
+        assert frozen["cross"][0]["text"] == "氏名が一致する"
+        cert = next(s for s in frozen["slots"] if s["slot_id"] == "attach:勤務証明書")
+        assert cert["formal"][0]["result"] == "fail"
+        assert cert["content"][0]["text"] == "勤務先名が読める"
+
+        res = client.put(
+            f"/procedures/{proc['id']}",
+            headers=_headers(),
+            json={
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "子ども",
+                            "form_ids": [form["id"]],
+                            "prepare": ["勤務証明書"],
+                            "reviews": [
+                                {
+                                    "slot_id": "attach:勤務証明書",
+                                    "formal": ["file_present"],
+                                    "content": [{"id": "hat", "text": "帽子がない"}],
+                                }
+                            ],
+                            "cross": [],
+                        }
+                    ]
+                }
+            },
+        )
+        assert res.status_code == 200, res.text
+        res = client.get(f"/applications/{opened['id']}", headers=_headers())
+        assert res.status_code == 200, res.text
+        again = res.json()["review"]
+        kept = next(s for s in again["slots"] if s["slot_id"] == "attach:勤務証明書")
+        assert kept["content"][0]["text"] == "勤務先名が読める"
+        assert again["cross"][0]["text"] == "氏名が一致する"
+    finally:
+        _teardown(path)
+
+
+def test_yoshiki_submit_stays_on_its_application() -> None:
+    """様式が別手続きの案内でも、記入先の申請から画面が移らない。"""
+    client, path = _setup()
+    try:
+        guide = _create_form(client, "確認用の案内", ["子ども", "保護者の病気"])
+        survey = _create_form(client, "研修受講後アンケート")
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={"name": "アンケート単独", "guide_form_id": survey["id"]},
+        )
+        assert res.status_code == 201, res.text
+        alone = res.json()
+        res = client.post(
+            f"/procedures/{alone['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+
+        res = client.post(
+            "/procedures",
+            headers=_headers(),
+            json={
+                "name": "ウィザード確認",
+                "guide_form_id": guide["id"],
+                "mapping": {
+                    "rules": [
+                        {
+                            "component_id": "event",
+                            "option": "子ども",
+                            "form_ids": [survey["id"]],
+                        }
+                    ]
+                },
+            },
+        )
+        assert res.status_code == 201, res.text
+        bundle = res.json()
+        res = client.post(
+            f"/procedures/{bundle['id']}/status",
+            headers=_headers(),
+            json={"status": "published"},
+        )
+        assert res.status_code == 200, res.text
+        guide_rec = _reception_of(client, guide["id"])
+        survey_rec = _reception_of(client, survey["id"])
+
+        res = client.post(
+            "/applications",
+            headers=_headers(),
+            json={"procedure_id": bundle["id"]},
+        )
+        assert res.status_code == 201, res.text
+        proj = res.json()
+        nav_id = proj["items"][0]["id"]
+        res = client.post(
+            f"/forms/{guide_rec['id']}/submissions",
+            headers=_headers(),
+            json={
+                "answers": {"name": "山田", "event": "子ども"},
+                "application_token": proj["token"],
+                "application_item_id": nav_id,
+            },
+        )
+        assert res.status_code == 201, res.text
+        after_guide = res.json()["application"]
+        assert after_guide["id"] == proj["id"]
+        yitem = next(i for i in after_guide["items"] if i.get("form_id") == survey_rec["id"])
+
+        res = client.post(
+            f"/forms/{survey_rec['id']}/submissions",
+            headers=_headers(),
+            json={
+                "answers": {"name": "山田"},
+                "application_token": proj["token"],
+                "application_item_id": yitem["id"],
+            },
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        assert body["application"]["id"] == proj["id"]
+        filled = next(
+            i for i in body["application"]["items"] if i["id"] == yitem["id"]
+        )
+        assert filled["status"] == "submitted"
+
+        res = client.get(f"/procedures/{alone['id']}/applications", headers=_headers())
+        assert res.status_code == 200, res.text
+        assert res.json()["applications"] == []
+    finally:
+        _teardown(path)
+
+
 if __name__ == "__main__":
     test_form_tags_endpoint_ignores_locked()
     test_form_archive_and_restore()
@@ -1115,4 +1307,5 @@ if __name__ == "__main__":
     test_procedure_share_links()
     test_application_and_procedure_export()
     test_service_key_and_since()
+    test_procedure_review_roundtrip_and_freeze()
     print("ok")

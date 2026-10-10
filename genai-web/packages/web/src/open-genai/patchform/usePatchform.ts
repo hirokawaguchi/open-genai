@@ -23,6 +23,7 @@ import type {
   PatchformExportBundle,
   Procedure,
   ProcedureCatalog,
+  ProcedureRule,
   ProcedureResolvePreview,
   ProcedureShare,
   ProcedureVisibility,
@@ -1386,6 +1387,7 @@ export const usePatchformProcedureActions = () => {
       name: string;
       description?: string;
       guide_form_id: string;
+      mapping?: { rules: ProcedureRule[] };
     }): Promise<Procedure | null> => {
       setSubmitting(true);
       setError(null);

@@ -178,6 +178,27 @@ export type UploadedFile = {
 
 export type ProcedureStatus = 'draft' | 'published' | 'archived';
 
+export type ReviewLine = {
+  id: string;
+  text: string;
+};
+
+export type SlotReview = {
+  slot_id: string;
+  formal: string[];
+  content: ReviewLine[];
+};
+
+export type ProcedureReview = {
+  slots: SlotReview[];
+  cross: ReviewLine[];
+};
+
+export type FormalCheck = {
+  id: string;
+  label: string;
+};
+
 export type ProcedureRule = {
   component_id: string;
   option: string;
@@ -185,6 +206,8 @@ export type ProcedureRule = {
   notes?: string;
   prepare?: string[];
   refs?: string[];
+  reviews?: SlotReview[];
+  cross?: ReviewLine[];
 };
 
 export type ProcedureChoiceField = {
@@ -212,7 +235,8 @@ export type Procedure = {
   // 公開範囲は手続き単位（庁内のみ / 庁内と外部）。guide_visibility は後方互換のミラー。
   visibility?: ProcedureVisibility | null;
   guide_visibility?: FormVisibility | null;
-  mapping: { rules: ProcedureRule[] };
+  mapping: { rules: ProcedureRule[]; review?: ProcedureReview };
+  formal_checks?: FormalCheck[];
   status: ProcedureStatus;
   creator_user_id?: string | null;
   creator_name?: string | null;
@@ -322,6 +346,25 @@ export type ApplicationEvent = {
   created_at: string;
 };
 
+export type ReviewFormalResult = {
+  id: string;
+  label: string;
+  result: 'pass' | 'fail' | 'unknown';
+  detail?: string;
+};
+
+export type ReviewSlotResult = {
+  slot_id: string;
+  title: string;
+  formal: ReviewFormalResult[];
+  content: ReviewLine[];
+};
+
+export type ApplicationReview = {
+  slots: ReviewSlotResult[];
+  cross: ReviewLine[];
+};
+
 export type Application = {
   id: string;
   token: string;
@@ -342,6 +385,7 @@ export type Application = {
   forms: ApplicationForm[];
   items: ApplicationItem[];
   events?: ApplicationEvent[];
+  review?: ApplicationReview | null;
   public_url: string;
   created_at: string;
   updated_at?: string;

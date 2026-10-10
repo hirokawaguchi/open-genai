@@ -2433,6 +2433,7 @@ async def public_set_application_status(application_id: str, request: Request) -
     )
     if msg or result is None:
         return _application_error(msg)
+    result.pop("review", None)
     return JSONResponse(content=result)
 
 
@@ -2875,6 +2876,7 @@ def mine_get_application(application_id: str, request: Request) -> JSONResponse:
     data = store.get_application(application_id=application_id)
     if data is None:
         return JSONResponse(status_code=404, content={"error": "申請が見つかりません"})
+    data.pop("review", None)
     return JSONResponse(content=data)
 
 
@@ -2895,6 +2897,7 @@ async def mine_set_application_status(application_id: str, request: Request) -> 
     )
     if msg or result is None:
         return _application_error(msg)
+    result.pop("review", None)
     return JSONResponse(content=result)
 
 

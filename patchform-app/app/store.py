@@ -435,6 +435,9 @@ def _migrate_applications_optional_submission(db: sqlite3.Connection) -> None:
           assignee TEXT NOT NULL DEFAULT '',
           deadline TEXT NOT NULL DEFAULT '',
           next_action_date TEXT NOT NULL DEFAULT '',
+          submitted_at TEXT NOT NULL DEFAULT '',
+          reception_status TEXT NOT NULL DEFAULT '未確認',
+          review_json TEXT NOT NULL DEFAULT '',
           FOREIGN KEY (procedure_id) REFERENCES procedures(id),
           FOREIGN KEY (guide_form_id) REFERENCES forms(id)
         )
@@ -444,10 +447,12 @@ def _migrate_applications_optional_submission(db: sqlite3.Connection) -> None:
         "INSERT INTO applications_new (id, token, procedure_id, guide_form_id, "
         "guide_submission_id, form_ids_json, notice_json, created_at, items_json, "
         "owner_kind, owner_key, title, status_override, updated_at, "
-        "assignee, deadline, next_action_date) "
+        "assignee, deadline, next_action_date, submitted_at, reception_status, "
+        "review_json) "
         "SELECT id, token, procedure_id, guide_form_id, guide_submission_id, "
         "form_ids_json, notice_json, created_at, items_json, owner_kind, owner_key, "
-        "title, status_override, updated_at, assignee, deadline, next_action_date "
+        "title, status_override, updated_at, assignee, deadline, next_action_date, "
+        "submitted_at, reception_status, review_json "
         "FROM applications"
     )
     db.execute("DROP TABLE applications")
@@ -493,6 +498,8 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
         # 受付（受領側）が回す処理ステータス。申請者側の提出状態とは独立。
         ("applications", "reception_status", "TEXT NOT NULL DEFAULT '未確認'"),
+        # 提出した瞬間の審査項目。あとから手続きを直しても、この申請の項目は変えない。
+        ("applications", "review_json", "TEXT NOT NULL DEFAULT ''"),
         # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
         ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
         # 添付ファイルの由来（internal=庁内 / external=庁外アップロード）。
@@ -2248,16 +2255,28 @@ def submit_answers(
             return None, bind_err
         opened = None
         notify_proc = None
+        notify_new = False
         if not is_draft:
             if linked_app_id:
                 opened = _populate_project_from_guide(
                     db, linked_app_id, row["id"], sid, cleaned
                 )
-            if opened is None:
+                if opened is None and app_for_link is not None:
+                    # 申請の中の様式を記入しただけ。この様式を案内にしている
+                    # 別の手続きがあっても、そちらへ申請を開き直さない。
+                    fresh = db.execute(
+                        "SELECT * FROM applications WHERE id = ?", (linked_app_id,)
+                    ).fetchone()
+                    opened = _application_payload(db, fresh) if fresh else None
+                elif opened is not None:
+                    notify_new = True
+            else:
                 opened = _open_application_from_guide(
                     db, row["id"], sid, cleaned, submitter_user_id=submitter_user_id
                 )
-            if opened:
+                if opened is not None:
+                    notify_new = True
+            if notify_new and opened is not None:
                 notify_proc = db.execute(
                     "SELECT name, notify_emails_json FROM procedures WHERE id = ?",
                     (opened.get("procedure_id"),),
@@ -2277,7 +2296,7 @@ def submit_answers(
                     changes=diffs,
                 )
         db.commit()
-    if opened:
+    if notify_new and opened is not None:
         try:
             notify.notify_new_application(
                 opened,
@@ -2652,6 +2671,7 @@ def _row_to_procedure(
         "warnings": procedure.mapping_warnings(mapping, definition),
         "can_edit": _can_edit_procedure(row, actor_user_id, actor_groups),
         "notify_emails": _emails_from_row(row),
+        "formal_checks": procedure.formal_check_catalog(),
     }
 
 
@@ -3780,6 +3800,14 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         stamps.append(stored_updated)
     override = str(row["status_override"]) if "status_override" in keys and row["status_override"] else ""
     title = str(row["title"]) if "title" in keys and row["title"] else ""
+    review = None
+    if "review_json" in keys and row["review_json"]:
+        try:
+            parsed_review = json.loads(row["review_json"])
+        except (TypeError, json.JSONDecodeError):
+            parsed_review = None
+        if isinstance(parsed_review, dict):
+            review = parsed_review
 
     def _meta(name: str) -> str:
         return str(row[name]) if name in keys and row[name] else ""
@@ -3812,6 +3840,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "created_at": row["created_at"],
         "updated_at": max(stamps),
         "events": list_application_events(db, row["id"]),
+        "review": review,
     }
 
 
@@ -4606,6 +4635,72 @@ def list_application_events(
     return out
 
 
+def _guide_answers(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    sid = row["guide_submission_id"] if "guide_submission_id" in row.keys() else None
+    if not sid:
+        return {}
+    sub = db.execute(
+        "SELECT answers_json FROM submissions WHERE id = ?", (sid,)
+    ).fetchone()
+    if not sub or not sub["answers_json"]:
+        return {}
+    try:
+        parsed = json.loads(sub["answers_json"])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _review_item_views(db: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for it in _application_items(row):
+        file_id = str(it.get("file_id") or "")
+        mime = ""
+        if file_id:
+            found = db.execute(
+                "SELECT mime FROM uploaded_files WHERE id = ?", (file_id,)
+            ).fetchone()
+            if found and found["mime"]:
+                mime = str(found["mime"])
+        title = str(it.get("title") or "")
+        form_id = str(it.get("form_id") or "")
+        if not title and form_id:
+            form = _form_row(db, form_id)
+            if form:
+                title = str(form["title"] or "")
+        out.append(
+            {
+                "slot_id": str(it.get("slot_id") or ""),
+                "title": title,
+                "kind": it.get("kind") or "",
+                "file_id": file_id,
+                "mime": mime,
+                "status": _item_status(db, row["id"], it),
+                "fulfillment": it.get("fulfillment") or "",
+            }
+        )
+    return out
+
+
+def _freeze_application_review(db: sqlite3.Connection, row: sqlite3.Row) -> None:
+    """提出の瞬間に、当たった審査項目を申請へ写す。既にあれば上書きしない。"""
+    if "review_json" in row.keys() and str(row["review_json"] or "").strip():
+        return
+    proc = db.execute(
+        "SELECT mapping_json FROM procedures WHERE id = ?", (row["procedure_id"],)
+    ).fetchone()
+    if not proc:
+        return
+    mapping, err = procedure.normalize_mapping(proc["mapping_json"])
+    if err or mapping is None:
+        mapping = {"rules": [], "review": {"slots": [], "cross": []}}
+    snap = procedure.review_snapshot(mapping, _guide_answers(db, row), _review_item_views(db, row))
+    db.execute(
+        "UPDATE applications SET review_json = ? WHERE id = ?",
+        (json.dumps(snap, ensure_ascii=False), row["id"]),
+    )
+
+
 def set_application_status(
     *, application_id: str, owner_kind: str, owner_key: str, status: str
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -4638,6 +4733,11 @@ def set_application_status(
                 actor_user_id=owner_key,
                 action="提出",
             )
+            frozen = db.execute(
+                "SELECT * FROM applications WHERE id = ?", (application_id,)
+            ).fetchone()
+            if frozen is not None:
+                _freeze_application_review(db, frozen)
         else:
             db.execute(
                 "UPDATE applications SET status_override = ?, updated_at = ? WHERE id = ?",
@@ -5005,6 +5105,7 @@ def public_application(token: str) -> tuple[dict[str, Any] | None, str | None]:
     data = get_application(token=token)
     if not data:
         return None, "申請が見つかりません"
+    data.pop("review", None)
     return data, None
 
 
