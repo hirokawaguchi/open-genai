@@ -1,0 +1,4 @@
+fastapi==0.139.0
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+boto3==1.38.27

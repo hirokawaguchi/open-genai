@@ -33,6 +33,7 @@ import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
 import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
+import { LmsPage } from '@/open-genai/lms/LmsPage';
 import { NishukanPage } from '@/open-genai/nishukan/NishukanPage';
 import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
@@ -105,6 +106,8 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'chosei/events/:eventId', element: <ChoseiEventPage /> },
     { path: 'chosei/events/:eventId/edit', element: <ChoseiEditPage /> },
     { path: 'apps/:teamId/chosei', element: <Navigate to='/chosei' replace /> },
+    { path: 'lms', element: <LmsPage /> },
+    { path: 'apps/:teamId/lms', element: <Navigate to='/lms' replace /> },
     { path: 'nishukan', element: <NishukanPage /> },
     { path: 'jigyo', element: <Navigate to='/nishukan' replace /> },
     { path: 'apps/:teamId/jigyo', element: <Navigate to='/nishukan' replace /> },

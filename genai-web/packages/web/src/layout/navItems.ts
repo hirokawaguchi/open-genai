@@ -8,6 +8,7 @@ import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
   useDoccheckAvailable,
+  useLmsAvailable,
   useNishukanAvailable,
   useNotebookAvailable,
   usePatchformAvailable,
@@ -101,6 +102,12 @@ export const NISHUKAN_PATH = '/nishukan';
 /** 二週間の仕事 exApp の識別子（専用ページへ振り替える対象） */
 export const NISHUKAN_EXAPP_ID = 'nishukan';
 
+/** 研修は汎用 exApp フォームではなく専用ページで提供する */
+export const LMS_PATH = '/lms';
+
+/** 研修 exApp の識別子（専用ページへ振り替える対象） */
+export const LMS_EXAPP_ID = 'lms';
+
 /** 旧ヒアリングシート ID（ピン留めの振り替え用） */
 export const NOTEBOOK_LEGACY_EXAPP_ID = 'procuretech-hearing';
 
@@ -147,6 +154,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
   const nishukanAvailable = useNishukanAvailable();
+  const lmsAvailable = useLmsAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
   // 取得前や未登録アプリ（GenU 組み込み・ナレッジ管理）はハードコードの既定値にフォールバック。
   const { apps: registryApps, loaded: catalogLoaded } = useExAppCatalog();
@@ -292,6 +300,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (lmsAvailable && listed(LMS_EXAPP_ID)) {
+      items.push({
+        label: nameOf(LMS_EXAPP_ID, '研修'),
+        to: LMS_PATH,
+        description: descOf(
+          LMS_EXAPP_ID,
+          '研修動画とテキストをコースにし、受講と実技認定の記録を残します。',
+        ),
+      });
+    }
+
     if (nishukanAvailable && listed(NISHUKAN_EXAPP_ID)) {
       items.push({
         label: nameOf(NISHUKAN_EXAPP_ID, '二週間の仕事'),
@@ -358,6 +377,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     sshAvailable,
     sengokuAvailable,
     nishukanAvailable,
+    lmsAvailable,
     registryApps,
     catalogLoaded,
     running,
@@ -416,6 +436,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   }
   if (item.app.value === NISHUKAN_EXAPP_ID) {
     return NISHUKAN_PATH;
+  }
+  if (item.app.value === LMS_EXAPP_ID) {
+    return LMS_PATH;
   }
   // 監査ログは管理者限定の専用ページへ振り替える
   if (item.app.value === AUDIT_EXAPP_ID) {

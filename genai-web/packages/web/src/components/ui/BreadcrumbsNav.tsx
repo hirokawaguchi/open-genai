@@ -6,11 +6,13 @@ import {
   BreadcrumbList,
   Breadcrumbs,
   BreadcrumbsLabel,
+  breadcrumbLinkStyle,
 } from './dads/Breadcrumbs';
 
 type Item = {
   label: string;
   to?: string;
+  onClick?: () => void;
 };
 
 type Props = {
@@ -34,6 +36,10 @@ export const BreadcrumbsNav = ({ items, className }: Props) => {
                 <BreadcrumbLink asChild>
                   <Link to={item.to}>{item.label}</Link>
                 </BreadcrumbLink>
+              ) : !isCurrent && item.onClick ? (
+                <button type='button' className={breadcrumbLinkStyle} onClick={item.onClick}>
+                  {item.label}
+                </button>
               ) : (
                 item.label
               )}

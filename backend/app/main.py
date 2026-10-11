@@ -153,6 +153,8 @@ SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/inv
 
 # 二週間の仕事（Compose profiles: ["nishukan"]）。実 API は /nishukan/* プロキシ。
 NISHUKAN_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
+# 研修 LMS（Compose profiles: ["lms"]）。実 API は /lms/* プロキシ。
+LMS_APP_URL = os.environ.get("LMS_APP_URL", "http://lms-app:8021/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
@@ -655,6 +657,31 @@ NISHUKAN_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 研修 LMS（共通アプリ）。UI は専用ページ /lms。未起動時は /health 失敗で一覧非表示。
+LMS_SEED: dict[str, Any] = {
+    "exAppId": "lms",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "研修",
+    "endpoint": (
+        LMS_APP_URL
+        if LMS_APP_URL.endswith("/invoke")
+        else LMS_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "研修動画とテキストをコースにし、受講と実技認定の記録を残します。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「研修」でコースを作り、教材庫へ動画か PDF を置きます。\n"
+        "- 教材の本文は「本文」から作ります。PDF はページごと、動画は発話ごとに直して確定します。\n"
+        "- 公開したコースを個人またはチームに割り当てます。修了は教材と実技の両方です。\n"
+        "- 有効化: `docker compose --profile lms up -d` または `COMPOSE_PROFILES=lms`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 # 書類領域分割チェック（共通アプリ）。UI は専用ページ /doccheck。
 DOCCHECK_SEED: dict[str, Any] = {
     "exAppId": "doccheck",
@@ -969,6 +996,7 @@ EXAPP_SEEDS = [
     PROMPT_SEED,
     CHOSEI_SEED,
     NISHUKAN_SEED,
+    LMS_SEED,
     DOCCHECK_SEED,
     PATCHFORM_SEED,
     DOCMAKER_SEED,
@@ -995,6 +1023,12 @@ RETIRED_SEED_EXAPP_IDS = [
 # リネーム前の既定シード文言（未編集で DB に残っている場合のみ現行シードへ揃える移行に使う）。
 # 管理者が意図的に変更した文言は上書きしない（旧文言に完全一致する場合だけ更新）。
 _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
+    {
+        "seed": LMS_SEED,
+        "old_name": "研修",
+        "old_description": "研修動画とスライドをコースにし、受講と実技認定の記録を残します。",
+        "old_howto_markers": (),
+    },
     {
         "seed": USERMGMT_SEED,
         "old_name": "利用者一括管理（管理者限定）",
@@ -3746,6 +3780,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
         ("ssh", _as_invoke_url(SSH_APP_URL)),
         ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
+        ("lms", _as_invoke_url(LMS_APP_URL)),
     ]
 
 
@@ -5033,6 +5068,128 @@ async def nishukan_proxy(path: str, request: Request) -> JSONResponse:
         return err
     headers["content-type"] = "application/json"
     return await _proxy_nishukan(request.method, url, headers, body)
+
+
+def _lms_app_url(path: str) -> str:
+    if LMS_APP_URL.endswith("/invoke"):
+        base = LMS_APP_URL[: -len("/invoke")]
+    else:
+        base = LMS_APP_URL.rstrip("/")
+    return base + path
+
+
+def _lms_access_payload(user_id: str, claims: dict[str, Any]) -> dict[str, Any] | None:
+    """活性棟の所属者とチームを、研修 LMS へ渡す。"""
+    tenant_id = _active_tenant_id(user_id, claims)
+    if _has_no_tenant(tenant_id):
+        return None
+    member = teams_store.get_tenant_membership(tenant_id, user_id) is not None or _is_system_admin(
+        claims
+    )
+    teams: list[dict[str, Any]] = []
+    names: dict[str, str] = {}
+    for team in teams_store.list_teams_in_tenant(tenant_id):
+        if team["teamId"] in (teams_store.COMMON_TEAM_ID, teams_store.ADMIN_TEAM_ID):
+            continue
+        members = teams_store.list_team_users(team["teamId"])
+        teams.append(
+            {
+                "teamId": team["teamId"],
+                "teamName": team["teamName"],
+                "memberIds": [row["userId"] for row in members],
+            }
+        )
+        for row in members:
+            if row.get("username"):
+                names[row["userId"]] = row["username"]
+    users = [
+        {"userId": row["userId"], "userName": names.get(row["userId"]) or row["userId"]}
+        for row in teams_store.list_tenant_memberships(tenant_id)
+    ]
+    return {
+        "userId": user_id,
+        "userName": claims.get("name") or user_id,
+        "tenantId": tenant_id,
+        "member": member,
+        "teams": teams,
+        "users": users,
+    }
+
+
+def _lms_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    payload = _lms_access_payload(user_id, claims)
+    if payload is None:
+        return JSONResponse(status_code=400, content={"error": "所属する棟がありません"}), {}
+    raw = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    scope = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": scope,
+        "x-lms-access": raw,
+        **intauth.signed_headers(user_id, groups_str, scope, team_ids),
+    }
+    return None, headers
+
+
+async def _proxy_lms(method: str, url: str, headers: dict[str, str], body: bytes | None) -> Response:
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            res = await client.request(method, url, headers=headers, content=body if body else None)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "研修に接続できませんでした。"
+                    "有効化するには `docker compose --profile lms up -d` "
+                    "または `COMPOSE_PROFILES=lms` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    content_type = res.headers.get("content-type", "")
+    if "text/csv" in content_type:
+        disposition = res.headers.get("content-disposition")
+        extra = {"content-disposition": disposition} if disposition else {}
+        return Response(content=res.content, status_code=res.status_code, media_type=content_type, headers=extra)
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "研修から不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.api_route(
+    "/lms/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def lms_proxy(path: str, request: Request) -> Response:
+    url = _lms_app_url("/" + path)
+    if request.url.query:
+        url += "?" + str(request.url.query)
+    body = await request.body()
+    err, headers = _lms_headers(request)
+    if err:
+        return err
+    incoming = request.headers.get("content-type")
+    if incoming:
+        headers["content-type"] = incoming
+    part = request.headers.get("x-part-index")
+    if part:
+        headers["x-part-index"] = part
+    return await _proxy_lms(request.method, url, headers, body)
 
 
 @app.get("/chosei/config")

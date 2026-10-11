@@ -223,6 +223,7 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "rag",
     "notebook",
     "ssh",
+    "lms",
 )
 DEFAULT_RECOMMENDED_EXAPP_IDS = OFFICIAL_CATALOG_EXAPP_IDS
 # 本体に同梱。外部マイクロサービスや画像生成サーバの起動は見ない。
@@ -236,7 +237,7 @@ ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
 )
 RECOMMENDED_SETTING_KEY = "recommendedExAppIds"
 # 後からおすすめ候補に足した ID。保存済み設定に無ければ一度だけ既定オンにする。
-RECOMMENDED_BACKFILL_IDS = ("rag",)
+RECOMMENDED_BACKFILL_IDS = ("rag", "lms")
 RECOMMENDED_BACKFILL_KEY = "recommendedExAppIdsBackfill"
 
 

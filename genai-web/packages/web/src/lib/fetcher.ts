@@ -148,9 +148,40 @@ const createApiClient = (baseURL: string) => {
     };
   };
 
+  const putBinary = async <T>(
+    path: string,
+    body: Blob,
+    headers: Record<string, string>,
+    retried = false,
+  ): Promise<ApiResponse<T>> => {
+    const url = buildUrl(baseURL, path);
+    const token = await getIdToken();
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body,
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        if (!retried && (await refreshSession())) {
+          return putBinary<T>(path, body, headers, true);
+        }
+        handleUnauthorized();
+      }
+      const errorData = await parseResponseBody<unknown>(res);
+      throw new ApiError(res.status, errorData);
+    }
+    const data = await parseResponseBody<T>(res);
+    return { data, status: res.status };
+  };
+
   return {
     get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
     getBlob,
+    putBinary,
     post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
       request<T>('POST', path, body, options),
     put: <T>(path: string, body?: unknown, options?: RequestOptions) =>

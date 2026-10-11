@@ -100,6 +100,8 @@ services:
       - CHOSEI_APP_URL=${CHOSEI_APP_URL:-http://chosei-app:8010/invoke}
       # 二週間の仕事（profiles: ["nishukan"] で起動。未起動時は専用ページが案内を表示）
       - NISHUKAN_APP_URL=${NISHUKAN_APP_URL:-http://nishukan-app:8020/invoke}
+      # 研修（profiles: ["lms"] で起動。未起動時は専用ページが案内を表示）
+      - LMS_APP_URL=${LMS_APP_URL:-http://lms-app:8021/invoke}
       - CHOSEI_PUBLIC_ENDPOINT=${CHOSEI_PUBLIC_ENDPOINT:-${PUBLIC_URL:-}}
       # 書類領域分割チェック（profiles: ["doccheck"]）
       - DOCCHECK_APP_URL=${DOCCHECK_APP_URL:-http://doccheck-app:8011/invoke}
@@ -767,6 +769,45 @@ services:
       - "8020"
     restart: unless-stopped
 
+  # 任意: 研修（`COMPOSE_PROFILES=lms` または `--profile lms`）
+  # ホストポートは公開しない。画面は backend からのみ到達する。
+  lms-app:
+    profiles: ["lms"]
+    build:
+      context: .
+      dockerfile: lms-app/Dockerfile
+    container_name: open-genai-lms-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - LMS_DB_PATH=/data/lms.db
+      - LMS_UPLOAD_DIR=/data/lms-uploads
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
+      - S3_PUBLIC_ENDPOINT=${S3_PUBLIC_ENDPOINT:?S3_PUBLIC_ENDPOINT（公開URL）を設定してください}
+      - S3_BUCKET=${S3_BUCKET:-open-genai}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:?S3_ACCESS_KEY を設定してください}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:?S3_SECRET_KEY を設定してください}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_ADDRESSING_STYLE=${S3_ADDRESSING_STYLE:-path}
+      - S3_PRESIGN_EXPIRY=${S3_PRESIGN_EXPIRY:-86400}
+      - LMS_S3_PREFIX=lms
+      - WHISPER_APP_URL=${WHISPER_APP_URL:-http://whisper-app:8002/invoke}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - LLM_PROVIDERS=${LLM_PROVIDERS:-}
+      - LLM_FALLBACKS=${LLM_FALLBACKS:-}
+      - LMS_VISION_MODEL=${LMS_VISION_MODEL:-gemma4:cloud}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - whisper-app
+    volumes:
+      - lms_app_data:/data
+    expose:
+      - "8021"
+    restart: unless-stopped
+
   # 成果物ファイル配信用の自前オブジェクトストレージ（OSS・S3互換）。
   # 本番: 利用者がインターネットから取得するため、別途 TLS 付きの公開経路
   #       （S3_PUBLIC_ENDPOINT）へ 8333 を露出する構成にすること。
@@ -815,3 +856,4 @@ volumes:
   procuretech_hearing_app_data:
   ssh_app_data:
   nishukan_app_data:
+  lms_app_data:

@@ -33,6 +33,7 @@ const FEATURE_OPTIONS = [
   { id: 'rag', label: 'ナレッジ検索' },
   { id: 'notebook', label: 'ノートブック' },
   { id: 'ssh', label: 'SSH 端末' },
+  { id: 'lms', label: '研修' },
 ] as const;
 
 const roleJa = (role: string) =>

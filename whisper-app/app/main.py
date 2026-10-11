@@ -112,9 +112,10 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
         tmp_path = tmp.name
     del raw
 
+    as_segments = str(inputs.get("format") or "") == "segments"
     async with _transcribe_lock:
         try:
-            outputs = await asyncio.to_thread(_transcribe_file, tmp_path, lang_arg)
+            outputs = await asyncio.to_thread(_transcribe_file, tmp_path, lang_arg, as_segments)
             return {"outputs": outputs}
         finally:
             try:
@@ -123,8 +124,11 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
                 pass
 
 
-def _transcribe_file(tmp_path: str, lang_arg: str | None) -> str:
-    """同期の文字起こし。イベントループを止めないようスレッドから呼ぶ。"""
+def _transcribe_file(tmp_path: str, lang_arg: str | None, as_segments: bool = False) -> Any:
+    """同期の文字起こし。イベントループを止めないようスレッドから呼ぶ。
+
+    format=segments のときは発話ごとの開始秒・終了秒を返す。通常は Markdown の文字列。
+    """
     try:
         model = _get_model()
     except Exception as e:  # noqa: BLE001
@@ -132,13 +136,24 @@ def _transcribe_file(tmp_path: str, lang_arg: str | None) -> str:
 
     try:
         segments, info = model.transcribe(tmp_path, language=lang_arg, vad_filter=True)
+        detected = getattr(info, "language", lang_arg or "auto")
+        if as_segments:
+            rows = []
+            for seg in segments:
+                rows.append(
+                    {
+                        "start": round(float(seg.start), 2),
+                        "end": round(float(seg.end), 2),
+                        "text": seg.text.strip(),
+                    }
+                )
+            return {"language": detected, "segments": rows}
         lines: list[str] = []
         for seg in segments:
             start = _fmt_ts(seg.start)
             end = _fmt_ts(seg.end)
             lines.append(f"[{start} - {end}] {seg.text.strip()}")
         transcript = "\n".join(lines) if lines else "（音声から文字を検出できませんでした）"
-        detected = getattr(info, "language", lang_arg or "auto")
         return f"**検出言語**: {detected}\n\n{transcript}"
     except Exception as e:  # noqa: BLE001
         return f"[文字起こし中にエラーが発生しました] {e}"
