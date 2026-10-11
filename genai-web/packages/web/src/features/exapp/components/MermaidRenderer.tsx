@@ -16,10 +16,12 @@ mermaid.initialize(defaultConfig);
 
 type Props = {
   code: string;
+  /** 記法を図にできないとき。指定するとエラー枠は出さない。 */
+  onError?: () => void;
 };
 
 export const MermaidRenderer = (props: Props) => {
-  const { code } = props;
+  const { code, onError } = props;
 
   const [svgContent, setSvgContent] = useState<string>('');
   const [hasError, setHasError] = useState(false);
@@ -49,14 +51,18 @@ export const MermaidRenderer = (props: Props) => {
     } catch (error) {
       setSvgContent(`レンダリングに失敗しました。Mermaid記法に誤りがあります。${error}`);
       setHasError(true);
+      onError?.();
     }
-  }, [code]);
+  }, [code, onError]);
 
   useEffect(() => {
     render();
   }, [render]);
 
   if (hasError) {
+    if (onError) {
+      return null;
+    }
     return (
       <div className='overflow-hidden rounded-8 border border-error-2 bg-white p-4'>
         <p

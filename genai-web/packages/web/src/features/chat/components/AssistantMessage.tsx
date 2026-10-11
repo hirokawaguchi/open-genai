@@ -5,6 +5,8 @@ import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { ReplayIcon } from '@/components/ui/icons/ReplayIcon';
+import { DiagramSupplement } from '@/features/chat/components/DiagramSupplement';
+import { ImageSupplement } from '@/features/chat/components/ImageSupplement';
 import { FileCard } from '@/features/chat/components/FileCard';
 import { ZoomUpImage } from '@/features/chat/components/ZoomUpImage';
 import { ZoomUpVideo } from '@/features/chat/components/ZoomUpVideo';
@@ -15,6 +17,7 @@ import { useTyping } from '@/hooks/useTyping';
 type Props = {
   idx?: number;
   chatContent: ShownMessage;
+  chatId?: string;
   loading?: boolean;
   allowRetry?: boolean;
   retryGeneration?: () => void;
@@ -23,6 +26,7 @@ type Props = {
 export const AssistantMessage = ({
   idx,
   chatContent,
+  chatId,
   loading,
   allowRetry,
   retryGeneration,
@@ -121,9 +125,29 @@ export const AssistantMessage = ({
           </div>
         </div>
 
-        <div className='mt-1 flex items-start justify-end gap-0.5 print:hidden'>
+        <div className='mt-1 flex items-center justify-end gap-0.5 print:hidden'>
           {!loading && (
             <>
+              {usecase === '/chat' &&
+                chatId &&
+                chatContent.messageId &&
+                chatContent.createdDate &&
+                chatContent.content?.trim() && (
+                  <>
+                    <DiagramSupplement
+                      chatId={chatId}
+                      messageId={chatContent.messageId}
+                      content={chatContent.content}
+                      modelId={chatContent.llmType}
+                    />
+                    <ImageSupplement
+                      chatId={chatId}
+                      messageId={chatContent.messageId}
+                      content={chatContent.content}
+                      modelId={chatContent.llmType}
+                    />
+                  </>
+                )}
               {allowRetry && (
                 <Button
                   variant='text'

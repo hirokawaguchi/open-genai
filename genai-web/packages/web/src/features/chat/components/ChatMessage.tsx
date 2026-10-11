@@ -5,6 +5,7 @@ import { UserMessage } from '@/features/chat/components/UserMessage';
 type Props = {
   idx?: number;
   chatContent: ShownMessage;
+  chatId?: string;
   loading?: boolean;
   allowRetry?: boolean;
   retryGeneration?: () => void;
