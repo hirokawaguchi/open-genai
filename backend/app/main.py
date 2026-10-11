@@ -46,6 +46,8 @@ from . import (
     account_rate,
     audit,
     auth,
+    diagram_supplement,
+    image_supplement,
     filesig,
     image_gen,
     intauth,
@@ -2395,6 +2397,157 @@ async def save_image_result(
     if not updated:
         return JSONResponse(status_code=404, content={"message": "message not found"})
     return JSONResponse(content={"message": updated})
+
+
+@app.post("/chats/{chat_id}/messages/{message_id}/diagram")
+async def create_message_diagram(
+    chat_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    """回答の補足図を、ボタン操作のタイミングで作って返す。
+
+    クリックが図の要求なので、要不要は判断しない。
+    同じ回答への再表示は、今の作り方で保存済みの結果を返す。回答を保存し直すと結果は消える。
+    """
+    user_id, tenant_id, claims = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    answer = storage.get_assistant_answer(chat_id, user_id, message_id, tenant_id)
+    if not answer:
+        return JSONResponse(status_code=404, content={"error": "回答が見つかりません"})
+
+    cached = storage.get_message_diagram(chat_id, message_id)
+    if cached:
+        return JSONResponse(content=cached)
+
+    body: dict[str, Any] = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            parsed = await request.json()
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            body = parsed
+    model = body.get("model") if isinstance(body.get("model"), dict) else None
+    if not model and answer.get("llmType"):
+        model = {"modelId": answer["llmType"], "type": "bedrock"}
+    denied = _model_denied(claims, model)
+    if denied:
+        return JSONResponse(status_code=403, content={"error": denied})
+
+    try:
+        result = await diagram_supplement.build_diagram(
+            answer.get("content") or "",
+            answer.get("userContent") or "",
+            model,
+        )
+    except Exception as exc:  # noqa: BLE001 - 図が作れなくても回答自体は残す
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"図を用意できませんでした（{type(exc).__name__}）"},
+        )
+
+    stored = storage.save_message_diagram(chat_id, user_id, message_id, result)
+    try:
+        audit.record(
+            request,
+            action="chat.diagram",
+            usecase="/chat",
+            chatId=chat_id,
+            model=llm.resolve_model(model if isinstance(model, dict) else None),
+            input_text=answer.get("content") or "",
+            output_text=stored.get("mermaid") or stored.get("status", ""),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse(content=stored)
+
+
+@app.post("/chats/{chat_id}/messages/{message_id}/image")
+async def create_message_image(
+    chat_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    """回答の補足画像を、リンクを押したときに作って返す。"""
+    user_id, tenant_id, claims = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    answer = storage.get_assistant_answer(chat_id, user_id, message_id, tenant_id)
+    if not answer:
+        return JSONResponse(status_code=404, content={"error": "回答が見つかりません"})
+
+    if not teams_store.builtin_feature_enabled(tenant_id, "image"):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "画像生成はこの棟では無効です。"},
+        )
+    if not await image_gen.is_image_available():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "画像生成のモデルが利用できません。"},
+        )
+
+    cached = storage.get_message_image(chat_id, message_id)
+    if cached:
+        return JSONResponse(content=_image_supplement_body(cached))
+
+    body: dict[str, Any] = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            parsed = await request.json()
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            body = parsed
+    model = body.get("model") if isinstance(body.get("model"), dict) else None
+    if not model and answer.get("llmType"):
+        model = {"modelId": answer["llmType"], "type": "bedrock"}
+    denied = _model_denied(claims, model)
+    if denied:
+        return JSONResponse(status_code=403, content={"error": denied})
+
+    try:
+        result = await image_supplement.build_image(
+            answer.get("content") or "",
+            answer.get("userContent") or "",
+            chat_id,
+            message_id,
+            model,
+        )
+    except image_gen.ImageGenError as exc:
+        return JSONResponse(
+            status_code=exc.status,
+            content={"error": str(exc)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"画像を用意できませんでした（{type(exc).__name__}）"},
+        )
+
+    stored = storage.save_message_image(chat_id, user_id, message_id, result)
+    try:
+        audit.record(
+            request,
+            action="chat.image",
+            usecase="/chat",
+            chatId=chat_id,
+            model=llm.resolve_model(model if isinstance(model, dict) else None),
+            input_text=answer.get("content") or "",
+            output_text=stored.get("prompt") or stored.get("status", ""),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse(content=_image_supplement_body(stored))
+
+
+def _image_supplement_body(stored: dict[str, str]) -> dict[str, str]:
+    body = {"status": stored.get("status") or "none"}
+    if body["status"] != "ready":
+        return body
+    data_url = image_supplement.read_image_data_url(stored.get("fileKey") or "")
+    if not data_url:
+        return {"status": "none"}
+    body["image"] = data_url
+    return body
 
 
 # ---------------------------------------------------------------------------

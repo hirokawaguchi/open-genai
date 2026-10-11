@@ -113,6 +113,39 @@ def init_db() -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """既存DB（userId 列の無い chats 等）への冪等マイグレーション。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS message_diagrams (
+            messageId TEXT PRIMARY KEY,
+            chatId TEXT NOT NULL,
+            userId TEXT NOT NULL,
+            status TEXT NOT NULL,
+            mermaid TEXT NOT NULL DEFAULT '',
+            createdDate TEXT NOT NULL,
+            revision TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    diagram_msg_cols = [
+        r["name"] for r in conn.execute("PRAGMA table_info(message_diagrams)").fetchall()
+    ]
+    if "revision" not in diagram_msg_cols:
+        conn.execute(
+            "ALTER TABLE message_diagrams ADD COLUMN revision TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS message_images (
+            messageId TEXT PRIMARY KEY,
+            chatId TEXT NOT NULL,
+            userId TEXT NOT NULL,
+            status TEXT NOT NULL,
+            prompt TEXT NOT NULL DEFAULT '',
+            fileKey TEXT NOT NULL DEFAULT '',
+            createdDate TEXT NOT NULL
+        )
+        """
+    )
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(chats)").fetchall()]
     if "userId" not in cols:
         conn.execute(
@@ -335,6 +368,8 @@ def delete_chat(chat_id: str, user_id: str, tenant_id: str | None = None) -> boo
         if not _chat_belongs(conn, chat_id, user_id, tenant_id):
             return False
         conn.execute("DELETE FROM messages WHERE chatId = ?", (chat_id,))
+        conn.execute("DELETE FROM message_diagrams WHERE chatId = ?", (chat_id,))
+        _drop_message_images(conn, chat_id, None)
         conn.execute("DELETE FROM chats WHERE chatId = ?", (chat_id,))
     return True
 
@@ -402,6 +437,149 @@ def update_message_extra_data(
             (chat_id, message_id),
         ).fetchone()
     return _row_to_message(updated) if updated else None
+
+
+def get_assistant_answer(
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    tenant_id: str | None = None,
+) -> dict[str, Any] | None:
+    """所有者の assistant 回答と、その直前のユーザー発言を返す。"""
+    with _lock, _connect() as conn:
+        if not _chat_belongs(conn, chat_id, user_id, tenant_id):
+            return None
+        row = conn.execute(
+            "SELECT * FROM messages"
+            " WHERE chatId = ? AND messageId = ? AND role = 'assistant'",
+            (chat_id, message_id),
+        ).fetchone()
+        if not row:
+            return None
+        prev = conn.execute(
+            "SELECT content FROM messages"
+            " WHERE chatId = ? AND role = 'user' AND seq < ?"
+            " ORDER BY seq DESC LIMIT 1",
+            (chat_id, row["seq"]),
+        ).fetchone()
+    msg = _row_to_message(row)
+    msg["userContent"] = prev["content"] if prev else ""
+    return msg
+
+
+# 図の作り方を変えたら上げる。古い保存は次のクリックで作り直す。
+MESSAGE_DIAGRAM_REVISION = "2"
+
+
+def get_message_diagram(chat_id: str, message_id: str) -> dict[str, str] | None:
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT status, mermaid, revision FROM message_diagrams"
+            " WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    if not row or (row["revision"] or "") != MESSAGE_DIAGRAM_REVISION:
+        return None
+    found: dict[str, str] = {"status": row["status"]}
+    if row["status"] == "ready" and row["mermaid"]:
+        found["mermaid"] = row["mermaid"]
+    return found
+
+
+def _drop_message_images(
+    conn: sqlite3.Connection, chat_id: str, message_id: str | None
+) -> None:
+    if message_id:
+        rows = conn.execute(
+            "SELECT fileKey FROM message_images WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        ).fetchall()
+        conn.execute(
+            "DELETE FROM message_images WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        )
+    else:
+        rows = conn.execute(
+            "SELECT fileKey FROM message_images WHERE chatId = ?",
+            (chat_id,),
+        ).fetchall()
+        conn.execute("DELETE FROM message_images WHERE chatId = ?", (chat_id,))
+    keys = [row["fileKey"] for row in rows if row["fileKey"]]
+    if not keys:
+        return
+    from .image_supplement import remove_stored_images
+
+    remove_stored_images(keys)
+
+
+def get_message_image(chat_id: str, message_id: str) -> dict[str, str] | None:
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT status, prompt, fileKey FROM message_images"
+            " WHERE chatId = ? AND messageId = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    if not row:
+        return None
+    found: dict[str, str] = {"status": row["status"]}
+    if row["prompt"]:
+        found["prompt"] = row["prompt"]
+    if row["fileKey"]:
+        found["fileKey"] = row["fileKey"]
+    return found
+
+
+def save_message_image(
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    result: dict[str, str],
+) -> dict[str, str]:
+    status = "ready" if result.get("status") == "ready" and result.get("fileKey") else "none"
+    prompt = result.get("prompt", "") if status == "ready" else ""
+    file_key = result.get("fileKey", "") if status == "ready" else ""
+    stored = {"status": status}
+    if prompt:
+        stored["prompt"] = prompt
+    if file_key:
+        stored["fileKey"] = file_key
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO message_images"
+            " (messageId, chatId, userId, status, prompt, fileKey, createdDate)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (message_id, chat_id, user_id, status, prompt, file_key, _now()),
+        )
+    return stored
+
+
+def save_message_diagram(
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    result: dict[str, str],
+) -> dict[str, str]:
+    status = "ready" if result.get("status") == "ready" and result.get("mermaid") else "none"
+    mermaid = result.get("mermaid", "") if status == "ready" else ""
+    stored = {"status": status}
+    if mermaid:
+        stored["mermaid"] = mermaid
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO message_diagrams"
+            " (messageId, chatId, userId, status, mermaid, createdDate, revision)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                message_id,
+                chat_id,
+                user_id,
+                status,
+                mermaid,
+                _now(),
+                MESSAGE_DIAGRAM_REVISION,
+            ),
+        )
+    return stored
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +811,11 @@ def create_messages(
                 ),
             )
             recorded.append(rec)
+            conn.execute(
+                "DELETE FROM message_diagrams WHERE chatId = ? AND messageId = ?",
+                (chat_id, message_id),
+            )
+            _drop_message_images(conn, chat_id, message_id)
         conn.execute(
             "UPDATE chats SET updatedDate = ? WHERE chatId = ?", (_now(), chat_id)
         )

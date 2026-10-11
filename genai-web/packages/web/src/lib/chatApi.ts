@@ -63,6 +63,46 @@ export const saveImageResult = async (
   return res.data;
 };
 
+export type DiagramSupplementResponse = {
+  status: 'none' | 'ready';
+  mermaid?: string;
+  error?: string;
+};
+
+export const createDiagramSupplement = async (
+  chatId: string,
+  messageId: string,
+  modelId?: string,
+) => {
+  const id = decomposeId(chatId) ?? chatId;
+  const mid = decomposeId(messageId) ?? messageId;
+  const res = await genUApi.post<DiagramSupplementResponse>(
+    `chats/${id}/messages/${mid}/diagram`,
+    modelId ? { model: { modelId, type: 'bedrock' } } : {},
+  );
+  return res.data;
+};
+
+export type ImageSupplementResponse = {
+  status: 'none' | 'ready';
+  image?: string;
+  error?: string;
+};
+
+export const createImageSupplement = async (
+  chatId: string,
+  messageId: string,
+  modelId?: string,
+) => {
+  const id = decomposeId(chatId) ?? chatId;
+  const mid = decomposeId(messageId) ?? messageId;
+  const res = await genUApi.post<ImageSupplementResponse>(
+    `chats/${id}/messages/${mid}/image`,
+    modelId ? { model: { modelId, type: 'bedrock' } } : {},
+  );
+  return res.data;
+};
+
 export const predict = async (req: PredictRequest): Promise<string> => {
   const res = await genUApi.post<PredictResponse>('predict', req);
   return res.data;

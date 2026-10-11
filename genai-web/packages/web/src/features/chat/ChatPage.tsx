@@ -75,6 +75,7 @@ export const ChatPage = () => {
     getCurrentSystemContext,
     retryGeneration,
     chatTitle,
+    sessionChatId,
   } = useChat(usecase, chatId);
 
   const { scrollableContainer, setFollowing } = useFollow();
@@ -258,6 +259,7 @@ export const ChatPage = () => {
                     <ChatMessage
                       key={chat.messageId ?? `message-${idx}`}
                       chatContent={chat}
+                      chatId={chatId || sessionChatId}
                       loading={loading && idx === messages.length - 1}
                       allowRetry={idx === messages.length - 1}
                       retryGeneration={onRetry}
