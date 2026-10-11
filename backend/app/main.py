@@ -43,6 +43,7 @@ from app.exapp_history import history_inputs
 from shared import ssrfguard
 
 from . import (
+    account_rate,
     audit,
     auth,
     filesig,
@@ -1690,6 +1691,22 @@ def _startup() -> None:
     os.makedirs(FILES_DIR, exist_ok=True)
 
 
+def _account_rate_response(claims: dict[str, Any]) -> JSONResponse | None:
+    """同じアカウントの短い時間の API が上限を超えていたら 429。"""
+    gate = account_rate.limiter()
+    key = account_rate.account_key(claims)
+    if gate.allow(key):
+        return None
+    return JSONResponse(
+        status_code=429,
+        content={"error": "too many requests"},
+        headers={
+            "Retry-After": str(gate.retry_after(key)),
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # 認証ミドルウェア（ブラウザ向け API を JWT で保護）
 # ---------------------------------------------------------------------------
@@ -1702,12 +1719,15 @@ async def auth_middleware(request: Request, call_next):
     authz = request.headers.get("authorization", "")
     if authz.startswith("Bearer "):
         try:
-            auth.verify_token(authz[7:])
+            claims = auth.verify_token(authz[7:])
         except Exception:  # noqa: BLE001 - トークン不正は 401 に集約
             pass
         else:
             # トークン検証のあとで起きた例外は 401 にしない。
             # ここに含めると、プロフィール取得の失敗がログアウトになる。
+            limited = _account_rate_response(claims)
+            if limited is not None:
+                return limited
             return await call_next(request)
 
     if _patchform_service_request(request):
