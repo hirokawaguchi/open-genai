@@ -613,6 +613,9 @@ async def update_procedure(
         guide_form_id=body.get("guide_form_id"),
         mapping=body.get("mapping"),
         notify_emails=body.get("notify_emails"),
+        handling=body.get("handling"),
+        endpoint=body.get("delivery"),
+        review_call=body.get("review_call"),
     )
     if msg or detail is None:
         code = 404 if "見つかりません" in (msg or "") else 403 if "権限" in (msg or "") else 400
@@ -947,6 +950,249 @@ async def set_reception_status(
     if msg or result is None:
         return _application_error(msg)
     return JSONResponse(content=result)
+
+
+@app.post("/applications/{application_id}/review-finding")
+async def set_review_finding(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.set_review_finding(
+        application_id=application_id,
+        line_id=str(body.get("id") or ""),
+        result=str(body.get("result") or ""),
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/applications/{application_id}/review-findings")
+async def generate_review_findings(
+    application_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    result, msg = await store.generate_review_findings(
+        application_id=application_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/applications/{application_id}/route")
+async def move_application_route(
+    application_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    result, msg = store.move_application_route(
+        application_id=application_id,
+        action=str(body.get("action") or ""),
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.post("/applications/{application_id}/delivery")
+def resend_application_delivery(
+    application_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    result, msg = store.resend_application_delivery(
+        application_id=application_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+    )
+    if msg or result is None:
+        return _application_error(msg)
+    return JSONResponse(content=result)
+
+
+@app.get("/ledger")
+def list_ledger(
+    procedure_id: str = "",
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
+    )
+    if err:
+        return err
+    rows = store.list_ledger_rows(
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        procedure_id=procedure_id,
+        unrestricted=_service_ok(x_service_key),
+    )
+    return JSONResponse(content={"rows": rows})
+
+
+@app.get("/ledger/{row_id}")
+def get_ledger_row(
+    row_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+    x_service_key: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key,
+        x_user_id,
+        x_user_groups,
+        x_scope,
+        x_user_ts,
+        x_user_sig,
+        x_user_tags,
+        x_service_key,
+        allow_service=True,
+    )
+    if err:
+        return err
+    row, msg = store.get_ledger_row(
+        row_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        unrestricted=_service_ok(x_service_key),
+    )
+    if msg or row is None:
+        code = 404 if "見つかりません" in (msg or "") else 403
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=row)
+
+
+@app.post("/ledger/{row_id}")
+async def update_ledger_row(
+    row_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    row, msg = store.update_ledger_row(
+        row_id=row_id,
+        actor_user_id=uid,
+        actor_groups=_groups(x_user_groups),
+        assignee=body.get("assignee") if "assignee" in body else None,
+        status=body.get("status") if "status" in body else None,
+        comment=body.get("comment") if "comment" in body else None,
+    )
+    if msg or row is None:
+        code = 404 if "見つかりません" in (msg or "") else 400
+        return JSONResponse(status_code=code, content={"error": msg})
+    return JSONResponse(content=row)
+
+
+@app.get("/ledger/{row_id}/files/{file_id}")
+def download_ledger_file(
+    row_id: str,
+    file_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Response:
+    err, uid = _verify_internal(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    _row, msg = store.get_ledger_row(
+        row_id, actor_user_id=uid, actor_groups=_groups(x_user_groups)
+    )
+    if msg:
+        code = 404 if "見つかりません" in msg else 403
+        return JSONResponse(status_code=code, content={"error": msg})
+    path = store.ledger_file(row_id, file_id)
+    if path is None:
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+    return FileResponse(path)
 
 
 @app.post("/applications/bulk-reception")
@@ -2433,6 +2679,10 @@ async def public_set_application_status(application_id: str, request: Request) -
     )
     if msg or result is None:
         return _application_error(msg)
+    result.pop("review", None)
+    result.pop("route", None)
+    result.pop("ledger_id", None)
+    result.pop("delivery", None)
     return JSONResponse(content=result)
 
 
@@ -2875,6 +3125,10 @@ def mine_get_application(application_id: str, request: Request) -> JSONResponse:
     data = store.get_application(application_id=application_id)
     if data is None:
         return JSONResponse(status_code=404, content={"error": "申請が見つかりません"})
+    data.pop("review", None)
+    data.pop("route", None)
+    data.pop("ledger_id", None)
+    data.pop("delivery", None)
     return JSONResponse(content=data)
 
 
@@ -2895,6 +3149,10 @@ async def mine_set_application_status(application_id: str, request: Request) -> 
     )
     if msg or result is None:
         return _application_error(msg)
+    result.pop("review", None)
+    result.pop("route", None)
+    result.pop("ledger_id", None)
+    result.pop("delivery", None)
     return JSONResponse(content=result)
 
 

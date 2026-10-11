@@ -1,16 +1,19 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { PiListBold, PiNotePencilBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
-import { Label } from '@/components/ui/dads/Label';
+import {
+  CustomDialog,
+  CustomDialogBody,
+  CustomDialogHeader,
+  CustomDialogPanel,
+} from '@/components/ui/CustomDialog';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
-import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
-import { PatchformProcedureCoach } from './PatchformProcedureCoach';
+import { PATCHFORM_LABEL } from './labels';
 import { PatchformGuideAssist } from './PatchformGuideAssist';
-import { PatchformPaneTabs } from './PatchformPaneTabs';
 import { PatchformSubnav } from './PatchformSubnav';
+import { ProcedureCreateWizard } from './ProcedureCreateWizard';
 import { ProcedureReceptionActions } from './ProcedureReceptionActions';
 import { omitsNavigation } from './types';
 import {
@@ -31,20 +34,16 @@ const statusLabel: Record<string, string> = {
 
 export const PatchformProceduresPage = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const pane = searchParams.get('tab') === 'new' ? 'new' : 'list';
-  const { forms, mutate: mutateForms } = usePatchformList();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { mutate: mutateForms } = usePatchformList();
   const { procedures, isLoading, loadError, mutate } = usePatchformProcedures();
   const {
-    create,
     setStatus,
     setStatusMany,
     removeMany,
     importProcedure,
     duplicate: duplicateProcedure,
     submitting,
-    error,
-    setError,
   } = usePatchformProcedureActions();
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
@@ -57,10 +56,8 @@ export const PatchformProceduresPage = () => {
     error: assistError,
     setError: setAssistError,
   } = usePatchformAssist();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [guideFormId, setGuideFormId] = useState('');
-  const [startMode, setStartMode] = useState<'omit' | 'navigate'>('omit');
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [assistOpen, setAssistOpen] = useState(false);
   const [guideText, setGuideText] = useState('');
   const [readingFile, setReadingFile] = useState(false);
   const [guideFileName, setGuideFileName] = useState('');
@@ -173,29 +170,11 @@ export const PatchformProceduresPage = () => {
     setSelected(new Set());
   };
 
-  const draftProc = procedures.find((p) => p.status === 'draft');
-  const publishedProc = procedures.find((p) => p.status === 'published');
-  const omitNav = startMode === 'omit';
-  const isNavForm = (f: (typeof forms)[number]) => (f.tags || []).includes(NAVIGATION_TAG);
-  const selectableForms = forms.filter(
-    (f) => f.status !== 'archived' && (omitNav ? !isNavForm(f) : isNavForm(f)),
-  );
-
-  const chooseStartMode = (mode: 'omit' | 'navigate') => {
-    setStartMode(mode);
-    const keep = forms.find((f) => f.id === guideFormId);
-    const ok = keep && (mode === 'omit' ? !isNavForm(keep) : isNavForm(keep));
-    if (!ok) setGuideFormId('');
-  };
-
-  const goCreate = () => {
-    if (pane === 'new') {
-      document.getElementById('pf-proc-name')?.focus();
-      document.getElementById('pf-proc-create')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-    navigate('/patchform/procedures?tab=new');
-  };
+  useEffect(() => {
+    if (searchParams.get('tab') !== 'new') return;
+    setWizardOpen(true);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const onPickGuide = async (file: File | null) => {
     if (!file) return;
@@ -266,24 +245,6 @@ export const PatchformProceduresPage = () => {
     }
   };
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!name.trim() || !guideFormId) {
-      setError(omitNav ? '名前と申請フォームを選んでください。' : '名前とナビゲーションフォームを選んでください。');
-      return;
-    }
-    const created = await create({
-      name: name.trim(),
-      description: description.trim() || undefined,
-      guide_form_id: guideFormId,
-    });
-    if (created) {
-      await mutate();
-      navigate(`/patchform/procedures/${created.id}`);
-    }
-  };
-
   return (
     <LayoutBody>
       <PageTitle title={`手続き · ${PATCHFORM_LABEL}`} />
@@ -300,227 +261,10 @@ export const PatchformProceduresPage = () => {
           <h1 className='text-std-20B-160 lg:text-std-24B-150'>手続き</h1>
           <PatchformSubnav current='procedures' />
           <p className='text-std-16N-170 text-solid-gray-700'>
-            手続きを公開して、受付可能な状態にします。「一覧」で公開中の手続きを見ることができます。「作成」で新たに手続きを作成します。
+            手続きを公開して、受付可能な状態にします。新しい手続きは「新しい手続きを作る」から始め、できた手続きは編集画面で直します。
           </p>
         </div>
 
-        <PatchformPaneTabs
-          label='手続きの作成と一覧'
-          current={pane}
-          tabs={[
-            { id: 'list', label: `一覧（${activeCount}）`, to: '/patchform/procedures', icon: PiListBold },
-            { id: 'new', label: '作成', to: '/patchform/procedures?tab=new', icon: PiNotePencilBold },
-          ]}
-        />
-
-        {pane === 'new' ? (
-        <>
-        <PatchformProcedureCoach
-          title='操作の流れ'
-          lead='今の段階が枠で示されます。ボタンを押すと次の画面へ進みます。'
-          steps={[
-            {
-              id: 'guide',
-              label: 'フォームを作成する',
-              done: forms.length > 0 || procedures.length > 0,
-              hint: '申請フォームかナビゲーションフォームを、「フォーム作成」で作ります。',
-              action: { label: 'フォーム作成へ', to: '/patchform?tab=new' },
-            },
-            {
-              id: 'map',
-              label: '手続きを作る',
-              done: procedures.length > 0,
-              hint: '下の作成欄から始めます。1枚だけなら「ナビゲーションフォームは使わない」を選びます。',
-              action: { label: '下の作成欄へ', onClick: goCreate },
-            },
-            {
-              id: 'publish',
-              label: '手続きを公開する',
-              done: Boolean(publishedProc),
-              hint: '公開すると、申請者や回答者が使える受付が始まります。',
-              action: draftProc
-                ? { label: `「${draftProc.name}」を開く`, to: `/patchform/procedures/${draftProc.id}` }
-                : { label: '作成タブへ', onClick: goCreate },
-            },
-            {
-              id: 'try',
-              label: '届いた申請は申請受付で見る',
-              done: false,
-              hint: '申請者や回答者が質問に答えると、必要な申請の一覧ができます。進捗は申請受付で見ます。',
-              action: { label: '申請受付を開く', to: '/patchform/inbox' },
-            },
-          ]}
-        />
-
-        <section id='pf-proc-create' className='flex flex-col gap-4'>
-          <h2 className='text-std-18B-160'>新しい手続き</h2>
-          <p className='text-std-16N-170 text-solid-gray-700'>
-            手続きを作成して公開します。手順に沿って作業してください。
-          </p>
-          <div className='rounded-8 border border-solid-gray-420 bg-white px-4 py-4'>
-            {forms.length === 0 ? (
-              <div className='mt-4 flex flex-col gap-3'>
-                <p className='text-dns-16N-130 text-solid-gray-700'>
-                  まだ選べるフォームがありません。先にフォームを作成してください。
-                </p>
-                <div>
-                  <Link to='/patchform?tab=new' className='inline-flex'>
-                    <Button type='button' variant='solid-fill' size='md'>
-                      フォームを作成する
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            ) : (
-            <form onSubmit={(e) => void onSubmit(e)} className='mt-6 flex flex-col gap-4'>
-              <div>
-                <Label htmlFor='pf-proc-name' size='sm'>
-                  名前
-                </Label>
-                <input
-                  id='pf-proc-name'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder='例: 転入の手続き'
-                  required
-                />
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  庁内の一覧で使う名前です。
-                </p>
-              </div>
-              <div>
-                <Label htmlFor='pf-proc-desc' size='sm'>
-                  説明（任意）
-                </Label>
-                <textarea
-                  id='pf-proc-desc'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder='例: 転入・転居のときに出す書類を振り分けます'
-                />
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  職員向けのメモです。空欄でも構いません。
-                </p>
-              </div>
-              <fieldset>
-                <legend className='text-std-16B-150'>始め方</legend>
-                <div className='mt-2 flex flex-col gap-2'>
-                  <label className='flex items-start gap-2 text-std-16N-170'>
-                    <input
-                      type='radio'
-                      name='pf-proc-start'
-                      className='mt-1'
-                      checked={omitNav}
-                      onChange={() => chooseStartMode('omit')}
-                    />
-                    <span>
-                      ナビゲーションフォームは使わない
-                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
-                        申請フォーム１枚だけの手続きの場合は、ナビゲーションフォームは不要です。
-                      </span>
-                    </span>
-                  </label>
-                  <label className='flex items-start gap-2 text-std-16N-170'>
-                    <input
-                      type='radio'
-                      name='pf-proc-start'
-                      className='mt-1'
-                      checked={!omitNav}
-                      onChange={() => chooseStartMode('navigate')}
-                    />
-                    <span>
-                      ナビゲーションフォームを使う
-                      <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
-                        申請者の状況に応じて複数の申請フォームの組み合わせを変える場合に使います。
-                      </span>
-                    </span>
-                  </label>
-                </div>
-              </fieldset>
-              <div>
-                <Label htmlFor='pf-proc-guide' size='sm'>
-                  {omitNav ? '申請フォーム' : 'ナビゲーションフォーム'}
-                </Label>
-                <select
-                  id='pf-proc-guide'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-                  value={guideFormId}
-                  onChange={(e) => setGuideFormId(e.target.value)}
-                  required
-                >
-                  <option value=''>{omitNav ? '申請フォームを選ぶ' : 'ナビゲーションフォームを選ぶ'}</option>
-                  {selectableForms.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.title}（{f.locked || f.work_status === 'ready' ? '作成完了' : '作成中'}
-                      {f.has_opening ? ' · 受付中' : ''}
-                      {(f.tags || []).length ? ` · ${(f.tags || []).join('、')}` : ''}）
-                    </option>
-                  ))}
-                </select>
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  表示させるフォームを選んでください。
-                </p>
-                {selectableForms.length === 0 ? (
-                  <div className='mt-2 flex flex-col items-start gap-2'>
-                    <p className='text-dns-16N-130 text-solid-gray-700'>
-                      {omitNav
-                        ? '選べる申請フォームがありません。'
-                        : '選べるナビゲーションフォームがありません。'}
-                    </p>
-                    <Button asChild variant='outline' size='sm' className='inline-flex items-center justify-center'>
-                      <Link to='/patchform?tab=new'>フォームを作成する</Link>
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-              {error && (
-                <p className='text-error-1' role='alert'>
-                  {error}
-                </p>
-              )}
-              <div>
-                <Button type='submit' variant='solid-fill' size='md' aria-disabled={submitting}>
-                  {submitting ? '作成中...' : '作成して編集する'}
-                </Button>
-              </div>
-            </form>
-            )}
-          </div>
-
-          <p className='text-center text-std-16B-150 text-solid-gray-700'>または</p>
-
-          <PatchformGuideAssist
-            readingFile={readingFile}
-            guideFileName={guideFileName}
-            guideText={guideText}
-            busy={assistBusy}
-            error={assistError}
-            setError={setAssistError}
-            onPickFile={(file) => {
-              setGuideFileName(file?.name || '');
-              void onPickGuide(file);
-            }}
-            previewProcedure={previewProcedure}
-            applyProcedureDraft={applyProcedureDraft}
-            onApplied={async (res) => {
-              await Promise.all([mutate(), mutateForms()]);
-              if (res.procedure?.id) {
-                navigate(`/patchform/procedures/${res.procedure.id}`);
-                return;
-              }
-              const nav = res.created_forms.find((f) => f.role === 'guide');
-              const first = res.created_forms[0];
-              if (nav) navigate(`/patchform/${nav.id}`);
-              else if (first) navigate(`/patchform/${first.id}`);
-              else navigate('/patchform');
-            }}
-          />
-        </section>
-        </>
-        ) : (
         <section className='flex flex-col gap-3'>
           <div className='flex flex-wrap items-center justify-between gap-2'>
             <h2 className='text-std-18B-160'>手続き一覧</h2>
@@ -541,11 +285,12 @@ export const PatchformProceduresPage = () => {
               >
                 読み込み
               </Button>
-              <Link to='/patchform/procedures?tab=new' className='inline-flex'>
-                <Button type='button' variant='solid-fill' size='sm'>
-                  新しい手続きを作る
-                </Button>
-              </Link>
+              <Button type='button' variant='outline' size='sm' onClick={() => setAssistOpen(true)}>
+                手引きから候補を出す
+              </Button>
+              <Button type='button' variant='solid-fill' size='sm' onClick={() => setWizardOpen(true)}>
+                新しい手続きを作る
+              </Button>
             </div>
           </div>
           {importMsg ? (
@@ -590,12 +335,13 @@ export const PatchformProceduresPage = () => {
               ) : procedures.length === 0 ? (
                 <>
                   まだ手続きがありません。
-                  <Link
-                    to='/patchform/procedures?tab=new'
+                  <button
+                    type='button'
                     className='ml-1 text-blue-900 underline-offset-2 hover:underline'
+                    onClick={() => setWizardOpen(true)}
                   >
-                    作成タブから作る
-                  </Link>
+                    新しい手続きを作る
+                  </button>
                 </>
               ) : (
                 '表示できる手続きはありません。'
@@ -765,7 +511,51 @@ export const PatchformProceduresPage = () => {
             </>
           )}
         </section>
-        )}
+        <ProcedureCreateWizard
+          open={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          onCreated={async (created) => {
+            setWizardOpen(false);
+            await mutate();
+            navigate(`/patchform/procedures/${created.id}`);
+          }}
+        />
+        <CustomDialog isOpen={assistOpen} onClose={() => setAssistOpen(false)} position='top'>
+          <CustomDialogPanel className='max-w-3xl'>
+            <CustomDialogHeader hasClose={true} onClose={() => setAssistOpen(false)}>
+              手引きから候補を出す
+            </CustomDialogHeader>
+            <CustomDialogBody>
+              <PatchformGuideAssist
+                readingFile={readingFile}
+                guideFileName={guideFileName}
+                guideText={guideText}
+                busy={assistBusy}
+                error={assistError}
+                setError={setAssistError}
+                onPickFile={(file) => {
+                  setGuideFileName(file?.name || '');
+                  void onPickGuide(file);
+                }}
+                previewProcedure={previewProcedure}
+                applyProcedureDraft={applyProcedureDraft}
+                onApplied={async (res) => {
+                  setAssistOpen(false);
+                  await Promise.all([mutate(), mutateForms()]);
+                  if (res.procedure?.id) {
+                    navigate(`/patchform/procedures/${res.procedure.id}`);
+                    return;
+                  }
+                  const nav = res.created_forms.find((f) => f.role === 'guide');
+                  const first = res.created_forms[0];
+                  if (nav) navigate(`/patchform/${nav.id}`);
+                  else if (first) navigate(`/patchform/${first.id}`);
+                  else navigate('/patchform');
+                }}
+              />
+            </CustomDialogBody>
+          </CustomDialogPanel>
+        </CustomDialog>
       </div>
     </LayoutBody>
   );

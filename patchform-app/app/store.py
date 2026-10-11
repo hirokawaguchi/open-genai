@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import bcrypt
 
-from . import crypto, files, notify, procedure, spec
+from . import crypto, delivery, files, ledger, notify, procedure, review_engine, spec
 
 DB_PATH = os.environ.get("PATCHFORM_DB_PATH", "/data/patchform.db")
 RETENTION_DAYS = int(os.environ.get("PATCHFORM_RETENTION_DAYS", "365"))
@@ -435,6 +435,11 @@ def _migrate_applications_optional_submission(db: sqlite3.Connection) -> None:
           assignee TEXT NOT NULL DEFAULT '',
           deadline TEXT NOT NULL DEFAULT '',
           next_action_date TEXT NOT NULL DEFAULT '',
+          submitted_at TEXT NOT NULL DEFAULT '',
+          reception_status TEXT NOT NULL DEFAULT '未確認',
+          reception_stage TEXT NOT NULL DEFAULT '',
+          review_json TEXT NOT NULL DEFAULT '',
+          delivery_json TEXT NOT NULL DEFAULT '',
           FOREIGN KEY (procedure_id) REFERENCES procedures(id),
           FOREIGN KEY (guide_form_id) REFERENCES forms(id)
         )
@@ -444,10 +449,13 @@ def _migrate_applications_optional_submission(db: sqlite3.Connection) -> None:
         "INSERT INTO applications_new (id, token, procedure_id, guide_form_id, "
         "guide_submission_id, form_ids_json, notice_json, created_at, items_json, "
         "owner_kind, owner_key, title, status_override, updated_at, "
-        "assignee, deadline, next_action_date) "
+        "assignee, deadline, next_action_date, submitted_at, reception_status, "
+        "reception_stage, review_json, delivery_json) "
         "SELECT id, token, procedure_id, guide_form_id, guide_submission_id, "
         "form_ids_json, notice_json, created_at, items_json, owner_kind, owner_key, "
-        "title, status_override, updated_at, assignee, deadline, next_action_date "
+        "title, status_override, updated_at, assignee, deadline, next_action_date, "
+        "submitted_at, reception_status, '' AS reception_stage, review_json, "
+        "'' AS delivery_json "
         "FROM applications"
     )
     db.execute("DROP TABLE applications")
@@ -493,6 +501,13 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "submitted_at", "TEXT NOT NULL DEFAULT ''"),
         # 受付（受領側）が回す処理ステータス。申請者側の提出状態とは独立。
         ("applications", "reception_status", "TEXT NOT NULL DEFAULT '未確認'"),
+        ("applications", "reception_stage", "TEXT NOT NULL DEFAULT ''"),
+        ("procedures", "handling_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("procedures", "delivery_json", "TEXT NOT NULL DEFAULT ''"),
+        ("procedures", "review_call_json", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "delivery_json", "TEXT NOT NULL DEFAULT ''"),
+        # 提出した瞬間の審査項目。あとから手続きを直しても、この申請の項目は変えない。
+        ("applications", "review_json", "TEXT NOT NULL DEFAULT ''"),
         # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
         ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
         # 添付ファイルの由来（internal=庁内 / external=庁外アップロード）。
@@ -2248,16 +2263,28 @@ def submit_answers(
             return None, bind_err
         opened = None
         notify_proc = None
+        notify_new = False
         if not is_draft:
             if linked_app_id:
                 opened = _populate_project_from_guide(
                     db, linked_app_id, row["id"], sid, cleaned
                 )
-            if opened is None:
+                if opened is None and app_for_link is not None:
+                    # 申請の中の様式を記入しただけ。この様式を案内にしている
+                    # 別の手続きがあっても、そちらへ申請を開き直さない。
+                    fresh = db.execute(
+                        "SELECT * FROM applications WHERE id = ?", (linked_app_id,)
+                    ).fetchone()
+                    opened = _application_payload(db, fresh) if fresh else None
+                elif opened is not None:
+                    notify_new = True
+            else:
                 opened = _open_application_from_guide(
                     db, row["id"], sid, cleaned, submitter_user_id=submitter_user_id
                 )
-            if opened:
+                if opened is not None:
+                    notify_new = True
+            if notify_new and opened is not None:
                 notify_proc = db.execute(
                     "SELECT name, notify_emails_json FROM procedures WHERE id = ?",
                     (opened.get("procedure_id"),),
@@ -2277,7 +2304,7 @@ def submit_answers(
                     changes=diffs,
                 )
         db.commit()
-    if opened:
+    if notify_new and opened is not None:
         try:
             notify.notify_new_application(
                 opened,
@@ -2612,6 +2639,76 @@ def _is_single_form_app(db: sqlite3.Connection, app: sqlite3.Row) -> bool:
     return not procedure.choice_fields(guide_def)
 
 
+def _handling_of_row(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
+    raw = row["handling_json"] if "handling_json" in keys else ""
+    handling, err = procedure.normalize_handling(raw or {})
+    if err or handling is None:
+        return procedure.default_handling()
+    return handling
+
+
+def _review_call_of_row(row: sqlite3.Row | None) -> dict[str, Any]:
+    if row is None:
+        return review_engine.empty_call()
+    keys = row.keys()
+    raw = row["review_call_json"] if "review_call_json" in keys else ""
+    if not str(raw or "").strip():
+        return review_engine.empty_call()
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return review_engine.empty_call()
+    call, err = review_engine.normalize_call(parsed if isinstance(parsed, dict) else None)
+    if err or call is None:
+        return review_engine.empty_call()
+    return call
+
+
+def _procedure_target(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
+    raw = row["delivery_json"] if "delivery_json" in keys else ""
+    if not str(raw or "").strip():
+        return delivery.empty_target()
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return delivery.empty_target()
+    target, err = delivery.normalize_target(parsed if isinstance(parsed, dict) else None)
+    if err or target is None:
+        return delivery.empty_target()
+    return target
+
+
+def _app_delivery(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
+    raw = row["delivery_json"] if "delivery_json" in keys else ""
+    data: dict[str, Any] = {}
+    if str(raw or "").strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data = parsed
+        except (TypeError, json.JSONDecodeError):
+            data = {}
+    try:
+        revision = int(data.get("revision") or 0)
+    except (TypeError, ValueError):
+        revision = 0
+    try:
+        attempts = int(data.get("attempts") or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    return {
+        "state": str(data.get("state") or ""),
+        "revision": revision,
+        "receipt_no": str(data.get("receipt_no") or "")[:80],
+        "detail": str(data.get("detail") or "")[:200],
+        "attempts": attempts,
+        "sent_at": str(data.get("sent_at") or ""),
+    }
+
+
 def _row_to_procedure(
     db: sqlite3.Connection,
     row: sqlite3.Row,
@@ -2652,6 +2749,10 @@ def _row_to_procedure(
         "warnings": procedure.mapping_warnings(mapping, definition),
         "can_edit": _can_edit_procedure(row, actor_user_id, actor_groups),
         "notify_emails": _emails_from_row(row),
+        "formal_checks": procedure.formal_check_catalog(),
+        "handling": _handling_of_row(row),
+        "delivery": delivery.public_target(_procedure_target(row)),
+        "review_call": review_engine.public_call(_review_call_of_row(row)),
     }
 
 
@@ -3220,6 +3321,9 @@ def update_procedure(
     guide_form_id: str | None = None,
     mapping: Any = None,
     notify_emails: Any = None,
+    handling: Any = None,
+    endpoint: Any = None,
+    review_call: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     db = connect()
     with _lock:
@@ -3252,15 +3356,36 @@ def update_procedure(
             next_emails, email_err = notify.parse_notify_emails(notify_emails)
             if email_err:
                 return None, email_err
+        if handling is None:
+            next_handling = _handling_of_row(row)
+        else:
+            next_handling, handling_err = procedure.normalize_handling(handling)
+            if handling_err or next_handling is None:
+                return None, handling_err
+        next_target, target_err = delivery.normalize_target(
+            endpoint, previous=_procedure_target(row)
+        )
+        if target_err or next_target is None:
+            return None, target_err
+        next_call, call_err = review_engine.normalize_call(
+            review_call, previous=_review_call_of_row(row)
+        )
+        if call_err or next_call is None:
+            return None, call_err
         db.execute(
             "UPDATE procedures SET name = ?, description = ?, guide_form_id = ?, "
-            "mapping_json = ?, notify_emails_json = ?, updated_at = ? WHERE id = ?",
+            "mapping_json = ?, notify_emails_json = ?, handling_json = ?, "
+            "delivery_json = ?, review_call_json = ?, updated_at = ? "
+            "WHERE id = ?",
             (
                 next_name,
                 next_desc,
                 next_guide,
                 json.dumps(next_mapping, ensure_ascii=False),
                 json.dumps(next_emails or [], ensure_ascii=False),
+                json.dumps(next_handling, ensure_ascii=False),
+                json.dumps(next_target, ensure_ascii=False),
+                json.dumps(next_call, ensure_ascii=False),
                 _now_iso(),
                 procedure_id,
             ),
@@ -3623,6 +3748,8 @@ def _item_payload(
     db: sqlite3.Connection,
     app_row: sqlite3.Row,
     item: dict[str, Any],
+    *,
+    mask: bool = True,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": item.get("id"),
@@ -3687,7 +3814,7 @@ def _item_payload(
             if definition is None:
                 form = _form_row(db, form_id)
                 definition = _definition(form) if form else {}
-            out["answers"] = crypto.reveal_answers(definition, answers, mask=True)
+            out["answers"] = crypto.reveal_answers(definition, answers, mask=mask)
             out["definition"] = definition
             out["receipt_code"] = sub["receipt_code"]
             out["respondent_label"] = sub["submitter_name"]
@@ -3707,7 +3834,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
     except (TypeError, json.JSONDecodeError):
         notice = {"notes": [], "prepare": [], "refs": []}
     proc = db.execute(
-        "SELECT name, description, guide_form_id FROM procedures WHERE id = ?",
+        "SELECT * FROM procedures WHERE id = ?",
         (row["procedure_id"],),
     ).fetchone()
     forms: list[dict[str, Any]] = []
@@ -3780,6 +3907,14 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         stamps.append(stored_updated)
     override = str(row["status_override"]) if "status_override" in keys and row["status_override"] else ""
     title = str(row["title"]) if "title" in keys and row["title"] else ""
+    review = None
+    if "review_json" in keys and row["review_json"]:
+        try:
+            parsed_review = json.loads(row["review_json"])
+        except (TypeError, json.JSONDecodeError):
+            parsed_review = None
+        if isinstance(parsed_review, dict):
+            review = parsed_review
 
     def _meta(name: str) -> str:
         return str(row[name]) if name in keys and row[name] else ""
@@ -3802,6 +3937,14 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
             if "reception_status" in keys and row["reception_status"]
             else RECEPTION_TODO
         ),
+        "reception_stage": _meta("reception_stage"),
+        "route": {
+            "steps": _handling_of_row(proc)["route"] if proc else procedure.default_handling()["route"],
+            "exit": _handling_of_row(proc)["exit"] if proc else "ledger",
+            "current": _meta("reception_stage"),
+        },
+        "ledger_id": ledger.row_id_for(str(row["id"])),
+        "delivery": _app_delivery(row) if _app_delivery(row)["state"] else None,
         "guide_form_id": row["guide_form_id"],
         "guide_submission_id": row["guide_submission_id"],
         "form_ids": form_ids,
@@ -3812,6 +3955,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
         "created_at": row["created_at"],
         "updated_at": max(stamps),
         "events": list_application_events(db, row["id"]),
+        "review": review,
     }
 
 
@@ -4606,6 +4750,98 @@ def list_application_events(
     return out
 
 
+def _guide_answers(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    sid = row["guide_submission_id"] if "guide_submission_id" in row.keys() else None
+    if not sid:
+        return {}
+    sub = db.execute(
+        "SELECT answers_json FROM submissions WHERE id = ?", (sid,)
+    ).fetchone()
+    if not sub or not sub["answers_json"]:
+        return {}
+    try:
+        parsed = json.loads(sub["answers_json"])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _review_item_views(db: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for it in _application_items(row):
+        file_id = str(it.get("file_id") or "")
+        mime = ""
+        if file_id:
+            found = db.execute(
+                "SELECT mime FROM uploaded_files WHERE id = ?", (file_id,)
+            ).fetchone()
+            if found and found["mime"]:
+                mime = str(found["mime"])
+        title = str(it.get("title") or "")
+        form_id = str(it.get("form_id") or "")
+        if not title and form_id:
+            form = _form_row(db, form_id)
+            if form:
+                title = str(form["title"] or "")
+        out.append(
+            {
+                "slot_id": str(it.get("slot_id") or ""),
+                "title": title,
+                "kind": it.get("kind") or "",
+                "file_id": file_id,
+                "mime": mime,
+                "status": _item_status(db, row["id"], it),
+                "fulfillment": it.get("fulfillment") or "",
+            }
+        )
+    return out
+
+
+def _freeze_application_review(
+    db: sqlite3.Connection, row: sqlite3.Row, actor_user_id: str = ""
+) -> None:
+    """提出の瞬間に、当たった審査項目を申請へ写す。既にあれば上書きしない。"""
+    if "review_json" in row.keys() and str(row["review_json"] or "").strip():
+        return
+    proc = db.execute(
+        "SELECT mapping_json FROM procedures WHERE id = ?", (row["procedure_id"],)
+    ).fetchone()
+    if not proc:
+        return
+    mapping, err = procedure.normalize_mapping(proc["mapping_json"])
+    if err or mapping is None:
+        mapping = {"rules": [], "review": {"slots": [], "cross": []}}
+    snap = procedure.review_snapshot(mapping, _guide_answers(db, row), _review_item_views(db, row))
+    db.execute(
+        "UPDATE applications SET review_json = ? WHERE id = ?",
+        (json.dumps(snap, ensure_ascii=False), row["id"]),
+    )
+    if not procedure.review_needs_clerk(snap):
+        return
+    keys = row.keys()
+    current = (
+        str(row["reception_status"])
+        if "reception_status" in keys and row["reception_status"]
+        else RECEPTION_TODO
+    )
+    if current != RECEPTION_TODO:
+        return
+    now = _now_iso()
+    db.execute(
+        "UPDATE applications SET reception_status = ?, reception_stage = ?, updated_at = ? "
+        "WHERE id = ?",
+        (RECEPTION_REVIEWING, "desk", now, row["id"]),
+    )
+    _log_app_event(
+        db,
+        row["id"],
+        actor_role="受付",
+        actor_user_id=actor_user_id,
+        action="受付を確認中にした",
+        detail="形式または確認文が残っています",
+    )
+
+
 def set_application_status(
     *, application_id: str, owner_kind: str, owner_key: str, status: str
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -4638,6 +4874,11 @@ def set_application_status(
                 actor_user_id=owner_key,
                 action="提出",
             )
+            frozen = db.execute(
+                "SELECT * FROM applications WHERE id = ?", (application_id,)
+            ).fetchone()
+            if frozen is not None:
+                _freeze_application_review(db, frozen, owner_key)
         else:
             db.execute(
                 "UPDATE applications SET status_override = ?, updated_at = ? WHERE id = ?",
@@ -4668,6 +4909,8 @@ def set_reception_status(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """受付（受領側）の処理ステータスを変更する。手続きの編集者/管理者のみ。"""
     value = (reception_status or "").strip()
+    if value == RECEPTION_ACCEPTED:
+        return None, "確定は経路の「進む」で行います"
     if value not in RECEPTION_STATUS_VALUES:
         return None, "不正な受付ステータスです"
     db = connect()
@@ -4688,10 +4931,20 @@ def set_reception_status(
             if "reception_status" in keys and row["reception_status"]
             else RECEPTION_TODO
         )
+        stage = (
+            str(row["reception_stage"])
+            if "reception_stage" in keys and row["reception_stage"]
+            else ""
+        )
+        if value == RECEPTION_REVIEWING and not stage:
+            stage = "desk"
+        if value != RECEPTION_REVIEWING:
+            stage = ""
         now = _now_iso()
         db.execute(
-            "UPDATE applications SET reception_status = ?, updated_at = ? WHERE id = ?",
-            (value, now, application_id),
+            "UPDATE applications SET reception_status = ?, reception_stage = ?, updated_at = ? "
+            "WHERE id = ?",
+            (value, stage, now, application_id),
         )
         if value != current:
             _log_app_event(
@@ -4707,6 +4960,780 @@ def set_reception_status(
         ).fetchone()
         db.commit()
         return _application_payload(db, row), None
+
+
+def _stage_label(handling: dict[str, Any], stage: str) -> str:
+    for step in handling.get("route") or []:
+        if step.get("id") == stage:
+            return str(step.get("label") or "")
+    return ""
+
+
+def _confirm_copies(db: sqlite3.Connection, payload: dict[str, Any]) -> list[dict[str, str]]:
+    copies: list[dict[str, str]] = []
+    for item in payload.get("items") or []:
+        file_id = str(item.get("file_id") or "")
+        if not file_id:
+            continue
+        stored = db.execute(
+            "SELECT form_id, filename, mime FROM uploaded_files WHERE id = ?",
+            (file_id,),
+        ).fetchone()
+        copies.append(
+            {
+                "file_id": file_id,
+                "form_id": str(stored["form_id"]) if stored else "",
+                "filename": str(stored["filename"]) if stored and stored["filename"] else str(item.get("title") or file_id),
+                "mime": str(stored["mime"]) if stored and stored["mime"] else "",
+            }
+        )
+    return copies
+
+
+def _store_delivery(
+    db: sqlite3.Connection,
+    application_id: str,
+    *,
+    state: str,
+    revision: int,
+    attempts: int,
+    detail: str,
+    receipt_no: str,
+    sent_at: str,
+) -> None:
+    record = {
+        "state": state,
+        "revision": revision,
+        "receipt_no": receipt_no,
+        "detail": detail,
+        "attempts": attempts,
+        "sent_at": sent_at,
+    }
+    db.execute(
+        "UPDATE applications SET delivery_json = ? WHERE id = ?",
+        (json.dumps(record, ensure_ascii=False), application_id),
+    )
+
+
+def _confirmed_records(
+    db: sqlite3.Connection, row: sqlite3.Row, *, send_mynumber: bool
+) -> tuple[dict[str, Any], list[str]]:
+    """確定版の aligned と同じ項目。個人番号は、送ると書いたときだけ入れる。"""
+    raw_items = _application_items(row)
+    if not raw_items:
+        raw_items = _items_from_form_ids(db, row)
+    records: list[dict[str, Any]] = []
+    form_ids: list[str] = []
+    for item in raw_items:
+        payload = _item_payload(db, row, item, mask=not send_mynumber)
+        definition = payload.get("definition") if isinstance(payload.get("definition"), dict) else {}
+        components = list(definition.get("components") or [])
+        if not send_mynumber:
+            payload = {
+                **payload,
+                "definition": {
+                    **definition,
+                    "components": [c for c in components if c.get("type") != "mynumber"],
+                },
+            }
+        fields = _data_item_fields(payload)
+        if not fields:
+            continue
+        record: dict[str, Any] = {
+            "案内番号": row["token"],
+            "様式": payload.get("title") or "",
+            "複製番号": int(payload.get("copy_index") or 0),
+        }
+        for header, _cid, value in fields:
+            record[header] = _export_cell(value)
+        records.append(record)
+        if send_mynumber and any(
+            comp.get("type") == "mynumber"
+            and str((payload.get("answers") or {}).get(comp.get("id")) or "").strip()
+            for comp in components
+        ):
+            form_id = str(payload.get("form_id") or "")
+            if form_id and form_id not in form_ids:
+                form_ids.append(form_id)
+    return {
+        "application_id": str(row["id"]),
+        "revision": 1,
+        "procedure_id": str(row["procedure_id"]),
+        "records": records,
+    }, form_ids
+
+
+def _delivery_job(
+    db: sqlite3.Connection,
+    row: sqlite3.Row,
+    proc: sqlite3.Row | None,
+    actor_user_id: str,
+) -> dict[str, Any]:
+    current = _app_delivery(row)
+    revision = current["revision"] or 1
+    target = _procedure_target(proc) if proc is not None else delivery.empty_target()
+    body, form_ids = _confirmed_records(
+        db, row, send_mynumber=bool(target["send_mynumber"])
+    )
+    body["revision"] = revision
+    return {
+        "url": target["url"],
+        "key": target["key"],
+        "send_mynumber": bool(target["send_mynumber"]),
+        "revision": revision,
+        "attempts": current["attempts"],
+        "idempotency_key": f"{row['id']}:{revision}",
+        "body": body,
+        "form_ids": form_ids,
+        "actor_user_id": actor_user_id,
+    }
+
+
+def _post_delivery(job: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return delivery.post_confirmed(
+            url=str(job["url"]),
+            key=str(job["key"]),
+            idempotency_key=str(job["idempotency_key"]),
+            body=job["body"],
+        )
+    except Exception:
+        return {"ok": False, "receipt_no": "", "detail": "受け口に接続できませんでした"}
+
+
+def _finish_delivery(
+    db: sqlite3.Connection,
+    application_id: str,
+    job: dict[str, Any],
+    outcome: dict[str, Any],
+) -> None:
+    ok = bool(outcome.get("ok"))
+    now = _now_iso()
+    detail = str(outcome.get("receipt_no") or "") if ok else str(outcome.get("detail") or "")
+    if not detail:
+        detail = "送りました" if ok else "送れませんでした"
+    if job.get("send_mynumber"):
+        detail = f"{detail}（個人番号を含めています）"
+    detail = detail[:200]
+    _store_delivery(
+        db,
+        application_id,
+        state="sent" if ok else "failed",
+        revision=int(job["revision"]),
+        attempts=int(job["attempts"]) + 1,
+        detail=detail,
+        receipt_no=str(outcome.get("receipt_no") or "")[:80] if ok else "",
+        sent_at=now if ok else "",
+    )
+    _log_app_event(
+        db,
+        application_id,
+        actor_role="受付",
+        actor_user_id=str(job.get("actor_user_id") or ""),
+        action="既存システムへ送った" if ok else "既存システムへ送れなかった",
+        detail=detail,
+    )
+    if job.get("send_mynumber"):
+        for form_id in job.get("form_ids") or []:
+            _log_audit(
+                db,
+                form_id=form_id,
+                actor_user_id=str(job.get("actor_user_id") or ""),
+                action="deliver_unmasked",
+            )
+
+
+def move_application_route(
+    *,
+    application_id: str,
+    action: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """受付確認、担当課、確定を進める・戻す・差戻しする。"""
+    send_job: dict[str, Any] | None = None
+    db = connect()
+    with _lock:
+        row, err = _staff_application(db, application_id, actor_user_id, actor_groups)
+        if err or row is None:
+            return None, err
+        if not _app_is_submitted(row):
+            return None, "提出後に進めます"
+        keys = row.keys()
+        status = (
+            str(row["reception_status"])
+            if "reception_status" in keys and row["reception_status"]
+            else RECEPTION_TODO
+        )
+        stage = (
+            str(row["reception_stage"])
+            if "reception_stage" in keys and row["reception_stage"]
+            else ""
+        )
+        next_status, next_stage, step_err = procedure.route_step(stage, status, action)
+        if step_err:
+            return None, step_err
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+        ).fetchone()
+        handling = _handling_of_row(proc) if proc else procedure.default_handling()
+        now = _now_iso()
+        if next_status == RECEPTION_ACCEPTED and handling.get("exit") == "ledger":
+            payload = _application_payload(db, row)
+            review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+            snapshot = {
+                "items": [
+                    {
+                        "title": item.get("title") or "",
+                        "kind": item.get("kind") or "",
+                        "status": item.get("status") or "",
+                    }
+                    for item in payload.get("items") or []
+                ],
+                "answers": _ledger_answer_blocks(payload.get("forms") or []),
+            }
+            section_role = next(
+                (
+                    str(step.get("role") or "")
+                    for step in handling["route"]
+                    if step.get("id") == "section"
+                ),
+                "",
+            )
+            ledger.open_row(
+                application_id=application_id,
+                procedure_id=str(row["procedure_id"]),
+                procedure_name=str(proc["name"]) if proc else "",
+                confirmed_by=actor_user_id,
+                assignee=section_role,
+                status=str(handling["statuses"][0]),
+                snapshot=snapshot,
+                review=review,
+                copies=_confirm_copies(db, payload),
+                confirmed_at=now,
+            )
+        db.execute(
+            "UPDATE applications SET reception_status = ?, reception_stage = ?, updated_at = ? "
+            "WHERE id = ?",
+            (next_status, next_stage, now, application_id),
+        )
+        detail = _stage_label(handling, next_stage) or next_status
+        if next_status == RECEPTION_ACCEPTED and handling.get("exit") == "external":
+            if not ledger.row_id_for(application_id):
+                send_job = _delivery_job(db, row, proc, actor_user_id)
+                _store_delivery(
+                    db,
+                    application_id,
+                    state="pending",
+                    revision=int(send_job["revision"]),
+                    attempts=int(send_job["attempts"]),
+                    detail="",
+                    receipt_no="",
+                    sent_at="",
+                )
+        _log_app_event(
+            db,
+            application_id,
+            actor_role="受付",
+            actor_user_id=actor_user_id,
+            action="経路を進めた" if action == "advance" else "経路を戻した" if action == "back" else "差し戻した",
+            detail=detail,
+        )
+        db.commit()
+    if send_job:
+        outcome = _post_delivery(send_job)
+        with _lock:
+            _finish_delivery(db, application_id, send_job, outcome)
+            db.commit()
+    with _lock:
+        saved = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        return _application_payload(db, saved), None
+
+
+def resend_application_delivery(
+    *,
+    application_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """受理済みで、台帳に無い申請を、同じ版のまま受け口へ送り直す。"""
+    db = connect()
+    with _lock:
+        row, err = _staff_application(db, application_id, actor_user_id, actor_groups)
+        if err or row is None:
+            return None, err
+        if not _app_is_submitted(row):
+            return None, "提出後に送ります"
+        keys = row.keys()
+        status = (
+            str(row["reception_status"])
+            if "reception_status" in keys and row["reception_status"]
+            else RECEPTION_TODO
+        )
+        if status != RECEPTION_ACCEPTED:
+            return None, "確定してから送ります"
+        if ledger.row_id_for(application_id):
+            return None, "この申請は台帳で進めています"
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+        ).fetchone()
+        handling = _handling_of_row(proc) if proc else procedure.default_handling()
+        if handling.get("exit") != "external":
+            return None, "この手続きは台帳で進めます"
+        send_job = _delivery_job(db, row, proc, actor_user_id)
+        _store_delivery(
+            db,
+            application_id,
+            state="pending",
+            revision=int(send_job["revision"]),
+            attempts=int(send_job["attempts"]),
+            detail="",
+            receipt_no="",
+            sent_at="",
+        )
+        db.commit()
+    outcome = _post_delivery(send_job)
+    with _lock:
+        _finish_delivery(db, application_id, send_job, outcome)
+        db.commit()
+        saved = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        return _application_payload(db, saved), None
+
+
+def _ledger_visible(
+    db: sqlite3.Connection,
+    procedure_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None,
+) -> bool:
+    proc = db.execute(
+        "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
+    ).fetchone()
+    return bool(proc and _can_edit_procedure(proc, actor_user_id, actor_groups))
+
+
+def list_ledger_rows(
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    procedure_id: str | None = None,
+    unrestricted: bool = False,
+) -> list[dict[str, Any]]:
+    rows = ledger.list_rows(procedure_id=(procedure_id or "").strip() or None)
+    db = connect()
+    with _lock:
+        shown: list[dict[str, Any]] = []
+        for row in rows:
+            if not unrestricted and not _ledger_visible(
+                db, str(row["procedure_id"]), actor_user_id, actor_groups
+            ):
+                continue
+            shown.append(_present_ledger_answers(db, row))
+        return shown
+
+
+def get_ledger_row(
+    row_id: str,
+    *,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    unrestricted: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
+    row = ledger.get_row(row_id)
+    if row is None:
+        return None, "台帳の行が見つかりません"
+    db = connect()
+    with _lock:
+        if not unrestricted and not _ledger_visible(
+            db, str(row["procedure_id"]), actor_user_id, actor_groups
+        ):
+            return None, "この手続きを操作する権限がありません"
+        return _present_ledger_answers(db, row), None
+
+
+def update_ledger_row(
+    *,
+    row_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+    assignee: str | None = None,
+    status: str | None = None,
+    comment: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    current, err = get_ledger_row(
+        row_id, actor_user_id=actor_user_id, actor_groups=actor_groups
+    )
+    if err or current is None:
+        return None, err
+    db = connect()
+    with _lock:
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (current["procedure_id"],)
+        ).fetchone()
+    handling = _handling_of_row(proc) if proc else procedure.default_handling()
+    allowed = list(handling["statuses"])
+    if current["status"] not in allowed:
+        allowed.append(str(current["status"]))
+    return ledger.update_row(
+        row_id=row_id,
+        actor_user_id=actor_user_id,
+        assignee=assignee,
+        status=status,
+        comment=comment,
+        allowed_statuses=allowed,
+    )
+
+
+def ledger_file(row_id: str, file_id: str):
+    return ledger.file_path(row_id, file_id)
+
+
+def _load_review(row: sqlite3.Row) -> dict[str, Any] | None:
+    keys = row.keys()
+    raw = row["review_json"] if "review_json" in keys else ""
+    if not str(raw or "").strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _staff_application(
+    db: sqlite3.Connection,
+    application_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None,
+) -> tuple[sqlite3.Row | None, str | None]:
+    row = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    if not row:
+        return None, "申請が見つかりません"
+    proc = db.execute(
+        "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+    ).fetchone()
+    if not proc or not _can_edit_procedure(proc, actor_user_id, actor_groups):
+        return None, "この手続きを操作する権限がありません"
+    return row, None
+
+
+def _save_review(
+    db: sqlite3.Connection,
+    application_id: str,
+    snap: dict[str, Any],
+    *,
+    actor_user_id: str,
+    action: str,
+    detail: str,
+) -> dict[str, Any]:
+    now = _now_iso()
+    db.execute(
+        "UPDATE applications SET review_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(snap, ensure_ascii=False), now, application_id),
+    )
+    _log_app_event(
+        db,
+        application_id,
+        actor_role="受付",
+        actor_user_id=actor_user_id,
+        action=action,
+        detail=detail,
+    )
+    row = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (application_id,)
+    ).fetchone()
+    db.commit()
+    return _application_payload(db, row)
+
+
+def set_review_finding(
+    *,
+    application_id: str,
+    line_id: str,
+    result: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """職員が確認文を確定する。本文は変えない。"""
+    value = (result or "").strip()
+    if value not in ("pass", "fail", "unknown"):
+        return None, "不正な結果です"
+    db = connect()
+    with _lock:
+        row, err = _staff_application(db, application_id, actor_user_id, actor_groups)
+        if err or row is None:
+            return None, err
+        snap = _load_review(row)
+        if snap is None:
+            return None, "提出後に審査項目が付きます"
+        if not procedure.set_line_finding(snap, (line_id or "").strip(), value, "", "staff"):
+            return None, "その確認文はありません"
+        label = {"pass": "満たしている", "fail": "満たしていない", "unknown": "人が確認"}[value]
+        return (
+            _save_review(
+                db,
+                application_id,
+                snap,
+                actor_user_id=actor_user_id,
+                action="確認文を確定した",
+                detail=label,
+            ),
+            None,
+        )
+
+
+_LEDGER_SUBFIELDS: dict[str, list[str]] = {
+    "user_info_composite": ["last_name", "first_name", "last_name_kana", "first_name_kana"],
+    "address_composite": ["postal_code", "prefecture", "city", "street", "building"],
+    "company_info_composite": ["company_name", "representative"],
+}
+
+
+def _ledger_option_label(comp: dict[str, Any], raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    options = spec.option_items((comp.get("properties") or {}).get("options"))
+    for item in options:
+        if item["value"] == text:
+            return item["label"]
+    return text
+
+
+def _ledger_value_text(comp: dict[str, Any], value: Any) -> str:
+    """台帳に出す1項目の文言。部品の内部キーは出さない。"""
+    ctype = str(comp.get("type") or "")
+    if value is None or value == "":
+        return ""
+    if ctype == "password":
+        return "（入力あり）"
+    if ctype == "signature_pad":
+        return "（署名あり）"
+    if ctype == "rating":
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if number == int(number) and 1 <= int(number) <= 5:
+            return f"{int(number)} / 5"
+        return str(value)
+    if ctype in ("select", "radio"):
+        return _ledger_option_label(comp, value)
+    if ctype == "checkbox" and isinstance(value, list):
+        labels = [_ledger_option_label(comp, item) for item in value]
+        return "、".join(label for label in labels if label)
+    if ctype == "user_info_composite" and isinstance(value, dict):
+        name = " ".join(
+            str(value.get(key) or "").strip()
+            for key in ("last_name", "first_name")
+            if str(value.get(key) or "").strip()
+        )
+        kana = " ".join(
+            str(value.get(key) or "").strip()
+            for key in ("last_name_kana", "first_name_kana")
+            if str(value.get(key) or "").strip()
+        )
+        shown = f"{name}（{kana}）" if name and kana else (name or kana)
+        extra = [
+            str(value.get(key) or "").strip()
+            for key in ("gender", "birth_date")
+            if str(value.get(key) or "").strip()
+        ]
+        return " / ".join([shown, *extra]) if shown else " / ".join(extra)
+    if ctype in _LEDGER_SUBFIELDS and isinstance(value, dict):
+        parts = [
+            str(value.get(key) or "").strip()
+            for key in _LEDGER_SUBFIELDS[ctype]
+            if str(value.get(key) or "").strip()
+        ]
+        return " ".join(parts)
+    if ctype == "file" and isinstance(value, dict):
+        return str(value.get("filename") or value.get("name") or "").strip()
+    if isinstance(value, list):
+        return "、".join(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, dict):
+        return ""
+    text = str(value).strip()
+    if not text or set(text) <= {"*"}:
+        return ""
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return text[:500]
+
+
+def _ledger_answer_blocks(forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """提出内容を、用紙名と項目ラベルで並べる。"""
+    blocks: list[dict[str, Any]] = []
+    for form in forms:
+        if not isinstance(form, dict):
+            continue
+        answers = form.get("answers")
+        definition = form.get("definition") if isinstance(form.get("definition"), dict) else {}
+        if not isinstance(answers, dict) or not definition:
+            continue
+        lines: list[dict[str, str]] = []
+        for comp in definition.get("components") or []:
+            if not isinstance(comp, dict) or comp.get("type") in spec.DISPLAY_TYPES:
+                continue
+            cid = str(comp.get("id") or "")
+            if not cid or cid not in answers:
+                continue
+            text = _ledger_value_text(comp, answers.get(cid))
+            if not text:
+                continue
+            lines.append({"label": str(comp.get("label") or "").strip() or cid, "value": text})
+            if len(lines) >= 40:
+                break
+        if lines:
+            blocks.append({"title": str(form.get("title") or ""), "lines": lines})
+    return blocks
+
+
+def _present_ledger_answers(db: sqlite3.Connection, row: dict[str, Any]) -> dict[str, Any]:
+    """古い行は内部キーのままなので、申請が残っていればラベルに直して見せる。"""
+    snap = row.get("snapshot") if isinstance(row.get("snapshot"), dict) else {}
+    raw = False
+    for block in snap.get("answers") or []:
+        if not isinstance(block, dict):
+            continue
+        for line in block.get("lines") or []:
+            if isinstance(line, str):
+                raw = True
+                break
+        if raw:
+            break
+    if not raw:
+        return row
+    app = db.execute(
+        "SELECT * FROM applications WHERE id = ?", (row.get("application_id"),)
+    ).fetchone()
+    if app is None:
+        return row
+    blocks = _ledger_answer_blocks(_application_payload(db, app).get("forms") or [])
+    if not blocks:
+        return row
+    shown = dict(row)
+    shown["snapshot"] = {**snap, "answers": blocks}
+    return shown
+
+
+def _flat_answer_lines(value: Any, prefix: str = "") -> list[str]:
+    if isinstance(value, dict):
+        out: list[str] = []
+        for key, item in value.items():
+            name = str(key)
+            if name.startswith("_"):
+                continue
+            out.extend(_flat_answer_lines(item, f"{prefix}{name}."))
+        return out
+    if isinstance(value, list):
+        text = ", ".join(str(item) for item in value if str(item).strip())
+        return [f"{prefix[:-1]}: {text[:80]}"] if text else []
+    text = str(value or "").strip()
+    if not text or set(text) <= {"*"}:
+        return []
+    return [f"{prefix[:-1]}: {text[:80]}"]
+
+
+def _review_context(db: sqlite3.Connection, row: sqlite3.Row) -> str:
+    parts: list[str] = []
+    for item in _review_item_views(db, row):
+        title = str(item.get("title") or item.get("slot_id") or "")
+        parts.append(f"{title}: {item.get('status') or ''}")
+    subs = db.execute(
+        "SELECT s.answers_json AS answers_json, v.definition_json AS definition_json "
+        "FROM submissions s "
+        "LEFT JOIN form_versions v ON v.id = s.version_id "
+        "WHERE s.application_id = ? AND s.is_draft = 0 ORDER BY s.created_at",
+        (row["id"],),
+    ).fetchall()
+    lines: list[str] = []
+    for sub in subs:
+        try:
+            answers = json.loads(sub["answers_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            answers = {}
+        definition: dict[str, Any] = {}
+        if sub["definition_json"]:
+            try:
+                parsed = json.loads(sub["definition_json"])
+                if isinstance(parsed, dict):
+                    definition = parsed
+            except (TypeError, json.JSONDecodeError):
+                definition = {}
+        if definition and isinstance(answers, dict):
+            answers = crypto.reveal_answers(definition, answers, mask=True)
+        for line in _flat_answer_lines(answers):
+            lines.append(line)
+            if len(lines) >= 30:
+                break
+        if len(lines) >= 30:
+            break
+    if lines:
+        parts.append("記入: " + " / ".join(lines))
+    return "\n".join(parts)[:2000]
+
+
+async def generate_review_findings(
+    *,
+    application_id: str,
+    actor_user_id: str,
+    actor_groups: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """確認文への所見を1件書く。職員が確定した行は上書きしない。"""
+    db = connect()
+    with _lock:
+        row, err = _staff_application(db, application_id, actor_user_id, actor_groups)
+        if err or row is None:
+            return None, err
+        snap = _load_review(row)
+        if snap is None:
+            return None, "提出後に審査項目が付きます"
+        checks = procedure.open_finding_lines(snap)
+        context = _review_context(db, row)
+        proc = db.execute(
+            "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
+        ).fetchone()
+        call = _review_call_of_row(proc)
+    if not checks:
+        with _lock:
+            current = db.execute(
+                "SELECT * FROM applications WHERE id = ?", (application_id,)
+            ).fetchone()
+            return _application_payload(db, current), None
+    try:
+        rows, source = await review_engine.ask_findings(checks, context, call)
+    except Exception:
+        return None, "所見を作れませんでした。確認中のままです。"
+    if not isinstance(rows, list):
+        return None, "所見を作れませんでした。確認中のままです。"
+    with _lock:
+        current = db.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+        if current is None:
+            return None, "申請が見つかりません"
+        snap = _load_review(current)
+        if snap is None:
+            return None, "提出後に審査項目が付きます"
+        procedure.merge_model_findings(snap, rows, source=source)
+        return (
+            _save_review(
+                db,
+                application_id,
+                snap,
+                actor_user_id=actor_user_id,
+                action="内容の所見を付けた",
+                detail="",
+            ),
+            None,
+        )
 
 
 def _normalize_date(value: str) -> str | None:
@@ -4895,6 +5922,17 @@ def list_inbox(
                     "public_url": app["public_url"],
                     "status": app["status"]["effective"],
                     "reception_status": app.get("reception_status") or RECEPTION_TODO,
+                    "reception_stage": app.get("reception_stage") or "",
+                    "reception_stage_label": next(
+                        (
+                            step.get("label")
+                            for step in (app.get("route") or {}).get("steps") or []
+                            if step.get("id") == app.get("reception_stage")
+                        ),
+                        "",
+                    ),
+                    "exit": (app.get("route") or {}).get("exit") or "ledger",
+                    "ledger_id": app.get("ledger_id") or "",
                     "respondent_label": app.get("owner_key") or "-",
                 }
             )
@@ -4932,6 +5970,7 @@ def list_inbox(
                 "public_url": public_url,
                 "bundle_count": n,
                 "can_edit": _can_edit_procedure(proc, actor_user_id, actor_groups),
+                "exit": _handling_of_row(proc).get("exit") or "ledger",
                 "updated_at": proc["updated_at"],
             }
             procedures.append(item)
@@ -5005,6 +6044,10 @@ def public_application(token: str) -> tuple[dict[str, Any] | None, str | None]:
     data = get_application(token=token)
     if not data:
         return None, "申請が見つかりません"
+    data.pop("review", None)
+    data.pop("route", None)
+    data.pop("ledger_id", None)
+    data.pop("delivery", None)
     return data, None
 
 

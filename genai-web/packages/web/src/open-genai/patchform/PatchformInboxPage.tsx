@@ -6,10 +6,16 @@ import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PATCHFORM_LABEL } from './labels';
 import { PatchformSubnav } from './PatchformSubnav';
-import { RECEPTION_STATUS_VALUES, type InboxItem, type ReceptionStatus } from './types';
+import {
+  RECEPTION_OPEN_VALUES,
+  RECEPTION_STATUS_VALUES,
+  type InboxItem,
+  type ReceptionStatus,
+} from './types';
 import {
   downloadProcedureExport,
   usePatchformInbox,
+  usePatchformProcedureActions,
   usePatchformProjectActions,
 } from './usePatchform';
 
@@ -22,7 +28,7 @@ type SortKey = 'created' | 'updated' | 'status';
 type SortDir = 'asc' | 'desc';
 
 const selectClass =
-  'rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130';
+  'rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130';
 
 export const PatchformInboxPage = () => {
   const { procedureId: pathId } = useParams();
@@ -41,6 +47,15 @@ export const PatchformInboxPage = () => {
     busy,
     error: actionError,
   } = usePatchformProjectActions();
+  const {
+    setStatusMany,
+    submitting: procBusy,
+    error: procError,
+  } = usePatchformProcedureActions();
+  const [procKeyword, setProcKeyword] = useState('');
+  const [procStatus, setProcStatus] = useState('');
+  const [procChecked, setProcChecked] = useState<Set<string>>(new Set());
+  const [procNote, setProcNote] = useState<string | null>(null);
 
   // 一括対象の選択
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -87,6 +102,54 @@ export const PatchformInboxPage = () => {
     });
     return filtered;
   }, [bundles, recvFilter, applicantFilter, dateFrom, dateTo, keyword, sortKey, sortDir]);
+
+  const visibleProcedures = useMemo(() => {
+    const kw = procKeyword.trim().toLowerCase();
+    return procedures.filter((item) => {
+      if (procStatus && item.status !== procStatus) return false;
+      if (!kw) return true;
+      const hay = `${item.name} ${item.guide_title || ''}`.toLowerCase();
+      return hay.includes(kw);
+    });
+  }, [procedures, procKeyword, procStatus]);
+  const visibleProcIds = visibleProcedures.map((item) => item.id);
+  const selectedProcIds = visibleProcIds.filter((id) => procChecked.has(id));
+  const allProcsSelected =
+    visibleProcIds.length > 0 && selectedProcIds.length === visibleProcIds.length;
+
+  const toggleProc = (id: string) =>
+    setProcChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAllProcs = () =>
+    setProcChecked((prev) => {
+      const next = new Set(prev);
+      if (allProcsSelected) for (const id of visibleProcIds) next.delete(id);
+      else for (const id of visibleProcIds) next.add(id);
+      return next;
+    });
+
+  const onCloseSelected = async () => {
+    if (selectedProcIds.length === 0) return;
+    if (
+      !window.confirm(
+        `選択した ${selectedProcIds.length} 件の受付を終了します。新しい申請は止まりますが、届いている申請は残ります。`,
+      )
+    )
+      return;
+    const results = await setStatusMany(selectedProcIds, 'draft');
+    const failed = results.filter((item) => !item.ok).length;
+    setProcNote(
+      failed
+        ? `${results.length - failed} 件の受付を終了し、${failed} 件は変更できませんでした。`
+        : `${results.length} 件の受付を終了しました。`,
+    );
+    setProcChecked(new Set());
+    await mutate();
+  };
 
   const visibleIds = visible.map((it) => it.id);
   const selectedIds = visibleIds.filter((id) => checked.has(id));
@@ -208,10 +271,25 @@ export const PatchformInboxPage = () => {
 
         {selected ? (
           <section className='flex flex-col gap-3'>
-            <p className='text-dns-14N-130 text-solid-gray-600'>
+            <p className='text-dns-16N-130 text-solid-gray-600'>
               {statusLabel(selected.status)}
               {selected.guide_title ? ` / ${selected.guide_title}` : ''}
               {` / 申請 ${selected.bundle_count} 件`}
+            </p>
+            <p className='text-std-16N-170 text-solid-gray-800'>
+              受理は、申請を開いて経路の「進む」で確定します。確定すると
+              {selected.exit === 'external' ? '既存システムへ送ります。' : '台帳に残します。'}
+              {selected.can_edit ? (
+                <>
+                  {' '}
+                  <Link
+                    to={`/patchform/procedures/${selected.id}`}
+                    className='text-blue-900 underline-offset-2 hover:underline'
+                  >
+                    行き先は手続きで決めます
+                  </Link>
+                </>
+              ) : null}
             </p>
             <div className='flex flex-wrap gap-2'>
               <Button
@@ -243,7 +321,7 @@ export const PatchformInboxPage = () => {
                 {exporting === 'aligned' ? '書き出し中...' : '記入必須だけ揃えて書き出す'}
               </Button>
             </div>
-            <p className='text-dns-14N-130 text-solid-gray-600'>
+            <p className='text-dns-16N-130 text-solid-gray-600'>
               CSV はざっと見る表です。連携契約には使いません。他システムへ渡すときは「記入必須だけ揃えて書き出す」を使ってください。
             </p>
             {exportError && (
@@ -254,7 +332,7 @@ export const PatchformInboxPage = () => {
 
             <h2 className='mt-4 text-std-18B-160'>届いた申請</h2>
             {inbox && (
-              <p className='text-dns-14N-130 text-solid-gray-600'>
+              <p className='text-dns-16N-130 text-solid-gray-600'>
                 全 {bundles.length} 件 / 表示 {visible.length} 件
               </p>
             )}
@@ -266,7 +344,7 @@ export const PatchformInboxPage = () => {
 
             {/* 絞り込み */}
             <div className='flex flex-wrap items-end gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-3'>
-              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+              <label className='flex flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
                 受付処理
                 <select
                   className={selectClass}
@@ -281,7 +359,7 @@ export const PatchformInboxPage = () => {
                   ))}
                 </select>
               </label>
-              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+              <label className='flex flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
                 申請者状態
                 <select
                   className={selectClass}
@@ -296,7 +374,7 @@ export const PatchformInboxPage = () => {
                   ))}
                 </select>
               </label>
-              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+              <label className='flex flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
                 受付日（自）
                 <input
                   type='date'
@@ -305,7 +383,7 @@ export const PatchformInboxPage = () => {
                   onChange={(e) => setDateFrom(e.target.value)}
                 />
               </label>
-              <label className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+              <label className='flex flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
                 受付日（至）
                 <input
                   type='date'
@@ -314,7 +392,7 @@ export const PatchformInboxPage = () => {
                   onChange={(e) => setDateTo(e.target.value)}
                 />
               </label>
-              <label className='flex flex-1 flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+              <label className='flex flex-1 flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
                 キーワード（案内番号・申請者）
                 <input
                   type='search'
@@ -342,12 +420,18 @@ export const PatchformInboxPage = () => {
               )}
             </div>
 
-            {/* 一括バー */}
-            {selectedIds.length > 0 && (
-              <div className='flex flex-wrap items-center gap-3 rounded-8 border border-blue-900 bg-blue-50 p-3'>
-                <span className='text-dns-14B-130 text-solid-gray-800'>
-                  {selectedIds.length} 件を選択中
-                </span>
+            <div
+              className={`flex flex-wrap items-center gap-3 rounded-8 border p-3 ${
+                selectedIds.length > 0
+                  ? 'border-blue-900 bg-blue-50'
+                  : 'border-solid-gray-300 bg-solid-gray-50'
+              }`}
+            >
+              <span className='text-dns-16B-130 text-solid-gray-800'>
+                {selectedIds.length > 0
+                  ? `${selectedIds.length} 件を選択中`
+                  : '行を選ぶと、まとめて処理できます'}
+              </span>
                 <div className='flex items-center gap-2'>
                   <select
                     className={selectClass}
@@ -355,7 +439,7 @@ export const PatchformInboxPage = () => {
                     onChange={(e) => setBulkRecv(e.target.value as ReceptionStatus)}
                     aria-label='受付処理ステータスを選ぶ'
                   >
-                    {RECEPTION_STATUS_VALUES.map((v) => (
+                    {RECEPTION_OPEN_VALUES.map((v) => (
                       <option key={v} value={v}>
                         {v}
                       </option>
@@ -365,7 +449,7 @@ export const PatchformInboxPage = () => {
                     type='button'
                     variant='outline'
                     size='sm'
-                    aria-disabled={busy}
+                    aria-disabled={busy || selectedIds.length === 0}
                     onClick={() => void onBulkReception()}
                   >
                     受付処理を一括変更
@@ -375,7 +459,7 @@ export const PatchformInboxPage = () => {
                   type='button'
                   variant='outline'
                   size='sm'
-                  aria-disabled={exporting != null}
+                  aria-disabled={exporting != null || selectedIds.length === 0}
                   onClick={() => void download('csv', selectedIds)}
                 >
                   選択をCSVでDL
@@ -384,7 +468,7 @@ export const PatchformInboxPage = () => {
                   type='button'
                   variant='outline'
                   size='sm'
-                  aria-disabled={exporting != null}
+                  aria-disabled={exporting != null || selectedIds.length === 0}
                   onClick={() => void download('jsonl', selectedIds)}
                 >
                   選択をJSONLでDL
@@ -393,13 +477,12 @@ export const PatchformInboxPage = () => {
                   type='button'
                   variant='outline'
                   size='sm'
-                  aria-disabled={busy}
+                  aria-disabled={busy || selectedIds.length === 0}
                   onClick={() => void onBulkDelete()}
                 >
                   選択を削除
                 </Button>
               </div>
-            )}
 
             {visible.length === 0 ? (
               <p className='text-solid-gray-600'>
@@ -409,7 +492,7 @@ export const PatchformInboxPage = () => {
               </p>
             ) : (
               <div className='overflow-x-auto'>
-                <table className='w-full min-w-[720px] border-collapse text-dns-14N-130'>
+                <table className='w-full min-w-[720px] border-collapse text-dns-16N-130'>
                   <thead>
                     <tr className='border-b border-solid-gray-300 text-left text-solid-gray-600'>
                       <th className='w-10 px-2 py-2'>
@@ -487,24 +570,49 @@ export const PatchformInboxPage = () => {
                           {item.respondent_label || '-'}
                         </td>
                         <td className='px-2 py-2'>
-                          <span className='inline-block rounded-full bg-solid-gray-100 px-2 py-0.5 text-dns-14N-130 text-solid-gray-700'>
+                          <span className='inline-block rounded-full bg-solid-gray-100 px-2 py-0.5 text-dns-16N-130 text-solid-gray-700'>
                             {item.status || '-'}
                           </span>
                         </td>
                         <td className='px-2 py-2'>
-                          <select
-                            className={selectClass}
-                            value={item.reception_status || '未確認'}
-                            aria-disabled={busy}
-                            onChange={(e) => void onRowReception(item.id, e.target.value)}
-                            aria-label={`案内番号 ${item.label} の受付処理ステータス`}
-                          >
-                            {RECEPTION_STATUS_VALUES.map((v) => (
-                              <option key={v} value={v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
+                          {item.reception_status === '受理' ? (
+                            <div className='flex flex-col gap-1'>
+                              <span className='text-dns-16N-130'>受理</span>
+                              {item.ledger_id ? (
+                                <Link
+                                  to={`/patchform/ledger/${item.ledger_id}`}
+                                  className='text-blue-900 underline-offset-2 hover:underline'
+                                >
+                                  台帳に残しています
+                                </Link>
+                              ) : item.exit === 'external' ? (
+                                <span className='text-dns-16N-130 text-solid-gray-600'>
+                                  既存システムへ渡します
+                                </span>
+                              ) : (
+                                <span className='text-dns-16N-130 text-solid-gray-600'>確定</span>
+                              )}
+                            </div>
+                          ) : (
+                            <select
+                              className={selectClass}
+                              value={item.reception_status || '未確認'}
+                              aria-disabled={busy}
+                              onChange={(e) => void onRowReception(item.id, e.target.value)}
+                              aria-label={`案内番号 ${item.label} の受付処理ステータス`}
+                            >
+                              {RECEPTION_OPEN_VALUES.map((v) => (
+                                <option key={v} value={v}>
+                                  {v}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {item.reception_status !== '受理' && item.reception_stage_label ? (
+                            <span className='mt-1 block text-dns-16N-130 text-solid-gray-600'>
+                              {item.reception_stage_label}
+                            </span>
+                          ) : null}
                         </td>
                         <td className='px-2 py-2 text-solid-gray-700'>
                           {item.total != null ? `${item.submitted}/${item.total}` : '-'}
@@ -549,25 +657,140 @@ export const PatchformInboxPage = () => {
                 公開中の手続きも、届いた申請もありません。先に「手続きを公開」してください。
               </p>
             ) : (
-              <ul className='divide-y divide-solid-gray-300 border-y border-solid-gray-300'>
-                {procedures.map((item) => (
-                  <li key={item.id} className='py-3'>
-                    <Link
-                      to={`/patchform/inbox/${item.id}`}
-                      className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
+              <>
+                <p className='text-dns-16N-130 text-solid-gray-600'>
+                  全 {procedures.length} 件 / 表示 {visibleProcedures.length} 件
+                </p>
+                <div className='flex flex-wrap items-end gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-3'>
+                  <label className='flex flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
+                    公開
+                    <select
+                      className={selectClass}
+                      value={procStatus}
+                      onChange={(e) => setProcStatus(e.target.value)}
                     >
-                      {item.name}
-                    </Link>
-                    <p className='text-dns-14N-130 text-solid-gray-600'>
-                      {statusLabel(item.status)}
-                      {item.guide_title ? ` / ${item.guide_title}` : ''}
-                      {` / 申請 ${item.bundle_count} 件`}
-                      {' / '}
-                      {new Date(item.updated_at).toLocaleString('ja-JP')}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+                      <option value=''>すべて</option>
+                      <option value='published'>公開中</option>
+                      <option value='draft'>受付終了</option>
+                    </select>
+                  </label>
+                  <label className='flex flex-1 flex-col gap-1 text-dns-16N-130 text-solid-gray-700'>
+                    キーワード
+                    <input
+                      type='search'
+                      className={selectClass}
+                      value={procKeyword}
+                      placeholder='手続き名で絞り込み'
+                      onChange={(e) => setProcKeyword(e.target.value)}
+                    />
+                  </label>
+                  {(procStatus || procKeyword) && (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => {
+                        setProcStatus('');
+                        setProcKeyword('');
+                      }}
+                    >
+                      絞り込みを解除
+                    </Button>
+                  )}
+                </div>
+                <div
+                  className={`flex flex-wrap items-center gap-3 rounded-8 border p-3 ${
+                    selectedProcIds.length > 0
+                      ? 'border-blue-900 bg-blue-50'
+                      : 'border-solid-gray-300 bg-solid-gray-50'
+                  }`}
+                >
+                  <span className='text-dns-16B-130 text-solid-gray-800'>
+                    {selectedProcIds.length > 0
+                      ? `${selectedProcIds.length} 件を選択中`
+                      : '行を選ぶと、まとめて処理できます'}
+                  </span>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-disabled={procBusy || selectedProcIds.length === 0}
+                    onClick={() => void onCloseSelected()}
+                  >
+                    受付を終了する
+                  </Button>
+                </div>
+                {procNote && <p className='text-dns-16N-130 text-solid-gray-700'>{procNote}</p>}
+                {procError && (
+                  <p className='text-error-1' role='alert'>
+                    {procError}
+                  </p>
+                )}
+                {visibleProcedures.length === 0 ? (
+                  <p className='text-solid-gray-600'>条件に合う手続きはありません。</p>
+                ) : (
+                  <div className='overflow-x-auto'>
+                    <table className='w-full min-w-[720px] border-collapse text-dns-16N-130'>
+                      <thead>
+                        <tr className='border-b border-solid-gray-300 text-left text-solid-gray-600'>
+                          <th className='w-10 px-2 py-2 font-normal'>
+                            <input
+                              type='checkbox'
+                              className='size-6'
+                              checked={allProcsSelected}
+                              onChange={toggleAllProcs}
+                              aria-label='すべて選択'
+                            />
+                          </th>
+                          <th className='px-2 py-2 font-normal'>手続き</th>
+                          <th className='px-2 py-2 font-normal'>公開</th>
+                          <th className='px-2 py-2 font-normal'>確定後</th>
+                          <th className='px-2 py-2 font-normal'>申請</th>
+                          <th className='px-2 py-2 font-normal'>更新</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleProcedures.map((item) => (
+                          <tr key={item.id} className='border-b border-solid-gray-200 align-middle'>
+                            <td className='px-2 py-2'>
+                              <input
+                                type='checkbox'
+                                className='size-6'
+                                checked={procChecked.has(item.id)}
+                                onChange={() => toggleProc(item.id)}
+                                aria-label={`${item.name} を選択`}
+                              />
+                            </td>
+                            <td className='px-2 py-2'>
+                              <Link
+                                to={`/patchform/inbox/${item.id}`}
+                                className='text-std-16B-150 text-blue-900 underline-offset-2 hover:underline'
+                              >
+                                {item.name}
+                              </Link>
+                              {item.guide_title ? (
+                                <span className='mt-1 block text-dns-16N-130 text-solid-gray-600'>
+                                  {item.guide_title}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className='px-2 py-2 text-solid-gray-700'>
+                              {statusLabel(item.status)}
+                            </td>
+                            <td className='px-2 py-2 text-solid-gray-700'>
+                              {item.exit === 'external' ? '既存システム' : '台帳'}
+                            </td>
+                            <td className='px-2 py-2 text-solid-gray-700'>{item.bundle_count}</td>
+                            <td className='px-2 py-2 text-solid-gray-600'>
+                              {new Date(item.updated_at).toLocaleString('ja-JP')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </section>
         )}

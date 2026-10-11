@@ -178,6 +178,34 @@ export type UploadedFile = {
 
 export type ProcedureStatus = 'draft' | 'published' | 'archived';
 
+export type ReviewFinding = {
+  result: 'pass' | 'fail' | 'unknown';
+  detail?: string;
+  source?: '' | 'model' | 'staff';
+};
+
+export type ReviewLine = {
+  id: string;
+  text: string;
+  finding?: ReviewFinding;
+};
+
+export type SlotReview = {
+  slot_id: string;
+  formal: string[];
+  content: ReviewLine[];
+};
+
+export type ProcedureReview = {
+  slots: SlotReview[];
+  cross: ReviewLine[];
+};
+
+export type FormalCheck = {
+  id: string;
+  label: string;
+};
+
 export type ProcedureRule = {
   component_id: string;
   option: string;
@@ -185,6 +213,8 @@ export type ProcedureRule = {
   notes?: string;
   prepare?: string[];
   refs?: string[];
+  reviews?: SlotReview[];
+  cross?: ReviewLine[];
 };
 
 export type ProcedureChoiceField = {
@@ -199,6 +229,34 @@ export type ProcedureChoiceField = {
 export const omitsNavigation = (procedure: { choice_fields?: ProcedureChoiceField[] | null }) =>
   !(procedure.choice_fields || []).length;
 
+export type ProcedureRouteStep = {
+  id: 'desk' | 'section' | 'confirm' | string;
+  label: string;
+  role: string;
+};
+
+export type ProcedureHandling = {
+  route: ProcedureRouteStep[];
+  exit: 'ledger' | 'external';
+  statuses: string[];
+};
+
+export type ProcedureDelivery = {
+  url: string;
+  key_set?: boolean;
+  key?: string;
+  send_mynumber: boolean;
+};
+
+export type ApplicationDelivery = {
+  state: 'pending' | 'sent' | 'failed' | string;
+  revision: number;
+  receipt_no: string;
+  detail: string;
+  attempts: number;
+  sent_at: string;
+};
+
 export type Procedure = {
   id: string;
   name: string;
@@ -212,7 +270,8 @@ export type Procedure = {
   // 公開範囲は手続き単位（庁内のみ / 庁内と外部）。guide_visibility は後方互換のミラー。
   visibility?: ProcedureVisibility | null;
   guide_visibility?: FormVisibility | null;
-  mapping: { rules: ProcedureRule[] };
+  mapping: { rules: ProcedureRule[]; review?: ProcedureReview };
+  formal_checks?: FormalCheck[];
   status: ProcedureStatus;
   creator_user_id?: string | null;
   creator_name?: string | null;
@@ -222,6 +281,18 @@ export type Procedure = {
   warnings?: string[];
   can_edit?: boolean;
   notify_emails?: string[];
+  handling?: ProcedureHandling;
+  delivery?: ProcedureDelivery;
+  review_call?: ProcedureReviewCall;
+};
+
+export type ProcedureReviewCall = {
+  engine: 'openai' | 'dify';
+  base_url?: string;
+  api_key?: string;
+  key_set?: boolean;
+  stub?: boolean;
+  label?: string;
 };
 
 export type ApplicationFormStatus = 'none' | 'draft' | 'submitted' | 'withdrawn';
@@ -322,6 +393,25 @@ export type ApplicationEvent = {
   created_at: string;
 };
 
+export type ReviewFormalResult = {
+  id: string;
+  label: string;
+  result: 'pass' | 'fail' | 'unknown';
+  detail?: string;
+};
+
+export type ReviewSlotResult = {
+  slot_id: string;
+  title: string;
+  formal: ReviewFormalResult[];
+  content: ReviewLine[];
+};
+
+export type ApplicationReview = {
+  slots: ReviewSlotResult[];
+  cross: ReviewLine[];
+};
+
 export type Application = {
   id: string;
   token: string;
@@ -342,6 +432,16 @@ export type Application = {
   forms: ApplicationForm[];
   items: ApplicationItem[];
   events?: ApplicationEvent[];
+  review?: ApplicationReview | null;
+  reception_status?: ReceptionStatus;
+  reception_stage?: string;
+  route?: {
+    steps: ProcedureRouteStep[];
+    exit: 'ledger' | 'external';
+    current: string;
+  };
+  ledger_id?: string | null;
+  delivery?: ApplicationDelivery | null;
   public_url: string;
   created_at: string;
   updated_at?: string;
@@ -384,12 +484,43 @@ export type ProcedureResolvePreview = {
 
 export type ReceptionStatus = '未確認' | '確認中' | '受理' | '差戻し';
 
+/** 受付の一覧で直接選べる状態。受理は経路の「進む」だけが付ける。 */
+export const RECEPTION_OPEN_VALUES: ReceptionStatus[] = ['未確認', '確認中', '差戻し'];
+
 export const RECEPTION_STATUS_VALUES: ReceptionStatus[] = [
   '未確認',
   '確認中',
   '受理',
   '差戻し',
 ];
+
+export type LedgerEvent = {
+  id: string;
+  actor_user_id: string;
+  action: string;
+  detail: string;
+  created_at: string;
+};
+
+export type LedgerRow = {
+  id: string;
+  application_id: string;
+  procedure_id: string;
+  procedure_name: string;
+  confirmed_at: string;
+  confirmed_by: string;
+  assignee: string;
+  status: string;
+  comment: string;
+  snapshot: {
+    items?: { title?: string; kind?: string; status?: string }[];
+    answers?: { title?: string; lines?: (string | { label?: string; value?: string })[] }[];
+    files?: { file_id: string; name: string; copied?: boolean }[];
+  };
+  review?: ApplicationReview;
+  events: LedgerEvent[];
+  updated_at: string;
+};
 
 export type InboxItem = {
   kind: 'bundle' | 'form';
@@ -407,6 +538,10 @@ export type InboxItem = {
   withdrawn?: boolean;
   status?: string;
   reception_status?: ReceptionStatus;
+  reception_stage?: string;
+  reception_stage_label?: string;
+  exit?: 'ledger' | 'external';
+  ledger_id?: string;
 };
 
 export type InboxOpening = {
@@ -426,6 +561,7 @@ export type InboxProcedure = {
   public_url?: string | null;
   bundle_count: number;
   can_edit?: boolean;
+  exit?: 'ledger' | 'external';
   updated_at: string;
 };
 

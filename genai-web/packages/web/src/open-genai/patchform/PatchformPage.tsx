@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { PiListBold, PiNotePencilBold } from 'react-icons/pi';
+import { PiListBold } from 'react-icons/pi';
 import { Button } from '@/components/ui/dads/Button';
-import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PATCHFORM_EXAPP_ID } from '@/layout/navItems';
-import { FormTagList, FormTagsField } from './FormTagsField';
+import { FormCreateWizard } from './FormCreateWizard';
+import { FormTagList } from './FormTagsField';
 import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
 import { PatchformPaneTabs } from './PatchformPaneTabs';
 import { PatchformSubnav } from './PatchformSubnav';
@@ -16,7 +16,6 @@ import {
   downloadFormPortable,
   readExportBundleFile,
   usePatchformActions,
-  usePatchformAssist,
   usePatchformConfig,
   usePatchformList,
   usePatchformTagActions,
@@ -32,11 +31,10 @@ const workLabel = (locked?: boolean, workStatus?: string | null) =>
  */
 export const PatchformPage = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const fromGuideLink = searchParams.get('intent') === 'guide';
   const kind: 'application' | 'navigation' =
     searchParams.get('kind') === 'navigation' || fromGuideLink ? 'navigation' : 'application';
-  const pane = searchParams.get('tab') === 'new' || fromGuideLink ? 'new' : 'list';
   const { config, isLoading: configLoading, unavailable } = usePatchformConfig();
   const { forms, isLoading, loadError, mutate } = usePatchformList();
   const { tags: tagUsage, mutate: mutateTags } = usePatchformTags();
@@ -48,34 +46,22 @@ export const PatchformPage = () => {
   } = usePatchformTagActions();
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const {
-    create,
     setStatusMany,
     applyTagsMany,
     removeMany,
     importForm,
     duplicate: duplicateForm,
     submitting,
-    error,
-    setError,
   } = usePatchformActions();
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
-  const {
-    generate,
-    busy: assistBusy,
-    error: assistError,
-    setError: setAssistError,
-  } = usePatchformAssist();
   const asGuide = kind === 'navigation';
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [aiText, setAiText] = useState('');
-  const [aiNotes, setAiNotes] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardKind, setWizardKind] = useState<'application' | 'navigation'>(kind);
   const [statusFilter, setStatusFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
-  const [tags, setTags] = useState<string[]>(fromGuideLink ? [NAVIGATION_TAG] : []);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [bulkAction, setBulkAction] = useState('');
@@ -277,18 +263,24 @@ export const PatchformPage = () => {
     setSelected(new Set());
   };
 
-  useEffect(() => {
-    // タブ（種別）に合わせてナビゲーションタグの有無を揃える
-    setTags((prev) => {
-      const without = prev.filter((t) => t !== NAVIGATION_TAG);
-      return kind === 'navigation' ? [NAVIGATION_TAG, ...without] : without;
-    });
-  }, [kind]);
+  const openWizard = (next: 'application' | 'navigation') => {
+    setWizardKind(next);
+    setWizardOpen(true);
+  };
 
   useEffect(() => {
-    if (pane !== 'new') return;
-    document.getElementById('pf-title')?.focus();
-  }, [pane]);
+    if (searchParams.get('tab') !== 'new' && searchParams.get('intent') !== 'guide') return;
+    setWizardKind(
+      searchParams.get('kind') === 'navigation' || searchParams.get('intent') === 'guide'
+        ? 'navigation'
+        : 'application',
+    );
+    setWizardOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    next.delete('intent');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const onExportForm = async (id: string) => {
     setImportMsg(null);
@@ -337,25 +329,6 @@ export const PatchformPage = () => {
     }
   };
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!title.trim()) {
-      setError('タイトルを入力してください。');
-      return;
-    }
-    const detail = await create({
-      title: title.trim(),
-      description: description.trim() || undefined,
-      visibility: 'internal',
-      tags,
-    });
-    if (detail) {
-      await mutate();
-      navigate(asGuide ? `/patchform/${detail.id}/edit?intent=guide` : `/patchform/${detail.id}/edit`);
-    }
-  };
-
   return (
     <LayoutBody>
       <PageTitle title={PATCHFORM_LABEL} />
@@ -364,21 +337,8 @@ export const PatchformPage = () => {
           teamId={COMMON_EXAPPS_TEAM_ID}
           exAppId={PATCHFORM_EXAPP_ID}
           fallbackTitle={PATCHFORM_LABEL}
-          fallbackDescription='申請フォームとナビゲーションフォームは、それぞれの「一覧」で確認し、「作成」タブから作れます。'
-          fallbackHowTo={
-            <>
-              <p>・「申請フォーム」は記入してもらう1枚の用紙です。「ナビゲーションフォーム」は申請者の状況を聞いて必要な用紙を出し分ける入口で、それぞれ専用タブから作成・一覧できます。ナビゲーションフォームにはラジオやプルダウンを入れてください（作成時に「ナビゲーション」タグが自動で付きます）。</p>
-              <p>・受付は「手続き」を公開すると始まります。届いた件は「申請受付」にあります。</p>
-              <p>・外部 URL は「手続きを公開」にあります。LGWAN から届かない場合は、そこのリンクファイルを持ち出して別端末で開いてください。</p>
-              <p>
-                ・有効化: <code>docker compose --profile patchform up -d</code> または{' '}
-                <code>COMPOSE_PROFILES=patchform</code>
-              </p>
-              {config?.retention_days != null && (
-                <p>・既定の保持期間は {config.retention_days} 日です（フォームごとに変更できます）。</p>
-              )}
-            </>
-          }
+          fallbackDescription='記入してもらう用紙と、申請者の状況を聞く入口を作ります。'
+          hideHowTo
         >
           <PatchformSubnav current='forms' />
         </ManagedAppHeader>
@@ -404,8 +364,8 @@ export const PatchformPage = () => {
         {!unavailable && (
           <>
             <PatchformPaneTabs
-              label='フォームの作成と一覧'
-              current={`${kind === 'navigation' ? 'nav' : 'app'}-${pane}`}
+              label='フォームの一覧'
+              current={kind === 'navigation' ? 'nav-list' : 'app-list'}
               tabs={[
                 {
                   id: 'app-list',
@@ -414,147 +374,13 @@ export const PatchformPage = () => {
                   icon: PiListBold,
                 },
                 {
-                  id: 'app-new',
-                  label: '申請フォーム作成',
-                  to: '/patchform?tab=new',
-                  icon: PiNotePencilBold,
-                },
-                {
                   id: 'nav-list',
                   label: `ナビゲーションフォーム一覧（${navActiveCount}）`,
                   to: '/patchform?kind=navigation',
                   icon: PiListBold,
                 },
-                {
-                  id: 'nav-new',
-                  label: 'ナビゲーションフォーム作成',
-                  to: '/patchform?kind=navigation&tab=new',
-                  icon: PiNotePencilBold,
-                },
               ]}
             />
-            {pane === 'new' ? (
-            <section id='pf-new-form' className='flex flex-col gap-4'>
-              <h2 className='flex items-center gap-2 text-std-18B-160'>
-                <PiNotePencilBold className='size-5' />
-                {asGuide ? '新しいナビゲーションフォーム' : '新しい申請フォーム'}
-              </h2>
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                {asGuide
-                  ? '申請者の状況を聞き、必要な申請フォームの組み合わせを決めます。ラジオやプルダウンを入れてください。作成すると「ナビゲーション」タグが自動で付きます。'
-                  : '1枚の申請やお問い合わせなど、記入してもらう用紙です。'}
-              </p>
-              <form onSubmit={onSubmit} className='flex flex-col gap-4'>
-                <div>
-                  <Label htmlFor='pf-title' size='sm'>
-                    タイトル
-                  </Label>
-                  <input
-                    id='pf-title'
-                    className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder={asGuide ? '例: 転入・転居の確認' : '例: 転入届'}
-                    required
-                  />
-                  <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                    一覧と入力画面の見出しに出ます。
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor='pf-desc' size='sm'>
-                    説明（任意）
-                  </Label>
-                  <textarea
-                    id='pf-desc'
-                    className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-                    rows={3}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder='例: 転入か転居かを確認します'
-                  />
-                  <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                    入力画面の案内文です。空欄でも構いません。
-                  </p>
-                </div>
-                <FormTagsField
-                  id='pf-tags'
-                  value={tags}
-                  onChange={setTags}
-                  suggestions={knownTags}
-                />
-                <div className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
-                  <Label htmlFor='pf-ai' size='sm'>
-                    AIで下書きを作る
-                  </Label>
-                  <textarea
-                    id='pf-ai'
-                    className='w-full rounded-4 border border-solid-gray-420 bg-white px-3 py-2 text-std-16N-170'
-                    rows={2}
-                    value={aiText}
-                    onChange={(e) => setAiText(e.target.value)}
-                    placeholder='例: 子ども医療費助成の申請。申請者・住所・振込先が必要'
-                  />
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    失敗時はテンプレートにフォールバックします。
-                  </p>
-                  {(assistError || aiNotes) && (
-                    <p
-                      className={
-                        assistError ? 'text-dns-14N-130 text-error-1' : 'text-dns-14N-130 text-solid-gray-700'
-                      }
-                      role={assistError ? 'alert' : undefined}
-                    >
-                      {assistError || aiNotes}
-                    </p>
-                  )}
-                  <div>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      aria-disabled={assistBusy || submitting || !aiText.trim()}
-                      onClick={async () => {
-                        setAssistError(null);
-                        setAiNotes(null);
-                        const res = await generate({ text: aiText.trim() });
-                        if (!res) return;
-                        const created = await create({
-                          title: res.definition.metadata.title || title.trim() || 'AI下書き',
-                          description: res.definition.metadata.description || description.trim() || undefined,
-                          definition: res.definition,
-                          visibility: 'internal',
-                          tags,
-                        });
-                        if (created) {
-                          await mutate();
-                          navigate(
-                            asGuide
-                              ? `/patchform/${created.id}/edit?intent=guide`
-                              : `/patchform/${created.id}/edit`,
-                          );
-                        } else {
-                          setAiNotes(res.notes || '下書きを生成しましたが、作成に失敗しました。');
-                        }
-                      }}
-                    >
-                      {assistBusy || submitting ? '生成中...' : '生成して編集する'}
-                    </Button>
-                  </div>
-                </div>
-                {error && (
-                  <p className='text-dns-16N-130 text-error-1' role='alert'>
-                    {error}
-                  </p>
-                )}
-                <div>
-                  <Button type='submit' variant='solid-fill' size='md' aria-disabled={submitting}>
-                    {submitting ? '作成中...' : '作成して編集する'}
-                  </Button>
-                </div>
-              </form>
-            </section>
-            ) : (
             <section className='flex flex-col gap-3'>
               <div className='flex flex-wrap items-center justify-between gap-2'>
                 <h2 className='text-std-18B-160'>
@@ -577,14 +403,14 @@ export const PatchformPage = () => {
                   >
                     読み込み
                   </Button>
-                  <Link
-                    to={asGuide ? '/patchform?kind=navigation&tab=new' : '/patchform?tab=new'}
-                    className='inline-flex'
+                  <Button
+                    type='button'
+                    variant='solid-fill'
+                    size='sm'
+                    onClick={() => openWizard(kind)}
                   >
-                    <Button type='button' variant='solid-fill' size='sm'>
-                      {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
-                    </Button>
-                  </Link>
+                    {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
+                  </Button>
                 </div>
               </div>
               {importMsg ? (
@@ -714,7 +540,7 @@ export const PatchformPage = () => {
                   {loadError}
                 </p>
               ) : visibleForms.length === 0 ? (
-                <p className='text-solid-gray-600'>
+                <div className='text-solid-gray-600'>
                   {trashView
                     ? 'ゴミ箱は空です。'
                     : kindForms.length === 0
@@ -722,7 +548,14 @@ export const PatchformPage = () => {
                         ? 'まだナビゲーションフォームがありません。'
                         : 'まだ申請フォームがありません。'
                       : 'この条件のフォームはありません。'}
-                </p>
+                  {!trashView && kindForms.length === 0 ? (
+                    <span className='mt-3 block'>
+                      <Button type='button' variant='solid-fill' size='sm' onClick={() => openWizard(kind)}>
+                        {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
+                      </Button>
+                    </span>
+                  ) : null}
+                </div>
               ) : (
                 <>
                   {selectableVisible.length > 0 ? (
@@ -964,7 +797,20 @@ export const PatchformPage = () => {
                 </>
               )}
             </section>
-            )}
+            <FormCreateWizard
+              open={wizardOpen}
+              kind={wizardKind}
+              onClose={() => setWizardOpen(false)}
+              onCreated={(created) => {
+                setWizardOpen(false);
+                void mutate();
+                navigate(
+                  wizardKind === 'navigation'
+                    ? `/patchform/${created.id}/edit?intent=guide`
+                    : `/patchform/${created.id}/edit`,
+                );
+              }}
+            />
           </>
         )}
       </div>

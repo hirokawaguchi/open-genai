@@ -7865,6 +7865,137 @@ async def patchform_set_reception_status(
     )
 
 
+@app.post("/patchform/applications/{application_id}/route")
+async def patchform_move_application_route(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/route"),
+        headers,
+        body,
+        timeout=40,
+    )
+
+
+@app.post("/patchform/applications/{application_id}/delivery")
+async def patchform_resend_application_delivery(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/delivery"),
+        headers,
+        None,
+        timeout=40,
+    )
+
+
+@app.get("/patchform/ledger")
+async def patchform_list_ledger(request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    procedure_id = (request.query_params.get("procedure_id") or "").strip()
+    url = _patchform_app_url("/ledger")
+    if procedure_id:
+        url = f"{url}?procedure_id={procedure_id}"
+    return await _proxy_patchform("GET", url, headers)
+
+
+@app.get("/patchform/ledger/{row_id}")
+async def patchform_get_ledger_row(row_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform("GET", _patchform_app_url(f"/ledger/{row_id}"), headers)
+
+
+@app.post("/patchform/ledger/{row_id}")
+async def patchform_update_ledger_row(row_id: str, request: Request) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST", _patchform_app_url(f"/ledger/{row_id}"), headers, body
+    )
+
+
+@app.get("/patchform/ledger/{row_id}/files/{file_id}")
+async def patchform_download_ledger_file(
+    row_id: str, file_id: str, request: Request
+) -> Response:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                _patchform_app_url(f"/ledger/{row_id}/files/{file_id}"),
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"フォームサービスに接続できませんでした: {e}", "enabled": False},
+        )
+    ctype = res.headers.get("content-type", "")
+    if res.status_code == 200 and ctype and not ctype.startswith("application/json"):
+        return Response(
+            content=res.content,
+            media_type=ctype,
+            headers={
+                "Content-Disposition": res.headers.get(
+                    "content-disposition", f'attachment; filename="{file_id}"'
+                )
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "台帳のファイルを取得できませんでした"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.post("/patchform/applications/{application_id}/review-finding")
+async def patchform_set_review_finding(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    body = await request.json()
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/review-finding"),
+        headers,
+        body,
+    )
+
+
+@app.post("/patchform/applications/{application_id}/review-findings")
+async def patchform_generate_review_findings(
+    application_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _patchform_headers(request)
+    if err:
+        return err
+    return await _proxy_patchform(
+        "POST",
+        _patchform_app_url(f"/applications/{application_id}/review-findings"),
+        headers,
+        timeout=150,
+    )
+
+
 @app.patch("/patchform/applications/{application_id}")
 async def patchform_rename_application(
     application_id: str, request: Request

@@ -13,13 +13,14 @@ import { Label } from '@/components/ui/dads/Label';
 import { PageTitle } from '@/components/PageTitle';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NAVIGATION_TAG, PATCHFORM_LABEL } from './labels';
-import { PatchformProcedureCoach } from './PatchformProcedureCoach';
+import { ProcedureSlotEditor } from './ProcedureSlotEditor';
 import { PatchformSubnav } from './PatchformSubnav';
 import { FillForm } from './runtime/FillForm';
 import {
   type FormSummary,
   omitsNavigation,
   type ProcedureResolvePreview,
+  type ProcedureReview,
   type ProcedureRule,
   type SlotKind,
   type SlotTemplate,
@@ -77,7 +78,22 @@ export const PatchformProcedureEditPage = () => {
   const [description, setDescription] = useState('');
   const [guideFormId, setGuideFormId] = useState('');
   const [notifyEmails, setNotifyEmails] = useState('');
+  const [deskRole, setDeskRole] = useState('受付');
+  const [sectionRole, setSectionRole] = useState('担当課');
+  const [confirmRole, setConfirmRole] = useState('受付');
+  const [exitTo, setExitTo] = useState<'ledger' | 'external'>('ledger');
+  const [ledgerStatuses, setLedgerStatuses] = useState('受理\n処理中\n完了');
+  const [endpointUrl, setEndpointUrl] = useState('');
+  const [endpointKey, setEndpointKey] = useState('');
+  const [keySet, setKeySet] = useState(false);
+  const [sendMynumber, setSendMynumber] = useState(false);
+  const [reviewEngine, setReviewEngine] = useState<'openai' | 'dify'>('openai');
+  const [difyBaseUrl, setDifyBaseUrl] = useState('');
+  const [difyKey, setDifyKey] = useState('');
+  const [difyKeySet, setDifyKeySet] = useState(false);
+  const [difyStub, setDifyStub] = useState(false);
   const [ruleMap, setRuleMap] = useState<Map<string, ProcedureRule>>(new Map());
+  const [bundleReview, setBundleReview] = useState<ProcedureReview>({ slots: [], cross: [] });
   const [pane, setPane] = useState<'edit' | 'preview'>('edit');
   const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({});
   const { form: guidePreviewForm, isLoading: guideLoading } = usePatchformDetail(
@@ -114,7 +130,24 @@ export const PatchformProcedureEditPage = () => {
     setDescription(procedure.description || '');
     setGuideFormId(procedure.guide_form_id);
     setNotifyEmails((procedure.notify_emails || []).join('\n'));
+    const roleOf = (id: string, fallback: string) =>
+      procedure.handling?.route?.find((step) => step.id === id)?.role || fallback;
+    setDeskRole(roleOf('desk', '受付'));
+    setSectionRole(roleOf('section', '担当課'));
+    setConfirmRole(roleOf('confirm', '受付'));
+    setExitTo(procedure.handling?.exit === 'external' ? 'external' : 'ledger');
+    setLedgerStatuses((procedure.handling?.statuses || ['受理', '処理中', '完了']).join('\n'));
+    setEndpointUrl(procedure.delivery?.url || '');
+    setEndpointKey('');
+    setKeySet(Boolean(procedure.delivery?.key_set));
+    setSendMynumber(Boolean(procedure.delivery?.send_mynumber));
+    setReviewEngine(procedure.review_call?.engine === 'dify' ? 'dify' : 'openai');
+    setDifyBaseUrl(procedure.review_call?.base_url || '');
+    setDifyKey('');
+    setDifyKeySet(Boolean(procedure.review_call?.key_set));
+    setDifyStub(Boolean(procedure.review_call?.stub));
     setRuleMap(rulesToMap(procedure.mapping?.rules || []));
+    setBundleReview(procedure.mapping?.review || { slots: [], cross: [] });
   }, [procedure]);
 
   const styleForms = useMemo(
@@ -142,7 +175,18 @@ export const PatchformProcedureEditPage = () => {
   const collectedRules = (): ProcedureRule[] => {
     const out: ProcedureRule[] = [];
     for (const rule of ruleMap.values()) {
-      if (!rule.form_ids.length && !rule.notes && !(rule.prepare || []).length && !(rule.refs || []).length) {
+      const hasReview = (rule.reviews || []).some(
+        (slot) => slot.formal.length || slot.content.some((line) => line.text.trim()),
+      );
+      const hasCross = (rule.cross || []).some((line) => line.text.trim());
+      if (
+        !rule.form_ids.length &&
+        !rule.notes &&
+        !(rule.prepare || []).length &&
+        !(rule.refs || []).length &&
+        !hasReview &&
+        !hasCross
+      ) {
         continue;
       }
       out.push({
@@ -152,6 +196,8 @@ export const PatchformProcedureEditPage = () => {
         notes: rule.notes || '',
         prepare: rule.prepare || [],
         refs: rule.refs || [],
+        reviews: rule.reviews || [],
+        cross: rule.cross || [],
       });
     }
     return out;
@@ -164,11 +210,34 @@ export const PatchformProcedureEditPage = () => {
       name: name.trim(),
       description: description.trim(),
       guide_form_id: guideFormId,
-      mapping: { rules: collectedRules() },
+      mapping: { rules: collectedRules(), review: bundleReview },
       notify_emails: notifyEmails
         .split(/[\n,、;]+/)
         .map((addr) => addr.trim())
         .filter(Boolean),
+      handling: {
+        route: [
+          { id: 'desk', label: '受付確認', role: deskRole.trim() || '受付' },
+          { id: 'section', label: '担当課', role: sectionRole.trim() || '担当課' },
+          { id: 'confirm', label: '確定', role: confirmRole.trim() || '受付' },
+        ],
+        exit: exitTo,
+        statuses: ledgerStatuses
+          .split(/[\n,、]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      },
+      delivery: {
+        url: endpointUrl.trim(),
+        send_mynumber: sendMynumber,
+        ...(endpointKey.trim() ? { key: endpointKey.trim() } : {}),
+      },
+      review_call: {
+        engine: reviewEngine,
+        base_url: difyBaseUrl.trim(),
+        stub: reviewEngine === 'dify' && difyStub,
+        ...(difyKey.trim() ? { api_key: difyKey.trim() } : {}),
+      },
     });
     if (saved) await mutate();
   };
@@ -218,9 +287,6 @@ export const PatchformProcedureEditPage = () => {
     const f = formById.get(id);
     if (f && !f.has_opening) unpublishedMapped.push(f);
   }
-  const nameLooksDraft = /[#＃]|目次/.test(name);
-  const needsCopyReview = description.includes('【確認】') || nameLooksDraft;
-  const hasMappedForms = collectedRules().some((r) => r.form_ids.length > 0);
   const scrollTo = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const knownKeys = new Set(
@@ -255,12 +321,14 @@ export const PatchformProcedureEditPage = () => {
               <h1 className='text-std-20B-160 lg:text-std-24B-150'>{procedure.name}</h1>
               <PatchformSubnav current='procedures' />
               <p className='text-std-16N-170 text-solid-gray-700'>
-                {statusLabel[procedure.status] || procedure.status}
+                {procedure.status === 'published'
+                  ? '公開中。'
+                  : procedure.status === 'draft'
+                    ? '下書き。公開すると受付が始まります。'
+                    : `${statusLabel[procedure.status] || procedure.status}。`}
                 {singleForm
-                  ? '。申請用紙はこの1枚です。'
-                  : needsCopyReview
-                    ? '。手引きから作った直後は下書きです。名前と対応を直してから、下の「保存する」「公開する」を使います。'
-                    : '。各答えのときに出す申請用紙を選んでから、保存または公開します。'}
+                  ? '審査項目はこの用紙に書きます。'
+                  : '審査項目は答えごとのカードに書きます。'}
               </p>
             </div>
 
@@ -298,90 +366,6 @@ export const PatchformProcedureEditPage = () => {
 
             {pane === 'edit' && (
             <>
-            {!singleForm ? (
-            <PatchformProcedureCoach
-              title='操作の流れ'
-              defaultOpen={needsCopyReview}
-              lead={
-                singleForm
-                  ? '申請用紙はこの1枚です。保存して公開すると受付が始まります。'
-                  : 'チェックを付けた申請用紙だけが、申請者や回答者に出ます。'
-              }
-              note={
-                <div className='flex flex-col gap-1'>
-                  <p className='text-std-16B-150'>ナビゲーションフォームとは</p>
-                  <p className='text-dns-16N-130 text-solid-gray-700'>
-                    申請者・回答者が最初に答える「案内」の1枚です。ラジオボタンやプルダウンの答えに応じて、必要な申請用紙を出し分けます（出し分けは下の「答えと申請用紙の対応」で設定します）。
-                  </p>
-                  <p className='text-dns-16N-130 text-solid-gray-700'>
-                    答えによって必要書類が変わる手続きに向いています。選択肢が無く自由記入だけのときはナビゲーションにならず、その1枚だけを配る「単一フォーム」として公開されます。1枚で完結する手続きは単一フォームのままで構いません。
-                  </p>
-                </div>
-              }
-              steps={[
-                {
-                  id: 'review',
-                  label: '名前と説明を直す',
-                  done: !needsCopyReview,
-                  hint: '庁内の一覧で使う短い名前にします。説明の【確認】は読んで直すか消します。',
-                  action: { label: '名前の欄へ', onClick: () => scrollTo('pf-pe-name') },
-                },
-                {
-                  id: 'choices',
-                  label: singleForm ? '申請用紙を確認する' : '質問にラジオやプルダウンがある',
-                  done: singleForm || fields.length > 0,
-                  hint: singleForm
-                    ? 'この手続きはナビゲーションフォームを使いません。用紙を直すときは申請用紙を編集してください。'
-                    : '答えの選択肢が無いと、申請用紙を振り分けられません。無ければナビゲーションフォームを編集してください。',
-                  action: procedure.guide_form_id
-                    ? {
-                        label: singleForm ? '申請用紙を編集する' : 'ナビゲーションフォームを編集する',
-                        to: `/patchform/${procedure.guide_form_id}/edit`,
-                      }
-                    : undefined,
-                },
-                ...(singleForm
-                  ? []
-                  : [
-                      {
-                        id: 'map',
-                        label: '答えごとに申請用紙を選ぶ',
-                        done: hasMappedForms,
-                        hint: '例: 「転入」なら転入届。「該当しない」なら用紙を付けない、など。',
-                        action: {
-                          label: '対応の欄へ',
-                          onClick: () => scrollTo('pf-mapping'),
-                        },
-                      },
-                    ]),
-                {
-                  id: 'publish',
-                  label: '保存して公開する',
-                  done: procedure.status === 'published',
-                  hint: '公開すると、申請者や回答者が使える受付が始まります。確認が残っているときは、先に直してください。',
-                  action: procedure.can_edit
-                    ? {
-                        label: '保存・公開のボタンへ',
-                        onClick: () => scrollTo('pf-proc-actions'),
-                      }
-                    : undefined,
-                },
-                {
-                  id: 'inbox',
-                  label: '届いた申請は申請受付で見る',
-                  done: false,
-                  hint: singleForm
-                    ? '申請用紙を提出すると束ができます。進捗の確認は申請受付です。'
-                    : '案内を提出すると束ができます。進捗の確認は申請受付です。',
-                  action: {
-                    label: '申請受付を開く',
-                    to: `/patchform/inbox/${encodeURIComponent(procedure.id)}`,
-                  },
-                },
-              ]}
-            />
-            ) : null}
-
             {(procedure.warnings || []).length > 0 && (
               <div className='rounded-8 border border-orange-400 bg-orange-50 px-4 py-3' role='status'>
                 <p className='text-std-16B-150'>案内の選択肢が対応表と一致しません</p>
@@ -526,115 +510,188 @@ export const PatchformProcedureEditPage = () => {
                 ) : null}
               </div>
             </div>
-            {!singleForm ? (
-            <section id='pf-mapping' className='flex flex-col gap-4'>
-              <h2 className='text-std-18B-160'>答えと申請用紙の対応</h2>
-              <>
-              <p className='text-std-16N-170 text-solid-gray-700'>
-                申請者がその答えを選んだとき、手続きへ追加するフォームにチェックします。
-              </p>
+            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+              <h2 className='text-std-18B-160'>所見の呼び出し</h2>
               <p className='text-dns-14N-130 text-solid-gray-600'>
-                「未公開」のフォームは、手続きを公開すると自動で受付が開き、申請者に出せるようになります。
+                この手続きの確認文への所見を、どこで書くかです。合否は職員が押します。
               </p>
-              {fields.length === 0 ? (
-                <div className='rounded-8 border border-solid-gray-300 px-4 py-3'>
-                  <p className='text-solid-gray-700'>
-                    選んだフォームに、ラジオやプルダウンがありません。
+              <fieldset className='flex flex-col gap-2'>
+                <legend className='text-dns-14N-130'>呼び出し先</legend>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-review-engine'
+                    checked={reviewEngine === 'openai'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setReviewEngine('openai')}
+                  />
+                  OpenAI 互換
+                </label>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-review-engine'
+                    checked={reviewEngine === 'dify'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setReviewEngine('dify')}
+                  />
+                  Dify
+                </label>
+              </fieldset>
+              {reviewEngine === 'dify' && (
+                <div className='flex flex-col gap-3'>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    Dify の API ベース
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={difyBaseUrl}
+                      disabled={!procedure.can_edit}
+                      placeholder='https://api.dify.ai/v1'
+                      onChange={(e) => setDifyBaseUrl(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    API キー
+                    <input
+                      type='password'
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={difyKey}
+                      disabled={!procedure.can_edit}
+                      placeholder={difyKeySet ? '設定済み。変えるときだけ入力' : ''}
+                      autoComplete='new-password'
+                      onChange={(e) => setDifyKey(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='checkbox'
+                      checked={difyStub}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setDifyStub(e.target.checked)}
+                    />
+                    接続せず、スタブで所見を返す
+                  </label>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    ワークフローは、確認文の id ごとに pass、fail、unknown と短い detail を findings として返します。ファイルを渡して文章で返すワークフローとは、入出力が違います。鍵は保存後に画面へ戻しません。
                   </p>
-                  {procedure.guide_form_id ? (
-                    <p className='mt-2'>
-                      <Link
-                        to={`/patchform/${procedure.guide_form_id}/edit`}
-                        className='text-blue-900 underline-offset-2 hover:underline'
-                      >
-                        質問に選択肢を足す
-                      </Link>
-                    </p>
-                  ) : null}
                 </div>
-              ) : (
-                fields.map((field) => (
-                  <div key={field.id} className='rounded-8 border border-solid-gray-300 p-4'>
-                    <h3 className='text-std-16B-150'>質問「{field.label}」</h3>
-                    <div className='mt-3 flex flex-col gap-4'>
-                      {(field.option_items?.length
-                        ? field.option_items
-                        : field.options.map((option) => ({ value: option, label: option }))
-                      ).map((item) => {
-                        const option = item.value;
-                        const rule = ruleMap.get(ruleKey(field.id, option));
-                        return (
-                          <div key={option} className='border-t border-solid-gray-300 pt-3'>
-                            <p className='text-std-16B-150'>
-                              答えが「{item.label}」
-                              {item.label !== item.value ? `（${item.value}）` : ''}
-                              のとき
-                            </p>
-                            <fieldset className='mt-2'>
-                              <legend className='text-dns-14N-130 text-solid-gray-700'>
-                                このとき追加するフォーム
-                              </legend>
-                              <div className='mt-1 flex flex-col gap-1'>
-                                {styleForms.map((f) => {
-                                  const checked = Boolean(rule?.form_ids.includes(f.id));
-                                  return (
-                                    <label key={f.id} className='flex items-center gap-2 text-std-16N-170'>
-                                      <input
-                                        type='checkbox'
-                                        checked={checked}
-                                        disabled={!procedure.can_edit}
-                                        onChange={(e) => {
-                                          const current = rule?.form_ids || [];
-                                          const next = e.target.checked
-                                            ? [...current, f.id]
-                                            : current.filter((id) => id !== f.id);
-                                          updateRule(field.id, option, { form_ids: next });
-                                        }}
-                                      />
-                                      <span>{f.title}</span>
-                                      {checked && !f.has_opening ? (
-                                        <span className='rounded-4 bg-orange-50 px-1.5 py-0.5 text-dns-14N-130 text-orange-800'>
-                                          未公開
-                                        </span>
-                                      ) : null}
-                                    </label>
-                                  );
-                                })}
-                                {styleForms.length === 0 ? (
-                                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                                    追加できるフォームがありません。先に申請フォームを作成してください。
-                                  </p>
-                                ) : null}
-                              </div>
-                            </fieldset>
-                            <div className='mt-2'>
-                              <Label htmlFor={`note-${field.id}-${option}`} size='sm'>
-                                解説
-                              </Label>
-                              <textarea
-                                id={`note-${field.id}-${option}`}
-                                className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                                rows={2}
-                                value={rule?.notes || ''}
-                                disabled={!procedure.can_edit}
-                                onChange={(e) => updateRule(field.id, option, { notes: e.target.value })}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))
               )}
-              {orphanRules.length > 0 && (
-                <p className='text-solid-gray-700'>
-                  案内に無い対応が {orphanRules.length} 件残っています。保存すると残ります。選択肢を戻すか、空にして消してください。
-                </p>
-              )}
-              </>
             </section>
-            ) : null}
+            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+              <h2 className='text-std-18B-160'>確定前の経路</h2>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                提出後は、受付確認、担当課、確定の順です。進む、戻す、差戻しができます。確定すると、台帳の行になるか、受け口へ送られます。
+              </p>
+              <div className='grid gap-3 md:grid-cols-3'>
+                {(
+                  [
+                    ['受付確認', deskRole, setDeskRole],
+                    ['担当課', sectionRole, setSectionRole],
+                    ['確定', confirmRole, setConfirmRole],
+                  ] as const
+                ).map(([label, value, setValue]) => (
+                  <label key={label} className='flex flex-col gap-1 text-dns-14N-130'>
+                    {label}の役割
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={value}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
+              <fieldset className='flex flex-col gap-2'>
+                <legend className='text-dns-14N-130'>確定した後</legend>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-exit'
+                    checked={exitTo === 'ledger'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setExitTo('ledger')}
+                  />
+                  台帳で担当と状態を進める
+                </label>
+                <label className='flex items-center gap-2 text-std-16N-170'>
+                  <input
+                    type='radio'
+                    name='pf-exit'
+                    checked={exitTo === 'external'}
+                    disabled={!procedure.can_edit}
+                    onChange={() => setExitTo('external')}
+                  />
+                  既存システムへ渡す
+                </label>
+              </fieldset>
+              {exitTo === 'external' && (
+                <div className='flex flex-col gap-3'>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    受け口の URL
+                    <input
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={endpointUrl}
+                      disabled={!procedure.can_edit}
+                      placeholder='https://example.lg.jp/intake'
+                      onChange={(e) => setEndpointUrl(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex flex-col gap-1 text-dns-14N-130'>
+                    受け口の鍵
+                    <input
+                      type='password'
+                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={endpointKey}
+                      disabled={!procedure.can_edit}
+                      placeholder={keySet ? '設定済み。変えるときだけ入力' : ''}
+                      autoComplete='new-password'
+                      onChange={(e) => setEndpointKey(e.target.value)}
+                    />
+                  </label>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='checkbox'
+                      checked={sendMynumber}
+                      disabled={!procedure.can_edit}
+                      onChange={(e) => setSendMynumber(e.target.checked)}
+                    />
+                    マイナンバーを含めて送る
+                  </label>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    確定すると、記入済みの項目をこの URL へ送ります。送れなかったときは、申請の画面から同じ版で送り直せます。鍵は保存後に画面へ戻しません。
+                  </p>
+                </div>
+              )}
+              {exitTo === 'ledger' && (
+                <label className='flex flex-col gap-1 text-dns-14N-130'>
+                  台帳の状態（1行に1つ。最初の行が確定時の状態）
+                  <textarea
+                    className='min-h-24 rounded-4 border border-solid-gray-420 px-3 py-2'
+                    value={ledgerStatuses}
+                    disabled={!procedure.can_edit}
+                    onChange={(e) => setLedgerStatuses(e.target.value)}
+                  />
+                </label>
+              )}
+            </section>
+            <ProcedureSlotEditor
+              fields={fields}
+              styleForms={styleForms}
+              guideFormId={guideFormId}
+              guideTitle={procedure.guide_title || name}
+              singleForm={singleForm}
+              ruleMap={ruleMap}
+              review={bundleReview}
+              formalChecks={procedure.formal_checks}
+              canEdit={Boolean(procedure.can_edit)}
+              onRule={updateRule}
+              onReview={setBundleReview}
+            />
+            {orphanRules.length > 0 && (
+              <p className='text-solid-gray-700'>
+                案内に無い対応が {orphanRules.length} 件残っています。保存すると残ります。選択肢を戻すか、空にして消してください。
+              </p>
+            )}
             </>
             )}
 
