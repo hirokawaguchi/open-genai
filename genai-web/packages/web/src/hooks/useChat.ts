@@ -32,6 +32,16 @@ import { useChatList } from './useChatList';
 
 type GenerationMode = 'normal' | 'continue' | 'retry';
 
+const streamAborts = new Map<string, AbortController>();
+
+const isAbortError = (error: unknown): boolean => {
+  return error instanceof Error && error.name === 'AbortError';
+};
+
+const stopChatStream = (id: string) => {
+  streamAborts.get(id)?.abort();
+};
+
 export type GenerateOptions = {
   ignoreHistory?: boolean;
   preProcessInput?: (messages: ShownMessage[]) => ShownMessage[];
@@ -466,11 +476,16 @@ const useChatStore = create<{
       base64Cache,
     );
 
-    const stream = predictStream({
-      model: model,
-      messages: formattedMessages,
-      id: id,
-    });
+    const abort = new AbortController();
+    streamAborts.set(id, abort);
+    const stream = predictStream(
+      {
+        model: model,
+        messages: formattedMessages,
+        id: id,
+      },
+      abort.signal,
+    );
 
     // Assistant の発言を更新
     let tmpChunk = '';
@@ -516,9 +531,24 @@ const useChatStore = create<{
       if (tmpChunk.length > 0) {
         addChunkToAssistantMessage(id, tmpChunk, undefined, model);
       }
+      if (abort.signal.aborted) {
+        addChunkToAssistantMessage(id, '\n\n生成を中止しました。\n', undefined, model);
+      }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      addChunkToAssistantMessage(id, `\n[エラー] ${msg}`, undefined, model);
+      if (isAbortError(e)) {
+        if (tmpChunk.length > 0) {
+          addChunkToAssistantMessage(id, tmpChunk, undefined, model);
+          tmpChunk = '';
+        }
+        addChunkToAssistantMessage(id, '\n\n生成を中止しました。\n', undefined, model);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        addChunkToAssistantMessage(id, `\n[エラー] ${msg}`, undefined, model);
+      }
+    } finally {
+      if (streamAborts.get(id) === abort) {
+        streamAborts.delete(id);
+      }
     }
 
     // メッセージの後処理（例：footnote の付与）
@@ -825,6 +855,9 @@ export const useChat = (id: string, chatId?: string) => {
     sessionChatId: decomposeId(chats[id]?.chat?.chatId ?? '') || undefined,
     getStopReason: () => {
       return getStopReason(id);
+    },
+    stopGeneration: () => {
+      stopChatStream(id);
     },
   };
 };

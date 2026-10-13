@@ -31,6 +31,14 @@ OPENAI_BASE_URL = (
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "ollama"
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen2.5:7b")
 REQUEST_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "600"))
+# 末尾がこの字数ぶん、同じ短い語句の連続になったら生成を打ち切る。
+# 「はい、」の繰り返しは会議の相づちを写したあと崩れやすく、120字あれば引用と区別できる。
+_REPETITION_MIN_CHARS = 120
+_REPETITION_MAX_UNIT = 24
+_REPETITION_STOP_NOTE = (
+    "\n\n同じ語句の繰り返しが続いたため、ここで生成を止めました。"
+    "直す箇所や、会議録だけを作るなど、範囲を指定してもう一度お試しください。\n"
+)
 
 
 @dataclass
@@ -199,6 +207,52 @@ def _content_text(content: Any) -> str:
                 parts.append(str(part))
         return " ".join(parts)
     return str(content or "")
+
+
+def _has_word_char(text: str) -> bool:
+    """句読点だけの繰り返しでは止めない。"""
+    for ch in text:
+        if ch.isalnum():
+            return True
+        code = ord(ch)
+        if 0x3040 <= code <= 0x30FF or 0x4E00 <= code <= 0x9FFF:
+            return True
+    return False
+
+
+def _repetition_detected(recent: str) -> bool:
+    """末尾が同じ短い語句の連続なら True。"""
+    if len(recent) < _REPETITION_MIN_CHARS:
+        return False
+    suffix = recent[-(_REPETITION_MAX_UNIT * 40) :]
+    size = len(suffix)
+    for unit_len in range(1, _REPETITION_MAX_UNIT + 1):
+        if unit_len * 8 > size:
+            continue
+        unit = suffix[-unit_len:]
+        if not _has_word_char(unit):
+            continue
+        count = 0
+        index = size
+        while index >= unit_len and suffix[index - unit_len : index] == unit:
+            count += 1
+            index -= unit_len
+        if count >= 8 and count * unit_len >= _REPETITION_MIN_CHARS:
+            return True
+    return False
+
+
+class _RepetitionGuard:
+    """ストリームをまたいで、同じ語句の連続を見る。"""
+
+    def __init__(self) -> None:
+        self._recent = ""
+
+    def push(self, text: str) -> bool:
+        if not text:
+            return False
+        self._recent = (self._recent + text)[-(_REPETITION_MIN_CHARS * 4) :]
+        return _repetition_detected(self._recent)
 
 
 def _assistant_visible_text(part: dict[str, Any]) -> str:
@@ -454,6 +508,7 @@ async def chat_stream(
     )
     try:
         finish_reason = "stop"
+        repetition = _RepetitionGuard()
         async for line in iter_chat_lines(_endpoint(provider), payload, REQUEST_TIMEOUT):
             line = line.strip()
             if not line or not line.startswith("data:"):
@@ -468,6 +523,13 @@ async def chat_stream(
             choice = (chunk.get("choices") or [{}])[0]
             delta = choice.get("delta") or {}
             text = _assistant_visible_text(delta)
+            if text and repetition.push(text):
+                print(f"[llm] repetition stop model={model_id}")
+                yield json.dumps(
+                    {"text": _REPETITION_STOP_NOTE, "stopReason": "stop"},
+                    ensure_ascii=False,
+                ) + "\n"
+                return
             if text:
                 yield json.dumps({"text": text}, ensure_ascii=False) + "\n"
             if choice.get("finish_reason"):
