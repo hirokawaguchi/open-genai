@@ -114,7 +114,7 @@ export const predict = async (req: PredictRequest): Promise<string> => {
  * バックエンドは改行区切り JSON (StreamingChunk) を返すため、完全な 1 行ごとに
  * yield して呼び出し側 (useChat) の JSON.parse が壊れないようにする。
  */
-export async function* predictStream(req: PredictRequest) {
+export async function* predictStream(req: PredictRequest, signal?: AbortSignal) {
   const callOnce = async (): Promise<Response> => {
     const token = await getIdToken();
     return fetch(`${import.meta.env.VITE_APP_API_ENDPOINT}/predict/stream`, {
@@ -124,6 +124,7 @@ export async function* predictStream(req: PredictRequest) {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(req),
+      signal,
     });
   };
 

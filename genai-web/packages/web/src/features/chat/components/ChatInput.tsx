@@ -42,7 +42,7 @@ export const ChatInput = (props: Props) => {
   const { usecase, chatId } = useUsecasePath();
   const { content, setContent, hasSent, setHasSent } = useChatStore();
 
-  const { loading } = useChat(usecase, chatId);
+  const { loading, stopGeneration } = useChat(usecase, chatId);
   const { uploadedFiles, uploadFiles, checkFiles, deleteUploadedFile, uploading, errorMessages } =
     useFiles(usecase);
 
@@ -298,15 +298,22 @@ export const ChatInput = (props: Props) => {
               )}
 
               <LoadingButton
-                type='submit'
+                type={loading ? 'button' : 'submit'}
                 variant='solid-fill'
                 size='md'
-                disabled={disabledSend}
-                onClick={() => {}}
+                disabled={loading ? false : disabledSend}
+                onClick={
+                  loading
+                    ? (event) => {
+                        event.preventDefault();
+                        stopGeneration();
+                      }
+                    : undefined
+                }
                 className='shrink-0 ml-auto inline-flex justify-center items-center gap-1 min-w-36'
               >
                 <SendIcon aria-hidden={true} className='shrink-0' />
-                {loading ? '生成中...' : '送信'}
+                {loading ? '中止' : '送信'}
               </LoadingButton>
             </div>
           </div>
