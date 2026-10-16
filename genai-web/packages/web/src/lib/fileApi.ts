@@ -8,7 +8,7 @@ import {
 } from 'genai-web';
 import { genUApi, readUploadPutJson, uploadToSignedUrl } from '@/lib/fetcher';
 import type { UploadPutResponse } from '@/lib/fetcher';
-import { fileObjectKeyFromUrl } from '@/lib/fileUrl';
+import { fileObjectKeyFromUrl, pageFileUrl } from '@/lib/fileUrl';
 
 const parseS3Url = (s3Url: string) => {
   let result = /^s3:\/\/(?<bucketName>.+?)\/(?<prefix>.+)/.exec(s3Url);
@@ -33,12 +33,15 @@ const parseS3Url = (s3Url: string) => {
   };
 };
 
-export const getSignedUrl = (req: GetFileUploadSignedUrlRequest) => {
-  return genUApi.post<GetFileUploadSignedUrlResponse>('file/url', {
+export const getSignedUrl = async (req: GetFileUploadSignedUrlRequest) => {
+  const res = await genUApi.post<GetFileUploadSignedUrlResponse>('file/url', {
     filename: req.filename,
     mediaFormat: req.mediaFormat,
     operation: 'upload',
   } as GetFileUploadSignedUrlRequest & { operation: string });
+  // 署名 URL は公開ホスト固定で返る。別ホストの画面から PUT すると届かないので、
+  // 今開いているページの /api/files/ に付け替える。
+  return { ...res, data: pageFileUrl(res.data) };
 };
 
 export const uploadFile = async (
@@ -58,7 +61,7 @@ const mintLocalFileUrl = async (
     filename: key.split('/').pop() || key,
     operation,
   });
-  return url;
+  return pageFileUrl(url);
 };
 
 export const getFileDownloadSignedUrl = async (s3Url: string) => {

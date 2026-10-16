@@ -21,6 +21,7 @@ const useFilesState = create<{
     fileLimit: FileLimit,
     accept: string[],
   ) => Promise<boolean>;
+  dropPendingFile: (id: string, idx: number) => void;
   clear: (id: string) => void;
   base64Cache: Record<string, string>;
   getFileDownloadSignedUrl: (s3Url: string, cacheBase64?: boolean) => Promise<string>;
@@ -227,8 +228,14 @@ const useFilesState = create<{
       };
 
       const mediaFormat = uploadedFile.file.name.split('.').pop() as string;
+      const uploadFailedMessage =
+        'アップロードに失敗しました。ファイルを外して、もう一度添付してください。';
+
+      const sameFile = (file: UploadedFileType | undefined) =>
+        !!file && file.file === uploadedFile.file;
 
       // 署名付き URL の取得（並列実行させるために、await せずに実行）
+      // 失敗しても uploading を戻さないと、送信ボタンが無反応のままになる
       fileApi
         .getSignedUrl({
           filename: uploadedFile.file.name,
@@ -238,24 +245,56 @@ const useFilesState = create<{
           const signedUrl = signedUrlRes.data;
           const fileUrl = extractBaseURL(signedUrl); // 署名付き url からクエリパラメータを除外
           // ファイルのアップロード（応答に個人情報警告が付く場合がある）
-          fileApi.uploadFile(signedUrl, { file: uploadedFile.file }).then((scan) => {
-            set(
-              produce((state) => {
-                state.uploadedFilesDict[id][idx].uploading = false;
-                state.uploadedFilesDict[id][idx].s3Url = fileUrl;
-                state.uploadedFilesDict[id][idx].piiWarned = Boolean(scan?.warned);
-                state.uploadedFilesDict[id][idx].piiCategories = scan?.categories ?? [];
-                state.uploadedFilesDict[id][idx].piiHits = scan?.hits ?? [];
-                state.uploadedFilesDict[id][idx].piiMessage = scan?.message;
-                state.base64Cache = {
-                  ...state.base64Cache,
-                  [fileUrl]: reader.result?.toString() ?? '',
-                };
-              }),
-            );
-          });
+          const scan = await fileApi.uploadFile(signedUrl, { file: uploadedFile.file });
+          set(
+            produce((state) => {
+              const file = state.uploadedFilesDict[id]?.[idx];
+              if (!sameFile(file)) return;
+              file.uploading = false;
+              file.s3Url = fileUrl;
+              file.piiWarned = Boolean(scan?.warned);
+              file.piiCategories = scan?.categories ?? [];
+              file.piiHits = scan?.hits ?? [];
+              file.piiMessage = scan?.message;
+              state.base64Cache = {
+                ...state.base64Cache,
+                [fileUrl]: reader.result?.toString() ?? '',
+              };
+            }),
+          );
+        })
+        .catch(() => {
+          set(
+            produce((state) => {
+              const files = state.uploadedFilesDict[id];
+              const file = files?.[idx];
+              if (!files || !sameFile(file)) return;
+              file.uploading = false;
+              if (!file.errorMessages.includes(uploadFailedMessage)) {
+                file.errorMessages.push(uploadFailedMessage);
+              }
+              state.errorMessagesDict[id] = [
+                ...new Set(files.flatMap((item: UploadedFileType) => item.errorMessages)),
+              ];
+            }),
+          );
         });
     });
+  };
+
+  // 署名 URL を得る前に失敗した添付はサーバに無いので、一覧から外すだけ
+  const dropPendingFile = (id: string, idx: number) => {
+    set(
+      produce((state) => {
+        const files = state.uploadedFilesDict[id];
+        const file = files?.[idx];
+        if (!files || !file || file.s3Url) return;
+        files.splice(idx, 1);
+        state.errorMessagesDict[id] = [
+          ...new Set(files.flatMap((item: UploadedFileType) => item.errorMessages)),
+        ];
+      }),
+    );
   };
 
   // Delete Uploaded File
@@ -346,6 +385,7 @@ const useFilesState = create<{
     uploadFiles,
     checkFiles,
     deleteUploadedFile,
+    dropPendingFile,
     base64Cache: {},
     getFileDownloadSignedUrl,
   };
@@ -358,6 +398,7 @@ export const useFiles = (id: string) => {
     clear,
     uploadedFilesDict,
     deleteUploadedFile,
+    dropPendingFile,
     errorMessagesDict,
     base64Cache,
     getFileDownloadSignedUrl,
@@ -375,6 +416,7 @@ export const useFiles = (id: string) => {
     uploadedFiles: uploadedFilesDict[id] ?? [],
     deleteUploadedFile: (fileUrl: string, fileLimit: FileLimit, accept: string[]) =>
       deleteUploadedFile(id, fileUrl, fileLimit, accept),
+    dropPendingFile: (idx: number) => dropPendingFile(id, idx),
     uploading: uploadedFilesDict[id]?.some((uploadedFile) => uploadedFile.uploading) ?? false,
     base64Cache,
     getFileDownloadSignedUrl,
