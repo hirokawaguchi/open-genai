@@ -181,7 +181,7 @@ export type ProcedureStatus = 'draft' | 'published' | 'archived';
 export type ReviewFinding = {
   result: 'pass' | 'fail' | 'unknown';
   detail?: string;
-  source?: '' | 'model' | 'staff';
+  source?: '' | 'model' | 'staff' | 'dify';
 };
 
 export type ReviewLine = {
