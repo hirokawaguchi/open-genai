@@ -49,6 +49,9 @@ export const useSshAvailable = (): boolean => useOptionalAppAvailable('ssh/confi
 
 export const useSengokuAvailable = (): boolean => useOptionalAppAvailable('sengoku/config');
 
+export const useWorldmonitorAvailable = (): boolean =>
+  useOptionalAppAvailable('worldmonitor/config');
+
 export const useNishukanAvailable = (): boolean => useOptionalAppAvailable('nishukan/config');
 
 export const useLmsAvailable = (): boolean => useOptionalAppAvailable('lms/config');
