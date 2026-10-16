@@ -20,6 +20,7 @@ const FOOTER_HIDDEN_PATHS = [
   '/procuretech-editor',
   '/procuretech-navigator',
   '/sengoku',
+  '/worldmonitor',
   '/diagram',
 ];
 

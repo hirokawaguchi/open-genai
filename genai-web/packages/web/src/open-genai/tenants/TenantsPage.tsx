@@ -34,6 +34,7 @@ const FEATURE_OPTIONS = [
   { id: 'notebook', label: 'ノートブック' },
   { id: 'ssh', label: 'SSH 端末' },
   { id: 'lms', label: '研修' },
+  { id: 'worldmonitor', label: 'ワールドモニター' },
 ] as const;
 
 const roleJa = (role: string) =>

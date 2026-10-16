@@ -27,6 +27,10 @@
 # ※ Compose の `include` には required フィールドが無く、実在しないファイルを指すと
 #   compose 全体が失敗する。また include は同名サービスを上書きできない（衝突エラー）
 #   ため、overlay の汎用機構としては -f マージを採用する。
+# ワールドモニターは新規サービスだけを足す（既存サービスの上書きではない）。
+
+include:
+  - docker-compose.worldmonitor.yml
 
 services:
   # 唯一の公開点: TLS を終端し /、/api/、/kc/ を内部サービスへ振り分ける
@@ -38,6 +42,7 @@ services:
       - "${PROXY_BIND_IP:-0.0.0.0}:${PROXY_HTTPS_PORT:-443}:443"
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/snippets:/etc/nginx/snippets:ro
       - ./proxy/kc-admin-allow.conf:/etc/nginx/kc-admin-allow.conf:ro
       - ./proxy/kc-admin-allow.d:/etc/nginx/kc-admin-allow.d:ro
       - ./proxy/certs:/etc/nginx/certs:ro
@@ -120,6 +125,8 @@ services:
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
+      # ワールドモニター（profiles: ["worldmonitor"]。未起動時は専用ページが案内を表示）
+      - WORLDMONITOR_UPSTREAM=${WORLDMONITOR_UPSTREAM:-http://worldmonitor:8080}
       # 内部サービス間署名の共有鍵（x-user-* 偽装対策）。全 exApp と同一値・必須。
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
       # 成果物取得(SSRF 対策): 許可ホスト(カンマ区切り)とサイズ上限。既知の生成元のみ許可を推奨。

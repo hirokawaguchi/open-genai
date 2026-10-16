@@ -17,6 +17,7 @@ export const RECOMMENDED_APP_OPTIONS = [
   { id: 'notebook', label: 'ノートブック' },
   { id: 'ssh', label: 'SSH 端末' },
   { id: 'lms', label: '研修' },
+  { id: 'worldmonitor', label: 'ワールドモニター' },
 ] as const;
 
 export type RecommendedAppId = (typeof RECOMMENDED_APP_OPTIONS)[number]['id'];

@@ -42,6 +42,7 @@ from fastapi.responses import (
 from app.exapp_history import history_inputs
 from shared import ssrfguard
 
+from . import wm_gate
 from . import (
     account_rate,
     audit,
@@ -83,7 +84,7 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/
 # /health は完全一致のみ（/health/details は JWT 必須）。
 # /files/ は Authorization を付けられない img/PUT 用。認可は HMAC クエリで行う。
 # /ssh/ws はブラウザが Upgrade に Authorization を付けられない。JWT は accept 後の最初の JSON で検証する。
-PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws"})
+PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws", "/worldmonitor/gate"})
 PUBLIC_PATH_PREFIXES = (
     "/auth/",
     "/files/",
@@ -147,6 +148,11 @@ PROCURETECH_EDITOR_APP_URL = os.environ.get(
 # Web SSH（Compose profiles: ["ssh"]）。実 API は /ssh/* と /ssh/ws。
 SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 
+# ワールドモニター（Compose profiles: ["worldmonitor"]）。UI は /worldmonitor。
+# 実体は別コンテナ。/health は無いので到達確認は sidecar。endpoint の /invoke は導出用。
+WORLDMONITOR_UPSTREAM = os.environ.get(
+    "WORLDMONITOR_UPSTREAM", "http://worldmonitor:8080"
+).rstrip("/")
 # 戦国国取り（Compose profiles: ["sengoku"] でオプション起動。お遊びのシミュレーションゲーム）。
 # 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
@@ -903,6 +909,27 @@ SENGOKU_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+WORLDMONITOR_SEED: dict[str, Any] = {
+    "exAppId": "worldmonitor",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "ワールドモニター",
+    "endpoint": f"{WORLDMONITOR_UPSTREAM}/invoke",
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "ニュース、地政学、市場、インフラを一画面の地図で見ます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「ワールドモニター」で地図とパネルを開きます。\n"
+        "- 有効化: `docker compose --profile worldmonitor up -d` "
+        "または `COMPOSE_PROFILES=worldmonitor`。\n"
+        "- 地震や気象など公開データは鍵なしで取れます。"
+        "市場・航空・船舶は環境変数の鍵を足すと増えます。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -1011,6 +1038,7 @@ EXAPP_SEEDS = [
     PROCURETECH_HEARING_SEED,
     SSH_SEED,
     SENGOKU_SEED,
+    WORLDMONITOR_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -1798,7 +1826,7 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def audit_access_middleware(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path == "/ssh/ws":
+    if request.method == "OPTIONS" or request.url.path in {"/ssh/ws", "/worldmonitor/gate"}:
         return await call_next(request)
     started = time.monotonic()
     response = await call_next(request)
@@ -3760,6 +3788,10 @@ async def delete_file(file_name: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 def _health_url(endpoint: str) -> str:
     """AI アプリの endpoint(.../invoke) から /health の URL を導出する。"""
+    base = endpoint[: -len("/invoke")] if endpoint.endswith("/invoke") else endpoint.rstrip("/")
+    # World Monitor に /health は無い。sidecar が応答するまで起動済みにしない。
+    if base == WORLDMONITOR_UPSTREAM:
+        return f"{WORLDMONITOR_UPSTREAM}/api/sidecar-health"
     if endpoint.endswith("/invoke"):
         return endpoint[: -len("/invoke")] + "/health"
     return endpoint.rstrip("/") + "/health"
@@ -3797,6 +3829,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
         ("ssh", _as_invoke_url(SSH_APP_URL)),
         ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
+        ("worldmonitor", f"{WORLDMONITOR_UPSTREAM}/invoke"),
         ("lms", _as_invoke_url(LMS_APP_URL)),
     ]
 
@@ -5396,6 +5429,55 @@ async def chosei_event_carrier(
         media_type=media,
         headers={"Content-Disposition": disposition},
     )
+
+
+# ---------------------------------------------------------------------------
+# ワールドモニター専用ページ(/worldmonitor)
+#
+# 到達確認と入場クッキーだけを出す。地図と API は nginx が /worldmonitor-ui/ で中継する。
+# /worldmonitor/gate は auth_request 用。Authorization を付けられないので公開パスにし、
+# クッキーだけで判定する。
+# ---------------------------------------------------------------------------
+def _wm_secret() -> str:
+    return os.environ.get("INTERNAL_SIGNING_SECRET") or "dev-internal-secret-change-me"
+
+
+@app.get("/worldmonitor/config")
+async def worldmonitor_config(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    enabled = await _is_app_up(f"{WORLDMONITOR_UPSTREAM}/invoke")
+    body: dict[str, Any] = {"enabled": enabled}
+    if not enabled:
+        body["error"] = (
+            "ワールドモニターに接続できませんでした。"
+            "有効化するには `docker compose --profile worldmonitor up -d` "
+            "または `COMPOSE_PROFILES=worldmonitor` を設定してください。"
+        )
+    response = JSONResponse(content=body)
+    if enabled:
+        token = wm_gate.sign(_wm_secret(), user_id)
+        response.set_cookie(
+            key=wm_gate.COOKIE,
+            value=token,
+            max_age=wm_gate.TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=request.headers.get("x-forwarded-proto", "").lower() == "https",
+            path="/worldmonitor-ui/",
+        )
+    return response
+
+
+@app.get("/worldmonitor/gate")
+async def worldmonitor_gate(request: Request) -> Response:
+    token = request.cookies.get(wm_gate.COOKIE, "")
+    if wm_gate.user_id_from_token(_wm_secret(), token):
+        return Response(status_code=200)
+    # 403 にする。上流 API の 401 と nginx の error_page がぶつからないようにする。
+    return Response(status_code=403)
 
 
 # ---------------------------------------------------------------------------

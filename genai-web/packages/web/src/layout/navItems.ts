@@ -16,6 +16,7 @@ import {
   useProcuretechEditorAvailable,
   useSengokuAvailable,
   useSshAvailable,
+  useWorldmonitorAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -90,6 +91,12 @@ export const SSH_PATH = '/ssh';
 /** Web SSH exApp の識別子（専用ページへ振り替える対象） */
 export const SSH_EXAPP_ID = 'ssh';
 
+/** ワールドモニターは汎用 exApp フォームではなく専用ページで提供する */
+export const WORLDMONITOR_PATH = '/worldmonitor';
+
+/** ワールドモニター exApp の識別子（専用ページへ振り替える対象） */
+export const WORLDMONITOR_EXAPP_ID = 'worldmonitor';
+
 /** 戦国国取り（お遊び）は汎用 exApp フォームではなく専用ページで提供する */
 export const SENGOKU_PATH = '/sengoku';
 
@@ -153,6 +160,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
+  const worldmonitorAvailable = useWorldmonitorAvailable();
   const nishukanAvailable = useNishukanAvailable();
   const lmsAvailable = useLmsAvailable();
   // 登録済み exApp の表示名・説明は「AIアプリの編集」（レジストリ）の内容に追従させる。
@@ -333,6 +341,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (worldmonitorAvailable && listed(WORLDMONITOR_EXAPP_ID)) {
+      items.push({
+        label: nameOf(WORLDMONITOR_EXAPP_ID, 'ワールドモニター'),
+        to: WORLDMONITOR_PATH,
+        description: descOf(
+          WORLDMONITOR_EXAPP_ID,
+          'ニュース、地政学、市場、インフラを一画面の地図で見ます。',
+        ),
+      });
+    }
+
     if (sengokuAvailable && listed(SENGOKU_EXAPP_ID)) {
       items.push({
         label: nameOf(SENGOKU_EXAPP_ID, '戦国国取り'),
@@ -376,6 +395,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     notebookAvailable,
     sshAvailable,
     sengokuAvailable,
+    worldmonitorAvailable,
     nishukanAvailable,
     lmsAvailable,
     registryApps,
@@ -433,6 +453,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 戦国国取りは専用ページへ振り替える
   if (item.app.value === SENGOKU_EXAPP_ID) {
     return SENGOKU_PATH;
+  }
+  if (item.app.value === WORLDMONITOR_EXAPP_ID) {
+    return WORLDMONITOR_PATH;
   }
   if (item.app.value === NISHUKAN_EXAPP_ID) {
     return NISHUKAN_PATH;

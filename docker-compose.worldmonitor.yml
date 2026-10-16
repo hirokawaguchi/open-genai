@@ -1,0 +1,98 @@
+# World Monitor（AGPL-3.0）。ソースはこのリポジトリに置かない。
+# ghcr.io には版タグが無い（sha だけ、しかも静的配信用）ので、
+# 自己ホスト用 Dockerfile を upstream のタグからビルドする。
+# 起動: docker compose --profile worldmonitor up -d
+# 詳細: docs/worldmonitor.md
+
+services:
+  worldmonitor:
+    profiles: ["worldmonitor"]
+    build:
+      context: https://github.com/koala73/worldmonitor.git#${WM_GIT_REF:-v2.10.0}
+      dockerfile: Dockerfile
+    image: open-genai-worldmonitor:${WM_GIT_REF:-v2.10.0}
+    container_name: open-genai-worldmonitor
+    expose:
+      - "8080"
+    environment:
+      UPSTASH_REDIS_REST_URL: http://worldmonitor-redis-rest:80
+      UPSTASH_REDIS_REST_TOKEN: ${WM_REDIS_TOKEN:-opengenai-wm-redis-token-change-me}
+      WM_SESSION_SECRET: ${WM_SESSION_SECRET:-opengenai-wm-session-secret-change-me}
+      LOCAL_API_PORT: "46123"
+      LOCAL_API_MODE: docker
+      LOCAL_API_CLOUD_FALLBACK: "false"
+      WM_TRUSTED_PROXY_CIDRS: ${WM_TRUSTED_PROXY_CIDRS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}
+      WS_RELAY_URL: http://worldmonitor-ais-relay:3004
+      RELAY_SHARED_SECRET: ${WM_RELAY_SHARED_SECRET:-opengenai-wm-relay-secret-change-me}
+      WORLDMONITOR_VALID_KEYS: ${WORLDMONITOR_VALID_KEYS:-}
+      WORLDMONITOR_RELAY_KEY: ${WORLDMONITOR_RELAY_KEY:-}
+      LLM_API_URL: ${WM_LLM_API_URL:-}
+      LLM_API_KEY: ${WM_LLM_API_KEY:-}
+      LLM_MODEL: ${WM_LLM_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      EIA_API_KEY: ${EIA_API_KEY:-}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      ACLED_EMAIL: ${ACLED_EMAIL:-}
+      ACLED_PASSWORD: ${ACLED_PASSWORD:-}
+      ACLED_ACCESS_TOKEN: ${ACLED_ACCESS_TOKEN:-}
+      NASA_FIRMS_API_KEY: ${NASA_FIRMS_API_KEY:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      AVIATIONSTACK_API: ${AVIATIONSTACK_API:-}
+    depends_on:
+      - worldmonitor-redis-rest
+      - worldmonitor-ais-relay
+    restart: unless-stopped
+
+  worldmonitor-ais-relay:
+    profiles: ["worldmonitor"]
+    build:
+      context: https://github.com/koala73/worldmonitor.git#${WM_GIT_REF:-v2.10.0}
+      dockerfile: Dockerfile.relay
+    image: open-genai-worldmonitor-ais-relay:${WM_GIT_REF:-v2.10.0}
+    container_name: open-genai-worldmonitor-ais-relay
+    environment:
+      RELAY_SHARED_SECRET: ${WM_RELAY_SHARED_SECRET:-opengenai-wm-relay-secret-change-me}
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      UPSTASH_REDIS_REST_URL: http://worldmonitor-redis-rest:80
+      UPSTASH_REDIS_REST_TOKEN: ${WM_REDIS_TOKEN:-opengenai-wm-redis-token-change-me}
+      UPSTASH_ALLOW_INSECURE_HTTP: "true"
+      API_BASE_URL: http://worldmonitor:8080
+      WORLDMONITOR_RELAY_KEY: ${WORLDMONITOR_RELAY_KEY:-}
+      PORT: "3004"
+    depends_on:
+      - worldmonitor-redis-rest
+    restart: unless-stopped
+
+  worldmonitor-redis:
+    profiles: ["worldmonitor"]
+    image: redis:7-alpine
+    container_name: open-genai-worldmonitor-redis
+    command: >
+      redis-server
+      --requirepass ${WM_REDIS_PASSWORD:-opengenai-wm-redis-password-change}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - worldmonitor_redis_data:/data
+    restart: unless-stopped
+
+  worldmonitor-redis-rest:
+    profiles: ["worldmonitor"]
+    build:
+      context: https://github.com/koala73/worldmonitor.git#${WM_GIT_REF:-v2.10.0}:docker
+      dockerfile: Dockerfile.redis-rest
+    image: open-genai-worldmonitor-redis-rest:${WM_GIT_REF:-v2.10.0}
+    container_name: open-genai-worldmonitor-redis-rest
+    mem_limit: 512m
+    environment:
+      SRH_TOKEN: ${WM_REDIS_TOKEN:-opengenai-wm-redis-token-change-me}
+      SRH_CONNECTION_STRING: redis://:${WM_REDIS_PASSWORD:-opengenai-wm-redis-password-change}@worldmonitor-redis:6379
+    depends_on:
+      - worldmonitor-redis
+    restart: unless-stopped
+
+volumes:
+  worldmonitor_redis_data:

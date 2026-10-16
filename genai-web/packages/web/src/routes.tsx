@@ -51,6 +51,7 @@ import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/Procurete
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
+import { WorldmonitorPage } from '@/open-genai/worldmonitor/WorldmonitorPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
@@ -150,6 +151,9 @@ export const createRoutes = (): RouteObject[] => {
     // Web SSH（Compose profiles: ["ssh"]）。
     { path: 'ssh', element: <SshPage /> },
     { path: 'apps/:teamId/ssh', element: <Navigate to='/ssh' replace /> },
+    // ワールドモニター（Compose profiles: ["worldmonitor"]）。
+    { path: 'worldmonitor', element: <WorldmonitorPage /> },
+    { path: 'apps/:teamId/worldmonitor', element: <Navigate to='/worldmonitor' replace /> },
     // 戦国国取り（お遊び・Compose profiles: ["sengoku"]）。
     { path: 'sengoku', element: <SengokuPage /> },
     { path: 'apps/:teamId/sengoku', element: <Navigate to='/sengoku' replace /> },
