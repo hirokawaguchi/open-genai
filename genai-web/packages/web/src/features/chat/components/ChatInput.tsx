@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { PiSpinnerGap } from 'react-icons/pi';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -43,8 +44,15 @@ export const ChatInput = (props: Props) => {
   const { content, setContent, hasSent, setHasSent } = useChatStore();
 
   const { loading, stopGeneration } = useChat(usecase, chatId);
-  const { uploadedFiles, uploadFiles, checkFiles, deleteUploadedFile, uploading, errorMessages } =
-    useFiles(usecase);
+  const {
+    uploadedFiles,
+    uploadFiles,
+    checkFiles,
+    deleteUploadedFile,
+    dropPendingFile,
+    uploading,
+    errorMessages,
+  } = useFiles(usecase);
 
   const isInitialChat = !chatId && !hasSent;
 
@@ -81,6 +89,11 @@ export const ChatInput = (props: Props) => {
   };
 
   const deleteFile = async (fileUrl: string, idx: number) => {
+    if (!fileUrl) {
+      dropPendingFile(idx);
+      attachButtonRef.current?.focus();
+      return;
+    }
     const remainingCount = uploadedFiles.filter((f) => f.s3Url !== fileUrl).length;
     await deleteUploadedFile(fileUrl, FILE_LIMIT, accept);
     if (remainingCount === 0) {
@@ -112,7 +125,10 @@ export const ChatInput = (props: Props) => {
   };
 
   const [fileErrorMessage, setFileErrorMessage] = useState('');
+  const [uploadNotice, setUploadNotice] = useState('');
+  const pendingSendRef = useRef<string | null>(null);
   const disabledSend = loading;
+  const fileErrorText = '選択したファイルにエラーがあります。該当ファイルをチェックしてください。';
 
   useEffect(() => {
     if (errorMessages.length === 0) {
@@ -120,27 +136,56 @@ export const ChatInput = (props: Props) => {
     }
   }, [errorMessages]);
 
+  const deliver = (text: string) => {
+    pendingSendRef.current = null;
+    setUploadNotice('');
+    setFileErrorMessage('');
+    setContent(text);
+    setHasSent(true);
+    onSend(text);
+  };
+
   const onSubmit = handleSubmit((data) => {
     if (disabledSend) {
       return;
     }
 
-    if (uploading) {
-      return;
-    }
-
     if (errorMessages.length > 0) {
-      setFileErrorMessage(
-        '選択したファイルにエラーがあります。該当ファイルをチェックしてください。',
-      );
+      pendingSendRef.current = null;
+      setUploadNotice('');
+      setFileErrorMessage(fileErrorText);
       return;
     }
 
-    setFileErrorMessage('');
-    setContent(data.content);
-    setHasSent(true);
-    onSend(data.content);
+    // アップロード中はボタンを無効にせず、完了後に送る。
+    // ここで黙って return すると、青い送信ボタンを押しても何も起きない。
+    if (uploading) {
+      pendingSendRef.current = data.content;
+      setUploadNotice('ファイルのアップロードが終わり次第、送信します。');
+      return;
+    }
+
+    deliver(data.content);
   });
+
+  useEffect(() => {
+    const text = pendingSendRef.current;
+    if (text == null || uploading || loading) {
+      return;
+    }
+    if (errorMessages.length > 0) {
+      pendingSendRef.current = null;
+      setUploadNotice('');
+      setFileErrorMessage(fileErrorText);
+      return;
+    }
+    pendingSendRef.current = null;
+    setUploadNotice('');
+    setFileErrorMessage('');
+    setContent(text);
+    setHasSent(true);
+    onSend(text);
+  }, [uploading, loading, errorMessages, onSend, setContent, setHasSent]);
 
   return (
     <div
@@ -195,9 +240,10 @@ export const ChatInput = (props: Props) => {
               </ul>
             )}
 
-            <div className='flex w-full justify-start items-start gap-6'>
+            <div className='flex w-full flex-col gap-2'>
+              <div className='flex w-full items-start gap-6'>
               {fileUpload && (
-                <FileUpload className='flex-1' hasError={errorMessages.length > 0}>
+                <FileUpload className='min-w-0 flex-1' hasError={errorMessages.length > 0}>
                   <FileUploadInput
                     ref={fileInputRef}
                     onChange={onChangeFiles}
@@ -210,20 +256,50 @@ export const ChatInput = (props: Props) => {
                     type='button'
                     size='md'
                     aria-describedby='chat-input-file-error'
+                    aria-disabled={uploading || undefined}
+                    aria-busy={uploading || undefined}
                     className='inline-flex justify-center items-center gap-1 group-data-[has-error=true]/file-upload:border-error-1'
-                    title='4.5MBまで'
+                    title={uploading ? 'ファイルをアップロードしています' : '4.5MBまで'}
                     onClick={handleClickFileUpload}
                   >
-                    <AttachmentIcon aria-hidden={true} className='shrink-0' />
+                    {uploading ? (
+                      <PiSpinnerGap aria-hidden={true} className='size-4 shrink-0 animate-spin' />
+                    ) : (
+                      <AttachmentIcon aria-hidden={true} className='shrink-0' />
+                    )}
                     ファイルを添付
                   </Button>
+                </FileUpload>
+              )}
 
-                  {uploadedFiles.length > 0 && (
-                    <FileUploadFileList className='mt-2! py-2 pl-2 overflow-y-auto max-h-48 -ml-2 -mr-[calc(168/16*1rem)] overscroll-contain [scrollbar-gutter:stable]'>
+              <LoadingButton
+                type={loading ? 'button' : 'submit'}
+                variant='solid-fill'
+                size='md'
+                disabled={loading ? false : disabledSend}
+                onClick={
+                  loading
+                    ? (event) => {
+                        event.preventDefault();
+                        stopGeneration();
+                      }
+                    : undefined
+                }
+                className='relative z-10 shrink-0 ml-auto inline-flex justify-center items-center gap-1 min-w-36'
+              >
+                <SendIcon aria-hidden={true} className='shrink-0' />
+                {loading ? '中止' : '送信'}
+              </LoadingButton>
+              </div>
+
+              {fileUpload && uploadedFiles.length > 0 && (
+                <FileUpload className='w-full' hasError={errorMessages.length > 0}>
+                  <FileUploadFileList className='py-1 overflow-y-auto max-h-48 overscroll-contain [scrollbar-gutter:stable]'>
                       {uploadedFiles.map((uploadedFile, idx) => (
                         <FileUploadFileItem
                           key={idx}
                           hasError={uploadedFile.errorMessages.length > 0}
+                          aria-busy={uploadedFile.uploading || undefined}
                         >
                           <FileUploadFileMarker />
                           <FileUploadFileInfo>
@@ -238,6 +314,15 @@ export const ChatInput = (props: Props) => {
                                 </span>
                                 バイト）
                               </FileUploadFileMeta>
+                              {uploadedFile.uploading && (
+                                <span className='ml-2 inline-flex items-center gap-1 text-solid-gray-600'>
+                                  <PiSpinnerGap
+                                    aria-hidden={true}
+                                    className='size-4 shrink-0 animate-spin'
+                                  />
+                                  アップロード中
+                                </span>
+                              )}
                             </p>
                             {uploadedFile.errorMessages.length > 0 &&
                               uploadedFile.errorMessages.map((error) => (
@@ -279,7 +364,7 @@ export const ChatInput = (props: Props) => {
                             size='xs'
                             className='-order-1 shrink-0 min-w-14 min-h-[calc(30/16*1rem)] text-oln-16B-100'
                             onClick={() => {
-                              if (uploadedFile.uploading || uploadedFile.deleting) return;
+                              if (uploadedFile.deleting) return;
                               deleteFile(uploadedFile.s3Url ?? '', idx);
                             }}
                             aria-labelledby={
@@ -293,28 +378,13 @@ export const ChatInput = (props: Props) => {
                         </FileUploadFileItem>
                       ))}
                     </FileUploadFileList>
-                  )}
                 </FileUpload>
               )}
-
-              <LoadingButton
-                type={loading ? 'button' : 'submit'}
-                variant='solid-fill'
-                size='md'
-                disabled={loading ? false : disabledSend}
-                onClick={
-                  loading
-                    ? (event) => {
-                        event.preventDefault();
-                        stopGeneration();
-                      }
-                    : undefined
-                }
-                className='shrink-0 ml-auto inline-flex justify-center items-center gap-1 min-w-36'
-              >
-                <SendIcon aria-hidden={true} className='shrink-0' />
-                {loading ? '中止' : '送信'}
-              </LoadingButton>
+              {uploadNotice && (
+                <p className='m-0 text-dns-14N-130 text-solid-gray-600' role='status'>
+                  {uploadNotice}
+                </p>
+              )}
             </div>
           </div>
         </div>
