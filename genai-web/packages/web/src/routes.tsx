@@ -111,6 +111,7 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/lms', element: <Navigate to='/lms' replace /> },
     { path: 'nishukan', element: <NishukanPage /> },
     { path: 'jigyo', element: <Navigate to='/nishukan' replace /> },
+    { path: 'apps/:teamId/nishukan', element: <Navigate to='/nishukan' replace /> },
     { path: 'apps/:teamId/jigyo', element: <Navigate to='/nishukan' replace /> },
     // 書類領域分割チェックは専用ページへ（Compose profiles: ["doccheck"]）。
     { path: 'doccheck', element: <DoccheckPage /> },
