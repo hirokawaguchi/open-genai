@@ -22,6 +22,7 @@ const FOOTER_HIDDEN_PATHS = [
   '/sengoku',
   '/worldmonitor',
   '/diagram',
+  '/shimen',
 ];
 
 export const Layout = () => {

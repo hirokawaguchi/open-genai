@@ -26,7 +26,6 @@ import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
 import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
 import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
 import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
-import { NoticesPage } from '@/open-genai/notices/NoticesPage';
 import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
@@ -36,6 +35,7 @@ import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
 import { LmsPage } from '@/open-genai/lms/LmsPage';
 import { NishukanPage } from '@/open-genai/nishukan/NishukanPage';
 import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
+import { NoticesPage } from '@/open-genai/notices/NoticesPage';
 import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
 import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
@@ -51,10 +51,11 @@ import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/Procurete
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
-import { WorldmonitorPage } from '@/open-genai/worldmonitor/WorldmonitorPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
+import { ShimenPage } from '@/open-genai/shimen/ShimenPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
+import { WorldmonitorPage } from '@/open-genai/worldmonitor/WorldmonitorPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 import { Layout } from './layout/Layout';
@@ -188,6 +189,12 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/modelpolicy', element: <Navigate to='/admin/model-policy' replace /> },
     { path: 'admin/ngword', element: <NgWordPage /> },
     { path: 'apps/:teamId/ngword', element: <Navigate to='/admin/ngword' replace /> },
+    ...(isUseCaseEnabled('shimen')
+      ? [
+          { path: 'shimen', element: <ShimenPage /> },
+          { path: 'apps/:teamId/shimen', element: <Navigate to='/shimen' replace /> },
+        ]
+      : []),
     { path: 'apps/:teamId/:exAppId', element: <ExAppPage /> },
     { path: 'chat', element: <ChatPage /> },
     { path: 'chat/:chatId', element: <ChatPage /> },

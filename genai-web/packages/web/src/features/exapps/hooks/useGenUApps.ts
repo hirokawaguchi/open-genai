@@ -1,8 +1,8 @@
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
-import { useExAppCatalog } from './useExAppCatalog';
-import { isCatalogListed } from '../utils/builtinExApp';
 import { ExAppOptions } from '../types';
+import { isCatalogListed } from '../utils/builtinExApp';
+import { useExAppCatalog } from './useExAppCatalog';
 
 export const useGenUApps = () => {
   // 画像生成は /image/health（ローカル SD またはクラウド画像プロバイダ）で出し分ける
@@ -56,6 +56,13 @@ export const useGenUApps = () => {
       label: nameOf('diagram', 'ダイアグラムを生成'),
       value: 'diagram',
       description: descOf('diagram', 'テキストからフローチャートやマインドマップを作成'),
+    });
+  }
+  if (isUseCaseEnabled('shimen') && listed('shimen')) {
+    genUApps.push({
+      label: nameOf('shimen', '紙面'),
+      value: 'shimen',
+      description: descOf('shimen', '文字・図形・画像を紙の上に組む'),
     });
   }
   if (listed('knowledge')) {

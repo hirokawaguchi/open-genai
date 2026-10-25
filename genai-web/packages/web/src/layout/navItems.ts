@@ -103,6 +103,12 @@ export const SENGOKU_PATH = '/sengoku';
 /** 戦国国取り exApp の識別子（専用ページへ振り替える対象） */
 export const SENGOKU_EXAPP_ID = 'sengoku';
 
+/** 紙面は汎用 exApp フォームではなく専用ページで提供する */
+export const SHIMEN_PATH = '/shimen';
+
+/** 紙面 exApp の識別子（専用ページへ振り替える対象） */
+export const SHIMEN_EXAPP_ID = 'shimen';
+
 /** 二週間の仕事は汎用 exApp フォームではなく専用ページで提供する */
 export const NISHUKAN_PATH = '/nishukan';
 
@@ -223,6 +229,13 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
         label: nameOf('diagram', 'ダイアグラムを生成'),
         to: '/diagram',
         description: descOf('diagram', '文章から図の下書きを作り、draw.io で編集して画像にする'),
+      });
+    }
+    if (isUseCaseEnabled('shimen') && listed('shimen')) {
+      items.push({
+        label: nameOf('shimen', '紙面'),
+        to: SHIMEN_PATH,
+        description: descOf('shimen', '文字・図形・画像を紙の上に組む'),
       });
     }
 
@@ -453,6 +466,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 戦国国取りは専用ページへ振り替える
   if (item.app.value === SENGOKU_EXAPP_ID) {
     return SENGOKU_PATH;
+  }
+  if (item.app.value === SHIMEN_EXAPP_ID) {
+    return SHIMEN_PATH;
   }
   if (item.app.value === WORLDMONITOR_EXAPP_ID) {
     return WORLDMONITOR_PATH;

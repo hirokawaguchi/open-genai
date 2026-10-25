@@ -77,6 +77,7 @@ deletion-report-*.txt
 !/docs/ssh.md
 !/docs/lms.md
 !/docs/worldmonitor.md
+!/docs/shimen.md
 
 # 運用者ログインの初期平文（サーバ内のみ）
 /.ops-credentials

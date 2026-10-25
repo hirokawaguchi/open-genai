@@ -7,6 +7,7 @@ export const BUILTIN_EXAPP_IDS = new Set([
   'translate',
   'image',
   'diagram',
+  'shimen',
   'knowledge',
 ]);
 
@@ -23,10 +24,7 @@ export const isBuiltinConfig = (config?: string): boolean => {
   }
 };
 
-export const isKnowledgeSearchApp = (app: {
-  config?: string;
-  exAppId?: string;
-}): boolean => {
+export const isKnowledgeSearchApp = (app: { config?: string; exAppId?: string }): boolean => {
   if (app.exAppId === 'rag') {
     return true;
   }
@@ -57,11 +55,7 @@ export const builtinRouteOf = (config?: string): string | null => {
 };
 
 /** カタログ取得後、公開中ならメニューに出す。未取得時は従来どおり出す。 */
-export const isCatalogListed = (
-  id: string,
-  apps: CatalogApp[],
-  loaded: boolean,
-): boolean => {
+export const isCatalogListed = (id: string, apps: CatalogApp[], loaded: boolean): boolean => {
   if (!loaded) {
     return true;
   }

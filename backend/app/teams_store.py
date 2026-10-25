@@ -45,7 +45,7 @@ NO_TENANT_ID = "__none__"
 
 # GenU 組み込み機能の itemId。共通チームのカタログ（名前・紹介・公開）として登録し、
 # ピン留め対象にもする。knowledge は専用ページだが同じカタログで出し分ける。
-GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram", "knowledge"})
+GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram", "shimen", "knowledge"})
 
 # 利用者ごとのピン留め上限
 MAX_APP_PINS = 8
@@ -211,6 +211,7 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "translate",
     "image",
     "diagram",
+    "shimen",
     "whisper",
     "prompt",
     "chosei",
@@ -233,12 +234,13 @@ ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
     "generate",
     "translate",
     "diagram",
+    "shimen",
     "knowledge",
     "rag",
 )
 RECOMMENDED_SETTING_KEY = "recommendedExAppIds"
 # 後からおすすめ候補に足した ID。保存済み設定に無ければ一度だけ既定オンにする。
-RECOMMENDED_BACKFILL_IDS = ("rag", "lms", "worldmonitor")
+RECOMMENDED_BACKFILL_IDS = ("rag", "lms", "worldmonitor", "shimen")
 RECOMMENDED_BACKFILL_KEY = "recommendedExAppIdsBackfill"
 
 
