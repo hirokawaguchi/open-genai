@@ -99,8 +99,13 @@ def select_nodes(
     nodes: list[dict[str, Any]],
     *,
     budget: int = CHAR_BUDGET,
+    unmatched_fallback: bool = True,
 ) -> list[dict[str, Any]]:
-    """設問との重なり順で節を取る。ヒットがあるときは無関係な節を捨てる。"""
+    """設問との重なり順で節を取る。ヒットがあるときは無関係な節を捨てる。
+
+    unmatched_fallback が真のとき、重なりが無ければ先頭の節を返す（行生成）。
+    対話は偽にして、当たらないときは空を返す。
+    """
     usable = [n for n in nodes if (n.get("text") or "").strip()]
     if not usable:
         return []
@@ -108,6 +113,8 @@ def select_nodes(
     hits = [(s, n) for s, n in scored if s > 0]
     if hits:
         ranked = [n for _, n in sorted(hits, key=lambda x: x[0], reverse=True)][:MAX_NODES]
+    elif not unmatched_fallback:
+        return []
     else:
         ranked = usable[:3]
     picked: list[dict[str, Any]] = []

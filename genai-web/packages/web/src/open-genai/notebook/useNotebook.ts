@@ -321,13 +321,18 @@ export const useNotebookActions = () => {
       sessionId: string,
       question: string,
       skillId?: string,
+      sourceIds?: string[],
     ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
-          { question, skill_id: skillId || undefined },
+          {
+            question,
+            skill_id: skillId || undefined,
+            source_ids: sourceIds && sourceIds.length > 0 ? sourceIds : undefined,
+          },
         );
         return res.data ?? null;
       } catch (e) {

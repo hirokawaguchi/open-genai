@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from app import harness, llm, store, tools
 
@@ -25,6 +26,18 @@ def test_skill_seed_and_crud(tmp_path, monkeypatch):
     assert store.get_skill(created["id"], "u1") is None
 
 
+def test_message_source_labels(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    sid = store.create_session(user_id="u1")["id"]
+    detail = store.add_message(
+        sid, "u1", role="user", content="抜き出して", source_labels=["審査.pdf"]
+    )
+    assert detail["messages"][-1]["content"] == "抜き出して"
+    assert detail["messages"][-1]["source_labels"] == ["審査.pdf"]
+
+
 def test_message_tool_trace(tmp_path, monkeypatch):
     monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
     store._db = None
@@ -39,6 +52,48 @@ def test_message_tool_trace(tmp_path, monkeypatch):
         tool_trace=[{"name": "search_sources", "result": "hit"}],
     )
     assert detail["messages"][-1]["tool_trace"][0]["name"] == "search_sources"
+
+
+def _add_note(sid: str, filename: str, title: str, text: str) -> str:
+    store.add_file(
+        sid,
+        "u1",
+        filename=filename,
+        raw=f"# {title}\n{text}\n".encode(),
+        error="",
+        nodes=[{"title": title, "text": text, "source": filename}],
+        briefing={"outline": [title]},
+    )
+    detail = store.get_session(sid, "u1")
+    return next(f["id"] for f in detail["files"] if f["filename"] == filename)
+
+
+def test_search_sources_scope_and_miss(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    sid = store.create_session(user_id="u1")["id"]
+    budget_id = _add_note(sid, "予算.pdf", "予算", "予算を増やす")
+    _add_note(sid, "天気.pdf", "天気", "今日は晴れである")
+    scoped = tools.ToolContext(
+        session_id=sid, user_id="u1", scope="team-1", source_ids=[budget_id]
+    )
+    found = asyncio.run(tools.dispatch("search_sources", {"query": "予算"}, scoped))
+    assert "予算を増やす" in found
+    assert "晴れ" not in found
+    widened = asyncio.run(
+        tools.dispatch(
+            "search_sources",
+            {"query": "晴れ", "source_ids": []},
+            scoped,
+        )
+    )
+    assert "晴れ" not in widened
+    assert "予算を増やす" not in widened
+    payload = json.loads(widened)
+    assert payload["matched"] is False
+    assert payload["sources"][0]["name"] == "予算.pdf"
+    assert "予算" in payload["sources"][0]["outline"]
 
 
 def test_search_sources_and_list_items(tmp_path, monkeypatch):
@@ -127,6 +182,39 @@ def test_harness_openai_tool_loop(tmp_path, monkeypatch):
     assert "予算" in answer
     assert traces[0]["name"] == "search_sources"
     assert cites[0]["n"] == 1
+
+
+def test_harness_mentions_selected_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    sid = store.create_session(user_id="u1")["id"]
+    file_id = _add_note(sid, "審査.pdf", "審査項目", "審査は書面で行う")
+    seen: dict[str, str] = {}
+
+    async def fake_chat(messages, temperature=0.2, tools=None):
+        seen["system"] = messages[0]["content"]
+        seen["user"] = messages[-1]["content"]
+        return {"role": "assistant", "content": "どの節を抜き出しますか。見出しは審査項目です。"}
+
+    monkeypatch.setattr("app.llm.chat_completion", fake_chat)
+    answer, _, _ = asyncio.run(
+        harness.run(
+            session_id=sid,
+            user_id="u1",
+            scope="team-1",
+            question="抜き出して",
+            history=[],
+            source_ids=[file_id],
+            source_labels=["審査.pdf"],
+        )
+    )
+    assert "審査.pdf" in seen["system"]
+    assert "審査項目" in seen["system"]
+    assert "抜き出して" in seen["user"]
+    assert "指定した資料: 審査.pdf" in seen["user"]
+    assert "どの節を抜き出しますか" in answer
+    assert "書面で行う" not in answer
 
 
 def test_continue_if_length_joins_chunks(monkeypatch):
