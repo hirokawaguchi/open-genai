@@ -2394,7 +2394,8 @@ async def delete_saved_diagram(diagram_id: str, request: Request) -> JSONRespons
 @app.get("/chats/{chat_id}/messages")
 async def list_messages(chat_id: str, request: Request) -> dict[str, Any]:
     user_id, tenant_id, _ = _request_scope(request)
-    return {"messages": storage.list_messages(chat_id, user_id, tenant_id)}
+    messages = storage.list_messages(chat_id, user_id, tenant_id)
+    return {"messages": filesig.refresh_image_result_urls(messages)}
 
 
 @app.post("/chats/{chat_id}/messages")
