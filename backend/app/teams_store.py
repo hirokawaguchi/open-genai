@@ -20,6 +20,8 @@ import unicodedata
 import uuid
 from typing import Any
 
+from .think_text import strip_think_tags
+
 DB_PATH = os.environ.get("TEAMS_DB_PATH", "/data/open-genai-teams.db")
 
 COMMON_TEAM_ID = "00000000-0000-0000-0000-000000000000"
@@ -2035,6 +2037,9 @@ def remove_user_app_pin(
 # ---------------------------------------------------------------------------
 def _row_to_history(r: sqlite3.Row) -> dict[str, Any]:
     keys = r.keys()
+    outputs = r["outputs"]
+    if isinstance(outputs, str):
+        outputs = strip_think_tags(outputs)
     return {
         "teamId": r["teamId"],
         "teamName": r["teamName"],
@@ -2043,7 +2048,7 @@ def _row_to_history(r: sqlite3.Row) -> dict[str, Any]:
         "userId": r["userId"],
         "tenantId": r["tenantId"] if "tenantId" in keys else DEFAULT_TENANT_ID,
         "inputs": json.loads(r["inputs"] or "{}"),
-        "outputs": r["outputs"],
+        "outputs": outputs,
         "createdDate": r["createdDate"],
         "status": r["status"],
         "progress": r["progress"],

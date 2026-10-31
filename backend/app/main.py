@@ -65,6 +65,7 @@ from . import (
     security_warn,
     storage,
     teams_store,
+    think_text,
     titlegen,
 )
 
@@ -4466,6 +4467,8 @@ async def invoke_exapp(request: Request) -> JSONResponse:
     data = res.json()
     outputs = data.get("outputs", "")
     artifacts = data.get("artifacts")
+    if isinstance(outputs, str):
+        outputs = think_text.strip_think_tags(outputs)
 
     # 成果物ファイルを自前オブジェクトストレージへ再ホスト（署名付き URL 化）
     try:
@@ -4642,6 +4645,7 @@ async def invoke_exapp_stream(request: Request) -> Any:
         audit_status = 200
         got_done = False
         terminal = False  # done または error を送出済み
+        think_splitter = think_text.ThinkTagSplitter()
         try:
             async with httpx.AsyncClient(timeout=600) as client:
                 async with client.stream(
@@ -4679,11 +4683,16 @@ async def invoke_exapp_stream(request: Request) -> Any:
                             continue
                         event = obj.get("event")
                         if event == "delta":
-                            parts.append(obj.get("text", ""))
-                            yield line + "\n"
+                            visible = think_splitter.feed(str(obj.get("text") or ""))
+                            if not visible:
+                                continue
+                            parts.append(visible)
+                            yield _line({"event": "delta", "text": visible})
                         elif event == "done":
                             got_done = True
                             outputs = obj.get("outputs", "")
+                            if isinstance(outputs, str):
+                                outputs = think_text.strip_think_tags(outputs)
                             artifacts = obj.get("artifacts")
                             try:
                                 outputs, artifacts = await _rehost_artifacts(
@@ -4725,7 +4734,9 @@ async def invoke_exapp_stream(request: Request) -> Any:
         finally:
             # done が来ずに接続が途切れた場合は、受信済みの断片を成果として残す
             if status == "COMPLETED" and not got_done:
-                final_outputs = "".join(parts)
+                final_outputs = think_text.strip_think_tags(
+                    "".join(parts) + think_splitter.finish()
+                )
             _persist_invoke(
                 outputs=(
                     final_outputs
