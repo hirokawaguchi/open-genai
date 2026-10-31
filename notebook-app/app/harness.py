@@ -11,10 +11,23 @@ MAX_STEPS = 6
 HISTORY_LIMIT = 8
 
 
+def _catalog_for_prompt(
+    catalog: list[dict[str, Any]],
+    source_ids: list[str],
+) -> list[dict[str, Any]]:
+    if not source_ids:
+        return catalog
+    wanted = set(source_ids)
+    return [s for s in catalog if str(s.get("id") or "") in wanted]
+
+
 def _system_prompt(
     skill: dict[str, Any] | None,
     instruction: str,
     enabled_mcps: list[dict[str, Any]],
+    *,
+    source_labels: list[str],
+    catalog: list[dict[str, Any]],
 ) -> str:
     lines = [
         "あなたはノートの参考資料と、接続中の MCP を根拠にするアシスタントです。",
@@ -51,6 +64,29 @@ def _system_prompt(
             lines.append(f"性格: {personality}")
         if custom:
             lines.append(custom)
+    lines.append("\n# この送信の資料範囲")
+    if source_labels:
+        lines.append("指定された資料だけを検索する: " + "、".join(source_labels))
+    else:
+        lines.append("未指定のため、ノートの参考資料すべてを検索する。")
+    lines.append("\n# 資料と見出し")
+    if not catalog:
+        lines.append("参考資料はまだありません。")
+    else:
+        shown = catalog[:20]
+        for src in shown:
+            heads = [str(h).strip() for h in (src.get("outline") or []) if str(h).strip()][:8]
+            head = "、".join(heads) if heads else "見出しなし"
+            lines.append(f"- {src.get('name')}: {head}")
+        rest = len(catalog) - len(shown)
+        if rest > 0:
+            lines.append(f"- ほか {rest} 件")
+    lines.append(
+        "資料名・節・項目のどれも質問が指しておらず、"
+        "search_sources が本文を返さないときは、見出しを示してどの節かを1つだけ聞く。"
+        "そのときは下書きしない。"
+        "AIタイプの型で下書きするのは、見る資料と節が決まってから。"
+    )
     return "\n".join(lines)
 
 
@@ -132,6 +168,8 @@ async def run(
     instruction: str = "",
     skill: dict[str, Any] | None = None,
     enabled_mcps: list[dict[str, Any]] | None = None,
+    source_ids: list[str] | None = None,
+    source_labels: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
     mcps = enabled_mcps
     if mcps is None:
@@ -139,18 +177,34 @@ async def run(
     allowed, extra_specs = tools.allowed_from_mcps(skill, mcps)
     if not allowed:
         allowed = list(tools.CORE_TOOL_NAMES)
+    scoped = [str(s).strip() for s in (source_ids or []) if str(s).strip()]
+    labels = [str(s).strip() for s in (source_labels or []) if str(s).strip()]
+    catalog = _catalog_for_prompt(store.list_source_index(session_id, user_id) or [], scoped)
     ctx = tools.ToolContext(
         session_id=session_id,
         user_id=user_id,
         scope=scope,
         remote_mcps=[m for m in mcps if m.get("kind") == "remote" and m.get("url")],
+        source_ids=scoped,
     )
     traces: list[dict[str, str]] = []
     openai_tools = tools.openai_tools(allowed, extra_specs)
+    model_question = question
+    if labels:
+        model_question = f"{question}\n\n（この発言で指定した資料: {'、'.join(labels)}）"
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _system_prompt(skill, instruction, mcps)},
+        {
+            "role": "system",
+            "content": _system_prompt(
+                skill,
+                instruction,
+                mcps,
+                source_labels=labels,
+                catalog=catalog,
+            ),
+        },
         *_history(history),
-        {"role": "user", "content": question},
+        {"role": "user", "content": model_question},
     ]
     fallback_hint = (
         "ツールを使うときは次の JSON だけを返す。"

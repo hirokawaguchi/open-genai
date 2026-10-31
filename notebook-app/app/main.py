@@ -574,8 +574,32 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
         skill = store.get_skill(skill_id, uid)
         if not skill:
             return JSONResponse(status_code=404, content={"error": "スキルが見つかりません"})
+    raw_ids = body.get("source_ids")
+    requested: list[str] = []
+    if isinstance(raw_ids, list):
+        seen: set[str] = set()
+        for item in raw_ids:
+            sid = str(item or "").strip()
+            if sid and sid not in seen:
+                seen.add(sid)
+                requested.append(sid)
+    scoped: list[str] | None = None
+    labels: list[str] = []
+    if requested:
+        resolved = store.resolve_source_selection(session_id, uid, requested)
+        if resolved is None:
+            return JSONResponse(status_code=404, content={"error": "見つかりません"})
+        kept, labels = resolved
+        if not kept:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "指定した資料がこのノートにありません"},
+            )
+        scoped = kept
     history = list(detail.get("messages") or [])
-    store.add_message(session_id, uid, role="user", content=question)
+    store.add_message(
+        session_id, uid, role="user", content=question, source_labels=labels
+    )
     scope = (request.headers.get("x-scope") or "").strip()
     try:
         answer, cites, traces = await harness.run(
@@ -586,6 +610,8 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
             history=history,
             instruction=str(detail.get("instruction") or ""),
             skill=skill,
+            source_ids=scoped,
+            source_labels=labels,
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})

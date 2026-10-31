@@ -91,6 +91,7 @@ def init_db() -> None:
               content TEXT NOT NULL DEFAULT '',
               citations TEXT NOT NULL DEFAULT '[]',
               tool_trace TEXT NOT NULL DEFAULT '[]',
+              source_labels TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
               FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
@@ -141,6 +142,10 @@ def init_db() -> None:
         msg_cols = {r[1] for r in db.execute("PRAGMA table_info(messages)").fetchall()}
         if "tool_trace" not in msg_cols:
             db.execute("ALTER TABLE messages ADD COLUMN tool_trace TEXT NOT NULL DEFAULT '[]'")
+        if "source_labels" not in msg_cols:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN source_labels TEXT NOT NULL DEFAULT '[]'"
+            )
         db.commit()
 
 
@@ -228,8 +233,8 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
             (session_id,),
         ).fetchall()
         messages = db.execute(
-            "SELECT id, role, content, citations, tool_trace, created_at FROM messages"
-            " WHERE session_id = ? ORDER BY created_at",
+            "SELECT id, role, content, citations, tool_trace, source_labels, created_at"
+            " FROM messages WHERE session_id = ? ORDER BY created_at",
             (session_id,),
         ).fetchall()
         mcps = _session_mcps_unlocked(db, session_id, user_id)
@@ -300,12 +305,16 @@ def _public_message(m: sqlite3.Row) -> dict[str, Any]:
     cites = _parse_json(m["citations"], [])
     keys = m.keys()
     trace = _parse_json(m["tool_trace"] if "tool_trace" in keys else "[]", [])
+    labels = _parse_json(m["source_labels"] if "source_labels" in keys else "[]", [])
     return {
         "id": m["id"],
         "role": m["role"],
         "content": m["content"],
         "citations": cites if isinstance(cites, list) else [],
         "tool_trace": trace if isinstance(trace, list) else [],
+        "source_labels": [str(x) for x in labels if str(x).strip()]
+        if isinstance(labels, list)
+        else [],
         "created_at": m["created_at"],
     }
 
@@ -482,32 +491,110 @@ def delete_file(session_id: str, user_id: str, file_id: str) -> dict[str, Any] |
     return get_session(session_id, user_id)
 
 
-def list_material_nodes(session_id: str, user_id: str) -> list[dict[str, Any]] | None:
-    """アップロードとナレッジ参照の節を、retrieve 用にフラット化する。"""
+def resolve_source_selection(
+    session_id: str, user_id: str, source_ids: list[str]
+) -> tuple[list[str], list[str]] | None:
+    """指定 id のうち、このノートのファイルとナレッジ参照だけを残す。"""
     db = connect()
     with _lock:
         if not _owned(session_id, user_id):
             return None
         files = db.execute(
-            "SELECT filename, nodes FROM files WHERE session_id = ? AND error = ''",
+            "SELECT id, filename FROM files WHERE session_id = ?",
             (session_id,),
         ).fetchall()
         refs = db.execute(
-            "SELECT source, title, nodes FROM source_refs WHERE session_id = ?",
+            "SELECT id, source, title FROM source_refs WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+    names = {str(f["id"]): str(f["filename"]) for f in files}
+    for r in refs:
+        names[str(r["id"])] = str(r["title"] or r["source"])
+    kept: list[str] = []
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in source_ids:
+        sid = str(raw or "").strip()
+        if not sid or sid in seen or sid not in names:
+            continue
+        seen.add(sid)
+        kept.append(sid)
+        labels.append(names[sid])
+    return kept, labels
+
+
+def list_material_nodes(
+    session_id: str,
+    user_id: str,
+    *,
+    source_ids: list[str] | None = None,
+) -> list[dict[str, Any]] | None:
+    """アップロードとナレッジ参照の節を、retrieve 用にフラット化する。
+
+    source_ids があるときは、その資料の節だけを返す。
+    """
+    db = connect()
+    wanted = {str(s).strip() for s in (source_ids or []) if str(s).strip()}
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        files = db.execute(
+            "SELECT id, filename, nodes FROM files WHERE session_id = ? AND error = ''",
+            (session_id,),
+        ).fetchall()
+        refs = db.execute(
+            "SELECT id, source, title, nodes FROM source_refs WHERE session_id = ?",
             (session_id,),
         ).fetchall()
     out: list[dict[str, Any]] = []
     for f in files:
+        if wanted and str(f["id"]) not in wanted:
+            continue
         for n in _parse_json(f["nodes"], []):
             if not isinstance(n, dict):
                 continue
-            out.append({**n, "source": f["filename"]})
+            out.append({**n, "source": f["filename"], "source_id": str(f["id"])})
     for r in refs:
+        if wanted and str(r["id"]) not in wanted:
+            continue
         for n in _parse_json(r["nodes"], []):
             if not isinstance(n, dict):
                 continue
-            out.append({**n, "source": r["title"] or r["source"]})
+            out.append(
+                {
+                    **n,
+                    "source": r["title"] or r["source"],
+                    "source_id": str(r["id"]),
+                }
+            )
     return out
+
+
+def list_source_index(session_id: str, user_id: str) -> list[dict[str, Any]] | None:
+    """読める資料の名前と見出し。プロンプト用で、本文は含まない。"""
+    nodes = list_material_nodes(session_id, user_id)
+    if nodes is None:
+        return None
+    return source_outline(nodes)
+
+
+def source_outline(nodes: list[dict[str, Any]], *, limit: int = 40) -> list[dict[str, Any]]:
+    order: list[str] = []
+    grouped: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        key = str(n.get("source_id") or n.get("source") or "")
+        if key not in grouped:
+            grouped[key] = {
+                "id": str(n.get("source_id") or ""),
+                "name": str(n.get("source") or "資料"),
+                "outline": [],
+            }
+            order.append(key)
+        title = str(n.get("title") or "").strip()
+        outline: list[str] = grouped[key]["outline"]
+        if title and title not in outline and len(outline) < limit:
+            outline.append(title)
+    return [grouped[k] for k in order]
 
 
 def add_knowledge_ref(
@@ -586,15 +673,17 @@ def add_message(
     content: str,
     citations: list[dict[str, Any]] | None = None,
     tool_trace: list[dict[str, Any]] | None = None,
+    source_labels: list[str] | None = None,
 ) -> dict[str, Any] | None:
     db = connect()
     msg_id = str(uuid.uuid4())
+    labels = [str(x).strip() for x in (source_labels or []) if str(x).strip()]
     with _lock:
         if not _owned(session_id, user_id):
             return None
         db.execute(
             "INSERT INTO messages (id, session_id, role, content, citations, tool_trace,"
-            " created_at) VALUES (?,?,?,?,?,?,?)",
+            " source_labels, created_at) VALUES (?,?,?,?,?,?,?,?)",
             (
                 msg_id,
                 session_id,
@@ -602,6 +691,7 @@ def add_message(
                 content,
                 json.dumps(citations or [], ensure_ascii=False),
                 json.dumps(tool_trace or [], ensure_ascii=False),
+                json.dumps(labels, ensure_ascii=False),
                 _now_iso(),
             ),
         )

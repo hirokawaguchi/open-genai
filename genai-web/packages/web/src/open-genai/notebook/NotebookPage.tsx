@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PiBookOpenBold, PiFilePlus, PiPuzzlePieceBold } from 'react-icons/pi';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
@@ -186,6 +186,7 @@ export const NotebookPage = () => {
   const [manageOpen, setManageOpen] = useState(false);
   const [sessionMcpOpen, setSessionMcpOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [skillId, setSkillId] = useState('');
   const [applyItemId, setApplyItemId] = useState('');
   const [knowledgeScope, setKnowledgeScope] = useState('');
@@ -209,6 +210,24 @@ export const NotebookPage = () => {
       setKnowledgeScope(scopes[0].scope);
     }
   }, [knowledgeScope, scopes]);
+
+  const chatSources = useMemo(
+    () => [
+      ...(detail?.files ?? [])
+        .filter((file) => !file.error)
+        .map((file) => ({ id: file.id, name: file.filename })),
+      ...(detail?.knowledge_refs ?? []).map((ref) => ({
+        id: ref.id,
+        name: ref.title || ref.source,
+      })),
+    ],
+    [detail],
+  );
+
+  useEffect(() => {
+    const ids = new Set(chatSources.map((source) => source.id));
+    setSelectedSourceIds((prev) => prev.filter((id) => ids.has(id)));
+  }, [chatSources]);
 
   const accept = (
     config?.accept ?? ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md', '.csv', '.html', '.json']
@@ -330,11 +349,23 @@ export const NotebookPage = () => {
     if (next) await refresh(next);
   };
 
+  const onToggleSource = (id: string) => {
+    setSelectedSourceIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
   const onChat = async () => {
     if (!sessionId || !chatDraft.trim()) return;
     const q = chatDraft.trim();
     const prev = detail;
     const localId = `local-${newId()}`;
+    const sourceIds = chatSources
+      .map((source) => source.id)
+      .filter((id) => selectedSourceIds.includes(id));
+    const sourceLabels = chatSources
+      .filter((source) => sourceIds.includes(source.id))
+      .map((source) => source.name);
     setChatDraft('');
     if (detail) {
       await mutateDetail(
@@ -346,6 +377,7 @@ export const NotebookPage = () => {
               id: localId,
               role: 'user',
               content: q,
+              source_labels: sourceLabels,
               created_at: new Date().toISOString(),
             },
           ],
@@ -353,7 +385,7 @@ export const NotebookPage = () => {
         { revalidate: false },
       );
     }
-    const next = await actions.chat(sessionId, q, skillId || undefined);
+    const next = await actions.chat(sessionId, q, skillId || undefined, sourceIds);
     if (next) {
       await refresh(next);
       return;
@@ -839,10 +871,13 @@ export const NotebookPage = () => {
                   skillId={skillId}
                   applyItemId={applyItemId}
                   draft={chatDraft}
+                  sources={chatSources}
+                  selectedSourceIds={selectedSourceIds}
                   submitting={actions.submitting}
                   llmEnabled={llmEnabled}
                   onSkillIdChange={setSkillId}
                   onApplyItemIdChange={setApplyItemId}
+                  onToggleSource={onToggleSource}
                   onDraftChange={setChatDraft}
                   onSend={() => void onChat()}
                   onApplyMessage={(m) => void onChatToItem(m)}
@@ -1094,7 +1129,9 @@ export const NotebookPage = () => {
                   ・共有ナレッジ MCP
                   は共通チームのナレッジをその場で検索します（取り込みではありません）。
                 </p>
-                <p>・「対話」で質問や整理をします。調べた手順は回答の上に出ます。</p>
+                <p>
+                  ・「対話」で質問や整理をします。入力の上で資料を選ぶと、その送信はその資料だけを見ます。未選択ならすべての参考資料です。調べた手順は回答の上に出ます。
+                </p>
                 <p>・下書きを「項目に追加」すると、シートの正本になります。</p>
                 <p>・「項目」で設問を直し、記入済みシートを Markdown エディタへ渡せます。</p>
                 <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>

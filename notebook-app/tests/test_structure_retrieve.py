@@ -46,6 +46,13 @@ def test_build_nodes_from_markdown_headings():
     assert "背景" in briefing["outline"]
 
 
+def test_select_nodes_chat_miss_is_empty():
+    nodes = [{"title": "天気", "text": "今日は晴れである。", "source": "a.pdf"}]
+    assert retrieve.select_nodes("予算", nodes, unmatched_fallback=False) == []
+    fallback = retrieve.select_nodes("予算", nodes)
+    assert fallback and "晴れ" in (fallback[0].get("text") or "")
+
+
 def test_select_nodes_prefers_matching_section():
     nodes = [
         {"title": "背景", "text": "予算が不足している。", "source": "a.md"},
@@ -96,8 +103,17 @@ def test_store_nodes_and_knowledge_ref(tmp_path, monkeypatch):
         nodes=[{"title": "第1条", "text": "目的", "source": "規程.pdf"}],
         briefing={"summary": "目的", "outline": ["第1条"]},
     )
+    detail = store.get_session(sid, "u1")
+    file_id = detail["files"][0]["id"]
+    ref_id = detail["knowledge_refs"][0]["id"]
     nodes = store.list_material_nodes(sid, "u1")
     assert nodes and {n["title"] for n in nodes} >= {"課題", "第1条"}
+    only_file = store.list_material_nodes(sid, "u1", source_ids=[file_id])
+    assert only_file and {n["title"] for n in only_file} == {"課題"}
+    assert only_file[0]["source_id"] == file_id
+    kept, labels = store.resolve_source_selection(sid, "u1", [ref_id, "missing"])
+    assert kept == [ref_id]
+    assert labels == ["規程"]
     listed = store.list_sessions("u1")
     assert listed[0]["item_count"] == 0
     added = store.add_item(sid, "u1", label="課題は何か")

@@ -9,7 +9,13 @@ import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { ChatAnswer } from './Citations';
 import { toolLabel } from './toolLabels';
-import type { NotebookItem, NotebookMessage, NotebookSkill, NotebookToolTrace } from './types';
+import type {
+  NotebookItem,
+  NotebookMessage,
+  NotebookSkill,
+  NotebookSourceOption,
+  NotebookToolTrace,
+} from './types';
 
 type Props = {
   messages: NotebookMessage[];
@@ -18,10 +24,13 @@ type Props = {
   skillId: string;
   applyItemId: string;
   draft: string;
+  sources: NotebookSourceOption[];
+  selectedSourceIds: string[];
   submitting: boolean;
   llmEnabled: boolean;
   onSkillIdChange: (id: string) => void;
   onApplyItemIdChange: (id: string) => void;
+  onToggleSource: (id: string) => void;
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onApplyMessage: (message: NotebookMessage) => void;
@@ -64,10 +73,13 @@ export const NotebookChat = ({
   skillId,
   applyItemId,
   draft,
+  sources,
+  selectedSourceIds,
   submitting,
   llmEnabled,
   onSkillIdChange,
   onApplyItemIdChange,
+  onToggleSource,
   onDraftChange,
   onSend,
   onApplyMessage,
@@ -158,6 +170,11 @@ export const NotebookChat = ({
                 <>
                   <h2 className='sr-only'>あなたのメッセージ</h2>
                   <p className='whitespace-pre-wrap break-words text-std-16N-170'>{m.content}</p>
+                  {m.source_labels && m.source_labels.length > 0 ? (
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      資料: {m.source_labels.join('、')}
+                    </p>
+                  ) : null}
                 </>
               )}
             </div>
@@ -223,6 +240,39 @@ export const NotebookChat = ({
           <SupportText id='notebook-chat-submit-hint' className='mb-1'>
             {hint}
           </SupportText>
+          {sources.length > 0 ? (
+            <div className='mb-2'>
+              <p id='notebook-source-scope' className='text-dns-14N-130 text-solid-gray-700'>
+                この送信で見る資料
+              </p>
+              <p className='text-dns-14N-130 text-solid-gray-600'>未選択ならすべての参考資料</p>
+              <div
+                role='group'
+                aria-labelledby='notebook-source-scope'
+                className='mt-1 flex flex-wrap gap-2'
+              >
+                {sources.map((source) => {
+                  const pressed = selectedSourceIds.includes(source.id);
+                  return (
+                    <button
+                      key={source.id}
+                      type='button'
+                      aria-pressed={pressed}
+                      title={source.name}
+                      onClick={() => onToggleSource(source.id)}
+                      className={`inline-block max-w-48 truncate rounded-full border px-3 py-1 text-left text-dns-14N-130 ${
+                        pressed
+                          ? 'border-blue-900 bg-blue-50 text-blue-900'
+                          : 'border-solid-gray-420 bg-white text-solid-gray-800'
+                      }`}
+                    >
+                      {source.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           <div className='flex flex-col gap-2'>
             <AutoResizeTextarea
               id='notebook-chat'

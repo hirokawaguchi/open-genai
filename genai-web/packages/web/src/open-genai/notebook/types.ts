@@ -101,7 +101,13 @@ export type NotebookMessage = {
   content: string;
   citations?: NotebookCitation[];
   tool_trace?: NotebookToolTrace[];
+  source_labels?: string[];
   created_at: string;
+};
+
+export type NotebookSourceOption = {
+  id: string;
+  name: string;
 };
 
 export type NotebookSkill = {

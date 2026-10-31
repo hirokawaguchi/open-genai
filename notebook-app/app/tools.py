@@ -32,6 +32,7 @@ class ToolContext:
     scope: str
     citations: list[dict[str, Any]] = field(default_factory=list)
     remote_mcps: list[dict[str, Any]] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
 
 
 def openai_tools(
@@ -136,15 +137,34 @@ def _as_dict(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _miss_outline(nodes: list[dict[str, Any]]) -> str:
+    """節に当たらないとき。本文は返さず、見出しだけを渡す。"""
+    return json.dumps(
+        {
+            "matched": False,
+            "note": (
+                "本文は返していません。見出しを示して、どの節かを1つ聞いてください。"
+                "下書きはしないでください。"
+            ),
+            "sources": store.source_outline(nodes),
+        },
+        ensure_ascii=False,
+    )
+
+
 async def _search_sources(ctx: ToolContext, args: dict[str, Any]) -> str:
     query = str(args.get("query") or "").strip()
     if not query:
         return json.dumps({"error": "query が空です"}, ensure_ascii=False)
-    nodes = store.list_material_nodes(ctx.session_id, ctx.user_id)
+    nodes = store.list_material_nodes(
+        ctx.session_id,
+        ctx.user_id,
+        source_ids=ctx.source_ids or None,
+    )
     if nodes is None:
         return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
-    picked = retrieve.select_nodes(query, nodes)
-    if not picked:
+    readable = [n for n in nodes if str(n.get("text") or "").strip()]
+    if not readable:
         return json.dumps(
             {
                 "error": "読めるソースがありません。ファイルをアップロードするか、"
@@ -152,6 +172,9 @@ async def _search_sources(ctx: ToolContext, args: dict[str, Any]) -> str:
             },
             ensure_ascii=False,
         )
+    picked = retrieve.select_nodes(query, readable, unmatched_fallback=False)
+    if not picked:
+        return _miss_outline(readable)
     material, cites = retrieve.format_material(picked)
     offset = len(ctx.citations)
     for c in cites:
