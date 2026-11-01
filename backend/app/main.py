@@ -63,6 +63,7 @@ from . import (
     portal_login,
     policy,
     security_warn,
+    sessions,
     storage,
     teams_store,
     think_text,
@@ -2016,25 +2017,64 @@ async def auth_metadata() -> Response:
     return Response(content=metadata, media_type="text/xml")
 
 
+def _bearer_claims(authorization: str | None) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+    try:
+        return auth.verify_token(authorization[7:]), None
+    except Exception:  # noqa: BLE001
+        return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+
+def _session_idents(claims: dict[str, Any]) -> list[str]:
+    return [str(claims.get("sub") or ""), str(claims.get("email") or "")]
+
+
+async def _end_keycloak_sessions(*idents: str) -> str:
+    """庁内アカウントの SSO を終わらせる。ended / skipped / error。"""
+    try:
+        found = await portal_login.logout_sessions(*idents)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[auth] Keycloak のセッション終了に失敗: {exc}")
+        return "error"
+    return "ended" if found else "skipped"
+
+
 @app.get("/auth/me")
 async def auth_me(authorization: str | None = Header(default=None)) -> JSONResponse:
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    try:
-        claims = auth.verify_token(authorization[7:])
-    except Exception:  # noqa: BLE001
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    claims, err = _bearer_claims(authorization)
+    if err or claims is None:
+        return err or JSONResponse(status_code=401, content={"error": "unauthorized"})
     return JSONResponse(content=claims)
+
+
+@app.get("/auth/session")
+async def auth_session(authorization: str | None = Header(default=None)) -> JSONResponse:
+    """今のログインの絶対期限。画面が「いつ再ログインか」を出すために使う。"""
+    claims, err = _bearer_claims(authorization)
+    if err or claims is None:
+        return err or JSONResponse(status_code=401, content={"error": "unauthorized"})
+    row = sessions.get(str(claims.get("sid") or ""))
+    if row is None:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    auth_time = int(row["auth_time"])
+    return JSONResponse(
+        content={
+            "authTime": auth_time,
+            "absoluteExpiresAt": sessions.deadline(auth_time),
+            "expiresAt": claims.get("exp"),
+        }
+    )
 
 
 @app.post("/auth/refresh")
 async def auth_refresh(
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:
-    """作業中のアプリ JWT を同一 claims で再発行する（Keycloak 再認証なし）。
+    """作業中のアプリ JWT を同じログインのまま再発行する（Keycloak 再認証なし）。
 
-    有効な、または期限切れ直後（猶予内）の JWT を Bearer で受け取り、新しい JWT を返す。
-    それ以外は 401（フロントはログイン画面へ誘導する）。
+    JWT の期限が切れていても、サーバ側セッションが生きていてリセット時刻の前なら新しい JWT を返す。
+    失効・リセット時刻の超過・署名不正は 401（フロントはログイン画面へ誘導する）。
     """
     if not authorization or not authorization.startswith("Bearer "):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -2043,6 +2083,58 @@ async def auth_refresh(
     except Exception:  # noqa: BLE001 - トークン不正/猶予超過は 401 に集約
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     return JSONResponse(content={"token": token})
+
+
+async def _revoke_login_sessions(
+    request: Request,
+    claims: dict[str, Any],
+    *,
+    keep_sid: str | None,
+) -> JSONResponse:
+    """この利用者のアプリログインを切り、庁内アカウントの SSO も終わらせる。"""
+    idents = _session_idents(claims)
+    revoked = sessions.revoke_matching(idents, keep_sid=keep_sid)
+    identity_provider = await _end_keycloak_sessions(*idents)
+    groups = claims.get("groups")
+    audit.record(
+        request,
+        action="auth.session.revoke",
+        status=200,
+        user_id=str(claims.get("sub") or ""),
+        user_email=str(claims.get("email") or ""),
+        user_name=str(claims.get("name") or ""),
+        groups=list(groups) if isinstance(groups, list) else [],
+        output_text=f"revoked={revoked} keep_current={bool(keep_sid)} idp={identity_provider}",
+    )
+    return JSONResponse(
+        content={"revoked": revoked, "identityProvider": identity_provider}
+    )
+
+
+@app.post("/auth/sessions/revoke-others")
+async def auth_revoke_other_sessions(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """今のブラウザ以外のログインを切る。コピーされた JWT もここで死ぬ。"""
+    claims, err = _bearer_claims(authorization)
+    if err or claims is None:
+        return err or JSONResponse(status_code=401, content={"error": "unauthorized"})
+    sid = claims.get("sid")
+    keep = sid if isinstance(sid, str) else None
+    return await _revoke_login_sessions(request, claims, keep_sid=keep)
+
+
+@app.post("/auth/sessions/revoke-all")
+async def auth_revoke_all_sessions(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """すべての端末のログインを切る。呼び出し元の JWT も同時に無効になる。"""
+    claims, err = _bearer_claims(authorization)
+    if err or claims is None:
+        return err or JSONResponse(status_code=401, content={"error": "unauthorized"})
+    return await _revoke_login_sessions(request, claims, keep_sid=None)
 
 
 @app.get("/auth/logout")
@@ -2058,9 +2150,24 @@ async def auth_logout(
     claims: dict | None = None
     if token:
         try:
-            claims = auth.verify_token(token)
+            # 期限切れや、すでに切ったセッションでも NameID は読んで SLO する。
+            claims = auth.read_token(token, allow_expired=True)
         except Exception:  # noqa: BLE001
             claims = None
+    if claims:
+        sid = claims.get("sid")
+        if isinstance(sid, str) and sid:
+            sessions.revoke(sid)
+        groups = claims.get("groups")
+        audit.record(
+            request,
+            action="auth.logout",
+            status=200,
+            user_id=str(claims.get("sub") or ""),
+            user_email=str(claims.get("email") or ""),
+            user_name=str(claims.get("name") or ""),
+            groups=list(groups) if isinstance(groups, list) else [],
+        )
     return_to = ops_login.signed_out_url(request, claims)
     if token and claims and claims.get("sidx"):
         try:
@@ -5554,8 +5661,9 @@ async def worldmonitor_config(request: Request) -> JSONResponse:
             "または `COMPOSE_PROFILES=worldmonitor` を設定してください。"
         )
     response = JSONResponse(content=body)
-    if enabled:
-        token = wm_gate.sign(_wm_secret(), user_id)
+    sid = str(claims.get("sid") or "")
+    if enabled and sid:
+        token = wm_gate.sign(_wm_secret(), sid)
         response.set_cookie(
             key=wm_gate.COOKIE,
             value=token,
@@ -5571,7 +5679,8 @@ async def worldmonitor_config(request: Request) -> JSONResponse:
 @app.get("/worldmonitor/gate")
 async def worldmonitor_gate(request: Request) -> Response:
     token = request.cookies.get(wm_gate.COOKIE, "")
-    if wm_gate.user_id_from_token(_wm_secret(), token):
+    sid = wm_gate.session_id_from_token(_wm_secret(), token)
+    if sid and sessions.is_active(sid):
         return Response(status_code=200)
     # 403 にする。上流 API の 401 と nginx の error_page がぶつからないようにする。
     return Response(status_code=403)
@@ -9426,6 +9535,42 @@ async def plan_admin_users(request: Request) -> JSONResponse:
         rows = [_hide_tenant_fields(row) for row in (payload.get("rows") or [])]
     rows.extend(_hide_tenant_fields(row) for row in skipped)
     return JSONResponse(content={"rows": rows, "count": len(rows)})
+
+
+@app.post("/admin/users/sessions/revoke")
+async def revoke_admin_user_sessions(request: Request) -> JSONResponse:
+    """いま開いている組織の利用者について、アプリのログインと庁内 SSO を切る。"""
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    email = str(body.get("email") or "")
+    username = str(body.get("username") or "")
+    members = _tenant_member_ids(ctx["tenant_id"])
+    # この組織の識別子だけを切る。リクエストに混ぜた他人の ID は使わない。
+    allowed = [value for value in (email, username) if _identity_in(members, value)]
+    if not allowed:
+        return JSONResponse(
+            status_code=404, content={"error": "この組織の利用者が見つかりません"}
+        )
+    revoked = sessions.revoke_matching(allowed)
+    identity_provider = await _end_keycloak_sessions(*allowed)
+    audit.record(
+        request,
+        action="auth.session.revoke",
+        status=200,
+        output_text=(
+            f"対象={','.join(allowed)} revoked={revoked} idp={identity_provider}"
+        ),
+    )
+    return JSONResponse(
+        content={"revoked": revoked, "identityProvider": identity_provider}
+    )
 
 
 @app.post("/admin/users/apply")

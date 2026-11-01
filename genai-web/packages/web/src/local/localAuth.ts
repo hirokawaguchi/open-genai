@@ -88,7 +88,7 @@ export const isAuthenticated = (): boolean => {
 /**
  * アプリ JWT をサイレント再発行する（Keycloak には戻らない）。
  * 成功で新トークンを localStorage に保存して true。失敗（401 等）は false。
- * 期限切れ直後でも backend 側の猶予内なら成功する。
+ * JWT の期限が切れていても、次のリセット時刻の前でセッションが生きていれば成功する。
  */
 let refreshInFlight: Promise<boolean> | null = null;
 export const refreshSession = (): Promise<boolean> => {
@@ -129,14 +129,33 @@ const REFRESH_THRESHOLD_MS = 60 * 60 * 1000;
 const KEEPALIVE_INTERVAL_MS = 60 * 1000;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 
+let leavingForLogin = false;
+
+/** 絶対期限や失効で延長できないとき、ログイン画面へ戻す。 */
+const forceRelogin = (): void => {
+  if (leavingForLogin) {
+    return;
+  }
+  leavingForLogin = true;
+  clearToken();
+  login();
+};
+
 const maybeRefresh = (): void => {
   const exp = getTokenExpMs();
   if (exp === null) {
     return;
   }
   const remaining = exp - Date.now();
-  // 期限切れは keep-alive では扱わない（API の 401 リトライ／ログインゲートに委ねる）
-  if (remaining > 0 && remaining < REFRESH_THRESHOLD_MS) {
+  if (remaining <= 0) {
+    void refreshSession().then((ok) => {
+      if (!ok) {
+        forceRelogin();
+      }
+    });
+    return;
+  }
+  if (remaining < REFRESH_THRESHOLD_MS) {
     void refreshSession();
   }
 };

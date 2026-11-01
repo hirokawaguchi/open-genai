@@ -9,8 +9,10 @@ import { GlobalErrorFallback } from '@/components/ui/GlobalErrorFallback';
 import {
   captureTokenFromUrl,
   clearToken,
+  getToken,
   isAuthenticated,
   login,
+  refreshSession,
   startSessionKeepAlive,
 } from '@/local/localAuth';
 
@@ -22,15 +24,46 @@ captureTokenFromUrl();
 // サインアウト後・認証エラーページは認証不要で表示する。
 const AuthGate = ({ children }: { children: ReactNode }) => {
   const path = window.location.pathname;
-  if (path === '/signed-out' || path === '/auth-error') {
-    // 認証エラー到達時は壊れたトークンを残さない（セッションを永続化しない）
-    if (path === '/auth-error') {
-      clearToken();
+  const publicPath = path === '/signed-out' || path === '/auth-error';
+  const [ready, setReady] = React.useState(() => publicPath || isAuthenticated());
+
+  React.useEffect(() => {
+    if (publicPath) {
+      // 認証エラー到達時は壊れたトークンを残さない（セッションを永続化しない）
+      if (path === '/auth-error') {
+        clearToken();
+      }
+      return;
     }
+    if (isAuthenticated()) {
+      setReady(true);
+      return;
+    }
+    // JWT の期限が切れていても、次のリセット時刻（既定は午前4時）までは延長して入る。
+    if (!getToken()) {
+      login();
+      return;
+    }
+    let cancelled = false;
+    void refreshSession().then((ok) => {
+      if (cancelled) {
+        return;
+      }
+      if (ok) {
+        setReady(true);
+        return;
+      }
+      login();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, publicPath]);
+
+  if (publicPath) {
     return <>{children}</>;
   }
-  if (!isAuthenticated()) {
-    login();
+  if (!ready) {
     return (
       <div
         style={{
@@ -42,7 +75,7 @@ const AuthGate = ({ children }: { children: ReactNode }) => {
           fontFamily: 'sans-serif',
         }}
       >
-        ログイン画面へ移動しています…
+        ログインを確認しています…
       </div>
     );
   }

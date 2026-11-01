@@ -141,6 +141,44 @@ async def _lookup_user(client: httpx.AsyncClient, token: str, ident: str) -> dic
     return None
 
 
+async def logout_sessions(*idents: str) -> bool:
+    """Keycloak 上のその利用者の SSO セッションをすべて終わらせる。
+
+    利用者が見つかって切断できれば True。どの識別子でも見つからなければ False
+    （運用者ログインなど、Keycloak にいないアカウント）。
+    見つかったあとの切断失敗は例外にする。
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+    for raw in idents:
+        key = (raw or "").strip()
+        if not key or key.lower() in seen:
+            continue
+        seen.add(key.lower())
+        keys.append(key)
+    if not keys:
+        return False
+    async with httpx.AsyncClient(timeout=15) as client:
+        token = await _admin_token(client)
+        found: dict[str, Any] | None = None
+        for key in keys:
+            found = await _lookup_user(client, token, key)
+            if found:
+                break
+        if not found:
+            return False
+        user_id = str(found.get("id") or "")
+        if not user_id:
+            return False
+        res = await client.post(
+            f"{_kc_url()}/admin/realms/{_kc_realm()}/users/{user_id}/logout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if res.status_code not in (200, 204):
+            raise RuntimeError(f"keycloak logout failed: {res.status_code}")
+        return True
+
+
 async def authenticate(ident: str, password: str) -> dict[str, Any] | None:
     ident = (ident or "").strip()
     if not ident or not password:
