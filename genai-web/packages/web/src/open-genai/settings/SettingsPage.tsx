@@ -6,6 +6,7 @@ import { TenantSwitcher } from '@/open-genai/tenants/TenantSwitcher';
 import { useMyTenants } from '@/open-genai/tenants/useTenants';
 import { PasswordForm } from './components/PasswordForm';
 import { ProfileForm } from './components/ProfileForm';
+import { SessionSection } from './components/SessionSection';
 import { SubmitKeySettings } from './components/SubmitKeySettings';
 import { useMyProfile } from './useMyProfile';
 
@@ -23,8 +24,8 @@ export const SettingsPage = () => {
           <h1 className='text-std-22B-150 text-solid-gray-900'>アカウント設定</h1>
           <p className='text-dns-16N-170 text-solid-gray-700'>
             {profile
-              ? '表示名（姓名）とパスワード、プロンプト入力の送信キーを変更できます。'
-              : 'プロンプト入力の送信キーを変更できます。'}
+              ? '表示名（姓名）、パスワード、ログインの期限、プロンプト入力の送信キーを変更できます。'
+              : 'ログインの期限と、プロンプト入力の送信キーを変更できます。'}
           </p>
         </div>
 
@@ -69,6 +70,8 @@ export const SettingsPage = () => {
             </section>
           </>
         )}
+
+        {!isLoading && <SessionSection />}
 
         {current && (
           <section className='flex flex-col gap-4 rounded-8 border border-solid-gray-300 bg-white p-5'>

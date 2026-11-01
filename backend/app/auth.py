@@ -17,13 +17,14 @@ from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.idp_metadata_parser import OneLogin_Saml2_IdPMetadataParser
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
 
+from . import sessions
+
 APP_JWT_SECRET = os.environ.get("APP_JWT_SECRET", "change-me-open-genai-secret")
 JWT_ALG = "HS256"
-JWT_TTL_SECONDS = int(os.environ.get("APP_JWT_TTL", "43200"))  # 12 時間
+JWT_TTL_SECONDS = int(os.environ.get("APP_JWT_TTL", "43200"))  # 12 時間。絶対期限内だけ再発行で延びる
 # 時計ずれで作業中に 401 にならないよう、検証時に許す猶予（秒）。
 JWT_LEEWAY_SECONDS = int(os.environ.get("APP_JWT_LEEWAY", "60"))
-# 期限切れ直後でも同一 claims で再発行を許す猶予（秒）。
-# （タブがスリープ等で keep-alive が一瞬止まっても復帰できるようにする）
+# 互換のため残す。再発行の上限はこちらではなく、セッションの絶対期限。
 JWT_REFRESH_GRACE_SECONDS = int(os.environ.get("APP_JWT_REFRESH_GRACE", "300"))
 
 SP_ENTITY_ID = os.environ.get(
@@ -136,6 +137,37 @@ def get_sp_metadata() -> str:
 # ---------------------------------------------------------------------------
 # アプリ JWT
 # ---------------------------------------------------------------------------
+def read_token(token: str, *, allow_expired: bool = False) -> dict[str, Any]:
+    """署名を検証して claims を返す。セッション台帳は見ない。
+
+    ログアウトは、すでに切れたトークンからでも NameID とセッション ID を
+    読む必要がある。API の認可には verify_token を使う。
+    """
+    return jwt.decode(
+        token,
+        APP_JWT_SECRET,
+        algorithms=[JWT_ALG],
+        leeway=JWT_LEEWAY_SECONDS,
+        options={"verify_exp": not allow_expired},
+    )
+
+
+def _require_live_session(claims: dict[str, Any]) -> dict[str, Any]:
+    """サーバ側セッションが生きていて、絶対期限内であることを確かめる。"""
+    sid = claims.get("sid")
+    if not isinstance(sid, str) or not sid:
+        raise jwt.InvalidTokenError("session required")
+    row = sessions.get(sid)
+    if row is None or row.get("revoked_at") is not None:
+        raise jwt.InvalidTokenError("session revoked")
+    auth_time = row.get("auth_time")
+    if not isinstance(auth_time, int):
+        raise jwt.InvalidTokenError("session revoked")
+    if int(time.time()) > sessions.deadline(auth_time) + JWT_LEEWAY_SECONDS:
+        raise jwt.ExpiredSignatureError("absolute session lifetime exceeded")
+    return row
+
+
 def mint_token(
     *,
     sub: str,
@@ -143,8 +175,24 @@ def mint_token(
     name: str,
     groups: list[str],
     session_index: str | None = None,
+    sid: str | None = None,
+    auth_time: int | None = None,
 ) -> str:
+    """ログイン JWT を発行する。
+
+    sid を渡さない呼び出しは新しいログインで、サーバ側セッションを作る。
+    再発行は同じ sid と最初の auth_time を渡し、リセット時刻を超える exp は出さない。
+    """
     now = int(time.time())
+    if sid is None:
+        auth_time = now
+        sid = sessions.create(sub=sub, email=email, auth_time=now)
+    elif auth_time is None:
+        raise jwt.InvalidTokenError("auth_time required")
+    absolute_end = sessions.deadline(int(auth_time))
+    exp = min(now + JWT_TTL_SECONDS, absolute_end)
+    if exp <= now:
+        raise jwt.ExpiredSignatureError("absolute session lifetime exceeded")
     payload = {
         "sub": sub,
         "email": email,
@@ -152,47 +200,41 @@ def mint_token(
         "groups": groups,
         # SAML シングルログアウト(SLO) 用のセッションインデックス
         "sidx": session_index,
+        "sid": sid,
+        "auth_time": int(auth_time),
         "iat": now,
-        "exp": now + JWT_TTL_SECONDS,
+        "exp": exp,
     }
     return jwt.encode(payload, APP_JWT_SECRET, algorithm=JWT_ALG)
 
 
 def verify_token(token: str) -> dict[str, Any]:
-    return jwt.decode(
-        token,
-        APP_JWT_SECRET,
-        algorithms=[JWT_ALG],
-        leeway=JWT_LEEWAY_SECONDS,
-    )
+    """署名・期限に加え、サーバ側セッションが有効であることを確かめる。"""
+    claims = read_token(token)
+    _require_live_session(claims)
+    return claims
 
 
 def refresh_token(token: str) -> str:
-    """有効な（または期限切れ直後・猶予内の）JWT から同一 claims で新 JWT を発行する。
+    """同じログインのまま JWT を再発行する。
 
-    Keycloak への再認証は行わない。作業中の突然ログアウトを避けるための延長用。
-    - 通常検証を通れば、そのまま再発行。
-    - 期限切れのときだけ、署名を検証しつつ `exp` を無視して読み、`JWT_REFRESH_GRACE_SECONDS`
-      以内なら再発行する。それ以上経過・署名不正は例外を送出（呼び出し側で 401）。
+    Keycloak への再認証は行わない。画面を閉じて JWT の期限が切れても、
+    リセット時刻の前であり、セッションが切られていなければ延長する。
+    署名不正・失効・リセット時刻の超過は例外（呼び出し側で 401）。
     """
     try:
-        claims = verify_token(token)
+        claims = read_token(token)
     except jwt.ExpiredSignatureError:
-        claims = jwt.decode(
-            token,
-            APP_JWT_SECRET,
-            algorithms=[JWT_ALG],
-            options={"verify_exp": False},
-        )
-        exp = claims.get("exp")
-        if not isinstance(exp, (int, float)):
-            raise
-        if int(time.time()) - int(exp) > JWT_REFRESH_GRACE_SECONDS:
-            raise
+        claims = read_token(token, allow_expired=True)
+    row = _require_live_session(claims)
+    groups = claims.get("groups")
+    sidx = claims.get("sidx")
     return mint_token(
-        sub=claims.get("sub", ""),
-        email=claims.get("email", ""),
-        name=claims.get("name", ""),
-        groups=list(claims.get("groups") or []),
-        session_index=claims.get("sidx"),
+        sub=str(claims.get("sub") or row["sub"]),
+        email=str(claims.get("email") or row["email"] or ""),
+        name=str(claims.get("name") or ""),
+        groups=list(groups) if isinstance(groups, list) else [],
+        session_index=sidx if isinstance(sidx, str) else None,
+        sid=str(row["sid"]),
+        auth_time=int(row["auth_time"]),
     )

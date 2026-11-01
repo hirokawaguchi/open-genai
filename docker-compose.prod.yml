@@ -172,6 +172,9 @@ services:
       - APP_JWT_SECRET=${APP_JWT_SECRET:?APP_JWT_SECRET を .env.prod に設定してください}
       # アプリ JWT の有効期限（秒）。既定 43200=12時間。フロントが期限前に静かに再発行する。
       - APP_JWT_TTL=${APP_JWT_TTL:-43200}
+      # ログインを切る時刻（日本時間の時）。既定は午前4時。近い時刻のログインは次の日まで持つ。
+      - APP_SESSION_RESET_HOUR=${APP_SESSION_RESET_HOUR:-4}
+      - APP_SESSION_RESET_MIN_SECONDS=${APP_SESSION_RESET_MIN_SECONDS:-14400}
       # ログイン後の API 回数（アカウント単位）。0 で無効。既定は 1 分に 300 件。
       - API_ACCOUNT_RATE_LIMIT=${API_ACCOUNT_RATE_LIMIT:-300}
       - API_ACCOUNT_RATE_WINDOW_SEC=${API_ACCOUNT_RATE_WINDOW_SEC:-60}
