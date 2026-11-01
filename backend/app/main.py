@@ -2973,6 +2973,7 @@ async def create_notice(request: Request) -> JSONResponse:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     body = await request.json()
     scope = str((body or {}).get("scope") or "").strip()
+    title = str((body or {}).get("title") or "")
     text = str((body or {}).get("body") or "")
     tenant_id = _active_tenant_id(user_id, claims)
     is_sys = _is_system_admin(claims)
@@ -2988,12 +2989,47 @@ async def create_notice(request: Request) -> JSONResponse:
         created = notices.create_notice(
             scope=scope,
             tenant_id=tenant_id if scope == "tenant" else "",
+            title=title,
             body=text,
             author_id=user_id,
         )
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     return JSONResponse(content=created)
+
+
+def _may_change_notice(current: dict[str, Any], user_id: str, claims: dict[str, Any]) -> bool:
+    is_sys = _is_system_admin(claims)
+    tenant_id = _active_tenant_id(user_id, claims)
+    if current["scope"] == "all":
+        return is_sys
+    return bool(
+        current["tenantId"] == tenant_id
+        and _can_post_tenant_notice(user_id, tenant_id, is_sys)
+    )
+
+
+@app.put("/notices/{notice_id}")
+async def update_notice(notice_id: str, request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    current = notices.get_notice(notice_id)
+    if not current:
+        return JSONResponse(status_code=404, content={"error": "お知らせが見つかりません"})
+    if not _may_change_notice(current, user_id, claims):
+        return JSONResponse(status_code=403, content={"error": "このお知らせは変更できません"})
+    body = await request.json()
+    title = str((body or {}).get("title") or "")
+    text = str((body or {}).get("body") or "")
+    try:
+        updated = notices.update_notice(notice_id, title, text)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    if not updated:
+        return JSONResponse(status_code=404, content={"error": "お知らせが見つかりません"})
+    return JSONResponse(content=updated)
 
 
 @app.delete("/notices/{notice_id}")
@@ -3005,15 +3041,7 @@ async def delete_notice(notice_id: str, request: Request) -> JSONResponse:
     current = notices.get_notice(notice_id)
     if not current:
         return JSONResponse(status_code=404, content={"error": "お知らせが見つかりません"})
-    is_sys = _is_system_admin(claims)
-    tenant_id = _active_tenant_id(user_id, claims)
-    if current["scope"] == "all":
-        if not is_sys:
-            return JSONResponse(status_code=403, content={"error": "このお知らせは削除できません"})
-    elif not (
-        current["tenantId"] == tenant_id
-        and _can_post_tenant_notice(user_id, tenant_id, is_sys)
-    ):
+    if not _may_change_notice(current, user_id, claims):
         return JSONResponse(status_code=403, content={"error": "このお知らせは削除できません"})
     notices.delete_notice(notice_id)
     return JSONResponse(content={"ok": True})
