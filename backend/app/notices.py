@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Callable
 
 DB_PATH = os.environ.get("DB_PATH", "/data/open-genai.db")
+MAX_TITLE = 80
 MAX_BODY = 4000
 
 _lock = threading.Lock()
@@ -54,6 +55,7 @@ def init_db() -> None:
                 noticeId TEXT PRIMARY KEY,
                 scope TEXT NOT NULL,
                 tenantId TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
                 body TEXT NOT NULL,
                 authorId TEXT NOT NULL,
                 createdDate TEXT NOT NULL,
@@ -61,6 +63,9 @@ def init_db() -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(notices)")}
+        if "title" not in cols:
+            conn.execute("ALTER TABLE notices ADD COLUMN title TEXT NOT NULL DEFAULT ''")
     _ready = True
 
 
@@ -74,6 +79,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         "noticeId": row["noticeId"],
         "scope": row["scope"],
         "tenantId": row["tenantId"],
+        "title": row["title"] if "title" in row.keys() else "",
         "body": row["body"],
         "authorId": row["authorId"],
         "createdDate": row["createdDate"],
@@ -99,19 +105,26 @@ def list_visible(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
     return items
 
 
+def _checked(value: str, *, empty: str, limit: int, unit: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        raise ValueError(empty)
+    if len(text) > limit:
+        raise ValueError(f"{unit}は {limit} 文字までです")
+    return text
+
+
 def create_notice(
     *,
     scope: str,
     tenant_id: str,
+    title: str,
     body: str,
     author_id: str,
 ) -> dict[str, Any]:
     _ensure()
-    text = (body or "").strip()
-    if not text:
-        raise ValueError("本文が空です")
-    if len(text) > MAX_BODY:
-        raise ValueError(f"本文は {MAX_BODY} 文字までです")
+    heading = _checked(title, empty="タイトルが空です", limit=MAX_TITLE, unit="タイトル")
+    text = _checked(body, empty="本文が空です", limit=MAX_BODY, unit="本文")
     if scope not in ("all", "tenant"):
         raise ValueError("scope が不正です")
     if scope == "all":
@@ -124,10 +137,10 @@ def create_notice(
         conn.execute(
             """
             INSERT INTO notices
-            (noticeId, scope, tenantId, body, authorId, createdDate, updatedDate)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (noticeId, scope, tenantId, title, body, authorId, createdDate, updatedDate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (notice_id, scope, tenant_id, text, author_id, now, now),
+            (notice_id, scope, tenant_id, heading, text, author_id, now, now),
         )
         row = conn.execute(
             "SELECT * FROM notices WHERE noticeId = ?", (notice_id,)
@@ -138,6 +151,24 @@ def create_notice(
 def get_notice(notice_id: str) -> dict[str, Any] | None:
     _ensure()
     with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM notices WHERE noticeId = ?", (notice_id,)
+        ).fetchone()
+    return _row(row) if row else None
+
+
+def update_notice(notice_id: str, title: str, body: str) -> dict[str, Any] | None:
+    _ensure()
+    heading = _checked(title, empty="タイトルが空です", limit=MAX_TITLE, unit="タイトル")
+    text = _checked(body, empty="本文が空です", limit=MAX_BODY, unit="本文")
+    now = _now()
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            "UPDATE notices SET title = ?, body = ?, updatedDate = ? WHERE noticeId = ?",
+            (heading, text, now, notice_id),
+        )
+        if cur.rowcount == 0:
+            return None
         row = conn.execute(
             "SELECT * FROM notices WHERE noticeId = ?", (notice_id,)
         ).fetchone()
