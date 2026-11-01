@@ -57,13 +57,26 @@ _CONTENT_POLICY_PHRASES = (
     "コンテンツフィルタ",
 )
 
-# OpenAI Images の許可サイズ。未登録モデルは gpt-image-1 と同じ 3 サイズへ寄せる。
+# OpenAI Images の許可サイズ。未登録モデルは gpt-image 系と同じ 3 サイズへ寄せる。
+_GPT_IMAGE_SIZES = ((1024, 1024), (1536, 1024), (1024, 1536))
 _OPENAI_IMAGE_SIZES: dict[str, tuple[tuple[int, int], ...]] = {
-    "gpt-image-1": ((1024, 1024), (1536, 1024), (1024, 1536)),
+    "gpt-image-1": _GPT_IMAGE_SIZES,
+    "gpt-image-2.5-flare": _GPT_IMAGE_SIZES,
+    "gpt-image-2.5-sunburst": _GPT_IMAGE_SIZES,
     "dall-e-3": ((1024, 1024), (1792, 1024), (1024, 1792)),
     "dall-e-2": ((256, 256), (512, 512), (1024, 1024)),
 }
-_DEFAULT_OPENAI_IMAGE_SIZES = _OPENAI_IMAGE_SIZES["gpt-image-1"]
+_DEFAULT_OPENAI_IMAGE_SIZES = _GPT_IMAGE_SIZES
+
+# 画面のモデルIDは維持する。gpt-image-1 は 2026-10-23 に提供終了した。
+_RETIRED_OPENAI_IMAGE_MODELS = {
+    "gpt-image-1": "gpt-image-2.5-flare",
+}
+
+
+def openai_request_model(model_id: str) -> str:
+    """画面のモデルIDを、Images API が受け付けるモデル名に読み替える。"""
+    return _RETIRED_OPENAI_IMAGE_MODELS.get(model_id, model_id)
 
 
 class ImageGenError(Exception):
@@ -366,12 +379,14 @@ def build_openai_edit_fields(
     except (ValueError, TypeError) as exc:
         raise ImageGenError("画像を読み込めませんでした。", status=400) from exc
     fields = {
-        "model": model_id,
+        "model": openai_request_model(model_id),
         "prompt": _openai_prompt(common),
         "n": "1",
         "size": openai_image_size(model_id, common["width"], common["height"]),
-        "input_fidelity": "high",
     }
+    # gpt-image-2 以降は入力画像を常に高忠実度で扱うため、指定すると拒否される。
+    if not openai_request_model(model_id).startswith("gpt-image-2"):
+        fields["input_fidelity"] = "high"
     return fields, raw
 
 
@@ -385,7 +400,7 @@ def build_openai_images_payload(model_id: str, params: dict[str, Any]) -> dict[s
             code="unsupported_image_mode",
         )
     payload: dict[str, Any] = {
-        "model": model_id,
+        "model": openai_request_model(model_id),
         "prompt": _openai_prompt(common),
         "n": 1,
         "size": openai_image_size(model_id, common["width"], common["height"]),

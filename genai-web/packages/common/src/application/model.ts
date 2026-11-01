@@ -393,7 +393,7 @@ export const modelMetadata: Record<string, ModelMetadata> = {
   },
   'gpt-image-1': {
     flags: MODEL_FEATURE.IMAGE_GEN,
-    displayName: 'GPT Image 1',
+    displayName: 'GPT Image 2.5',
   },
 
   // Stability AI Image Gen
