@@ -873,6 +873,42 @@ def test_compose_embeds_image_with_spaces(client, monkeypatch):
     assert captured["assets"][f"images/{name}"] == b"PNGDATA"
 
 
+def test_prepare_sections_separates_headings_for_word():
+    """Word 化（pandoc）は、空行のない見出しを本文に残す。視覚形式のときだけ空行を足す。"""
+    from app.main import _prepare_sections_for_compose
+
+    sections = [{
+        "filename": "section4.md",
+        "rel_path": "section4.md",
+        "content": (
+            "項目を保持する。\n"
+            "#### 帳票要件\n"
+            "本機能において直接的に出力する帳票は発生しない。\n"
+            "#### データ要件\n"
+            "申込情報を管理する。\n"
+            "```\n"
+            "#### そのまま\n"
+            "```\n"
+            "#### 外の見出し\n"
+            "本文\n"
+        ),
+    }]
+    visual, refs = _prepare_sections_for_compose(sections, {}, embed_images=True)
+    assert refs == []
+    text = visual[0]["content"]
+    assert "する。\n\n#### 帳票要件\n" in text
+    assert "ない。\n\n#### データ要件\n" in text
+    assert "```\n#### そのまま\n```\n\n#### 外の見出し\n" in text
+    again, _ = _prepare_sections_for_compose(
+        [{"filename": "section4.md", "rel_path": "section4.md", "content": text}],
+        {},
+        embed_images=True,
+    )
+    assert again[0]["content"] == text
+    raw, _ = _prepare_sections_for_compose(sections, {}, embed_images=False)
+    assert raw[0]["content"] == sections[0]["content"]
+
+
 def test_rewrite_root_image_with_spaces():
     """同じ階層に既にある空白入り画像も、山括弧付きの参照へ揃える。"""
     from app.main import _rewrite_image_refs

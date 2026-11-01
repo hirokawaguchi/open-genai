@@ -1386,6 +1386,32 @@ def _rewrite_image_refs(
     return _IMAGE_REF_RE.sub(repl, content or ""), refs
 
 
+# pandoc は空行のない ATX 見出しを本文の続きとして残す。プレビュー側は空行なしでも見出しにする。
+_FENCE_LINE_RE = re.compile(r"^[ \t]{0,3}(?:```+|~~~+)")
+_ATX_HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}(?:[ \t]|$)")
+
+
+def _separate_atx_headings(content: str) -> str:
+    """見出し行の直前に空行を足す。コードフェンスの中は変えない。"""
+    if not content or "#" not in content:
+        return content
+    text = content.replace("\r\n", "\n").replace("\r", "\n")
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if not in_fence and _ATX_HEADING_RE.match(line) and out and out[-1].strip() != "":
+            out.append("")
+        out.append(line)
+    joined = "\n".join(out)
+    if "\r\n" in content:
+        joined = joined.replace("\n", "\r\n")
+    return joined
+
+
 def _prepare_sections_for_compose(
     sections: list[dict[str, str]],
     files_by_rel: dict[str, dict[str, Any]],
@@ -1398,6 +1424,7 @@ def _prepare_sections_for_compose(
     for sec in sections:
         content = sec.get("content") or ""
         if embed_images:
+            content = _separate_atx_headings(content)
             content, found = _rewrite_image_refs(content, sec.get("rel_path") or "", files_by_rel)
             for rel in found:
                 if rel not in refs:
