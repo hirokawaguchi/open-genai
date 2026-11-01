@@ -157,7 +157,7 @@ def test_build_openai_images_payload_text_only() -> None:
             stylePreset="anime",
         ),
     )
-    assert payload["model"] == "gpt-image-1"
+    assert payload["model"] == "gpt-image-2.5-flare"
     assert payload["prompt"] == "a cat, anime style Avoid: blurry"
     assert payload["size"] == "1536x1024"
     assert payload["n"] == 1
@@ -187,16 +187,17 @@ def test_openai_edit_preserves_prompt_unless_style_set() -> None:
     fields, image = image_gen.build_openai_edit_fields(
         "gpt-image-1", _cat_params(initImage=raw)
     )
+    assert fields["model"] == "gpt-image-2.5-flare"
     assert fields["prompt"] == "a cat"
     assert "style" not in fields["prompt"]
-    assert fields["input_fidelity"] == "high"
+    assert "input_fidelity" not in fields
     assert image == b"png-bytes"
 
     styled, _ = image_gen.build_openai_edit_fields(
         "gpt-image-1", _cat_params(initImage=raw, stylePreset="anime")
     )
     assert styled["prompt"] == "a cat, anime style"
-    assert styled["input_fidelity"] == "high"
+    assert "input_fidelity" not in styled
 
 
 def test_build_dall_e_payload_requests_b64() -> None:
@@ -308,7 +309,7 @@ def test_gpt_image_posts_generations_and_returns_b64() -> None:
         os.environ.pop("IMAGE_PROVIDERS", None)
     assert b64 == "aGVsbG8="
     assert captured["url"] == "https://api.openai.com/v1/images/generations"
-    assert captured["json"]["model"] == "gpt-image-1"
+    assert captured["json"]["model"] == "gpt-image-2.5-flare"
     assert captured["json"]["size"] == "1024x1024"
     assert captured["json"]["prompt"] == "a cat"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
