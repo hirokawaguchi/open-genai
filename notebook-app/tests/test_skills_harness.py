@@ -351,3 +351,88 @@ def test_weather_and_wikipedia_helpers(monkeypatch):
     search = asyncio.run(sample_mcp.wikipedia_search("テスト"))
     assert "要約です" in search
     assert "Wikipedia" in search
+
+
+def test_answer_ref_resolution():
+    messages = [
+        {"id": "u", "role": "user", "content": "聞いて"},
+        {"id": "blank", "role": "assistant", "content": "  "},
+        {"id": "a1", "role": "assistant", "content": "一つ目"},
+        {"id": "u2", "role": "user", "content": "もう一度"},
+        {
+            "id": "a2",
+            "role": "assistant",
+            "content": "二つ目",
+            "citations": [{"display_name": "審査.pdf"}],
+        },
+    ]
+    assert harness.answer_ref_numbers("[[回答 2]] と [[回答2]] と [[回答 1]]") == [2, 1]
+    got, err = harness.resolve_answer_refs("[[回答 2]]を直して", messages)
+    assert err is None
+    assert got[0]["n"] == 2
+    assert got[0]["id"] == "a2"
+    assert got[0]["prompt"] == "もう一度"
+    assert got[0]["sources"] == ["審査.pdf"]
+    _, err = harness.resolve_answer_refs("[[回答 9]]", messages)
+    assert err == "回答 9 はこのノートにありません"
+    many = " ".join(f"[[回答 {i}]]" for i in range(1, 7))
+    _, err = harness.resolve_answer_refs(many, messages)
+    assert err == "指定できる過去の回答は5件までです"
+    section = harness._designated_section(
+        [{"n": 1, "content": "あ" * 4001, "prompt": "", "sources": []}]
+    )
+    assert "以下略" in section
+
+
+def test_harness_pins_designated_answers(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    sid = store.create_session(user_id="u1")["id"]
+    history = []
+    for i in range(1, 10):
+        history.append({"id": f"u{i}", "role": "user", "content": f"質問{i}"})
+        history.append(
+            {
+                "id": f"a{i}",
+                "role": "assistant",
+                "content": f"本文{i}はユニーク",
+                "citations": [{"display_name": "審査.pdf"}] if i == 1 else [],
+            }
+        )
+    question = "[[回答 1]] の結論を [[回答 2]] に合わせて"
+    designated, err = harness.resolve_answer_refs(question, history)
+    assert err is None
+    seen: dict[str, object] = {}
+
+    async def fake_chat(messages, temperature=0.2, tools=None):
+        seen["system"] = messages[0]["content"]
+        seen["rest"] = [
+            (m["role"], m["content"]) for m in messages if m["role"] != "system"
+        ]
+        return {"role": "assistant", "content": "合わせました"}
+
+    monkeypatch.setattr("app.llm.chat_completion", fake_chat)
+    answer, _, _ = asyncio.run(
+        harness.run(
+            session_id=sid,
+            user_id="u1",
+            scope="team-1",
+            question=question,
+            history=history,
+            designated_answers=designated,
+        )
+    )
+    system = str(seen["system"])
+    rest = seen["rest"]
+    assert isinstance(rest, list)
+    blob = "\n".join(content for _, content in rest)
+    assert "本文1はユニーク" in system
+    assert "本文2はユニーク" in system
+    assert "きっかけ: 質問1" in system
+    assert "出典: 審査.pdf" in system
+    assert "本文1はユニーク" not in blob
+    assert "本文2はユニーク" not in blob
+    assert "（回答 2。全文は「この送信で指定した過去の回答」を参照）" in blob
+    assert "指定した過去の回答: 回答 1、回答 2" in rest[-1][1]
+    assert "合わせました" in answer

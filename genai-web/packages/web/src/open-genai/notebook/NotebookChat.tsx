@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { Select } from '@/components/ui/dads/Select';
@@ -7,6 +7,13 @@ import { SendIcon } from '@/components/ui/icons/SendIcon';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
+import {
+  MAX_ANSWER_REFS,
+  answerPreviewLine,
+  answerRefNumbers,
+  insertAnswerRef,
+  numberedAssistantMessages,
+} from './answerRefs';
 import { ChatAnswer } from './Citations';
 import { toolLabel } from './toolLabels';
 import type {
@@ -34,6 +41,27 @@ type Props = {
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onApplyMessage: (message: NotebookMessage) => void;
+};
+
+const AnswerRefText = ({ content }: { content: string }) => {
+  const nodes: ReactNode[] = [];
+  const re = /\[\[回答\s*(\d+)\]\]/g;
+  let last = 0;
+  for (const match of content.matchAll(re)) {
+    const start = match.index ?? 0;
+    if (start > last) nodes.push(content.slice(last, start));
+    nodes.push(
+      <span
+        key={`${start}-${match[1]}`}
+        className='mx-0.5 inline-block rounded-full border border-blue-900 bg-white px-2 align-baseline text-dns-14N-130 text-blue-900'
+      >
+        回答 {Number(match[1])}
+      </span>,
+    );
+    last = start + match[0].length;
+  }
+  if (last < content.length || nodes.length === 0) nodes.push(content.slice(last));
+  return <p className='whitespace-pre-wrap break-words text-std-16N-170'>{nodes}</p>;
 };
 
 const AgentSteps = ({ traces, running }: { traces?: NotebookToolTrace[]; running?: boolean }) => {
@@ -87,9 +115,55 @@ export const NotebookChat = ({
   const { hint } = useSubmitKey();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const caretRef = useRef({ start: 0, end: 0 });
+  const pendingCaret = useRef<number | null>(null);
   const [formH, setFormH] = useState(0);
   const selectedSkill = skills.find((s) => s.id === skillId);
   const empty = messages.length === 0 && !submitting;
+  const numbered = useMemo(() => numberedAssistantMessages(messages), [messages]);
+  const answersByNumber = useMemo(
+    () => new Map(numbered.map((item) => [item.n, item.message])),
+    [numbered],
+  );
+  const numberById = useMemo(
+    () => new Map(numbered.map((item) => [item.message.id, item.n])),
+    [numbered],
+  );
+  const draftRefs = useMemo(() => answerRefNumbers(draft), [draft]);
+
+  const rememberCaret = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    caretRef.current = {
+      start: el.selectionStart ?? draft.length,
+      end: el.selectionEnd ?? draft.length,
+    };
+  };
+
+  const insertAnswer = (n: number) => {
+    if (submitting || n < 1) return;
+    const el = textareaRef.current;
+    const focused = el != null && document.activeElement === el;
+    const start = focused ? (el.selectionStart ?? caretRef.current.start) : caretRef.current.start;
+    const end = focused ? (el.selectionEnd ?? caretRef.current.end) : caretRef.current.end;
+    const safeStart = Math.min(start, draft.length);
+    const safeEnd = Math.min(Math.max(end, safeStart), draft.length);
+    const next = insertAnswerRef(draft, n, safeStart, safeEnd);
+    pendingCaret.current = next.caret;
+    caretRef.current = { start: next.caret, end: next.caret };
+    onDraftChange(next.value);
+  };
+
+  useEffect(() => {
+    const pos = pendingCaret.current;
+    if (pos == null) return;
+    pendingCaret.current = null;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(pos, pos);
+  }, [draft]);
 
   const lastMessage = messages[messages.length - 1];
   const lastKey = lastMessage?.id ?? '';
@@ -133,7 +207,14 @@ export const NotebookChat = ({
             >
               {m.role === 'assistant' ? (
                 <>
-                  <h2 className='sr-only'>回答</h2>
+                  <h2 className='sr-only'>
+                    {numberById.has(m.id) ? `回答 ${numberById.get(m.id)}` : '回答'}
+                  </h2>
+                  {numberById.has(m.id) ? (
+                    <p className='mb-1 text-dns-14N-130 text-solid-gray-600'>
+                      回答 {numberById.get(m.id)}
+                    </p>
+                  ) : null}
                   <AgentSteps traces={m.tool_trace} />
                   <ChatAnswer
                     content={m.content}
@@ -141,6 +222,20 @@ export const NotebookChat = ({
                     idPrefix={`nb-cite-${m.id}`}
                   />
                   <div className='mt-3 flex flex-wrap items-center gap-2'>
+                    {numberById.has(m.id) ? (
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='xs'
+                        disabled={submitting}
+                        onClick={() => {
+                          const n = numberById.get(m.id);
+                          if (n) insertAnswer(n);
+                        }}
+                      >
+                        指示に入れる
+                      </Button>
+                    ) : null}
                     <Button
                       type='button'
                       variant='outline'
@@ -169,7 +264,7 @@ export const NotebookChat = ({
               ) : (
                 <>
                   <h2 className='sr-only'>あなたのメッセージ</h2>
-                  <p className='whitespace-pre-wrap break-words text-std-16N-170'>{m.content}</p>
+                  <AnswerRefText content={m.content} />
                   {m.source_labels && m.source_labels.length > 0 ? (
                     <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
                       資料: {m.source_labels.join('、')}
@@ -240,6 +335,11 @@ export const NotebookChat = ({
           <SupportText id='notebook-chat-submit-hint' className='mb-1'>
             {hint}
           </SupportText>
+          {numbered.length > 0 ? (
+            <p className='mb-1 text-dns-14N-130 text-solid-gray-600'>
+              過去の回答は「指示に入れる」で、文の途中に番号を差し込めます。
+            </p>
+          ) : null}
           {sources.length > 0 ? (
             <div className='mb-2'>
               <p id='notebook-source-scope' className='text-dns-14N-130 text-solid-gray-700'>
@@ -276,6 +376,7 @@ export const NotebookChat = ({
           <div className='flex flex-col gap-2'>
             <AutoResizeTextarea
               id='notebook-chat'
+              ref={textareaRef}
               className='resize-none'
               rows={empty ? 3 : 1}
               value={draft}
@@ -283,8 +384,40 @@ export const NotebookChat = ({
               aria-labelledby='notebook-chat-input-heading'
               aria-describedby='notebook-chat-submit-hint'
               onKeyDown={requestSubmitOnEnter}
-              onChange={(e) => onDraftChange(e.target.value)}
+              onSelect={rememberCaret}
+              onKeyUp={rememberCaret}
+              onClick={rememberCaret}
+              onBlur={rememberCaret}
+              onChange={(e) => {
+                rememberCaret();
+                onDraftChange(e.target.value);
+              }}
             />
+            {draftRefs.length > 0 ? (
+              <div>
+                <p className='text-dns-14N-130 text-solid-gray-700'>この文で指定した回答</p>
+                <ul className='mt-1 flex flex-col gap-1'>
+                  {draftRefs.map((n) => {
+                    const message = answersByNumber.get(n);
+                    return (
+                      <li key={n} className='truncate text-dns-14N-130 text-solid-gray-700'>
+                        <span className='text-std-16B-150 text-blue-900'>回答 {n}</span>{' '}
+                        {message ? (
+                          answerPreviewLine(message.content)
+                        ) : (
+                          <span className='text-error-1'>このノートにありません</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {draftRefs.length > MAX_ANSWER_REFS ? (
+                  <p className='mt-1 text-dns-14N-130 text-error-1'>
+                    指定できる過去の回答は5件までです
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className='flex justify-end'>
               <LoadingButton
                 type='submit'

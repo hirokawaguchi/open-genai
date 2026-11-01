@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from . import llm, retrieve, store, tools
 
 MAX_STEPS = 6
 HISTORY_LIMIT = 8
+MAX_ANSWER_REFS = 5
+ANSWER_REF_CHARS = 4000
+_ANSWER_REF = re.compile(r"\[\[回答\s*(\d+)\]\]")
 
 
 def _catalog_for_prompt(
@@ -28,6 +32,7 @@ def _system_prompt(
     *,
     source_labels: list[str],
     catalog: list[dict[str, Any]],
+    designated: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
         "あなたはノートの参考資料と、接続中の MCP を根拠にするアシスタントです。",
@@ -87,19 +92,135 @@ def _system_prompt(
         "そのときは下書きしない。"
         "AIタイプの型で下書きするのは、見る資料と節が決まってから。"
     )
+    if designated:
+        lines.append("\n" + _designated_section(designated))
     return "\n".join(lines)
 
 
-def _history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def answer_ref_numbers(text: str) -> list[int]:
+    """質問文中の [[回答 N]] を、出てきた順・重複なしで返す。"""
+    seen: list[int] = []
+    for match in _ANSWER_REF.finditer(text or ""):
+        n = int(match.group(1))
+        if n not in seen:
+            seen.append(n)
+    return seen
+
+
+def numbered_assistant_answers(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """アシスタント回答を出てきた順に 1 始まりで番号付けする。空文は数えない。"""
+    numbered: list[dict[str, Any]] = []
+    prompt = ""
+    n = 0
+    for message in messages:
+        role = str(message.get("role") or "")
+        content = str(message.get("content") or "")
+        if role == "user":
+            if content.strip():
+                prompt = content.strip()
+            continue
+        if role != "assistant" or not content.strip():
+            continue
+        n += 1
+        names: list[str] = []
+        cites = message.get("citations")
+        if isinstance(cites, list):
+            for cite in cites:
+                if not isinstance(cite, dict):
+                    continue
+                name = str(cite.get("display_name") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+        numbered.append(
+            {
+                "n": n,
+                "id": str(message.get("id") or ""),
+                "content": content,
+                "prompt": prompt,
+                "sources": names[:8],
+            }
+        )
+    return numbered
+
+
+def resolve_answer_refs(
+    question: str, messages: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], str | None]:
+    wanted = answer_ref_numbers(question)
+    if not wanted:
+        return [], None
+    if len(wanted) > MAX_ANSWER_REFS:
+        return [], "指定できる過去の回答は5件までです"
+    by_n = {item["n"]: item for item in numbered_assistant_answers(messages)}
+    missing = [n for n in wanted if n not in by_n]
+    if missing:
+        labels = "、".join(f"回答 {n}" for n in missing)
+        return [], f"{labels} はこのノートにありません"
+    return [by_n[n] for n in wanted], None
+
+
+def _one_line(text: str, limit: int = 80) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    line = re.sub(r"\s+", " ", raw.splitlines()[0].strip())
+    if len(line) <= limit:
+        return line
+    return line[:limit] + "…"
+
+
+def _clip_answer(text: str) -> str:
+    body = (text or "").strip()
+    if len(body) <= ANSWER_REF_CHARS:
+        return body
+    return body[:ANSWER_REF_CHARS] + "\n（以下略）"
+
+
+def _designated_section(answers: list[dict[str, Any]]) -> str:
+    lines = [
+        "# この送信で指定した過去の回答",
+        "次の指示は、ここで挙げる回答を対象にする。",
+        "『これ』『その回答』は、履歴全体ではなく、この番号を指す。",
+        "指定が複数のときは、指示がどれかを言っていなければすべてを対象にする。",
+        "指定に無い事実を、指定回答の内容であるかのように扱わない。",
+    ]
+    for answer in answers:
+        lines.append(f"\n## 回答 {answer['n']}")
+        prompt = _one_line(str(answer.get("prompt") or ""))
+        if prompt:
+            lines.append(f"きっかけ: {prompt}")
+        sources = [str(s) for s in (answer.get("sources") or []) if str(s).strip()]
+        if sources:
+            lines.append("出典: " + "、".join(sources))
+        lines.append(_clip_answer(str(answer.get("content") or "")))
+    return "\n".join(lines)
+
+
+def _history(
+    messages: list[dict[str, Any]],
+    designated: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    by_id = {
+        str(item.get("id") or ""): int(item["n"])
+        for item in (designated or [])
+        if str(item.get("id") or "")
+    }
     usable = [
         m
         for m in messages
         if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()
     ]
     clipped = usable[-HISTORY_LIMIT * 2 :]
-    return [
-        {"role": str(m["role"]), "content": str(m.get("content") or "")} for m in clipped
-    ]
+    out: list[dict[str, Any]] = []
+    for message in clipped:
+        content = str(message.get("content") or "")
+        mid = str(message.get("id") or "")
+        if message.get("role") == "assistant" and mid in by_id:
+            content = (
+                f"（回答 {by_id[mid]}。全文は「この送信で指定した過去の回答」を参照）"
+            )
+        out.append({"role": str(message["role"]), "content": content})
+    return out
 
 
 def _json_objects(text: str) -> list[str]:
@@ -170,6 +291,7 @@ async def run(
     enabled_mcps: list[dict[str, Any]] | None = None,
     source_ids: list[str] | None = None,
     source_labels: list[str] | None = None,
+    designated_answers: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
     mcps = enabled_mcps
     if mcps is None:
@@ -179,6 +301,7 @@ async def run(
         allowed = list(tools.CORE_TOOL_NAMES)
     scoped = [str(s).strip() for s in (source_ids or []) if str(s).strip()]
     labels = [str(s).strip() for s in (source_labels or []) if str(s).strip()]
+    designated = list(designated_answers or [])
     catalog = _catalog_for_prompt(store.list_source_index(session_id, user_id) or [], scoped)
     ctx = tools.ToolContext(
         session_id=session_id,
@@ -190,8 +313,16 @@ async def run(
     traces: list[dict[str, str]] = []
     openai_tools = tools.openai_tools(allowed, extra_specs)
     model_question = question
+    notes: list[str] = []
     if labels:
-        model_question = f"{question}\n\n（この発言で指定した資料: {'、'.join(labels)}）"
+        notes.append("この発言で指定した資料: " + "、".join(labels))
+    if designated:
+        notes.append(
+            "この発言で指定した過去の回答: "
+            + "、".join(f"回答 {item['n']}" for item in designated)
+        )
+    if notes:
+        model_question = f"{question}\n\n（{'。'.join(notes)}）"
     messages: list[dict[str, Any]] = [
         {
             "role": "system",
@@ -201,9 +332,10 @@ async def run(
                 mcps,
                 source_labels=labels,
                 catalog=catalog,
+                designated=designated,
             ),
         },
-        *_history(history),
+        *_history(history, designated),
         {"role": "user", "content": model_question},
     ]
     fallback_hint = (

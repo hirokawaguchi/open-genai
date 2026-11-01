@@ -597,6 +597,9 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
             )
         scoped = kept
     history = list(detail.get("messages") or [])
+    designated, ref_error = harness.resolve_answer_refs(question, history)
+    if ref_error:
+        return JSONResponse(status_code=400, content={"error": ref_error})
     store.add_message(
         session_id, uid, role="user", content=question, source_labels=labels
     )
@@ -612,6 +615,7 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
             skill=skill,
             source_ids=scoped,
             source_labels=labels,
+            designated_answers=designated,
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
