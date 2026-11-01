@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
 import { Select } from '@/components/ui/dads/Select';
@@ -113,12 +113,10 @@ export const NotebookChat = ({
   onApplyMessage,
 }: Props) => {
   const { hint } = useSubmitKey();
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const caretRef = useRef({ start: 0, end: 0 });
   const pendingCaret = useRef<number | null>(null);
-  const [formH, setFormH] = useState(0);
   const selectedSkill = skills.find((s) => s.id === skillId);
   const empty = messages.length === 0 && !submitting;
   const numbered = useMemo(() => numberedAssistantMessages(messages), [messages]);
@@ -170,27 +168,20 @@ export const NotebookChat = ({
   const lastText = lastMessage?.content ?? '';
 
   useEffect(() => {
-    const node = formRef.current;
-    if (!node) return;
-    const sync = () => setFormH(node.offsetHeight);
-    const ro = new ResizeObserver(sync);
-    ro.observe(node);
-    sync();
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = chatEndRef.current;
+    const el = listRef.current;
     if (!el) return;
     const id = window.requestAnimationFrame(() => {
-      el.scrollIntoView({ block: 'end', behavior: 'instant' });
+      el.scrollTop = el.scrollHeight;
     });
     return () => window.cancelAnimationFrame(id);
-  }, [lastKey, lastText, messages.length, submitting, formH]);
+  }, [lastKey, lastText, messages.length, submitting]);
 
   return (
     <div className='flex min-h-0 flex-1 flex-col'>
-      <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-3'>
+      <div
+        ref={listRef}
+        className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain py-3'
+      >
         {empty && (
           <p className='text-std-16N-170 text-solid-gray-536'>
             メッセージを入力して会話を始めましょう。調べた手順は回答の上に出ます。
@@ -287,13 +278,9 @@ export const NotebookChat = ({
             </div>
           </div>
         )}
-        <div ref={chatEndRef} className='h-px' style={{ scrollMarginBottom: formH }} />
       </div>
 
-      <div
-        ref={formRef}
-        className='sticky bottom-0 z-1 shrink-0 border-t border-t-solid-gray-800 bg-white pb-2'
-      >
+      <div className='z-1 shrink-0 border-t border-t-solid-gray-800 bg-white pb-2'>
         <form
           className='w-full'
           onSubmit={(e) => {
@@ -303,7 +290,7 @@ export const NotebookChat = ({
           }}
           aria-labelledby='notebook-chat-input-heading'
         >
-          <div className='flex flex-wrap items-center gap-2 py-2'>
+          <div className='flex flex-wrap items-center gap-2 py-1'>
             <label htmlFor='notebook-skill' className='text-dns-14N-130 text-solid-gray-700'>
               AIタイプ
             </label>
@@ -327,29 +314,21 @@ export const NotebookChat = ({
               </span>
             ) : null}
           </div>
-          <h2 id='notebook-chat-input-heading' className='my-1 text-std-16N-170'>
+          <h2 id='notebook-chat-input-heading' className='sr-only'>
             {empty
               ? '調べたいことやお困りごとなど、何でも入力してみましょう'
               : '追加で質問や不明点などあれば返答してみましょう'}
           </h2>
-          <SupportText id='notebook-chat-submit-hint' className='mb-1'>
-            {hint}
-          </SupportText>
-          {numbered.length > 0 ? (
-            <p className='mb-1 text-dns-14N-130 text-solid-gray-600'>
-              過去の回答は「指示に入れる」で、文の途中に番号を差し込めます。
-            </p>
-          ) : null}
           {sources.length > 0 ? (
-            <div className='mb-2'>
+            <div className='mb-1 flex flex-wrap items-center gap-2'>
               <p id='notebook-source-scope' className='text-dns-14N-130 text-solid-gray-700'>
                 この送信で見る資料
+                <span className='text-solid-gray-600'>（未選択ならすべて）</span>
               </p>
-              <p className='text-dns-14N-130 text-solid-gray-600'>未選択ならすべての参考資料</p>
               <div
                 role='group'
                 aria-labelledby='notebook-source-scope'
-                className='mt-1 flex flex-wrap gap-2'
+                className='flex flex-wrap gap-2'
               >
                 {sources.map((source) => {
                   const pressed = selectedSourceIds.includes(source.id);
@@ -373,26 +352,46 @@ export const NotebookChat = ({
               </div>
             </div>
           ) : null}
-          <div className='flex flex-col gap-2'>
-            <AutoResizeTextarea
-              id='notebook-chat'
-              ref={textareaRef}
-              className='resize-none'
-              rows={empty ? 3 : 1}
-              value={draft}
-              placeholder=''
-              aria-labelledby='notebook-chat-input-heading'
-              aria-describedby='notebook-chat-submit-hint'
-              onKeyDown={requestSubmitOnEnter}
-              onSelect={rememberCaret}
-              onKeyUp={rememberCaret}
-              onClick={rememberCaret}
-              onBlur={rememberCaret}
-              onChange={(e) => {
-                rememberCaret();
-                onDraftChange(e.target.value);
-              }}
-            />
+          <div className='flex flex-col gap-1'>
+            <div className='flex items-end gap-2'>
+              <AutoResizeTextarea
+                id='notebook-chat'
+                ref={textareaRef}
+                className='min-w-0 flex-1 resize-none px-3! py-2!'
+                rows={1}
+                maxHeight={112}
+                value={draft}
+                placeholder=''
+                aria-labelledby='notebook-chat-input-heading'
+                aria-describedby='notebook-chat-submit-hint'
+                onKeyDown={requestSubmitOnEnter}
+                onSelect={rememberCaret}
+                onKeyUp={rememberCaret}
+                onClick={rememberCaret}
+                onBlur={rememberCaret}
+                onChange={(e) => {
+                  rememberCaret();
+                  onDraftChange(e.target.value);
+                }}
+              />
+              <LoadingButton
+                type='submit'
+                variant='solid-fill'
+                size='md'
+                disabled={submitting || !llmEnabled}
+                loading={submitting}
+                className='inline-flex min-w-28 shrink-0 items-center justify-center gap-1'
+              >
+                <SendIcon aria-hidden={true} className='shrink-0' />
+                {submitting ? '生成中...' : '送信'}
+              </LoadingButton>
+            </div>
+            <SupportText id='notebook-chat-submit-hint'>
+              {hint}
+              {numbered.length > 0
+                ? ' 過去の回答は「指示に入れる」で、文の途中に番号を差し込めます。'
+                : ''}
+            </SupportText>
             {draftRefs.length > 0 ? (
               <div>
                 <p className='text-dns-14N-130 text-solid-gray-700'>この文で指定した回答</p>
@@ -418,19 +417,6 @@ export const NotebookChat = ({
                 ) : null}
               </div>
             ) : null}
-            <div className='flex justify-end'>
-              <LoadingButton
-                type='submit'
-                variant='solid-fill'
-                size='md'
-                disabled={submitting || !llmEnabled}
-                loading={submitting}
-                className='inline-flex min-w-36 items-center justify-center gap-1'
-              >
-                <SendIcon aria-hidden={true} className='shrink-0' />
-                {submitting ? '生成中...' : '送信'}
-              </LoadingButton>
-            </div>
           </div>
         </form>
       </div>

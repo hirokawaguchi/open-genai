@@ -211,6 +211,50 @@ export const NotebookPage = () => {
     }
   }, [knowledgeScope, scopes]);
 
+  useEffect(() => {
+    if (pane === 'list') return;
+    const root = document.getElementById('layoutRoot');
+    const main = document.getElementById('mainContents');
+    const column = main?.parentElement ?? null;
+    const row = column?.parentElement ?? null;
+    const html = document.documentElement;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevRootHeight = root?.style.height ?? '';
+    const prevRootOverflow = root?.style.overflow ?? '';
+    html.style.overflow = 'hidden';
+    if (root) {
+      root.style.height = '100dvh';
+      root.style.overflow = 'hidden';
+    }
+    const added: Array<[HTMLElement, string[]]> = [];
+    const add = (el: HTMLElement | null, classes: string[]) => {
+      if (!el) return;
+      const next = classes.filter((name) => !el.classList.contains(name));
+      if (next.length === 0) return;
+      el.classList.add(...next);
+      added.push([el, next]);
+    };
+    add(row, ['min-h-0', 'overflow-hidden']);
+    add(column, ['min-h-0', 'overflow-hidden']);
+    add(main, ['flex', 'min-h-0', 'flex-col', 'overflow-hidden']);
+    const shell = document.getElementById('notebook-shell');
+    let node = shell?.parentElement ?? null;
+    while (node && node !== main) {
+      add(node, ['flex', 'min-h-0', 'h-full', 'flex-1', 'flex-col', 'overflow-hidden']);
+      node = node.parentElement;
+    }
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      if (root) {
+        root.style.height = prevRootHeight;
+        root.style.overflow = prevRootOverflow;
+      }
+      for (const [el, classes] of added) {
+        el.classList.remove(...classes);
+      }
+    };
+  }, [pane]);
+
   const chatSources = useMemo(
     () => [
       ...(detail?.files ?? [])
@@ -534,10 +578,11 @@ export const NotebookPage = () => {
     <LayoutBody>
       <PageTitle title={documentTitle} />
       <div
+        id={pane === 'list' ? undefined : 'notebook-shell'}
         className={
           pane === 'list'
             ? 'mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'
-            : 'mx-auto flex h-[calc(100dvh-var(--header-height))] w-full max-w-(--page-width) flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
+            : 'mx-auto flex min-h-0 w-full max-w-(--page-width) flex-1 flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
         }
       >
         {pane === 'list' ? (
