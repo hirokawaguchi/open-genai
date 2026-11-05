@@ -8,6 +8,7 @@
       "warn_attachments": true,
       "scan_knowledge_pii": true,
       "check_pii_ner": true,
+      "mask_prompts": true,
       "words": ["禁止語1"],
       "patterns": ["\\\\d{3}-\\\\d{4}"]
     }
@@ -40,6 +41,7 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
     warn_attachments = bool(data.get("warn_attachments", True))
     scan_knowledge_pii = bool(data.get("scan_knowledge_pii", True))
     check_pii_ner = bool(data.get("check_pii_ner", True))
+    mask_prompts = bool(data.get("mask_prompts", True))
 
     words = data.get("words", [])
     if not isinstance(words, list) or not all(isinstance(x, str) for x in words):
@@ -62,6 +64,7 @@ def parse_and_validate(text: str) -> tuple[dict[str, Any] | None, str | None]:
             "warn_attachments": warn_attachments,
             "scan_knowledge_pii": scan_knowledge_pii,
             "check_pii_ner": check_pii_ner,
+            "mask_prompts": mask_prompts,
             "words": [str(w) for w in words if w],
             "patterns": [str(p) for p in patterns if p],
         },
@@ -85,6 +88,8 @@ def render_rules(rules: dict[str, Any]) -> str:
         f"{'する' if rules.get('scan_knowledge_pii', True) else 'しない'}",
         f"- 氏名・住所の NER 検知: "
         f"{'する' if rules.get('check_pii_ner', True) else 'しない'}",
+        f"- プロンプト本文の個人情報置換: "
+        f"{'する' if rules.get('mask_prompts', True) else 'しない'}",
         f"- 禁止ワード数: {len(words)}",
         f"- 機密パターン数: {len(patterns)}",
     ]

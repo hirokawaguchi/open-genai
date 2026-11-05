@@ -58,7 +58,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        PII_INSTALL_NER: ${PII_INSTALL_NER:-0}
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-1}
     container_name: open-genai-backend
     # ホストにポート公開しない（proxy 経由のみ）
     expose:
@@ -308,7 +308,7 @@ services:
       context: .
       dockerfile: rag-app/Dockerfile
       args:
-        PII_INSTALL_NER: ${PII_INSTALL_NER:-0}
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-1}
     container_name: open-genai-rag-app
     environment:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -711,6 +711,8 @@ services:
     build:
       context: .
       dockerfile: notebook-app/Dockerfile
+      args:
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-1}
     container_name: open-genai-notebook-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -733,9 +735,12 @@ services:
       - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
+      # 棟の個人情報警告設定（backend と同じ ngwords.db を読む）
+      - NGWORD_DB_PATH=/ngword-data/ngwords.db
     volumes:
       # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）
       - procuretech_hearing_app_data:/data
+      - backend_data:/ngword-data:ro
     expose:
       - "8017"
     extra_hosts:

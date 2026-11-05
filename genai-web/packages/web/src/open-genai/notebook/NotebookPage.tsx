@@ -76,6 +76,30 @@ const Spinner = () => (
   />
 );
 
+const SourcePiiWarning = ({ briefing }: { briefing?: NotebookBriefing }) => {
+  const pii = briefing?.pii;
+  if (!pii?.warned) return null;
+  const hits = pii.hits ?? [];
+  return (
+    <div className='mt-2 text-orange-800 whitespace-pre-wrap'>
+      <p>
+        ＊
+        {(pii.message || '').split('\n')[0] ||
+          `個人情報の可能性: ${(pii.categories ?? []).join('・')}`}
+      </p>
+      {hits.length > 0 && (
+        <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
+          {hits.slice(0, 6).map((h, i) => (
+            <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
+              {h.category}: 「{h.context || h.match}」
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
 const SourceBriefing = ({ briefing }: { briefing?: NotebookBriefing }) => {
   if (
     !briefing?.summary &&
@@ -132,6 +156,7 @@ const SourceCard = ({
           削除
         </Button>
       </div>
+      <SourcePiiWarning briefing={briefing} />
       {hasBody && (
         <Disclosure className='mt-2'>
           <DisclosureSummary>詳細</DisclosureSummary>

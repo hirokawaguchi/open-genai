@@ -1,7 +1,7 @@
-"""個人情報の検知（氏名・住所・電話番号・マイナンバー）。
+"""個人情報の検知と、プロンプト本文の置換（氏名・住所・電話番号・マイナンバー）。
 
-- 検知のみ（匿名化・マスクは行わない）。
-- 警告 UI 用に、検知箇所の短い抜粋（match / context）を返す。
+- 警告 UI 用の scan() は検知だけ。抜粋は件数上限付き。
+- mask_text() はプロンプト本文の該当箇所を [種別N] に置き換える。対応表は残さない。
 - GiNZA が無い／失敗時は氏名をスキップし、住所は正規表現補助のみ。
 """
 
@@ -67,7 +67,14 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "scan_knowledge_pii": True,
     "check_pii_ner": True,
     "check_mynumber": True,
+    # チャット等のプロンプト本文を [種別N] に置き換えてからモデルと履歴へ渡す。
+    "mask_prompts": True,
 }
+
+# 置き換え済みトークン。再実行で中をさらに置換しない。
+_PLACEHOLDER_RE = re.compile(r"\[(?:氏名|住所|電話番号|マイナンバー)\d+\]")
+# ノートブック等、同期で全文を見るときの上限（NER は別途 DEFAULT_NER_MAX_CHARS）。
+NOTEBOOK_SCAN_MAX_CHARS = int(os.environ.get("PII_NOTEBOOK_SCAN_MAX_CHARS", "200000"))
 
 _nlp = None
 _nlp_failed = False
@@ -354,6 +361,190 @@ def scan(
 def format_categories(categories: list[str]) -> str:
     """UI 向けの「A・B・C」連結。"""
     return "・".join(categories)
+
+
+def _overlaps(a0: int, a1: int, b0: int, b1: int) -> bool:
+    return a0 < b1 and b0 < a1
+
+
+def _protected_spans(text: str) -> list[tuple[int, int]]:
+    spans = [(m.start(), m.end()) for m in _UUID_RE.finditer(text)]
+    spans.extend((m.start(), m.end()) for m in _PLACEHOLDER_RE.finditer(text))
+    return spans
+
+
+def _covered(start: int, end: int, protected: list[tuple[int, int]]) -> bool:
+    return any(_overlaps(start, end, a, b) for a, b in protected)
+
+
+def _resolve_overlaps(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """重なりは長い区間を残す。"""
+    chosen: list[tuple[int, int, str]] = []
+    for span in sorted(spans, key=lambda s: (-(s[1] - s[0]), s[0])):
+        if any(_overlaps(span[0], span[1], c[0], c[1]) for c in chosen):
+            continue
+        chosen.append(span)
+    chosen.sort(key=lambda s: s[0])
+    return chosen
+
+
+def _ner_raw_spans(sample: str) -> list[tuple[int, int, str]]:
+    """GiNZA の区間。(start, end, category)。件数上限は付けない。"""
+    out: list[tuple[int, int, str]] = []
+    if not sample:
+        return out
+    nlp = _get_nlp()
+    if nlp is None:
+        return out
+    try:
+        disable = [p for p in nlp.pipe_names if p not in ("tok2vec", "ner")]
+        with nlp.select_pipes(disable=disable):
+            doc = nlp(sample)
+    except Exception:  # noqa: BLE001
+        try:
+            doc = nlp(sample)
+        except Exception:  # noqa: BLE001
+            return out
+    for ent in doc.ents:
+        label = (ent.label_ or "").upper()
+        span = ent.text.strip()
+        if not span:
+            continue
+        if label == "PERSON" or label.startswith("PERSON"):
+            if _looks_like_person_name(span):
+                out.append((ent.start_char, ent.end_char, CAT_NAME))
+        elif label in (
+            "GPE",
+            "LOC",
+            "LOCATION",
+            "FACILITY",
+            "CITY",
+            "PROVINCE",
+            "COUNTRY",
+            "ADDRESS",
+        ) or any(x in label for x in ("LOC", "GPE", "ADDRESS", "FACILITY", "CITY", "PROVINCE")):
+            out.append((ent.start_char, ent.end_char, CAT_ADDRESS))
+    return out
+
+
+def _ner_spans(text: str, max_chars: int) -> list[tuple[int, int, str]]:
+    """長い本文は窓に分けて NER する。窓の重なり部分は先の窓の結果を使う。"""
+    cap = max(1, max_chars)
+    overlap = 40
+    spans: list[tuple[int, int, str]] = []
+    seen: set[tuple[int, int, str]] = set()
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(n, start + cap)
+        for local_s, local_e, cat in _ner_raw_spans(text[start:end]):
+            if start > 0 and local_s < overlap:
+                continue
+            abs_span = (start + local_s, start + local_e, cat)
+            if abs_span not in seen and abs_span[1] > abs_span[0]:
+                seen.add(abs_span)
+                spans.append(abs_span)
+        if end >= n:
+            break
+        start = end - overlap
+    return spans
+
+
+def _mask_spans(
+    text: str,
+    *,
+    enable_ner: bool,
+    check_mynumber: bool,
+    ner_max_chars: int,
+) -> list[tuple[int, int, str]]:
+    protected = _protected_spans(text)
+    spans: list[tuple[int, int, str]] = []
+    for m in _PHONE_RE.finditer(text):
+        digits = _phone_digits(m.group(0))
+        if len(digits) in (10, 11) and digits.startswith("0"):
+            if not _covered(m.start(), m.end(), protected):
+                spans.append((m.start(), m.end(), CAT_PHONE))
+    if check_mynumber:
+        for m in re.finditer(r"\d{12}", text):
+            val = m.group(0)
+            if val in find_valid_mynumbers(val) and not _covered(m.start(), m.end(), protected):
+                spans.append((m.start(), m.end(), CAT_MYNUMBER))
+    for m in _ADDRESS_RE.finditer(text):
+        if not _covered(m.start(), m.end(), protected):
+            spans.append((m.start(), m.end(), CAT_ADDRESS))
+    if enable_ner:
+        for start, end, cat in _ner_spans(text, ner_max_chars):
+            if not _covered(start, end, protected):
+                spans.append((start, end, cat))
+    return _resolve_overlaps(spans)
+
+
+def mask_text(
+    text: str,
+    *,
+    enable_ner: bool = True,
+    check_mynumber: bool = True,
+    ner_max_chars: int | None = None,
+) -> str:
+    """該当箇所を [種別N] に置き換える。同じ文字列は同じ番号。元の値は残さない。"""
+    if not text:
+        return text
+    cap = DEFAULT_NER_MAX_CHARS if ner_max_chars is None else ner_max_chars
+    spans = _mask_spans(
+        text,
+        enable_ner=enable_ner,
+        check_mynumber=check_mynumber,
+        ner_max_chars=max(0, cap),
+    )
+    if not spans:
+        return text
+    index: dict[tuple[str, str], int] = {}
+    counters: dict[str, int] = {}
+    tokens: list[str] = []
+    for start, end, cat in spans:
+        surface = text[start:end]
+        key = (cat, surface)
+        if key not in index:
+            counters[cat] = counters.get(cat, 0) + 1
+            index[key] = counters[cat]
+        tokens.append(f"[{cat}{index[key]}]")
+    out = text
+    for (start, end, _), token in zip(reversed(spans), reversed(tokens)):
+        out = out[:start] + token + out[end:]
+    return out
+
+
+def mask_prompt_text(text: str, tenant_id: str | None = None) -> str:
+    """棟の設定に従ってプロンプト本文を置き換える。無効なら原文を返す。"""
+    if not text:
+        return text
+    settings = load_pii_settings(tenant_id)
+    if not settings.get("mask_prompts", True):
+        return text
+    return mask_text(
+        text,
+        enable_ner=bool(settings.get("check_pii_ner", True)),
+        check_mynumber=bool(settings.get("check_mynumber", True)),
+    )
+
+
+def mask_chat_messages(
+    messages: list[dict[str, Any]], tenant_id: str | None = None
+) -> list[dict[str, Any]]:
+    """user / system の文字列本文だけ置き換える。添付や assistant はそのまま。"""
+    out: list[dict[str, Any]] = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role in ("user", "system") and isinstance(content, str) and content:
+            copied = dict(message)
+            copied["content"] = mask_prompt_text(content, tenant_id)
+            out.append(copied)
+        else:
+            out.append(message)
+    return out
 
 
 def format_warning_message(result: dict[str, Any]) -> str:

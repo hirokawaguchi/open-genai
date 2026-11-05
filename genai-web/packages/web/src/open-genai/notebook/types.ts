@@ -63,11 +63,24 @@ export type NotebookItem = {
   citations?: NotebookCitation[];
 };
 
+export type NotebookPiiHit = {
+  category: string;
+  match?: string;
+  context?: string;
+  offset?: number;
+};
+
 export type NotebookBriefing = {
   summary?: string;
   terms?: string[];
   outline?: string[];
   ocr?: boolean;
+  pii?: {
+    warned?: boolean;
+    categories?: string[];
+    message?: string;
+    hits?: NotebookPiiHit[];
+  };
 };
 
 export type NotebookFile = {
