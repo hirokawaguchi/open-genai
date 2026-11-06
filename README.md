@@ -1238,7 +1238,8 @@ S3_PUBLIC_ENDPOINT=https://files.example.lg.jp
 ## 入力制限と個人情報検知（添付・ナレッジ）
 
 禁止語ブロックに加え、**氏名・住所・電話番号・マイナンバー**を種別付きで検知できます。
-匿名化は行わず、**警告／ラベル表示のみ**（アップロードやナレッジ登録自体は止めません）。
+添付とナレッジは**警告／ラベル表示のみ**で、ファイルの中身は置き換えません。
+チャットのプロンプト本文（利用者発話・システムプロンプト・保存プロンプト・会話タイトルの材料）は、モデルへ渡す前と履歴・監査へ書く前に `[種別N]` へ置き換えます。対応表は残さないので、元の値はサーバに残りません。
 実装の中核は `shared/pii_scan.py` です。
 
 ### 動作概要
@@ -1247,11 +1248,12 @@ S3_PUBLIC_ENDPOINT=https://files.example.lg.jp
 | --- | --- | --- |
 | チャット等の添付 | `PUT /files` 保存と同時（同期）。先頭 `PII_NER_MAX_CHARS`（既定 8,000）文字まで NER | 添付行に種別と検知箇所の抜粋付き警告。送信は可能 |
 | ナレッジ登録 | 非同期ジョブ内で索引化のあと検知（`PII_KNOWLEDGE_NER_MAX_CHARS` 既定 200,000） | `/knowledge` のドキュメント一覧に `pii_labels` 等を表示 |
-| プロンプト本文 | 従来どおり禁止語・カスタム正規表現・マイナンバー検査 | ヒット時はブロック（従来仕様） |
+| プロンプト本文 | 禁止語判定のあと、モデル呼び出し・履歴保存・監査・タイトル生成の前に置換 | 画面の吹き出しは保存後に `[氏名1]` などの置換結果になる |
 
 管理者向け **入力制限** exApp で次を切り替えられます。
 
-- 添付アップロード時の個人情報警告（`warn_attachments`）
+- 添付とノートブック資料の個人情報警告（`warn_attachments`。中身は置き換えない）
+- プロンプト本文の置換（`mask_prompts`。既定はする）
 - ナレッジ登録時の個人情報検知（`scan_knowledge_pii`）
 - 氏名・住所の NER 検知（`check_pii_ner`。GiNZA 未導入時は実質オフ）
 - マイナンバー検査・禁止ワード・カスタム正規表現（従来どおり）
@@ -1268,8 +1270,9 @@ S3_PUBLIC_ENDPOINT=https://files.example.lg.jp
 ### GiNZA（spaCy）のセットアップ
 
 氏名 NER と住所 NER 強化には、**spaCy 系の日本語モデル GiNZA**（`ginza` + `ja-ginza`）を
-`backend` / `rag-app` イメージに入れます。既定ビルド（`PII_INSTALL_NER=0`）では入れず、
-電話・マイナンバー・住所パターンだけが動きます（イメージを軽量に保つため）。
+`backend` / `rag-app` / `notebook-app` イメージに入れます。開発用 compose の既定は入れず
+（`PII_INSTALL_NER=0`）、本番 compose の既定は入れます（`PII_INSTALL_NER=1`）。
+未導入でも電話・マイナンバー・住所パターンは動きます。氏名の置換と検知は GiNZA が必要です。
 
 Dockerfile（`backend/Dockerfile` / `rag-app/Dockerfile`）はビルド引数で分岐します。
 
@@ -1303,7 +1306,7 @@ docker restart open-genai-proxy
 
 | 変数 | 既定 | 役割 |
 | --- | --- | --- |
-| `PII_INSTALL_NER` | `0` | ビルド時に GiNZA を入れるか（`1` で有効） |
+| `PII_INSTALL_NER` | 開発 `0` / 本番 `1` | ビルド時に GiNZA を入れるか（`1` で backend・rag-app・notebook-app） |
 | `PII_NER_MAX_CHARS` | `8000` | 同期添付経路の NER 対象文字数上限 |
 | `PII_KNOWLEDGE_NER_MAX_CHARS` | `200000` | ナレッジ非同期経路の NER 対象文字数上限 |
 

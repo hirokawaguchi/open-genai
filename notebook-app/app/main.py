@@ -16,7 +16,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import extract, ground, harness, intauth, llm, mcp_catalog, mcp_knowledge, ocr, retrieve, store, structure, tools
+from . import extract, ground, harness, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools
 
 for parent in Path(__file__).resolve().parents:
     if (parent / "shared" / "navsheet.py").exists():
@@ -317,6 +317,9 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
             briefing["ocr"] = True
         sample = "\n".join(str(n.get("text") or "") for n in structure.sample_nodes(nodes, 6))
         briefing = await ground.enrich_briefing(filename, briefing, sample)
+        briefing = pii_warn.annotate_briefing(
+            briefing, nodes, request.headers.get("x-tenant-id")
+        )
     except extract.DocExtractError as e:
         error = str(e)
     detail = store.add_file(

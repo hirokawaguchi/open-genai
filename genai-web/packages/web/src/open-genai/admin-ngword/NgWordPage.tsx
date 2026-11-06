@@ -131,6 +131,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
   const [warnAttachments, setWarnAttachments] = useState(rules.warn_attachments ?? true);
   const [scanKnowledgePii, setScanKnowledgePii] = useState(rules.scan_knowledge_pii ?? true);
   const [checkPiiNer, setCheckPiiNer] = useState(rules.check_pii_ner ?? true);
+  const [maskPrompts, setMaskPrompts] = useState(rules.mask_prompts ?? true);
   const [words, setWords] = useState((rules.words ?? []).join('\n'));
   const [patterns, setPatterns] = useState((rules.patterns ?? []).join('\n'));
   const [localError, setLocalError] = useState<string | null>(null);
@@ -144,6 +145,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
     setWarnAttachments(rules.warn_attachments ?? true);
     setScanKnowledgePii(rules.scan_knowledge_pii ?? true);
     setCheckPiiNer(rules.check_pii_ner ?? true);
+    setMaskPrompts(rules.mask_prompts ?? true);
     setWords((rules.words ?? []).join('\n'));
     setPatterns((rules.patterns ?? []).join('\n'));
     setDone(false);
@@ -169,6 +171,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
       warn_attachments: warnAttachments,
       scan_knowledge_pii: scanKnowledgePii,
       check_pii_ner: checkPiiNer,
+      mask_prompts: maskPrompts,
       words: toLines(words),
       patterns: toLines(patterns),
     });
@@ -223,7 +226,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
             checked={warnAttachments}
             onChange={(e) => setWarnAttachments(e.target.checked)}
           />
-          添付アップロード時に個人情報を警告する（氏名・住所・電話・マイナンバー）
+          添付とノートブックの資料で個人情報を警告する（置き換えはしない）
         </label>
         <label className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
           <input
@@ -242,6 +245,15 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
             onChange={(e) => setCheckPiiNer(e.target.checked)}
           />
           氏名・住所の NER 検知を行う（GiNZA。未導入時は電話・マイナンバーと住所パターンのみ）
+        </label>
+        <label className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
+          <input
+            type='checkbox'
+            className='size-5'
+            checked={maskPrompts}
+            onChange={(e) => setMaskPrompts(e.target.checked)}
+          />
+          プロンプト本文の個人情報を [種別N] に置き換える（元の値は保存しない。添付の中身は対象外）
         </label>
       </fieldset>
 

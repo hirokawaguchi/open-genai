@@ -12,6 +12,9 @@ from shared.pii_scan import (
     CAT_PHONE,
     format_categories,
     load_pii_settings,
+    mask_chat_messages,
+    mask_prompt_text,
+    mask_text,
     scan,
 )
 
@@ -98,6 +101,71 @@ def test_load_pii_settings_per_tenant(tmp_path, monkeypatch) -> None:
     other_out = load_pii_settings("00000000-0000-0000-0000-00000000ffff")
     assert other_out["scan_knowledge_pii"] is True
     assert other_out["check_mynumber"] is True
+
+
+def test_mask_text_replaces_phone_address_and_mynumber() -> None:
+    text = "連絡先は 090-1234-5678、番号 123456789018、送付先は大分県大分市荷揚町2番31号"
+    masked = mask_text(text, enable_ner=False, check_mynumber=True)
+    assert "090-1234-5678" not in masked
+    assert "123456789018" not in masked
+    assert "大分県大分市" not in masked
+    assert "[電話番号1]" in masked
+    assert "[マイナンバー1]" in masked
+    assert "[住所1]" in masked
+
+
+def test_mask_text_reuses_number_for_same_value() -> None:
+    text = "090-1234-5678 と 090-1234-5678 と 03-1234-5678"
+    masked = mask_text(text, enable_ner=False, check_mynumber=False)
+    assert masked.count("[電話番号1]") == 2
+    assert "[電話番号2]" in masked
+    assert "090-1234-5678" not in masked
+    assert "03-1234-5678" not in masked
+
+
+def test_mask_text_is_idempotent() -> None:
+    once = mask_text("電話 090-1234-5678", enable_ner=False, check_mynumber=False)
+    twice = mask_text(once, enable_ner=False, check_mynumber=False)
+    assert once == twice
+    assert "090-1234-5678" not in twice
+
+
+def test_mask_text_leaves_uuid() -> None:
+    text = "id=550e8400-e29b-41d4-a716-446655440000"
+    assert mask_text(text, enable_ner=False, check_mynumber=True) == text
+
+
+def test_mask_prompt_respects_tenant_switch(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "ngwords.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE ngword_rules_v2 ("
+        " tenantId TEXT PRIMARY KEY, rules TEXT NOT NULL, updatedDate TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO ngword_rules_v2 (tenantId, rules, updatedDate) VALUES (?, ?, ?)",
+        (pii_mod.DEFAULT_TENANT_ID, json.dumps({"mask_prompts": False}), "1"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("NGWORD_DB_PATH", str(db_path))
+    raw = "電話 090-1234-5678"
+    assert mask_prompt_text(raw, pii_mod.DEFAULT_TENANT_ID) == raw
+    other = mask_prompt_text(raw, "00000000-0000-0000-0000-00000000ffff")
+    assert "090-1234-5678" not in other
+
+
+def test_mask_chat_messages_skips_assistant(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NGWORD_DB_PATH", str(tmp_path / "missing.db"))
+    messages = mask_chat_messages(
+        [
+            {"role": "user", "content": "電話 090-1234-5678"},
+            {"role": "assistant", "content": "電話 090-1234-5678"},
+        ],
+        "00000000-0000-0000-0000-00000000ffff",
+    )
+    assert "090-1234-5678" not in messages[0]["content"]
+    assert messages[1]["content"] == "電話 090-1234-5678"
 
 
 def test_scan_rejects_ner_false_positives() -> None:

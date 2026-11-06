@@ -44,6 +44,7 @@ _DEFAULT: dict[str, Any] = {
     "warn_attachments": True,
     "scan_knowledge_pii": True,
     "check_pii_ner": True,
+    "mask_prompts": True,
     "words": [],
     "patterns": [],
 }
@@ -155,6 +156,7 @@ _EXAMPLE = (
     '  "warn_attachments": true,\n'
     '  "scan_knowledge_pii": true,\n'
     '  "check_pii_ner": true,\n'
+    '  "mask_prompts": true,\n'
     '  "words": ["禁止語の例"],\n'
     '  "patterns": []\n'
     '}'
@@ -228,7 +230,7 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
             "default_value": "false"
             if rules.get("warn_attachments") is False
             else "true",
-            "desc": "チャット等の添付保存時に氏名・住所・電話・マイナンバーを警告します（ブロックしません）。",
+            "desc": "チャット等の添付と、ノートブックの資料アップロード時に氏名・住所・電話・マイナンバーを警告します（ブロックせず、本文も置き換えません）。",
             "visibleWhen": set_vw,
         },
         "scan_knowledge_pii": {
@@ -253,6 +255,19 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
             "default_value": "false"
             if rules.get("check_pii_ner") is False
             else "true",
+            "visibleWhen": set_vw,
+        },
+        "mask_prompts": {
+            "type": "select",
+            "title": "プロンプト本文の個人情報置換",
+            "items": [
+                {"title": "する（[種別N] に置き換えてからモデルと履歴へ渡す）", "value": "true"},
+                {"title": "しない", "value": "false"},
+            ],
+            "default_value": "false"
+            if rules.get("mask_prompts") is False
+            else "true",
+            "desc": "元の値は保存しません。添付ファイルの中身は置き換えません。",
             "visibleWhen": set_vw,
         },
         "words": {
@@ -399,6 +414,7 @@ async def invoke(
                 "warn_attachments": _as_bool(inputs.get("warn_attachments", True)),
                 "scan_knowledge_pii": _as_bool(inputs.get("scan_knowledge_pii", True)),
                 "check_pii_ner": _as_bool(inputs.get("check_pii_ner", True)),
+                "mask_prompts": _as_bool(inputs.get("mask_prompts", True)),
                 "words": [w.strip() for w in (inputs.get("words") or "").splitlines() if w.strip()],
                 "patterns": [
                     p.strip() for p in (inputs.get("patterns") or "").splitlines() if p.strip()

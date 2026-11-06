@@ -766,6 +766,8 @@ services:
     build:
       context: .
       dockerfile: notebook-app/Dockerfile
+      args:
+        PII_INSTALL_NER: ${PII_INSTALL_NER:-0}
     container_name: open-genai-notebook-app
     environment:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
@@ -788,9 +790,11 @@ services:
       - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
+      - NGWORD_DB_PATH=/ngword-data/ngwords.db
     volumes:
       # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）
       - procuretech_hearing_app_data:/data
+      - backend_data:/ngword-data:ro
     ports:
       - "${NOTEBOOK_PORT:-${PROCURETECH_HEARING_PORT:-8017}}:8017"
     extra_hosts:

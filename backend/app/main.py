@@ -1411,6 +1411,21 @@ def _last_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _masked_messages(
+    messages: list[dict[str, Any]], tenant_id: str | None
+) -> list[dict[str, Any]]:
+    """プロンプト本文の個人情報を置き換える。禁止語判定より後、保存とモデル呼び出しの前。"""
+    from shared.pii_scan import mask_chat_messages
+
+    return mask_chat_messages(messages, tenant_id)
+
+
+def _masked_prompt(text: str, tenant_id: str | None) -> str:
+    from shared.pii_scan import mask_prompt_text
+
+    return mask_prompt_text(text or "", tenant_id)
+
+
 def _user_scope_ids(claims: dict[str, Any]) -> list[str]:
     """モデル利用ポリシー判定に使う利用者スコープ = 開いている棟の所属チームID。"""
     try:
@@ -2542,7 +2557,7 @@ async def create_messages(chat_id: str, request: Request) -> JSONResponse:
     if _has_no_tenant(tenant_id):
         return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
     body = await request.json()
-    messages = body.get("messages", [])
+    messages = _masked_messages(body.get("messages", []), tenant_id)
     recorded = storage.create_messages(chat_id, user_id, messages, tenant_id)
     if recorded is None:
         return JSONResponse(status_code=404, content={"message": "chat not found"})
@@ -2863,6 +2878,8 @@ async def predict(request: Request) -> Response:
     ng = _ngword_denied(request, _last_user_text(messages))
     if ng:
         return JSONResponse(status_code=403, content={"error": ng})
+    _user_id, tenant_id, _claims = _request_scope(request)
+    messages = _masked_messages(messages, tenant_id)
     text = await llm.chat_once(
         messages, body.get("model"), request_id=body.get("id")
     )
@@ -2873,7 +2890,7 @@ async def predict(request: Request) -> Response:
 async def predict_title(request: Request) -> str:
     user_id, tenant_id, claims = _request_scope(request)
     body = await request.json()
-    prompt = body.get("prompt", "")
+    prompt = _masked_prompt(body.get("prompt", ""), tenant_id)
 
     if TITLE_MODE == "llm":
         # 許可外モデルではタイトル生成もしない（空タイトルを返す）
@@ -2921,8 +2938,8 @@ async def create_system_context(request: Request) -> JSONResponse:
     shared_teams, is_public = _resolve_share_teams(user_id, claims, body)
     sc = storage.create_system_context(
         user_id,
-        body.get("systemContextTitle", ""),
-        body.get("systemContext", ""),
+        _masked_prompt(body.get("systemContextTitle", ""), tenant_id),
+        _masked_prompt(body.get("systemContext", ""), tenant_id),
         shared_tags=shared_teams,
         is_public=is_public,
         tenant_id=tenant_id,
@@ -2956,7 +2973,7 @@ async def update_system_context_title(sc_id: str, request: Request) -> JSONRespo
     user_id, tenant_id, _ = _request_scope(request)
     body = await request.json()
     sc = storage.update_system_context_title(
-        user_id, sc_id, body.get("title", ""), tenant_id
+        user_id, sc_id, _masked_prompt(body.get("title", ""), tenant_id), tenant_id
     )
     if not sc:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
@@ -2972,11 +2989,17 @@ async def update_system_context(sc_id: str, request: Request) -> JSONResponse:
     is_public = None
     if "sharedTeams" in body or "isPublic" in body:
         shared_teams, is_public = _resolve_share_teams(user_id, claims, body)
+    title = body.get("systemContextTitle")
+    system_context = body.get("systemContext")
     sc = storage.update_system_context(
         user_id,
         sc_id,
-        title=body.get("systemContextTitle"),
-        system_context=body.get("systemContext"),
+        title=_masked_prompt(title, tenant_id) if isinstance(title, str) else title,
+        system_context=(
+            _masked_prompt(system_context, tenant_id)
+            if isinstance(system_context, str)
+            else system_context
+        ),
         shared_tags=shared_teams,
         is_public=is_public,
         tenant_id=tenant_id,
@@ -3009,8 +3032,10 @@ async def predict_stream(request: Request) -> StreamingResponse:
 
         return StreamingResponse(_blocked(), media_type="application/x-ndjson")
 
+    _user_id, tenant_id, _claims = _request_scope(request)
+    messages = _masked_messages(messages, tenant_id)
     generator = llm.chat_stream(messages, model, request_id=body.get("id"))
-    # 監査ログ（内容ログ）: 入力（最終ユーザー発話）と集約した出力を1件記録
+    # 監査ログ（内容ログ）: 置き換え後の入力と、集約した出力を1件記録
     audited = audit.wrap_stream(
         generator,
         request,
@@ -7024,6 +7049,7 @@ def _procuretech_hearing_headers(
         "x-user-tags": team_ids,
         "x-user-teams": teams_hdr,
         "x-scope": COMMON_TEAM_ID,
+        "x-tenant-id": _active_tenant_id(user_id, claims),
         **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
         "Content-Type": "application/json",
     }
