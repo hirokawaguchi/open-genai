@@ -2868,6 +2868,17 @@ async def generate_image(request: Request) -> Response:
     return Response(content=image_base64, media_type="text/plain")
 
 
+@app.post("/pii/prompt-warn")
+async def pii_prompt_warn(request: Request) -> JSONResponse:
+    """入力中のプロンプトについて、氏名と住所だけ警告する。送信は止めない。"""
+    _user_id, tenant_id, _claims = _request_scope(request)
+    body = await request.json()
+    text = str(body.get("text") or "")
+    from shared.pii_scan import prompt_name_address_warning
+
+    return JSONResponse(content=prompt_name_address_warning(text, tenant_id))
+
+
 @app.post("/predict")
 async def predict(request: Request) -> Response:
     body = await request.json()

@@ -24,6 +24,7 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
+import { warnPromptPii, type PromptPiiWarn } from '@/lib/chatApi';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
@@ -126,6 +127,8 @@ export const ChatInput = (props: Props) => {
 
   const [fileErrorMessage, setFileErrorMessage] = useState('');
   const [uploadNotice, setUploadNotice] = useState('');
+  const [promptWarn, setPromptWarn] = useState<PromptPiiWarn | null>(null);
+  const promptWarnReq = useRef(0);
   const pendingSendRef = useRef<string | null>(null);
   const disabledSend = loading;
   const fileErrorText = '選択したファイルにエラーがあります。該当ファイルをチェックしてください。';
@@ -167,6 +170,26 @@ export const ChatInput = (props: Props) => {
 
     deliver(data.content);
   });
+
+  useEffect(() => {
+    const text = content.trim();
+    if (text.length < 2) {
+      setPromptWarn(null);
+      return;
+    }
+    const req = ++promptWarnReq.current;
+    const timer = window.setTimeout(() => {
+      warnPromptPii(text)
+        .then((data) => {
+          if (promptWarnReq.current !== req) return;
+          setPromptWarn(data?.warned ? data : null);
+        })
+        .catch(() => {
+          if (promptWarnReq.current === req) setPromptWarn(null);
+        });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [content]);
 
   useEffect(() => {
     const text = pendingSendRef.current;
@@ -225,6 +248,24 @@ export const ChatInput = (props: Props) => {
                 },
               })}
             />
+            {promptWarn?.warned && (
+              <div className='text-orange-800 whitespace-pre-wrap' role='status'>
+                <p>
+                  ＊
+                  {(promptWarn.message || '').split('\n')[0] ||
+                    `個人情報の可能性: ${(promptWarn.categories ?? []).join('・')}`}
+                </p>
+                {(promptWarn.hits ?? []).length > 0 && (
+                  <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
+                    {promptWarn.hits.slice(0, 6).map((h, i) => (
+                      <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
+                        {h.category}: 「{h.context || h.match}」
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             {(errors.content || fileErrorMessage) && (
               <ul className='p-0 list-none space-y-0.5'>
                 {errors.content && (

@@ -15,6 +15,7 @@ from shared.pii_scan import (
     mask_chat_messages,
     mask_prompt_text,
     mask_text,
+    prompt_name_address_warning,
     scan,
 )
 
@@ -135,7 +136,7 @@ def test_mask_text_leaves_uuid() -> None:
     assert mask_text(text, enable_ner=False, check_mynumber=True) == text
 
 
-def test_mask_prompt_respects_tenant_switch(tmp_path, monkeypatch) -> None:
+def test_mask_prompt_partial_unless_full_switch(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "ngwords.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -146,13 +147,39 @@ def test_mask_prompt_respects_tenant_switch(tmp_path, monkeypatch) -> None:
         "INSERT INTO ngword_rules_v2 (tenantId, rules, updatedDate) VALUES (?, ?, ?)",
         (pii_mod.DEFAULT_TENANT_ID, json.dumps({"mask_prompts": False}), "1"),
     )
+    conn.execute(
+        "INSERT INTO ngword_rules_v2 (tenantId, rules, updatedDate) VALUES (?, ?, ?)",
+        (
+            "00000000-0000-0000-0000-00000000ffff",
+            json.dumps({"mask_prompts": True}),
+            "1",
+        ),
+    )
     conn.commit()
     conn.close()
     monkeypatch.setenv("NGWORD_DB_PATH", str(db_path))
-    raw = "電話 090-1234-5678"
-    assert mask_prompt_text(raw, pii_mod.DEFAULT_TENANT_ID) == raw
-    other = mask_prompt_text(raw, "00000000-0000-0000-0000-00000000ffff")
-    assert "090-1234-5678" not in other
+    raw = "連絡先は 090-1234-5678、送付先は大分県大分市荷揚町2番31号"
+    partial = mask_prompt_text(raw, pii_mod.DEFAULT_TENANT_ID)
+    assert "090-1234-5678" not in partial
+    assert "大分県大分市" in partial
+    assert "[住所1]" not in partial
+    full = mask_prompt_text(raw, "00000000-0000-0000-0000-00000000ffff")
+    assert "090-1234-5678" not in full
+    assert "大分県大分市" not in full
+    assert "[住所1]" in full
+    assert prompt_name_address_warning(raw, "00000000-0000-0000-0000-00000000ffff")["warned"] is False
+
+
+def test_prompt_warning_is_name_and_address_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NGWORD_DB_PATH", str(tmp_path / "missing.db"))
+    warned = prompt_name_address_warning(
+        "電話 090-1234-5678、送付先は大分県大分市荷揚町2番31号",
+        pii_mod.DEFAULT_TENANT_ID,
+    )
+    assert warned["warned"] is True
+    assert warned["categories"] == ["住所"]
+    assert "電話番号" not in warned["categories"]
+    assert "大分県大分市" in warned["message"]
 
 
 def test_mask_chat_messages_skips_assistant(tmp_path, monkeypatch) -> None:

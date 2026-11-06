@@ -37,7 +37,7 @@ _DEFAULT: dict[str, Any] = {
     "warn_attachments": True,
     "scan_knowledge_pii": True,
     "check_pii_ner": True,
-    "mask_prompts": True,
+    "mask_prompts": False,
     "words": [],
     "patterns": [],
 }

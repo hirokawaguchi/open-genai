@@ -44,7 +44,7 @@ _DEFAULT: dict[str, Any] = {
     "warn_attachments": True,
     "scan_knowledge_pii": True,
     "check_pii_ner": True,
-    "mask_prompts": True,
+    "mask_prompts": False,
     "words": [],
     "patterns": [],
 }
@@ -156,7 +156,7 @@ _EXAMPLE = (
     '  "warn_attachments": true,\n'
     '  "scan_knowledge_pii": true,\n'
     '  "check_pii_ner": true,\n'
-    '  "mask_prompts": true,\n'
+    '  "mask_prompts": false,\n'
     '  "words": ["禁止語の例"],\n'
     '  "patterns": []\n'
     '}'
@@ -259,15 +259,13 @@ def _build_schema(rules: dict[str, Any]) -> dict[str, Any]:
         },
         "mask_prompts": {
             "type": "select",
-            "title": "プロンプト本文の個人情報置換",
+            "title": "プロンプト本文の氏名・住所も置換",
             "items": [
-                {"title": "する（[種別N] に置き換えてからモデルと履歴へ渡す）", "value": "true"},
-                {"title": "しない", "value": "false"},
+                {"title": "する（氏名・住所も [種別N] に置き換える）", "value": "true"},
+                {"title": "しない（電話とマイナンバーだけ置き換え、氏名・住所は警告）", "value": "false"},
             ],
-            "default_value": "false"
-            if rules.get("mask_prompts") is False
-            else "true",
-            "desc": "元の値は保存しません。添付ファイルの中身は置き換えません。",
+            "default_value": "true" if rules.get("mask_prompts") is True else "false",
+            "desc": "オフでも電話番号とマイナンバーは置き換え、元の値は保存しません。氏名と住所は警告だけです。添付の中身は置き換えません。",
             "visibleWhen": set_vw,
         },
         "words": {
@@ -414,7 +412,7 @@ async def invoke(
                 "warn_attachments": _as_bool(inputs.get("warn_attachments", True)),
                 "scan_knowledge_pii": _as_bool(inputs.get("scan_knowledge_pii", True)),
                 "check_pii_ner": _as_bool(inputs.get("check_pii_ner", True)),
-                "mask_prompts": _as_bool(inputs.get("mask_prompts", True)),
+                "mask_prompts": _as_bool(inputs.get("mask_prompts", False)),
                 "words": [w.strip() for w in (inputs.get("words") or "").splitlines() if w.strip()],
                 "patterns": [
                     p.strip() for p in (inputs.get("patterns") or "").splitlines() if p.strip()

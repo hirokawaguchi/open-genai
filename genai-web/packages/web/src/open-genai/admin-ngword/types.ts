@@ -11,7 +11,7 @@ export type NgWordRules = {
   scan_knowledge_pii: boolean;
   /** 氏名・住所の NER（GiNZA）を使う */
   check_pii_ner: boolean;
-  /** プロンプト本文の個人情報を [種別N] に置き換える */
+  /** オンなら氏名・住所も置き換える。オフなら電話とマイナンバーだけ */
   mask_prompts: boolean;
   words: string[];
   patterns: string[];
