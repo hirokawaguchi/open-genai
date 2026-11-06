@@ -164,6 +164,8 @@ SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/inv
 NISHUKAN_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
 # 研修 LMS（Compose profiles: ["lms"]）。実 API は /lms/* プロキシ。
 LMS_APP_URL = os.environ.get("LMS_APP_URL", "http://lms-app:8021/invoke")
+# 自治体予算（Compose profiles: ["budget"]）。実 API は /budget/* プロキシ。
+BUDGET_APP_URL = os.environ.get("BUDGET_APP_URL", "http://budget-app:8022/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
 NOTEBOOK_APP_URL = (
@@ -929,6 +931,32 @@ SENGOKU_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# 自治体予算（共通アプリ）。UI は専用ページ /budget。未起動時は /health 失敗で一覧非表示。
+BUDGET_SEED: dict[str, Any] = {
+    "exAppId": "budget",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "自治体予算",
+    "endpoint": (
+        BUDGET_APP_URL
+        if BUDGET_APP_URL.endswith("/invoke")
+        else BUDGET_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "市区町村の普通会計決算を、歳入から歳出への流れで見ます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 専用ページ「自治体予算」で自治体名を選びます。\n"
+        "- 左は歳入、中央は普通会計、右は目的別または性質別の歳出です。\n"
+        "- 目的別と性質別は同じ歳出の別の分け方です。右の列を切り替えて見ます。\n"
+        "- 金額は総額と住民1人あたりを切り替えられます。\n"
+        "- 有効化: `docker compose --profile budget up -d` または `COMPOSE_PROFILES=budget`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 WORLDMONITOR_SEED: dict[str, Any] = {
     "exAppId": "worldmonitor",
     "teamId": COMMON_TEAM_ID,
@@ -1059,6 +1087,7 @@ EXAPP_SEEDS = [
     PROCURETECH_HEARING_SEED,
     SSH_SEED,
     SENGOKU_SEED,
+    BUDGET_SEED,
     WORLDMONITOR_SEED,
 ]
 
@@ -4023,6 +4052,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
         ("ssh", _as_invoke_url(SSH_APP_URL)),
         ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
+        ("budget", _as_invoke_url(BUDGET_APP_URL)),
         ("worldmonitor", f"{WORLDMONITOR_UPSTREAM}/invoke"),
         ("lms", _as_invoke_url(LMS_APP_URL)),
     ]
@@ -5684,6 +5714,78 @@ async def worldmonitor_gate(request: Request) -> Response:
         return Response(status_code=200)
     # 403 にする。上流 API の 401 と nginx の error_page がぶつからないようにする。
     return Response(status_code=403)
+
+
+# ---------------------------------------------------------------------------
+# 自治体予算専用ページ(/budget) 用プロキシ
+# ---------------------------------------------------------------------------
+def _budget_app_url(path: str) -> str:
+    if BUDGET_APP_URL.endswith("/invoke"):
+        base = BUDGET_APP_URL[: -len("/invoke")]
+    else:
+        base = BUDGET_APP_URL.rstrip("/")
+    return base + path
+
+
+def _budget_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+async def _proxy_budget(method: str, url: str, headers: dict[str, str]) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.request(method, url, headers=headers)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "自治体予算サービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile budget up -d` "
+                    "または `COMPOSE_PROFILES=budget` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "自治体予算サービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+@app.get("/budget/config")
+async def budget_config(request: Request) -> JSONResponse:
+    err, headers = _budget_headers(request)
+    if err:
+        return err
+    return await _proxy_budget("GET", _budget_app_url("/config"), headers)
+
+
+@app.get("/budget/data")
+async def budget_data(request: Request) -> JSONResponse:
+    err, headers = _budget_headers(request)
+    if err:
+        return err
+    return await _proxy_budget("GET", _budget_app_url("/data"), headers)
 
 
 # ---------------------------------------------------------------------------

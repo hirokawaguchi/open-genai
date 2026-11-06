@@ -92,6 +92,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `procuretech-editor-app/` | Markdown エディタ＋各種文書作成（標準起動。詳細は [`docs/procuretech-editor.md`](docs/procuretech-editor.md)） |
 | `procuretech-generate-app/` | 文書生成/合成の公開・汎用リファレンス実装（標準起動・既定の合成バックエンド。契約は [`docs/procuretech-generate-contract.md`](docs/procuretech-generate-contract.md)） |
 | `notebook-app/` | ノートブック（標準起動。資料を構造化して項目・対話・ヒアリングシート Excel を作る。詳細は [`docs/notebook.md`](docs/notebook.md)） |
+| `budget-app/` | 自治体予算（オプション・`profiles: ["budget"]`。市区町村の普通会計決算。詳細は [`budget-app/README.md`](budget-app/README.md)） |
 | `ssh-app/` | Web SSH 端末（オプション・`profiles: ["ssh"]`。詳細は [`docs/ssh.md`](docs/ssh.md)） |
 | `sengoku-app/` | 戦国国取り（お遊びのシミュレーションゲーム。オプション・`profiles: ["sengoku"]`。詳細は [`docs/sengoku.md`](docs/sengoku.md)） |
 | （profile `worldmonitor`） | ワールドモニター（上流タグからビルド。ソースは同梱しない。詳細は [`docs/worldmonitor.md`](docs/worldmonitor.md)） |

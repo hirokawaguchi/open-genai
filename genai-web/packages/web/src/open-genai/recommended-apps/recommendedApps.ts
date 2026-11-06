@@ -15,6 +15,7 @@ export const RECOMMENDED_APP_OPTIONS = [
   { id: 'knowledge', label: 'ナレッジ管理' },
   { id: 'rag', label: 'ナレッジ検索' },
   { id: 'notebook', label: 'ノートブック' },
+  { id: 'budget', label: '自治体予算' },
   { id: 'ssh', label: 'SSH 端末' },
   { id: 'lms', label: '研修' },
   { id: 'worldmonitor', label: 'ワールドモニター' },

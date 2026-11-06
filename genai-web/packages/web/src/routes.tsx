@@ -50,6 +50,7 @@ import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
 import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
+import { BudgetPage } from '@/open-genai/budget/BudgetPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { ShimenPage } from '@/open-genai/shimen/ShimenPage';
@@ -156,6 +157,9 @@ export const createRoutes = (): RouteObject[] => {
     // ワールドモニター（Compose profiles: ["worldmonitor"]）。
     { path: 'worldmonitor', element: <WorldmonitorPage /> },
     { path: 'apps/:teamId/worldmonitor', element: <Navigate to='/worldmonitor' replace /> },
+    // 自治体予算（Compose profiles: ["budget"]）。
+    { path: 'budget', element: <BudgetPage /> },
+    { path: 'apps/:teamId/budget', element: <Navigate to='/budget' replace /> },
     // 戦国国取り（お遊び・Compose profiles: ["sengoku"]）。
     { path: 'sengoku', element: <SengokuPage /> },
     { path: 'apps/:teamId/sengoku', element: <Navigate to='/sengoku' replace /> },
