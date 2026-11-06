@@ -170,3 +170,23 @@ export const predictTitle = async (req: PredictTitleRequest) => {
   const res = await genUApi.post<PredictTitleResponse>('predict/title', req);
   return res.data;
 };
+
+export type PromptPiiHit = {
+  category: string;
+  match?: string;
+  context?: string;
+  offset?: number;
+};
+
+export type PromptPiiWarn = {
+  warned: boolean;
+  categories: string[];
+  hits: PromptPiiHit[];
+  message: string;
+};
+
+/** 氏名・住所の警告。置換がオンのときは空。送信は止めない。 */
+export const warnPromptPii = async (text: string) => {
+  const res = await genUApi.post<PromptPiiWarn>('pii/prompt-warn', { text });
+  return res.data;
+};

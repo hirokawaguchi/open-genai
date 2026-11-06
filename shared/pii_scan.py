@@ -67,8 +67,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "scan_knowledge_pii": True,
     "check_pii_ner": True,
     "check_mynumber": True,
-    # チャット等のプロンプト本文を [種別N] に置き換えてからモデルと履歴へ渡す。
-    "mask_prompts": True,
+    # オンなら氏名・住所も [種別N] に置き換える。オフなら電話とマイナンバーだけ。
+    "mask_prompts": False,
 }
 
 # 置き換え済みトークン。再実行で中をさらに置換しない。
@@ -456,6 +456,7 @@ def _mask_spans(
     enable_ner: bool,
     check_mynumber: bool,
     ner_max_chars: int,
+    mask_names_addresses: bool,
 ) -> list[tuple[int, int, str]]:
     protected = _protected_spans(text)
     spans: list[tuple[int, int, str]] = []
@@ -469,13 +470,14 @@ def _mask_spans(
             val = m.group(0)
             if val in find_valid_mynumbers(val) and not _covered(m.start(), m.end(), protected):
                 spans.append((m.start(), m.end(), CAT_MYNUMBER))
-    for m in _ADDRESS_RE.finditer(text):
-        if not _covered(m.start(), m.end(), protected):
-            spans.append((m.start(), m.end(), CAT_ADDRESS))
-    if enable_ner:
-        for start, end, cat in _ner_spans(text, ner_max_chars):
-            if not _covered(start, end, protected):
-                spans.append((start, end, cat))
+    if mask_names_addresses:
+        for m in _ADDRESS_RE.finditer(text):
+            if not _covered(m.start(), m.end(), protected):
+                spans.append((m.start(), m.end(), CAT_ADDRESS))
+        if enable_ner:
+            for start, end, cat in _ner_spans(text, ner_max_chars):
+                if not _covered(start, end, protected):
+                    spans.append((start, end, cat))
     return _resolve_overlaps(spans)
 
 
@@ -485,6 +487,7 @@ def mask_text(
     enable_ner: bool = True,
     check_mynumber: bool = True,
     ner_max_chars: int | None = None,
+    mask_names_addresses: bool = True,
 ) -> str:
     """該当箇所を [種別N] に置き換える。同じ文字列は同じ番号。元の値は残さない。"""
     if not text:
@@ -495,6 +498,7 @@ def mask_text(
         enable_ner=enable_ner,
         check_mynumber=check_mynumber,
         ner_max_chars=max(0, cap),
+        mask_names_addresses=mask_names_addresses,
     )
     if not spans:
         return text
@@ -515,17 +519,55 @@ def mask_text(
 
 
 def mask_prompt_text(text: str, tenant_id: str | None = None) -> str:
-    """棟の設定に従ってプロンプト本文を置き換える。無効なら原文を返す。"""
+    """棟の設定に従ってプロンプト本文を置き換える。
+
+    mask_prompts がオンなら氏名・住所・電話・マイナンバーを置き換える。
+    オフでも電話番号とマイナンバーは置き換える。氏名と住所は残す。
+    """
     if not text:
         return text
     settings = load_pii_settings(tenant_id)
-    if not settings.get("mask_prompts", True):
-        return text
+    full = bool(settings.get("mask_prompts", False))
     return mask_text(
         text,
-        enable_ner=bool(settings.get("check_pii_ner", True)),
+        enable_ner=full and bool(settings.get("check_pii_ner", True)),
         check_mynumber=bool(settings.get("check_mynumber", True)),
+        mask_names_addresses=full,
     )
+
+
+def prompt_name_address_warning(text: str, tenant_id: str | None = None) -> dict[str, Any]:
+    """氏名と住所の警告。mask_prompts がオンのときは空（置き換え側に任せる）。"""
+    empty: dict[str, Any] = {
+        "warned": False,
+        "categories": [],
+        "hits": [],
+        "message": "",
+    }
+    if not text or not text.strip():
+        return empty
+    settings = load_pii_settings(tenant_id)
+    if settings.get("mask_prompts", False):
+        return empty
+    scanned = scan(
+        text[:NOTEBOOK_SCAN_MAX_CHARS],
+        enable_ner=bool(settings.get("check_pii_ner", True)),
+        check_mynumber=False,
+    )
+    hits = [
+        h
+        for h in (scanned.get("hits") or [])
+        if h.get("category") in (CAT_NAME, CAT_ADDRESS)
+    ][:6]
+    categories = [c for c in (CAT_NAME, CAT_ADDRESS) if any(h.get("category") == c for h in hits)]
+    if not categories:
+        return empty
+    return {
+        "warned": True,
+        "categories": categories,
+        "hits": hits,
+        "message": format_warning_message({"categories": categories, "hits": hits}),
+    }
 
 
 def mask_chat_messages(

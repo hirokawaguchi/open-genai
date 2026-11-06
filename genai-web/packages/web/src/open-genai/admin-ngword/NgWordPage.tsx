@@ -56,6 +56,7 @@ export const NgWordPage = () => {
           <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
           <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
           <p>・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。</p>
+          <p>・プロンプト本文は、オフのとき電話番号とマイナンバーだけ置き換え、氏名と住所は入力中に警告します。オンにすると氏名と住所も置き換えます。</p>
           <p>・システム管理者による管理系アプリの実行は本制限の対象外です。</p>
         </>
       }
@@ -131,7 +132,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
   const [warnAttachments, setWarnAttachments] = useState(rules.warn_attachments ?? true);
   const [scanKnowledgePii, setScanKnowledgePii] = useState(rules.scan_knowledge_pii ?? true);
   const [checkPiiNer, setCheckPiiNer] = useState(rules.check_pii_ner ?? true);
-  const [maskPrompts, setMaskPrompts] = useState(rules.mask_prompts ?? true);
+  const [maskPrompts, setMaskPrompts] = useState(rules.mask_prompts ?? false);
   const [words, setWords] = useState((rules.words ?? []).join('\n'));
   const [patterns, setPatterns] = useState((rules.patterns ?? []).join('\n'));
   const [localError, setLocalError] = useState<string | null>(null);
@@ -145,7 +146,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
     setWarnAttachments(rules.warn_attachments ?? true);
     setScanKnowledgePii(rules.scan_knowledge_pii ?? true);
     setCheckPiiNer(rules.check_pii_ner ?? true);
-    setMaskPrompts(rules.mask_prompts ?? true);
+    setMaskPrompts(rules.mask_prompts ?? false);
     setWords((rules.words ?? []).join('\n'));
     setPatterns((rules.patterns ?? []).join('\n'));
     setDone(false);
@@ -253,7 +254,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
             checked={maskPrompts}
             onChange={(e) => setMaskPrompts(e.target.checked)}
           />
-          プロンプト本文の個人情報を [種別N] に置き換える（元の値は保存しない。添付の中身は対象外）
+          プロンプト本文の氏名・住所も [種別N] に置き換える（オフのときは電話番号とマイナンバーだけ置き換え、氏名・住所は警告する。元の値は保存しない。添付の中身は対象外）
         </label>
       </fieldset>
 
