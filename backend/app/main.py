@@ -164,7 +164,7 @@ SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/inv
 NISHUKAN_APP_URL = os.environ.get("NISHUKAN_APP_URL", "http://nishukan-app:8020/invoke")
 # 研修 LMS（Compose profiles: ["lms"]）。実 API は /lms/* プロキシ。
 LMS_APP_URL = os.environ.get("LMS_APP_URL", "http://lms-app:8021/invoke")
-# 自治体予算。実 API は /budget/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用。
+# 自治体予算（Compose profiles: ["budget"]）。実 API は /budget/* プロキシ。
 BUDGET_APP_URL = os.environ.get("BUDGET_APP_URL", "http://budget-app:8022/invoke")
 
 # ノートブック。実 API は /notebook/* プロキシ（旧 /procuretech-hearing/* はエイリアス）。
@@ -951,7 +951,7 @@ BUDGET_SEED: dict[str, Any] = {
         "- 左は歳入、中央は普通会計、右は目的別または性質別の歳出です。\n"
         "- 目的別と性質別は同じ歳出の別の分け方です。右の列を切り替えて見ます。\n"
         "- 金額は総額と住民1人あたりを切り替えられます。\n"
-        "- `docker compose up -d` で標準起動します。\n"
+        "- 有効化: `docker compose --profile budget up -d` または `COMPOSE_PROFILES=budget`。\n"
     ),
     "copyable": False,
     "status": "published",
@@ -5758,7 +5758,8 @@ async def _proxy_budget(method: str, url: str, headers: dict[str, str]) -> JSONR
             content={
                 "error": (
                     "自治体予算サービスに接続できませんでした。"
-                    "`docker compose up -d budget-app` で起動してください。"
+                    "有効化するには `docker compose --profile budget up -d` "
+                    "または `COMPOSE_PROFILES=budget` を設定してください。"
                     f"（詳細: {e}）"
                 ),
                 "enabled": False,

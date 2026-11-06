@@ -157,7 +157,7 @@ export const createRoutes = (): RouteObject[] => {
     // ワールドモニター（Compose profiles: ["worldmonitor"]）。
     { path: 'worldmonitor', element: <WorldmonitorPage /> },
     { path: 'apps/:teamId/worldmonitor', element: <Navigate to='/worldmonitor' replace /> },
-    // 自治体予算（budget-app。標準起動）。
+    // 自治体予算（Compose profiles: ["budget"]）。
     { path: 'budget', element: <BudgetPage /> },
     { path: 'apps/:teamId/budget', element: <Navigate to='/budget' replace /> },
     // 戦国国取り（お遊び・Compose profiles: ["sengoku"]）。

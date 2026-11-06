@@ -1,6 +1,7 @@
 """自治体予算ビュー（Open GENAI exApp / 専用ページ向け）。
 
 令和6年度の市区町村・普通会計決算を返す。画面は genai-web の /budget。
+Compose では profiles: ["budget"] でオプション起動する。
 庁内は backend が JWT 検証後、HMAC 署名付きで /config と /data へプロキシする。
 """
 

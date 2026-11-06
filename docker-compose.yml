@@ -94,7 +94,7 @@ services:
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # ノートブック（標準起動）
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
-      # 自治体予算（標準起動）
+      # 自治体予算（profiles: ["budget"]。未起動時は専用ページが案内を表示）
       - BUDGET_APP_URL=${BUDGET_APP_URL:-http://budget-app:8022/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
@@ -797,8 +797,10 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-  # 標準: 自治体予算（市区町村の普通会計決算をサンキーで見る）
+  # 任意: 自治体予算（市区町村の普通会計決算）
+  # (`docker compose --profile budget up -d` または COMPOSE_PROFILES=budget)
   budget-app:
+    profiles: ["budget"]
     build: ./budget-app
     container_name: open-genai-budget-app
     environment:

@@ -211,9 +211,10 @@ export const BudgetPage = () => {
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170' role='status'>
             <p className='text-std-16B-150 text-solid-gray-900'>自治体予算は現在利用できません</p>
-            <p className='mt-2 text-solid-gray-700'>{config?.error || 'budget-app の起動を確認してください。'}</p>
+            <p className='mt-2 text-solid-gray-700'>{config?.error || 'profile budget で起動してください。'}</p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose up -d budget-app
+              docker compose --profile budget up -d{'\n'}
+              # または .env に COMPOSE_PROFILES=budget
             </pre>
           </div>
         )}

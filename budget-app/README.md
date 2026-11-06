@@ -2,7 +2,7 @@
 
 市区町村を選ぶと、令和6年度の普通会計決算をサンキー図で見る Open GENAI のアプリです。画面は `/budget` です。
 
-`docker compose up -d` で `budget-app`（ポート 8022）が起動します。未起動のあいだはアプリ一覧に出ません。
+`docker compose --profile budget up -d` で起動します。`.env` の `COMPOSE_PROFILES=budget` でも有効にできます。未起動のあいだはアプリ一覧に出ません。
 
 歳入の各科目は普通会計に入り、歳出は目的別か性質別のどちらかに分かれます。この二つは同じ歳出の別の分け方です。
 
