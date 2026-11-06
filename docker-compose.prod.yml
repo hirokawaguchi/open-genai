@@ -123,6 +123,8 @@ services:
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # ノートブック（標準起動）
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
+      # 自治体予算（標準起動）
+      - BUDGET_APP_URL=${BUDGET_APP_URL:-http://budget-app:8022/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
       # ワールドモニター（profiles: ["worldmonitor"]。未起動時は専用ページが案内を表示）
@@ -740,6 +742,17 @@ services:
       - "8017"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 標準: 自治体予算。ホストポートは公開しない。
+  budget-app:
+    build: ./budget-app
+    container_name: open-genai-budget-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+    expose:
+      - "8022"
     restart: unless-stopped
 
   # 任意: Web SSH（`COMPOSE_PROFILES=ssh` または `--profile ssh`）

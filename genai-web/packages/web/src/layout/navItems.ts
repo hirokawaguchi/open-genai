@@ -7,6 +7,7 @@ import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
 import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
+  useBudgetAvailable,
   useDoccheckAvailable,
   useLmsAvailable,
   useNishukanAvailable,
@@ -97,6 +98,12 @@ export const WORLDMONITOR_PATH = '/worldmonitor';
 /** ワールドモニター exApp の識別子（専用ページへ振り替える対象） */
 export const WORLDMONITOR_EXAPP_ID = 'worldmonitor';
 
+/** 自治体予算は汎用 exApp フォームではなく専用ページで提供する */
+export const BUDGET_PATH = '/budget';
+
+/** 自治体予算 exApp の識別子（専用ページへ振り替える対象） */
+export const BUDGET_EXAPP_ID = 'budget';
+
 /** 戦国国取り（お遊び）は汎用 exApp フォームではなく専用ページで提供する */
 export const SENGOKU_PATH = '/sengoku';
 
@@ -166,6 +173,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
+  const budgetAvailable = useBudgetAvailable();
   const worldmonitorAvailable = useWorldmonitorAvailable();
   const nishukanAvailable = useNishukanAvailable();
   const lmsAvailable = useLmsAvailable();
@@ -365,6 +373,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (budgetAvailable && listed(BUDGET_EXAPP_ID)) {
+      items.push({
+        label: nameOf(BUDGET_EXAPP_ID, '自治体予算'),
+        to: BUDGET_PATH,
+        description: descOf(
+          BUDGET_EXAPP_ID,
+          '市区町村の普通会計決算を、歳入から歳出への流れで見ます。',
+        ),
+      });
+    }
+
     if (sengokuAvailable && listed(SENGOKU_EXAPP_ID)) {
       items.push({
         label: nameOf(SENGOKU_EXAPP_ID, '戦国国取り'),
@@ -408,6 +427,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     notebookAvailable,
     sshAvailable,
     sengokuAvailable,
+    budgetAvailable,
     worldmonitorAvailable,
     nishukanAvailable,
     lmsAvailable,
@@ -466,6 +486,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // 戦国国取りは専用ページへ振り替える
   if (item.app.value === SENGOKU_EXAPP_ID) {
     return SENGOKU_PATH;
+  }
+  if (item.app.value === BUDGET_EXAPP_ID) {
+    return BUDGET_PATH;
   }
   if (item.app.value === SHIMEN_EXAPP_ID) {
     return SHIMEN_PATH;
