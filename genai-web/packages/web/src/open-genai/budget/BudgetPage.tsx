@@ -1,7 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { PiBookOpenBold } from 'react-icons/pi';
 import { useSearchParams } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
-import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
+import {
+  CustomDialog,
+  CustomDialogBody,
+  CustomDialogHeader,
+  CustomDialogPanel,
+} from '@/components/ui/CustomDialog';
+import { Button } from '@/components/ui/dads/Button';
+import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
@@ -130,10 +138,11 @@ const SegButton = (props: { pressed: boolean; onClick: () => void; children: str
 );
 
 export const BudgetPage = () => {
-  const { documentTitle } = useRegisteredAppMeta(
+  const { documentTitle, title, description, howToUse } = useRegisteredAppMeta(
     COMMON_EXAPPS_TEAM_ID,
     BUDGET_EXAPP_ID,
     '自治体予算',
+    '市区町村の普通会計決算を、歳入から歳出への流れで見ます。',
   );
   const { config, isLoading: configLoading, unavailable } = useBudgetConfig();
   const enabled = config?.enabled === true;
@@ -142,6 +151,50 @@ export const BudgetPage = () => {
   const [query, setQuery] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  useEffect(() => {
+    const root = document.getElementById('layoutRoot');
+    const main = document.getElementById('mainContents');
+    const column = main?.parentElement ?? null;
+    const row = column?.parentElement ?? null;
+    const html = document.documentElement;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevRootHeight = root?.style.height ?? '';
+    const prevRootOverflow = root?.style.overflow ?? '';
+    html.style.overflow = 'hidden';
+    if (root) {
+      root.style.height = '100dvh';
+      root.style.overflow = 'hidden';
+    }
+    const added: Array<[HTMLElement, string[]]> = [];
+    const add = (el: HTMLElement | null, classes: string[]) => {
+      if (!el) return;
+      const next = classes.filter((name) => !el.classList.contains(name));
+      if (next.length === 0) return;
+      el.classList.add(...next);
+      added.push([el, next]);
+    };
+    add(row, ['min-h-0', 'overflow-hidden']);
+    add(column, ['min-h-0', 'overflow-hidden']);
+    add(main, ['flex', 'min-h-0', 'flex-col', 'overflow-hidden']);
+    const shell = document.getElementById('budget-shell');
+    let node = shell?.parentElement ?? null;
+    while (node && node !== main) {
+      add(node, ['flex', 'min-h-0', 'h-full', 'flex-1', 'flex-col', 'overflow-hidden']);
+      node = node.parentElement;
+    }
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      if (root) {
+        root.style.height = prevRootHeight;
+        root.style.overflow = prevRootOverflow;
+      }
+      for (const [el, classes] of added) {
+        el.classList.remove(...classes);
+      }
+    };
+  }, []);
 
   const view: BudgetView = params.get('view') === 'nature' ? 'nature' : 'purpose';
   const unit: BudgetUnit = params.get('unit') === 'per' ? 'per' : 'total';
@@ -193,20 +246,28 @@ export const BudgetPage = () => {
   return (
     <LayoutBody>
       <PageTitle title={documentTitle} />
-      <div className='mx-auto flex w-full max-w-[1180px] flex-col gap-4 p-4 lg:p-6'>
-        <ManagedAppHeader
-          teamId={COMMON_EXAPPS_TEAM_ID}
-          exAppId={BUDGET_EXAPP_ID}
-          fallbackTitle='自治体予算'
-          fallbackDescription='市区町村の普通会計決算を、歳入から歳出への流れで見ます。'
-          fallbackHowTo={
-            <>
-              <p>・自治体名を選ぶと、令和6年度の決算が表示されます。</p>
-              <p>・左は歳入、中央は普通会計、右は目的別または性質別の歳出です。</p>
-              <p>・金額は総額と住民1人あたりを切り替えられます。</p>
-            </>
-          }
-        />
+      <div
+        id='budget-shell'
+        className='mx-auto flex min-h-0 w-full max-w-(--page-width) flex-1 flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
+      >
+        <div className='flex min-w-0 shrink-0 items-center gap-3'>
+          <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{title}</h1>
+          {description && (
+            <p className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600' title={description}>
+              {description}
+            </p>
+          )}
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='inline-flex shrink-0 items-center gap-1'
+            onClick={() => setHelpOpen(true)}
+          >
+            <PiBookOpenBold aria-hidden={true} className='size-4' />
+            使い方
+          </Button>
+        </div>
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170' role='status'>
@@ -219,11 +280,11 @@ export const BudgetPage = () => {
           </div>
         )}
 
-        {enabled && dataLoading && <p className='text-std-16N-170 text-solid-gray-700'>決算を読み込んでいます…</p>}
+        {enabled && dataLoading && <p className='shrink-0 text-std-16N-170 text-solid-gray-700'>決算を読み込んでいます…</p>}
 
         {enabled && data && row && (
           <>
-            <div className='flex flex-wrap items-end gap-3'>
+            <div className='flex shrink-0 flex-wrap items-end gap-3'>
               <label className='flex flex-col gap-1 text-xs text-solid-gray-600'>
                 都道府県
                 <select
@@ -288,10 +349,7 @@ export const BudgetPage = () => {
                 </div>
               </div>
             </div>
-            <p className='text-sm text-solid-gray-700'>
-              {row.pref}{row.name}の{data.label}{data.basis}。歳入 {formatAmount(row.revTotal, row.pop, unit)}、歳出 {formatAmount(row.expTotal, row.pop, unit)}。右の列は{view === 'nature' ? '性質別' : '目的別'}です。目的別と性質別は同じ歳出の別の分け方なので、同時にはつなぎません。
-            </p>
-            <div className='grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_280px]'>
+            <div className='grid min-h-0 flex-1 items-stretch gap-3 lg:grid-cols-[minmax(0,1fr)_280px]'>
               <Sankey
                 data={data}
                 row={row}
@@ -301,15 +359,36 @@ export const BudgetPage = () => {
                 selectedKey={selectedKey}
                 onSelect={setSelectedKey}
               />
-              <Side data={data} row={row} view={view} unit={unit} selectedKey={selectedKey} />
+              <Side
+                data={data}
+                row={row}
+                view={view}
+                unit={unit}
+                selectedKey={selectedKey}
+              />
             </div>
-            <p className='text-xs text-solid-gray-600'>
-              出典: <a className='underline' href={data.sourceUrl}>{data.source}</a>
-              。金額の原単位は千円で、画面では円換算しています。{data.rows.length.toLocaleString('ja-JP')}団体。
-            </p>
           </>
         )}
       </div>
+      <CustomDialog isOpen={helpOpen} onClose={() => setHelpOpen(false)}>
+        <CustomDialogPanel className='max-w-2xl'>
+          <CustomDialogHeader hasClose onClose={() => setHelpOpen(false)}>
+            使い方
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            {howToUse ? (
+              <ExAppUsageMarkdownRenderer content={howToUse} size='sm' />
+            ) : (
+              <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
+                <p>・自治体名を選ぶと、令和6年度の決算が表示されます。</p>
+                <p>・左は歳入、中央は普通会計、右は目的別または性質別の歳出です。</p>
+                <p>・目的別と性質別は同じ歳出の別の分け方です。右の列を切り替えて見ます。</p>
+                <p>・金額は総額と住民1人あたりを切り替えられます。</p>
+              </div>
+            )}
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
     </LayoutBody>
   );
 };
@@ -396,8 +475,8 @@ const Sankey = (props: {
   };
 
   return (
-    <div className='overflow-x-auto rounded-2xl border border-solid-gray-420 bg-white'>
-      <svg viewBox={`0 0 980 ${height}`} className='block h-auto w-full min-w-[720px]' role='img' aria-label={`${row.name}の${data.label}普通会計決算`}>
+    <div className='h-full min-h-0 overflow-hidden rounded-2xl border border-solid-gray-420 bg-white'>
+      <svg viewBox={`0 0 980 ${height}`} preserveAspectRatio='xMidYMid meet' className='block h-full w-full' role='img' aria-label={`${row.name}の${data.label}普通会計決算`}>
         <text x={20} y={22} fontSize={13} fontWeight={700}>歳入 {formatAmount(row.revTotal, row.pop, unit)}</text>
         <text x={479} y={22} fontSize={13} fontWeight={700} textAnchor='middle'>普通会計</text>
         <text x={716} y={22} fontSize={13} fontWeight={700}>{outTitle} {formatAmount(row.expTotal, row.pop, unit)}</text>
@@ -451,7 +530,7 @@ const Side = (props: {
     picked = found ? `${found.name}　${formatAmount(found.value, row.pop, unit)}　${share}` : name;
   }
   return (
-    <aside className='rounded-2xl border border-solid-gray-420 bg-white p-4'>
+    <aside className='h-full overflow-auto rounded-2xl border border-solid-gray-420 bg-white p-4'>
       <h2 className='text-xl font-semibold'>{row.name}</h2>
       <p className='mb-3 text-sm text-solid-gray-600'>{row.pref}　団体コード {row.code}　人口 {row.pop.toLocaleString('ja-JP')}人</p>
       <p className='mb-3 rounded-xl bg-solid-gray-50 px-3 py-2 text-sm'>{picked}</p>
@@ -468,6 +547,10 @@ const Side = (props: {
           <li key={item.name} className='my-1'>{item.name}　{formatAmount(item.value, row.pop, unit)}</li>
         ))}
       </ol>
+      <p className='mt-3 text-xs text-solid-gray-600'>
+        出典: <a className='underline' href={data.sourceUrl}>{data.source}</a>
+        。金額の原単位は千円で、画面では円換算しています。{data.rows.length.toLocaleString('ja-JP')}団体。
+      </p>
     </aside>
   );
 };
