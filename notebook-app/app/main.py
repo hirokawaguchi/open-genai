@@ -608,7 +608,7 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     )
     scope = (request.headers.get("x-scope") or "").strip()
     try:
-        answer, cites, traces = await harness.run(
+        answer, cites, traces, drafts, open_editor = await harness.run(
             session_id=session_id,
             user_id=uid,
             scope=scope,
@@ -633,6 +633,8 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
         content=answer,
         citations=cites,
         tool_trace=traces,
+        drafts=drafts,
+        open_editor=open_editor,
     )
     return JSONResponse(content=detail)
 

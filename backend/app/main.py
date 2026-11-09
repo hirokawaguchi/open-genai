@@ -7348,6 +7348,45 @@ async def procuretech_hearing_download(
     )
 
 
+@app.post("/notebook/sessions/{session_id}/open-editor")
+async def notebook_open_editor(session_id: str, request: Request) -> JSONResponse:
+    """採用済みの項目を、Markdown エディタのプロジェクト編集画面へ渡す。"""
+    from .notebook_handoff import HandoffError, open_in_editor
+
+    err, notebook_headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    editor_err, editor_headers = _procuretech_editor_headers(request)
+    if editor_err:
+        return editor_err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        async with httpx.AsyncClient(timeout=240) as client:
+            opened = await open_in_editor(
+                client,
+                download_url=_procuretech_hearing_app_url(
+                    f"/sessions/{session_id}/download"
+                ),
+                editor_base=_procuretech_editor_app_url(""),
+                notebook_headers=notebook_headers,
+                editor_headers=editor_headers,
+                mode=str(body.get("mode") or ""),
+                name=str(body.get("name") or ""),
+                project_id=str(body.get("project_id") or ""),
+            )
+    except HandoffError as e:
+        content: dict[str, Any] = {"error": e.message}
+        if e.project_id:
+            content["project_id"] = e.project_id
+        return JSONResponse(status_code=e.status, content=content)
+    return JSONResponse(content=opened)
+
+
 async def _snapshot_knowledge_doc(
     claims: dict[str, Any], scope: str, doc_id: str
 ) -> tuple[JSONResponse | None, dict[str, Any]]:

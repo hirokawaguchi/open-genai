@@ -146,6 +146,12 @@ def init_db() -> None:
             db.execute(
                 "ALTER TABLE messages ADD COLUMN source_labels TEXT NOT NULL DEFAULT '[]'"
             )
+        if "drafts" not in msg_cols:
+            db.execute("ALTER TABLE messages ADD COLUMN drafts TEXT NOT NULL DEFAULT '[]'")
+        if "open_editor" not in msg_cols:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN open_editor INTEGER NOT NULL DEFAULT 0"
+            )
         db.commit()
 
 
@@ -233,7 +239,8 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
             (session_id,),
         ).fetchall()
         messages = db.execute(
-            "SELECT id, role, content, citations, tool_trace, source_labels, created_at"
+            "SELECT id, role, content, citations, tool_trace, source_labels, drafts,"
+            " open_editor, created_at"
             " FROM messages WHERE session_id = ? ORDER BY created_at",
             (session_id,),
         ).fetchall()
@@ -306,6 +313,7 @@ def _public_message(m: sqlite3.Row) -> dict[str, Any]:
     keys = m.keys()
     trace = _parse_json(m["tool_trace"] if "tool_trace" in keys else "[]", [])
     labels = _parse_json(m["source_labels"] if "source_labels" in keys else "[]", [])
+    drafts = _parse_json(m["drafts"] if "drafts" in keys else "[]", [])
     return {
         "id": m["id"],
         "role": m["role"],
@@ -315,6 +323,8 @@ def _public_message(m: sqlite3.Row) -> dict[str, Any]:
         "source_labels": [str(x) for x in labels if str(x).strip()]
         if isinstance(labels, list)
         else [],
+        "drafts": drafts if isinstance(drafts, list) else [],
+        "open_editor": bool(m["open_editor"]) if "open_editor" in keys else False,
         "created_at": m["created_at"],
     }
 
@@ -674,6 +684,8 @@ def add_message(
     citations: list[dict[str, Any]] | None = None,
     tool_trace: list[dict[str, Any]] | None = None,
     source_labels: list[str] | None = None,
+    drafts: list[dict[str, Any]] | None = None,
+    open_editor: bool = False,
 ) -> dict[str, Any] | None:
     db = connect()
     msg_id = str(uuid.uuid4())
@@ -683,7 +695,7 @@ def add_message(
             return None
         db.execute(
             "INSERT INTO messages (id, session_id, role, content, citations, tool_trace,"
-            " source_labels, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            " source_labels, drafts, open_editor, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 msg_id,
                 session_id,
@@ -692,6 +704,8 @@ def add_message(
                 json.dumps(citations or [], ensure_ascii=False),
                 json.dumps(tool_trace or [], ensure_ascii=False),
                 json.dumps(labels, ensure_ascii=False),
+                json.dumps(drafts or [], ensure_ascii=False),
+                1 if open_editor else 0,
                 _now_iso(),
             ),
         )

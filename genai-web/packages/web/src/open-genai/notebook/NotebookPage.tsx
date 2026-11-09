@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PiBookOpenBold, PiFilePlus, PiPuzzlePieceBold } from 'react-icons/pi';
+import { useNavigate } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -24,16 +25,20 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
 import { useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import {
+  fetchGeneration,
+  useEditorProjects,
+} from '@/open-genai/procuretech-editor/useProcuretechEditor';
 import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
+import { chaptersFromAnswer } from './chapters';
 import { formatNotebookMarkdown, stripCitationMarks, usedCitations } from './formatMarkdown';
 import { NotebookChat } from './NotebookChat';
 import { NotebookManageDialog } from './NotebookManageDialog';
-import type { NotebookBriefing, NotebookMessage } from './types';
+import type { NotebookBriefing, NotebookDraft, NotebookMessage } from './types';
 import {
-  downloadHearingSheetTemplate,
-  downloadHearingSheetWorkbook,
   fileToBase64,
+  openNotebookInEditor,
   useNotebookActions,
   useNotebookConfig,
   useNotebookMcps,
@@ -47,6 +52,7 @@ const PANE_TABS = [
   { id: 'sources' as const, label: '参考資料' },
   { id: 'chat' as const, label: '対話' },
   { id: 'items' as const, label: '項目' },
+  { id: 'editor' as const, label: 'Markdownエディタで編集' },
 ];
 
 const defaultNoteTitle = (existing: { title: string }[]) => {
@@ -191,7 +197,7 @@ export const NotebookPage = () => {
     COMMON_EXAPPS_TEAM_ID,
     NOTEBOOK_EXAPP_ID,
     'ノートブック',
-    '参考資料を集めて調べ、項目として整理します。Markdown エディタに読み込ませるヒアリングシートも作成できます。',
+    '参考資料を集めて調べ、項目として整理します。Markdown エディタの編集画面へ渡せます。',
   );
   const { config, isLoading: configLoading, unavailable } = useNotebookConfig();
   const { sessions, mutate: mutateSessions } = useNotebookSessions();
@@ -200,12 +206,21 @@ export const NotebookPage = () => {
   const { skills, mutate: mutateSkills } = useNotebookSkills();
   const { mcps, mutate: mutateMcps } = useNotebookMcps();
   const actions = useNotebookActions();
+  const navigate = useNavigate();
+  const { projects: editorProjects, loadError: editorProjectsError } = useEditorProjects();
   const fileRef = useRef<HTMLInputElement>(null);
+  const editorNameTouched = useRef(false);
+  const openRun = useRef(0);
   const [listTitles, setListTitles] = useState<Record<string, string>>({});
   const [newNoteName, setNewNoteName] = useState('');
   const [instruction, setInstruction] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { label: string; value: string }>>({});
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [openingEditor, setOpeningEditor] = useState(false);
+  const [editorMode, setEditorMode] = useState<'new' | 'existing'>('new');
+  const [editorName, setEditorName] = useState('');
+  const [editorProjectId, setEditorProjectId] = useState('');
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [pane, setPane] = useState<(typeof PANE_TABS)[number]['id']>('list');
   const [helpOpen, setHelpOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -221,6 +236,26 @@ export const NotebookPage = () => {
   const [addingFileLabel, setAddingFileLabel] = useState('');
   const { scopes } = useScopes();
   const { docs: knowledgeDocs } = useDocs(knowledgeScope || undefined);
+
+  useEffect(() => {
+    editorNameTouched.current = false;
+    setEditorName('');
+    setEditorProjectId('');
+    setPendingProjectId(null);
+    setOpenError(null);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!detail || editorNameTouched.current) return;
+    setEditorName(detail.title);
+  }, [detail]);
+
+  useEffect(
+    () => () => {
+      openRun.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!detail) return;
@@ -327,7 +362,7 @@ export const NotebookPage = () => {
     setPane('chat');
     setSessionId(id);
     actions.setError(null);
-    setDownloadError(null);
+    setOpenError(null);
   };
 
   const onSaveListTitle = async (id: string) => {
@@ -344,6 +379,17 @@ export const NotebookPage = () => {
     if (!sessionId || !detail || instruction === detail.instruction) return;
     const next = await actions.updateSession(sessionId, { instruction });
     if (next) await refresh(next);
+  };
+
+  const onUseAsInstruction = async (message: NotebookMessage) => {
+    if (!sessionId || message.role !== 'assistant') return;
+    const text = stripCitationMarks(message.content);
+    if (!text) return;
+    const next = await actions.updateSession(sessionId, { instruction: text });
+    if (!next) return;
+    setInstruction(text);
+    await refresh(next);
+    setPane('editor');
   };
 
   const onSaveItem = async (itemId: string, field: 'label' | 'value') => {
@@ -457,6 +503,10 @@ export const NotebookPage = () => {
     const next = await actions.chat(sessionId, q, skillId || undefined, sourceIds);
     if (next) {
       await refresh(next);
+      const last = [...(next.messages ?? [])].reverse().find((m) => m.role === 'assistant');
+      if (last?.open_editor && !(last.drafts && last.drafts.length > 0)) {
+        setPane('editor');
+      }
       return;
     }
     setChatDraft(q);
@@ -529,6 +579,22 @@ export const NotebookPage = () => {
     return '';
   };
 
+  const onAdoptDrafts = async (chapters: NotebookDraft[]) => {
+    if (!sessionId || chapters.length === 0) return;
+    let latest: Awaited<ReturnType<typeof actions.addItem>> = null;
+    for (const chapter of chapters) {
+      const added = await actions.addItem(sessionId);
+      const item = added?.items[added.items.length - 1];
+      if (!item) return;
+      latest = await actions.updateItem(sessionId, item.id, {
+        label: chapter.label,
+        value: chapter.value,
+        citations: chapter.citations ?? [],
+      });
+    }
+    if (latest) await refresh(latest);
+  };
+
   const onChatToItem = async (message: NotebookMessage) => {
     if (!sessionId || message.role !== 'assistant') return;
     const value = stripCitationMarks(message.content);
@@ -538,17 +604,25 @@ export const NotebookPage = () => {
       if (next) await refresh(next);
       return;
     }
-    const added = await actions.addItem(sessionId);
-    const item = added?.items[added.items.length - 1];
-    if (!item) return;
-    const next = await actions.updateItem(sessionId, item.id, {
-      label: questionForAssistant(message.id) || '対話から追加',
-      value: stripCitationMarks(message.content),
-      citations: usedCitations(message.content, message.citations ?? []),
-    });
-    if (next) {
+    const chapters = chaptersFromAnswer(message.content);
+    const pieces =
+      chapters.length > 0
+        ? chapters
+        : [{ label: questionForAssistant(message.id) || '対話から追加', value }];
+    let latest: Awaited<ReturnType<typeof actions.addItem>> = null;
+    for (const piece of pieces) {
+      const added = await actions.addItem(sessionId);
+      const item = added?.items[added.items.length - 1];
+      if (!item) return;
+      latest = await actions.updateItem(sessionId, item.id, {
+        label: piece.label,
+        value: piece.value,
+        citations,
+      });
+    }
+    if (latest) {
       setPane('items');
-      await refresh(next);
+      await refresh(latest);
     }
   };
 
@@ -565,33 +639,73 @@ export const NotebookPage = () => {
     await mutateSessions();
   };
 
-  const onDownloadTemplate = async () => {
-    setDownloadError(null);
-    try {
-      await downloadHearingSheetTemplate();
-    } catch (e) {
-      setDownloadError(
-        e instanceof ApiError
-          ? ((e.data as { error?: string } | undefined)?.error ?? '雛形の取得に失敗しました。')
-          : '雛形の取得に失敗しました。',
-      );
+  const flushDrafts = async () => {
+    if (!sessionId || !detail) return;
+    if (instruction !== detail.instruction) {
+      const next = await actions.updateSession(sessionId, { instruction });
+      if (next) await refresh(next);
+    }
+    for (const item of detail.items) {
+      const draft = drafts[item.id];
+      if (!draft) continue;
+      if (draft.label === item.label && draft.value === item.value) continue;
+      const next = await actions.updateItem(sessionId, item.id, {
+        label: draft.label,
+        value: draft.value,
+      });
+      if (next) await refresh(next);
     }
   };
 
-  const onDownloadFilled = async () => {
-    if (!sessionId) return;
-    setDownloadError(null);
+  const onOpenEditor = async () => {
+    if (!sessionId || !detail || openingEditor) return;
+    const run = openRun.current + 1;
+    openRun.current = run;
+    setOpenError(null);
+    setPendingProjectId(null);
+    setOpeningEditor(true);
     try {
-      await onSaveInstruction();
-      await downloadHearingSheetWorkbook(sessionId);
+      await flushDrafts();
+      if (openRun.current !== run) return;
+      const started = await openNotebookInEditor(sessionId, {
+        mode: editorMode,
+        name: editorMode === 'new' ? editorName.trim() : undefined,
+        project_id: editorMode === 'existing' ? editorProjectId : undefined,
+      });
+      const deadline = Date.now() + 5 * 60 * 1000;
+      let status = await fetchGeneration(started.project_id, started.request_id);
+      while (status.status !== 'success' && status.status !== 'error') {
+        if (openRun.current !== run) return;
+        if (Date.now() > deadline) {
+          setPendingProjectId(started.project_id);
+          setOpenError('章の作成が時間内に終わりませんでした。作成したプロジェクトは開けます。');
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        if (openRun.current !== run) return;
+        status = await fetchGeneration(started.project_id, started.request_id);
+      }
+      if (status.status === 'error') {
+        setPendingProjectId(started.project_id);
+        setOpenError(status.error || '章の作成に失敗しました。');
+        return;
+      }
+      navigate(`/procuretech-editor?project=${encodeURIComponent(started.project_id)}`);
     } catch (e) {
-      setDownloadError(
-        e instanceof ApiError
-          ? ((e.data as { error?: string } | undefined)?.error ?? 'ダウンロードに失敗しました。')
-          : 'ダウンロードに失敗しました。',
-      );
+      if (openRun.current !== run) return;
+      const data =
+        e instanceof ApiError ? (e.data as { error?: string; project_id?: string }) : undefined;
+      if (data?.project_id) setPendingProjectId(data.project_id);
+      setOpenError(data?.error || '編集画面を開けませんでした。');
+    } finally {
+      if (openRun.current === run) setOpeningEditor(false);
     }
   };
+
+  const adoptedItems = (detail?.items ?? []).filter((item) => {
+    const draft = drafts[item.id] ?? item;
+    return draft.label.trim().length > 0 && draft.value.trim().length > 0;
+  });
 
   const sourceCount = (detail?.files.length ?? 0) + (detail?.knowledge_refs?.length ?? 0);
   const connectedMcps = (detail?.mcps ?? []).filter((m) => m.connected);
@@ -615,7 +729,7 @@ export const NotebookPage = () => {
             teamId={COMMON_EXAPPS_TEAM_ID}
             exAppId={NOTEBOOK_EXAPP_ID}
             fallbackTitle='ノートブック'
-            fallbackDescription='参考資料を集めて調べ、項目として整理します。Markdown エディタに読み込ませるヒアリングシートも作成できます。'
+            fallbackDescription='参考資料を集めて調べ、項目として整理します。Markdown エディタの編集画面へ渡せます。'
             hideHowTo={true}
           />
         ) : (
@@ -706,14 +820,6 @@ export const NotebookPage = () => {
                         <PiFilePlus className='size-4' aria-hidden={true} />
                         作成
                       </span>
-                    </Button>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      onClick={() => void onDownloadTemplate()}
-                    >
-                      空の雛形
                     </Button>
                   </div>
                 </div>
@@ -951,12 +1057,15 @@ export const NotebookPage = () => {
                   onDraftChange={setChatDraft}
                   onSend={() => void onChat()}
                   onApplyMessage={(m) => void onChatToItem(m)}
+                  onAdoptDrafts={(chapters) => void onAdoptDrafts(chapters)}
+                  onUseAsInstruction={(m) => void onUseAsInstruction(m)}
+                  onOpenEditorTab={() => setPane('editor')}
                 />
               </div>
             )}
 
             {pane === 'items' && detail && (
-              <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
+              <div className='flex min-h-0 flex-1 flex-col gap-3'>
                 <div className='flex items-center justify-between gap-2'>
                   <h2 className='text-std-18B-160'>項目</h2>
                   <Button
@@ -969,123 +1078,197 @@ export const NotebookPage = () => {
                   </Button>
                 </div>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  項目名が設問です。生成は参考資料の該当節だけを根拠にします。
+                  見出しが章の名前、本文が章の中身です。対話の下書きは、章ごとに項目にしてから正本になります。生成は参考資料の該当節だけを根拠にします。
                 </p>
-                {detail.items.length === 0 && (
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    「項目を追加」から設問を増やしてください。
-                  </p>
-                )}
-                {detail.items.map((item, index) => {
-                  const draft = drafts[item.id] ?? { label: item.label, value: item.value };
-                  const busy = actions.generatingId === item.id;
-                  return (
-                    <article
-                      key={item.id}
-                      className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 p-3'
-                    >
-                      <div className='flex flex-wrap items-center justify-between gap-2'>
-                        <Label htmlFor={`notebook-label-${item.id}`}>項目 {index + 1}</Label>
-                        <div className='flex flex-wrap gap-2'>
-                          <Button
-                            type='button'
-                            variant='solid-fill'
-                            size='sm'
-                            aria-disabled={busy || !llmEnabled || !draft.label.trim() || undefined}
-                            onClick={() => {
-                              if (busy || !llmEnabled || !draft.label.trim()) return;
-                              void onGenerate(item.id);
-                            }}
-                          >
-                            {busy ? (
-                              <>
-                                <Spinner /> 生成中
-                              </>
-                            ) : llmEnabled ? (
-                              '生成'
-                            ) : (
-                              'LLM 未設定'
-                            )}
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={() => void onDeleteItem(item.id)}
-                          >
-                            削除
-                          </Button>
+                <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2'>
+                  {detail.items.length === 0 && (
+                    <p className='text-dns-14N-130 text-solid-gray-600'>
+                      「項目を追加」から章を増やしてください。
+                    </p>
+                  )}
+                  {detail.items.map((item, index) => {
+                    const draft = drafts[item.id] ?? { label: item.label, value: item.value };
+                    const busy = actions.generatingId === item.id;
+                    return (
+                      <article
+                        key={item.id}
+                        className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 p-3'
+                      >
+                        <div className='flex flex-wrap items-center justify-between gap-2'>
+                          <Label htmlFor={`notebook-label-${item.id}`}>見出し {index + 1}</Label>
+                          <div className='flex flex-wrap gap-2'>
+                            <Button
+                              type='button'
+                              variant='solid-fill'
+                              size='sm'
+                              aria-disabled={
+                                busy || !llmEnabled || !draft.label.trim() || undefined
+                              }
+                              onClick={() => {
+                                if (busy || !llmEnabled || !draft.label.trim()) return;
+                                void onGenerate(item.id);
+                              }}
+                            >
+                              {busy ? (
+                                <>
+                                  <Spinner /> 生成中
+                                </>
+                              ) : llmEnabled ? (
+                                '生成'
+                              ) : (
+                                'LLM 未設定'
+                              )}
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() => void onDeleteItem(item.id)}
+                            >
+                              削除
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                      <Input
-                        id={`notebook-label-${item.id}`}
-                        blockSize='md'
-                        placeholder='例: 対象業務は何か'
-                        value={draft.label}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [item.id]: { ...draft, label: e.target.value },
-                          }))
-                        }
-                        onBlur={() => void onSaveItem(item.id, 'label')}
-                      />
-                      {editingValueId === item.id || !draft.value.trim() ? (
-                        <div className='flex flex-col gap-2'>
-                          {!!draft.value.trim() && (
-                            <div className='flex justify-end'>
+                        <Input
+                          id={`notebook-label-${item.id}`}
+                          blockSize='md'
+                          placeholder='例: 背景'
+                          value={draft.label}
+                          onChange={(e) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: { ...draft, label: e.target.value },
+                            }))
+                          }
+                          onBlur={() => void onSaveItem(item.id, 'label')}
+                        />
+                        <Label htmlFor={`notebook-value-${item.id}`}>本文</Label>
+                        {editingValueId === item.id || !draft.value.trim() ? (
+                          <div className='flex flex-col gap-2'>
+                            {!!draft.value.trim() && (
+                              <div className='flex justify-end'>
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='xs'
+                                  onClick={() => {
+                                    void onSaveItem(item.id, 'value');
+                                    setEditingValueId(null);
+                                  }}
+                                >
+                                  表示に戻す
+                                </Button>
+                              </div>
+                            )}
+                            <Textarea
+                              id={`notebook-value-${item.id}`}
+                              rows={5}
+                              placeholder='本文（手入力または生成）'
+                              value={draft.value}
+                              onChange={(e) =>
+                                setDrafts((prev) => ({
+                                  ...prev,
+                                  [item.id]: { ...draft, value: e.target.value },
+                                }))
+                              }
+                              onBlur={() => void onSaveItem(item.id, 'value')}
+                            />
+                          </div>
+                        ) : (
+                          <div className='rounded-8 border border-solid-gray-300 px-3 py-2'>
+                            <div className='mb-2 flex justify-end'>
                               <Button
                                 type='button'
                                 variant='outline'
                                 size='xs'
-                                onClick={() => {
-                                  void onSaveItem(item.id, 'value');
-                                  setEditingValueId(null);
-                                }}
+                                onClick={() => setEditingValueId(item.id)}
                               >
-                                表示に戻す
+                                編集
                               </Button>
                             </div>
-                          )}
-                          <Textarea
-                            id={`notebook-value-${item.id}`}
-                            rows={5}
-                            placeholder='値（手入力または生成）'
-                            value={draft.value}
-                            onChange={(e) =>
-                              setDrafts((prev) => ({
-                                ...prev,
-                                [item.id]: { ...draft, value: e.target.value },
-                              }))
-                            }
-                            onBlur={() => void onSaveItem(item.id, 'value')}
-                          />
-                        </div>
-                      ) : (
-                        <div className='rounded-8 border border-solid-gray-300 px-3 py-2'>
-                          <div className='mb-2 flex justify-end'>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='xs'
-                              onClick={() => setEditingValueId(item.id)}
-                            >
-                              編集
-                            </Button>
+                            <Markdown>{formatNotebookMarkdown(draft.value)}</Markdown>
                           </div>
-                          <Markdown>{formatNotebookMarkdown(draft.value)}</Markdown>
-                        </div>
-                      )}
-                      <SourceList citations={item.citations ?? []} />
-                    </article>
-                  );
-                })}
+                        )}
+                        <SourceList citations={item.citations ?? []} />
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
+            {pane === 'editor' && detail && (
+              <div className='flex flex-col gap-4'>
+                <h2 className='text-std-18B-160'>Markdownエディタで編集</h2>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  見出しと本文を、Markdown エディタの編集画面へ渡します。Word
+                  などへの書き出しは、開いたあとのエディタで行います。
+                </p>
+                <fieldset className='flex flex-col gap-2'>
+                  <legend className='text-std-16B-170 text-solid-gray-800'>渡し先</legend>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='radio'
+                      name='notebook-editor-mode'
+                      checked={editorMode === 'new'}
+                      onChange={() => setEditorMode('new')}
+                    />
+                    新しいプロジェクト
+                  </label>
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='radio'
+                      name='notebook-editor-mode'
+                      checked={editorMode === 'existing'}
+                      onChange={() => setEditorMode('existing')}
+                    />
+                    自分の既存プロジェクトに足す
+                  </label>
+                </fieldset>
+                {editorMode === 'new' ? (
+                  <label className='flex max-w-md flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+                    プロジェクト名
+                    <Input
+                      id='notebook-editor-name'
+                      blockSize='md'
+                      value={editorName}
+                      onChange={(e) => {
+                        editorNameTouched.current = true;
+                        setEditorName(e.target.value);
+                      }}
+                      placeholder={detail.title}
+                    />
+                  </label>
+                ) : (
+                  <div className='flex max-w-md flex-col gap-2'>
+                    <Label htmlFor='notebook-editor-project'>プロジェクト</Label>
+                    <Select
+                      id='notebook-editor-project'
+                      value={editorProjectId}
+                      onChange={(e) => setEditorProjectId(e.target.value)}
+                    >
+                      <option value=''>選択してください</option>
+                      {editorProjects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </Select>
+                    {editorProjectsError && (
+                      <p className='text-dns-14N-130 text-error-1' role='alert'>
+                        {editorProjectsError}
+                      </p>
+                    )}
+                    <p className='text-dns-14N-130 text-solid-gray-600'>
+                      同じファイル名（生成文書.md や
+                      01_見出し.md）があるときは、そのファイルを上書きします。
+                    </p>
+                  </div>
+                )}
                 <div className='flex flex-col gap-2'>
                   <Label htmlFor='notebook-instruction'>生成指示</Label>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    ヒアリングシート内に、Markdown
-                    エディタで処理させる指示を埋め込むことができます。
+                    エディタが成果物（生成文書.md）を書くときの指示です。空でも章は作れます。
                   </p>
                   <Textarea
                     id='notebook-instruction'
@@ -1095,31 +1278,70 @@ export const NotebookPage = () => {
                     onBlur={() => void onSaveInstruction()}
                   />
                 </div>
-
-                <div className='flex flex-wrap gap-2'>
+                <div>
+                  <p className='mb-1 text-dns-14N-130 text-solid-gray-700'>渡す章</p>
+                  {adoptedItems.length === 0 ? (
+                    <p className='text-dns-14N-130 text-solid-gray-600'>
+                      見出しと本文の両方がある項目がありません。
+                    </p>
+                  ) : (
+                    <ul className='list-disc pl-5 text-dns-14N-130 text-solid-gray-800'>
+                      {adoptedItems.map((item) => (
+                        <li key={item.id}>{(drafts[item.id]?.label ?? item.label).trim()}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className='flex flex-wrap items-center gap-2'>
                   <Button
                     type='button'
                     variant='solid-fill'
                     size='md'
-                    onClick={() => void onDownloadFilled()}
+                    aria-disabled={
+                      openingEditor ||
+                      adoptedItems.length === 0 ||
+                      (editorMode === 'new' && !editorName.trim()) ||
+                      (editorMode === 'existing' && !editorProjectId) ||
+                      undefined
+                    }
+                    onClick={() => {
+                      if (
+                        openingEditor ||
+                        adoptedItems.length === 0 ||
+                        (editorMode === 'new' && !editorName.trim()) ||
+                        (editorMode === 'existing' && !editorProjectId)
+                      ) {
+                        return;
+                      }
+                      void onOpenEditor();
+                    }}
                   >
-                    記入済みシートをダウンロード
+                    <span className='inline-flex items-center gap-2'>
+                      {openingEditor && <Spinner />}
+                      編集画面を開く
+                    </span>
                   </Button>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='md'
-                    onClick={() => void onDeleteSession()}
-                  >
-                    このノートを削除
-                  </Button>
+                  {pendingProjectId && (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      onClick={() =>
+                        navigate(
+                          `/procuretech-editor?project=${encodeURIComponent(pendingProjectId)}`,
+                        )
+                      }
+                    >
+                      作成したプロジェクトを開く
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
 
-            {(actions.error || downloadError) && (
+            {(actions.error || openError) && (
               <p className='text-std-16N-170 text-error-1' role='alert'>
-                {actions.error || downloadError}
+                {actions.error || openError}
               </p>
             )}
           </>
@@ -1200,11 +1422,18 @@ export const NotebookPage = () => {
                   は共通チームのナレッジをその場で検索します（取り込みではありません）。
                 </p>
                 <p>
-                  ・「対話」で質問や整理をします。入力の上で資料を選ぶと、その送信はその資料だけを見ます。未選択ならすべての参考資料です。調べた手順は回答の上に出ます。回答には番号が付きます。「指示に入れる」で
+                  ・「対話」で質問や整理をします。入力の上で資料を選ぶと、その送信はその資料だけを見ます。未選択ならすべての参考資料です。調べた手順は回答の上に出ます。回答は見出しでたたみ、直近だけ開きます。「指示に入れる」で
                   [[回答 1]] を文の途中に差し込むと、その回答をこの送信の対象にします。
                 </p>
-                <p>・下書きを「項目に追加」すると、シートの正本になります。</p>
-                <p>・「項目」で設問を直し、記入済みシートを Markdown エディタへ渡せます。</p>
+                <p>
+                  ・文書の下書きは章の一覧で出ます。「この章を項目にする」まで正本ではありません。見出しだけの回答は、これまでのように「項目に追加」で分かれます。「生成指示にする」で、その回答を編集タブの生成指示へ入れます。
+                </p>
+                <p>
+                  ・エディタで開くよう頼むと、「Markdownエディタで編集」タブへ進みます。新規か既存かはそこで選びます。
+                </p>
+                <p>
+                  ・「Markdownエディタで編集」で、新しいプロジェクトか、自分の既存プロジェクトを選んで編集画面を開きます。
+                </p>
                 <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>
               </div>
             )}

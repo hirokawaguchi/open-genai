@@ -26,7 +26,7 @@ import {
   PiTreeStructure,
   PiUploadSimple,
 } from 'react-icons/pi';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -1401,6 +1401,22 @@ export const ProcuretechEditorPage = () => {
     setSavedNotice(false);
     setPageError(null);
   };
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openedFromQuery = useRef<string | null>(null);
+  useEffect(() => {
+    const id = searchParams.get('project');
+    if (!id) {
+      openedFromQuery.current = null;
+      return;
+    }
+    if (openedFromQuery.current === id) return;
+    openedFromQuery.current = id;
+    openProject(id);
+    const next = new URLSearchParams(searchParams);
+    next.delete('project');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const openFile = async (path: string) => {
     setFileModalOpen(false);

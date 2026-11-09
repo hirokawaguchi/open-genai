@@ -8,7 +8,7 @@ from typing import Any
 
 from . import llm, retrieve, store, tools
 
-MAX_STEPS = 6
+MAX_STEPS = 12
 HISTORY_LIMIT = 8
 MAX_ANSWER_REFS = 5
 ANSWER_REF_CHARS = 4000
@@ -38,7 +38,14 @@ def _system_prompt(
         "あなたはノートの参考資料と、接続中の MCP を根拠にするアシスタントです。",
         "日本語で答えてください。参照したソースには [1] のように番号を付けてください。",
         "参考資料にも MCP にも無いことは断定せず、『資料から判断できない』と述べてください。",
-        "項目（ヒアリングシートの行）は人が採用します。あなたは下書きを提案するだけです。",
+        "項目は人が採用します。あなたは下書きを提案するだけです。",
+        "文書の下書きを頼まれたときは、調べたあと propose_drafts で章の一覧を置いてください。",
+        "各章は label（見出し）、value（本文）、citations（資料番号の配列）です。番号は検索結果の [1] と同じです。",
+        "propose_drafts は正本にしません。人が画面で項目にします。",
+        "回答本文にも、同じ章を Markdown の見出し（# から ###）で書いてください。見出しの前に長い前置きを置かないでください。",
+        "短い質問への返答は、見出しにも下書きにも分けないでください。",
+        "利用者がエディタで開く、編集画面へ渡す、と言ったときだけ open_editor を呼んでください。",
+        "新しいプロジェクトか既存かは人が選びます。あなたは決めません。",
         "接続中の MCP は、質問に少しでも関係があれば答える前に呼んでください。",
         "推測で日時・天気・Wikipedia にある用語を埋めないでください。",
         "参考資料だけで足りないときは、使える MCP を当たってから答えてください。",
@@ -292,7 +299,7 @@ async def run(
     source_ids: list[str] | None = None,
     source_labels: list[str] | None = None,
     designated_answers: list[dict[str, Any]] | None = None,
-) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, str]], list[dict[str, Any]], bool]:
     mcps = enabled_mcps
     if mcps is None:
         mcps = store.enabled_session_mcps(session_id, user_id)
@@ -393,6 +400,11 @@ async def run(
             raise ValueError("モデルの応答本文が空です")
         text = await llm.continue_if_length(messages, reply)
         cites = retrieve.filter_used_citations(text, ctx.citations)
-        return text, cites, traces
+        return text, cites, traces, list(ctx.drafts), ctx.open_editor
 
+    if ctx.drafts or ctx.open_editor:
+        note = "下書きを置きました。項目にするかは人が選びます。"
+        if ctx.open_editor:
+            note = "編集タブを開きます。渡し先は人が選びます。"
+        return note, [], traces, list(ctx.drafts), ctx.open_editor
     raise ValueError("ツール実行の上限に達しました。質問を短くしてやり直してください。")

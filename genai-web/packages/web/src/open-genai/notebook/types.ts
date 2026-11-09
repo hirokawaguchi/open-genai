@@ -108,6 +108,12 @@ export type NotebookToolTrace = {
   result?: string;
 };
 
+export type NotebookDraft = {
+  label: string;
+  value: string;
+  citations?: NotebookCitation[];
+};
+
 export type NotebookMessage = {
   id: string;
   role: 'user' | 'assistant' | string;
@@ -115,6 +121,8 @@ export type NotebookMessage = {
   citations?: NotebookCitation[];
   tool_trace?: NotebookToolTrace[];
   source_labels?: string[];
+  drafts?: NotebookDraft[];
+  open_editor?: boolean;
   created_at: string;
 };
 

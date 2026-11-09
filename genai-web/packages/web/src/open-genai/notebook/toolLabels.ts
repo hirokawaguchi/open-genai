@@ -1,6 +1,8 @@
 export const TOOL_LABELS: Record<string, string> = {
   search_sources: 'ノートの参考資料を検索',
   list_items: '採用済み項目を確認',
+  propose_drafts: '章の下書きを置く',
+  open_editor: '編集タブを開く',
   knowledge_list_tags: '共有ナレッジのタグを一覧',
   knowledge_list_docs: '共有ナレッジの文書を一覧',
   knowledge_search: '共有ナレッジを検索',
