@@ -129,7 +129,8 @@ export const NotebookChat = ({
     () => new Map(numbered.map((item) => [item.message.id, item.n])),
     [numbered],
   );
-  const latestAssistantId = numbered.at(-1)?.message.id ?? '';
+  const latestAssistantId =
+    numbered.length > 0 ? numbered[numbered.length - 1].message.id : '';
   const [openAnswerIds, setOpenAnswerIds] = useState<Set<string> | null>(null);
   const openAnswers = openAnswerIds ?? new Set(latestAssistantId ? [latestAssistantId] : []);
   const openedLatest = useRef('');
