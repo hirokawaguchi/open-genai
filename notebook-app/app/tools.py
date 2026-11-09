@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from . import mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
+
+# スキルのツール一覧に無くても、対話では常に使える。正本にはしない。
+FLOW_TOOLS = ("propose_drafts", "open_editor")
+_CITE_NUM = re.compile(r"\[(\d+)\]")
 
 CORE_TOOL_NAMES = mcp_catalog.CORE_TOOLS
 BUILTIN_MCP_TOOLS = (
@@ -33,6 +38,8 @@ class ToolContext:
     citations: list[dict[str, Any]] = field(default_factory=list)
     remote_mcps: list[dict[str, Any]] = field(default_factory=list)
     source_ids: list[str] = field(default_factory=list)
+    drafts: list[dict[str, Any]] = field(default_factory=list)
+    open_editor: bool = False
 
 
 def openai_tools(
@@ -95,6 +102,9 @@ def allowed_from_mcps(
                     seen_extra.add(name)
                     if name not in allowed:
                         allowed.append(name)
+    for name in FLOW_TOOLS:
+        if name not in allowed:
+            allowed.append(name)
     return allowed, extras
 
 
@@ -181,6 +191,95 @@ async def _search_sources(ctx: ToolContext, args: dict[str, Any]) -> str:
         n = int(c.get("n") or 0)
         ctx.citations.append({**c, "n": offset + n})
     return material
+
+
+def _citation_numbers(raw: Any, text: str) -> list[int]:
+    found: list[int] = []
+
+    def add(value: Any) -> None:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return
+        if n > 0 and n not in found:
+            found.append(n)
+
+    if isinstance(raw, list):
+        for item in raw:
+            add(item)
+    elif isinstance(raw, (int, str)) and str(raw).strip():
+        for part in re.split(r"[,、\s]+", str(raw).strip()):
+            add(part)
+    if not found:
+        for match in _CITE_NUM.finditer(text or ""):
+            add(match.group(1))
+    return found
+
+
+async def _propose_drafts(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """章の下書きをこの発言に置く。項目テーブルには書かない。"""
+    raw = args.get("chapters")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = []
+    if not isinstance(raw, list) or not raw:
+        return json.dumps(
+            {"error": "chapters に、見出しと本文の配列を渡してください。"},
+            ensure_ascii=False,
+        )
+    by_n = {int(c.get("n") or 0): c for c in ctx.citations if c.get("n")}
+    chapters: list[dict[str, Any]] = []
+    for item in raw[:12]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("heading") or "").strip()[:200]
+        value = str(item.get("value") or item.get("body") or "").strip()
+        if not label or not value:
+            continue
+        cites = []
+        for n in _citation_numbers(item.get("citations"), value):
+            src = by_n.get(n)
+            if src and src not in cites:
+                cites.append(src)
+        chapters.append({"label": label, "value": value, "citations": cites})
+    if not chapters:
+        return json.dumps(
+            {"error": "見出しと本文が揃った章がありません。"},
+            ensure_ascii=False,
+        )
+    ctx.drafts = chapters
+    return json.dumps(
+        {
+            "adopted": False,
+            "count": len(chapters),
+            "chapters": [
+                {
+                    "label": c["label"],
+                    "citations": [x.get("display_name") or "" for x in c["citations"]],
+                }
+                for c in chapters
+            ],
+            "note": "未採用の下書きです。人が項目にするまで正本ではありません。",
+        },
+        ensure_ascii=False,
+    )
+
+
+async def _open_editor(ctx: ToolContext, _args: dict[str, Any]) -> str:
+    """編集タブを開く合図だけを残す。プロジェクトは作らない。"""
+    ctx.open_editor = True
+    return json.dumps(
+        {
+            "opened_tab": "editor",
+            "note": (
+                "Markdownエディタで編集タブを開きます。"
+                "新しいプロジェクトか既存かは人が選びます。あなたは決めないでください。"
+            ),
+        },
+        ensure_ascii=False,
+    )
 
 
 async def _list_items(ctx: ToolContext, _args: dict[str, Any]) -> str:
@@ -322,6 +421,8 @@ async def _wikipedia_search(_ctx: ToolContext, args: dict[str, Any]) -> str:
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = {
     "search_sources": _search_sources,
     "list_items": _list_items,
+    "propose_drafts": _propose_drafts,
+    "open_editor": _open_editor,
     "knowledge_list_tags": _knowledge_list_tags,
     "knowledge_list_docs": _knowledge_list_docs,
     "knowledge_search": _knowledge_search,
@@ -354,6 +455,50 @@ _SPECS: list[dict[str, Any]] = [
         "function": {
             "name": "list_items",
             "description": "人が採用済みの項目と生成指示を見る。下書きは含まない。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_drafts",
+            "description": (
+                "文書の下書きを章の一覧として置く。項目にはしない。"
+                "人が画面で項目にしてから正本になる。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapters": {
+                        "type": "array",
+                        "description": "章。label が見出し、value が本文、citations が資料番号",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "value": {"type": "string"},
+                                "citations": {
+                                    "type": "array",
+                                    "items": {"type": "integer"},
+                                },
+                            },
+                            "required": ["label", "value"],
+                        },
+                    }
+                },
+                "required": ["chapters"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_editor",
+            "description": (
+                "Markdownエディタで編集タブを開く。"
+                "利用者がエディタで開くと言ったときだけ呼ぶ。"
+                "新規か既存のプロジェクトは人が選ぶ。このツールはプロジェクトを作らない。"
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },

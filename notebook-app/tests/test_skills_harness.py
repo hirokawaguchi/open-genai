@@ -170,7 +170,7 @@ def test_harness_openai_tool_loop(tmp_path, monkeypatch):
         return replies.pop(0)
 
     monkeypatch.setattr("app.llm.chat_completion", fake_chat)
-    answer, cites, traces = asyncio.run(
+    answer, cites, traces, drafts, open_editor = asyncio.run(
         harness.run(
             session_id=sid,
             user_id="u1",
@@ -182,6 +182,8 @@ def test_harness_openai_tool_loop(tmp_path, monkeypatch):
     assert "予算" in answer
     assert traces[0]["name"] == "search_sources"
     assert cites[0]["n"] == 1
+    assert drafts == []
+    assert open_editor is False
 
 
 def test_harness_mentions_selected_source(tmp_path, monkeypatch):
@@ -198,7 +200,7 @@ def test_harness_mentions_selected_source(tmp_path, monkeypatch):
         return {"role": "assistant", "content": "どの節を抜き出しますか。見出しは審査項目です。"}
 
     monkeypatch.setattr("app.llm.chat_completion", fake_chat)
-    answer, _, _ = asyncio.run(
+    answer, _, _, _, _ = asyncio.run(
         harness.run(
             session_id=sid,
             user_id="u1",
@@ -302,7 +304,12 @@ def test_sample_clock_and_allowed_tools():
             }
         ],
     )
-    assert allowed == ["search_sources", "get_current_time"]
+    assert allowed == [
+        "search_sources",
+        "get_current_time",
+        "propose_drafts",
+        "open_editor",
+    ]
     assert extras == []
 
 
@@ -413,7 +420,7 @@ def test_harness_pins_designated_answers(tmp_path, monkeypatch):
         return {"role": "assistant", "content": "合わせました"}
 
     monkeypatch.setattr("app.llm.chat_completion", fake_chat)
-    answer, _, _ = asyncio.run(
+    answer, _, _, _, _ = asyncio.run(
         harness.run(
             session_id=sid,
             user_id="u1",
@@ -436,3 +443,77 @@ def test_harness_pins_designated_answers(tmp_path, monkeypatch):
     assert "（回答 2。全文は「この送信で指定した過去の回答」を参照）" in blob
     assert "指定した過去の回答: 回答 1、回答 2" in rest[-1][1]
     assert "合わせました" in answer
+
+
+def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    sid = store.create_session(user_id="u1")["id"]
+    _add_note(sid, "仕様書.pdf", "背景", "現行は紙である")
+    replies = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "function": {"name": "search_sources", "arguments": {"query": "背景"}},
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c2",
+                    "function": {
+                        "name": "propose_drafts",
+                        "arguments": {
+                            "chapters": [
+                                {
+                                    "label": "背景",
+                                    "value": "現行は紙である [1]。",
+                                    "citations": [1],
+                                }
+                            ]
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c3", "function": {"name": "open_editor", "arguments": {}}}
+            ],
+        },
+        {"role": "assistant", "content": "# 背景\n現行は紙である [1]。"},
+    ]
+
+    async def fake_chat(messages, temperature=0.2, tools=None):
+        names = [t["function"]["name"] for t in (tools or [])]
+        assert "propose_drafts" in names
+        assert "open_editor" in names
+        return replies.pop(0)
+
+    monkeypatch.setattr("app.llm.chat_completion", fake_chat)
+    answer, _, traces, drafts, open_editor = asyncio.run(
+        harness.run(
+            session_id=sid,
+            user_id="u1",
+            scope="team-1",
+            question="仕様の下書きを置いて、エディタで開いて",
+            history=[],
+        )
+    )
+    detail = store.get_session(sid, "u1")
+    assert detail["items"] == []
+    assert [t["name"] for t in traces] == ["search_sources", "propose_drafts", "open_editor"]
+    assert drafts[0]["label"] == "背景"
+    assert "紙" in drafts[0]["value"]
+    assert drafts[0]["citations"][0]["display_name"].startswith("仕様書.pdf")
+    assert open_editor is True
+    assert "背景" in answer

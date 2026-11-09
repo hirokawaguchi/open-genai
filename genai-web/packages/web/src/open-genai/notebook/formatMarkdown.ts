@@ -8,12 +8,27 @@ export const formatNotebookMarkdown = (raw: string): string => {
   return md.replace(/\*\*([^*]+)\*\*/g, `**${WORD_JOINER}$1${WORD_JOINER}**`);
 };
 
-export const stripCitationMarks = (text: string): string =>
-  (text || '')
-    .replace(/\[\s*\d+(?:\s*[,、]\s*\d+)*\s*\]/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/ {2,}/g, ' ')
-    .trim();
+const CITATION_MARK = /\[\s*\d+(?:\s*[,、]\s*\d+)*\s*\]/g;
+const SOURCE_ONLY_LINE = /^(?:[-*+]|\d+[.)])?\s*【出典】[\s,、.。・]*$/;
+
+/** 引用番号だけを消す。行頭の字下げは残し、出典だけの行は捨てる。 */
+export const stripCitationMarks = (text: string): string => {
+  const kept: string[] = [];
+  for (const line of (text || '').replace(/\r\n/g, '\n').split('\n')) {
+    const indent = /^[ \t]*/.exec(line)?.[0] ?? '';
+    const body = line
+      .slice(indent.length)
+      .replace(CITATION_MARK, '')
+      .replace(/ {2,}/g, ' ')
+      .replace(/[ \t]+$/g, '');
+    if (SOURCE_ONLY_LINE.test(body)) continue;
+    kept.push(indent + body);
+  }
+  return kept
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '');
+};
 
 export const citationNumber = (c: NotebookCitation): number => {
   if (typeof c.n === 'number' && c.n > 0) return c.n;

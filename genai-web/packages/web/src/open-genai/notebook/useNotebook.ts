@@ -138,19 +138,24 @@ export const useNotebookActions = () => {
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const createSession = useCallback(async (title?: string): Promise<NotebookSessionDetail | null> => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await teamApi.post<NotebookSessionDetail>(`${BASE}/sessions`, { title: title ?? '' });
-      return res.data ?? null;
-    } catch (e) {
-      setError(errorMessage(e, 'ノートの作成に失敗しました。'));
-      return null;
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
+  const createSession = useCallback(
+    async (title?: string): Promise<NotebookSessionDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(`${BASE}/sessions`, {
+          title: title ?? '',
+        });
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'ノートの作成に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
 
   const updateSession = useCallback(
     async (
@@ -374,7 +379,10 @@ export const useNotebookActions = () => {
     ): Promise<NotebookMcp | null> => {
       setError(null);
       try {
-        const res = await teamApi.put<NotebookMcp>(`${BASE}/mcps/${encodeURIComponent(mcpId)}`, body);
+        const res = await teamApi.put<NotebookMcp>(
+          `${BASE}/mcps/${encodeURIComponent(mcpId)}`,
+          body,
+        );
         return res.data ?? null;
       } catch (e) {
         setError(errorMessage(e, 'MCP の更新に失敗しました。'));
@@ -422,7 +430,7 @@ export const useNotebookActions = () => {
       await teamApi.delete(`${BASE}/skills/${encodeURIComponent(skillId)}`);
       return true;
     } catch (e) {
-        setError(errorMessage(e, 'AIタイプの削除に失敗しました。'));
+      setError(errorMessage(e, 'AIタイプの削除に失敗しました。'));
       return false;
     } finally {
       setSubmitting(false);
@@ -472,6 +480,20 @@ export const useNotebookActions = () => {
     error,
     setError,
   };
+};
+
+export const openNotebookInEditor = async (
+  sessionId: string,
+  body: { mode: 'new' | 'existing'; name?: string; project_id?: string },
+): Promise<{ project_id: string; request_id: string }> => {
+  const res = await teamApi.post<{ project_id: string; request_id: string }>(
+    `${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`,
+    body,
+  );
+  if (!res.data?.project_id || !res.data.request_id) {
+    throw new ApiError(502, { error: '編集画面を開けませんでした。' });
+  }
+  return res.data;
 };
 
 export const downloadHearingSheetTemplate = async (): Promise<void> => {

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { Button } from '@/components/ui/dads/Button';
+import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
@@ -8,15 +9,16 @@ import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
 import {
-  MAX_ANSWER_REFS,
   answerPreviewLine,
   answerRefNumbers,
   insertAnswerRef,
+  MAX_ANSWER_REFS,
   numberedAssistantMessages,
 } from './answerRefs';
-import { ChatAnswer } from './Citations';
+import { ChatAnswer, SourceList } from './Citations';
 import { toolLabel } from './toolLabels';
 import type {
+  NotebookDraft,
   NotebookItem,
   NotebookMessage,
   NotebookSkill,
@@ -41,6 +43,9 @@ type Props = {
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onApplyMessage: (message: NotebookMessage) => void;
+  onAdoptDrafts: (drafts: NotebookDraft[]) => void;
+  onUseAsInstruction: (message: NotebookMessage) => void;
+  onOpenEditorTab: () => void;
 };
 
 const AnswerRefText = ({ content }: { content: string }) => {
@@ -81,13 +86,6 @@ const AgentSteps = ({ traces, running }: { traces?: NotebookToolTrace[]; running
       {traces.map((t, i) => (
         <li key={`${t.name}-${i}`} className='py-0.5'>
           <span className='text-std-16B-150'>{toolLabel(t.name)}</span>
-          {t.result ? (
-            <span className='text-solid-gray-600'>
-              {' '}
-              — {t.result.slice(0, 80)}
-              {t.result.length > 80 ? '…' : ''}
-            </span>
-          ) : null}
         </li>
       ))}
     </ol>
@@ -111,6 +109,9 @@ export const NotebookChat = ({
   onDraftChange,
   onSend,
   onApplyMessage,
+  onAdoptDrafts,
+  onUseAsInstruction,
+  onOpenEditorTab,
 }: Props) => {
   const { hint } = useSubmitKey();
   const listRef = useRef<HTMLDivElement>(null);
@@ -128,6 +129,19 @@ export const NotebookChat = ({
     () => new Map(numbered.map((item) => [item.message.id, item.n])),
     [numbered],
   );
+  const latestAssistantId = numbered.at(-1)?.message.id ?? '';
+  const [openAnswerIds, setOpenAnswerIds] = useState<Set<string> | null>(null);
+  const openAnswers = openAnswerIds ?? new Set(latestAssistantId ? [latestAssistantId] : []);
+  const openedLatest = useRef('');
+  useEffect(() => {
+    if (!latestAssistantId || openedLatest.current === latestAssistantId) return;
+    openedLatest.current = latestAssistantId;
+    setOpenAnswerIds((prev) => {
+      const next = new Set(prev ?? []);
+      next.add(latestAssistantId);
+      return next;
+    });
+  }, [latestAssistantId]);
   const draftRefs = useMemo(() => answerRefNumbers(draft), [draft]);
 
   const rememberCaret = () => {
@@ -189,29 +203,75 @@ export const NotebookChat = ({
         )}
         {messages.map((m) => (
           <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-            <div
-              className={`max-w-[85%] rounded-8 px-4 py-3 text-dns-14N-130 ${
-                m.role === 'user'
-                  ? 'bg-blue-50 text-solid-gray-800'
-                  : 'border border-solid-gray-420 bg-white'
-              }`}
-            >
-              {m.role === 'assistant' ? (
-                <>
-                  <h2 className='sr-only'>
+            {m.role === 'assistant' ? (
+              <Disclosure
+                className='w-full max-w-[85%] rounded-8 border border-solid-gray-420 bg-white text-dns-14N-130'
+                open={openAnswers.has(m.id)}
+                onToggle={(event) => {
+                  const nextOpen = event.currentTarget.open;
+                  setOpenAnswerIds((prev) => {
+                    const next = new Set(prev ?? (latestAssistantId ? [latestAssistantId] : []));
+                    if (nextOpen) next.add(m.id);
+                    else next.delete(m.id);
+                    return next;
+                  });
+                }}
+              >
+                <DisclosureSummary className='w-full px-4 py-3'>
+                  <span className='shrink-0 text-std-16B-150 text-solid-gray-900'>
                     {numberById.has(m.id) ? `回答 ${numberById.get(m.id)}` : '回答'}
-                  </h2>
-                  {numberById.has(m.id) ? (
-                    <p className='mb-1 text-dns-14N-130 text-solid-gray-600'>
-                      回答 {numberById.get(m.id)}
-                    </p>
-                  ) : null}
+                  </span>
+                  <span className='min-w-0 truncate text-dns-14N-130 text-solid-gray-600'>
+                    {answerPreviewLine(m.content.replace(/^#{1,6}\s+/, ''))}
+                  </span>
+                </DisclosureSummary>
+                <div className='px-4 pb-3'>
                   <AgentSteps traces={m.tool_trace} />
                   <ChatAnswer
                     content={m.content}
                     citations={m.citations ?? []}
                     idPrefix={`nb-cite-${m.id}`}
                   />
+                  {(m.drafts?.length ?? 0) > 0 && (
+                    <div className='mt-3 flex flex-col gap-2'>
+                      <p className='text-dns-14N-130 text-solid-gray-600'>
+                        下書きです。項目にすると正本になります。
+                      </p>
+                      {m.drafts?.map((chapter, index) => (
+                        <div
+                          key={`${m.id}-draft-${index}`}
+                          className='rounded-8 border border-solid-gray-300 px-3 py-2'
+                        >
+                          <p className='text-std-16B-150 text-solid-gray-900'>{chapter.label}</p>
+                          <p className='mt-1 line-clamp-3 whitespace-pre-wrap text-dns-14N-130 text-solid-gray-700'>
+                            {chapter.value}
+                          </p>
+                          <SourceList citations={chapter.citations ?? []} />
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='xs'
+                            className='mt-2'
+                            disabled={submitting}
+                            onClick={() => onAdoptDrafts([chapter])}
+                          >
+                            この章を項目にする
+                          </Button>
+                        </div>
+                      ))}
+                      {(m.drafts?.length ?? 0) > 1 && (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='xs'
+                          disabled={submitting}
+                          onClick={() => onAdoptDrafts(m.drafts ?? [])}
+                        >
+                          すべての章を項目にする
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   <div className='mt-3 flex flex-wrap items-center gap-2'>
                     {numberById.has(m.id) ? (
                       <Button
@@ -231,39 +291,57 @@ export const NotebookChat = ({
                       type='button'
                       variant='outline'
                       size='xs'
-                      onClick={() => onApplyMessage(m)}
+                      disabled={submitting}
+                      onClick={() => onUseAsInstruction(m)}
                     >
-                      {applyItemId ? '項目を更新' : '項目に追加'}
+                      生成指示にする
                     </Button>
-                    {items.length > 0 && (
-                      <Select
-                        id={`notebook-apply-${m.id}`}
-                        value={applyItemId}
-                        onChange={(e) => onApplyItemIdChange(e.target.value)}
-                        className='max-w-48'
-                      >
-                        <option value=''>新規項目</option>
-                        {items.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {(item.label || '無題').slice(0, 40)}
-                          </option>
-                        ))}
-                      </Select>
+                    {(m.drafts?.length ?? 0) === 0 && (
+                      <>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='xs'
+                          onClick={() => onApplyMessage(m)}
+                        >
+                          {applyItemId ? '項目を更新' : '項目に追加'}
+                        </Button>
+                        {items.length > 0 && (
+                          <Select
+                            id={`notebook-apply-${m.id}`}
+                            value={applyItemId}
+                            onChange={(e) => onApplyItemIdChange(e.target.value)}
+                            className='max-w-48'
+                          >
+                            <option value=''>新規項目</option>
+                            {items.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {(item.label || '無題').slice(0, 40)}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                      </>
+                    )}
+                    {m.open_editor && (
+                      <Button type='button' variant='outline' size='xs' onClick={onOpenEditorTab}>
+                        編集タブを開く
+                      </Button>
                     )}
                   </div>
-                </>
-              ) : (
-                <>
-                  <h2 className='sr-only'>あなたのメッセージ</h2>
-                  <AnswerRefText content={m.content} />
-                  {m.source_labels && m.source_labels.length > 0 ? (
-                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                      資料: {m.source_labels.join('、')}
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </div>
+                </div>
+              </Disclosure>
+            ) : (
+              <div className='max-w-[85%] rounded-8 bg-blue-50 px-4 py-3 text-dns-14N-130 text-solid-gray-800'>
+                <h2 className='sr-only'>あなたのメッセージ</h2>
+                <AnswerRefText content={m.content} />
+                {m.source_labels && m.source_labels.length > 0 ? (
+                  <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                    資料: {m.source_labels.join('、')}
+                  </p>
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
         {submitting && (
@@ -280,7 +358,7 @@ export const NotebookChat = ({
         )}
       </div>
 
-      <div className='z-1 shrink-0 border-t border-t-solid-gray-800 bg-white pb-2'>
+      <div className='relative z-10 shrink-0 border-t border-t-solid-gray-800 bg-white pb-2'>
         <form
           className='w-full'
           onSubmit={(e) => {
