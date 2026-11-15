@@ -84,7 +84,7 @@ const rememberRow = (ledgerId: string, rowId: string) => {
   }
 };
 
-type LedgerTab = 'list' | 'records' | 'card' | 'fields' | 'export' | 'access';
+type LedgerTab = 'list' | 'records' | 'card' | 'fields' | 'export' | 'access' | 'api';
 
 const Shell = ({
   tab,
@@ -132,6 +132,10 @@ const Shell = ({
       navigate(`/ledger/${openId}/export`);
       return;
     }
+    if (next === 'api') {
+      navigate(`/ledger/${openId}/api`);
+      return;
+    }
     if (next === 'card') {
       const cardId = rowId || rememberedRow(openId);
       navigate(cardId ? `/ledger/${openId}/card/${cardId}` : `/ledger/${openId}/card`);
@@ -176,6 +180,9 @@ const Shell = ({
             <button type='button' className={tabClass('access')} onClick={() => openTab('access')}>
               アクセス権設定
             </button>
+            <button type='button' className={tabClass('api')} onClick={() => openTab('api')}>
+              API
+            </button>
           </div>
           <Button
             type='button'
@@ -211,6 +218,7 @@ const Shell = ({
               <p>「定義項目」で、初期項目の表示と、この台帳の設定項目を管理します。資料を読み込むと、モデルが管理項目の案を出します。カードの追加項目は、そのレコードだけの文字です。</p>
               <p>「書き出し」で条件を決め、JSON、JSONL、CSV を書き出します。同じ画面で、その形式のレコードを読み込めます。</p>
               <p>「アクセス権設定」で、オーナー、読み書き、読み取りだけのチームを選びます。</p>
+              <p>「API」に、この台帳の読み書きとファイルの呼び出し方を書いてあります。</p>
             </div>
           </CustomDialogBody>
         </CustomDialogPanel>
@@ -2059,6 +2067,110 @@ export const LedgerFieldsPage = () => {
           </Button>
         </div>
       ) : null}
+    </Shell>
+  );
+};
+
+const ApiBlock = ({ children }: { children: string }) => (
+  <pre className='mt-2 overflow-x-auto rounded-8 bg-solid-gray-50 p-3 font-mono text-dns-14N-130 text-solid-gray-900'>
+    {children}
+  </pre>
+);
+
+export const LedgerApiPage = () => {
+  const { ledgerId = '' } = useParams();
+  const { data: ledger } = useLedger(ledgerId);
+  const id = ledgerId || '{台帳ID}';
+
+  return (
+    <Shell tab='api' ledgerId={ledgerId}>
+      <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}の API</h2>
+      <p className='text-std-16N-170 text-solid-gray-700'>
+        呼び出し先は、この画面と同じ <span className='font-mono'>/ledger</span> です。ログインした利用者の権限がそのまま効きます。外部システムは、利用者一括管理で発行したサービストークンを <span className='font-mono'>Authorization: Bearer</span> に載せます。このトークンは台帳だけに効き、チャットや管理画面には使えません。読み取りは閲覧者、値の登録は読み書き、定義とアクセス権はオーナーです。マスクした項目は、閲覧者には空で返ります。
+      </p>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>レコードを読む</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>条件を空にすると、見えているレコードを返します。削除した行は、オーナーが include_deleted=1 を付けたときだけ入ります。</p>
+        <ApiBlock>{`GET /ledger/ledgers/${id}/rows?status=&q=&offset=0&limit=50`}</ApiBlock>
+        <ApiBlock>{`GET /ledger/rows/{レコードID}`}</ApiBlock>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>レコードを書く</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          同じ business_key があればその行を更新し、無ければ新しい行を作ります。fields のキーは項目 ID です。origins を省いた値は取込になります。画面から人が入れるときは entered、資料から補うときは inferred を付けます。推測は取込と入力を上書きせず、取込は入力を上書きしません。残せなかった項目は kept で返ります。
+        </p>
+        <ApiBlock>{`POST /ledger/ledgers/${id}/rows
+POST /ledger/rows/{レコードID}`}</ApiBlock>
+        <ApiBlock>{`{
+  "business_key": "",
+  "status": "受付",
+  "assignee": "",
+  "comment": "",
+  "fields": { "項目ID": "値" },
+  "origins": { "項目ID": { "origin": "imported" } },
+  "extras": [{ "label": "追加の名前", "value": "文字" }]
+}`}</ApiBlock>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>ファイルで書き出す</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          JSON は台帳の項目一覧と行です。設定項目は fields に項目 ID で入り、追加項目は extras に入ります。出自は origins に入ります。JSONL は行だけです。CSV は business_key、status、assignee、comment と設定項目の名前だけで、追加項目と出自は入りません。文字コードは UTF-8（BOM 付き）です。見られないマスク項目は、どの形式からも除きます。
+        </p>
+        <ApiBlock>{`GET /ledger/ledgers/${id}/export?format=json&status=&q=&include_deleted=0`}</ApiBlock>
+        <p className='text-dns-14N-130 text-solid-gray-600'>format は json、jsonl、csv です。</p>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>ファイルから行を入れる</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          定義は変わりません。CSV は business_key が必要で、知らない列はエラーになります。追加項目は変わりません。JSON と JSONL は、知らない項目 ID を追加項目にします。ここから入れた値は取込です。
+        </p>
+        <ApiBlock>{`POST /ledger/ledgers/${id}/import
+{ "format": "json", "text": "…" }`}</ApiBlock>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>添付ファイル</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          出典も、項目としてのファイルも、レコードの添付です。登録は multipart の file です。Office のプレビューは文字と表だけを返し、元のファイルは別の取得で落とします。
+        </p>
+        <ApiBlock>{`POST /ledger/rows/{レコードID}/files
+GET  /ledger/rows/{レコードID}/files/{ファイルID}
+GET  /ledger/rows/{レコードID}/files/{ファイルID}/preview`}</ApiBlock>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>資料から値の案を出す</h3>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          1回目は保存しません。files は名前と base64 です。表に書いてある値は取込、空欄を補った値は推測です。2回目で残す行の番号を送ると、レコードになり、出典ファイルが付きます。状態は変わりません。
+        </p>
+        <ApiBlock>{`POST /ledger/ledgers/${id}/ingest
+{ "files": [{ "name": "備品.xlsx", "media_type": "…", "data": "base64" }] }
+
+POST /ledger/ledgers/${id}/ingest/{batch_id}
+{ "indexes": [0, 1] }`}</ApiBlock>
+      </section>
+
+      <section className='mt-8 flex flex-col gap-2'>
+        <h3 className='text-std-16B-150 text-solid-gray-900'>ほかの呼び出し</h3>
+        <ApiBlock>{`GET   /ledger/ledgers
+POST  /ledger/ledgers
+GET   /ledger/ledgers/${id}
+PATCH /ledger/ledgers/${id}
+POST  /ledger/ledgers/${id}/delete
+POST  /ledger/rows/{レコードID}/delete
+POST  /ledger/rows/{レコードID}/restore
+POST  /ledger/ledgers/${id}/promote
+POST  /ledger/ledgers/${id}/assist/definition
+POST  /ledger/ledgers/${id}/assist/material
+POST  /ledger/ledgers/${id}/assist/query`}</ApiBlock>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          promote は追加項目を設定項目へ移します。assist/definition は追加項目から設定項目の案、assist/material は資料から設定項目の案です。どちらも保存しません。assist/query は検索文を状態とキーワードに分けます。
+        </p>
+      </section>
     </Shell>
   );
 };

@@ -43,6 +43,7 @@ import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
 import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
 import {
   LedgerAccessPage,
+  LedgerApiPage,
   LedgerCardPage,
   LedgerExportPage,
   LedgerFieldsPage,
@@ -174,6 +175,7 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'ledger/:ledgerId/access', element: <LedgerAccessPage /> },
     { path: 'ledger/:ledgerId/fields', element: <LedgerFieldsPage /> },
     { path: 'ledger/:ledgerId/export', element: <LedgerExportPage /> },
+    { path: 'ledger/:ledgerId/api', element: <LedgerApiPage /> },
     { path: 'ledger/:ledgerId/card/:rowId', element: <LedgerCardPage /> },
     { path: 'ledger/:ledgerId/card', element: <LedgerCardPage /> },
     { path: 'ledger/:ledgerId', element: <LedgerRowsPage /> },

@@ -63,6 +63,7 @@ from . import (
     portal_login,
     policy,
     security_warn,
+    service_tokens,
     sessions,
     storage,
     teams_store,
@@ -9748,6 +9749,53 @@ async def plan_admin_users(request: Request) -> JSONResponse:
     return JSONResponse(content={"rows": rows, "count": len(rows)})
 
 
+@app.get("/admin/users/service-tokens")
+async def list_service_tokens(request: Request) -> JSONResponse:
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    return JSONResponse(content={"tokens": service_tokens.list_tokens(ctx["tenant_id"])})
+
+
+@app.post("/admin/users/service-tokens")
+async def issue_service_token(request: Request) -> JSONResponse:
+    """台帳専用のトークンを1枚出す。文字列はこの応答で一度だけ返す。"""
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    email = teams_store.normalize_email(str(body.get("email") or ""))
+    label = str(body.get("label") or "").strip()
+    groups = body.get("groups") if isinstance(body.get("groups"), list) else []
+    if not email or not _identity_in(_tenant_member_ids(ctx["tenant_id"]), email):
+        return JSONResponse(status_code=400, content={"error": _NOT_IN_TENANT})
+    if any(str(group) == "SystemAdminGroup" for group in groups):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "システム管理者にはトークンを発行できません"},
+        )
+    if not label or len(label) > 80:
+        return JSONResponse(status_code=400, content={"error": "名前は1文字以上80文字以内にしてください"})
+    claims = _claims_from_request(request)
+    secret, row = service_tokens.issue(email, ctx["tenant_id"], label, _user_id(claims))
+    return JSONResponse(content={"token": secret, **row})
+
+
+@app.post("/admin/users/service-tokens/{token_id}/revoke")
+async def revoke_service_token(token_id: str, request: Request) -> JSONResponse:
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    if not service_tokens.revoke(token_id, ctx["tenant_id"]):
+        return JSONResponse(status_code=404, content={"error": "トークンが見つかりません"})
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/admin/users/sessions/revoke")
 async def revoke_admin_user_sessions(request: Request) -> JSONResponse:
     """いま開いている組織の利用者について、アプリのログインと庁内 SSO を切る。"""
@@ -10627,14 +10675,34 @@ def _ledger_base() -> str:
     return raw.rstrip("/")
 
 
+def _service_token_secret(request: Request) -> str:
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return ""
+    return header.split(" ", 1)[1].strip()
+
+
 def _ledger_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str], str]:
     claims = _claims_from_request(request)
     user_id = _user_id(claims)
-    if not user_id:
-        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}, ""
-    groups_str = ",".join(claims.get("groups") or [])
-    tenant_id = _active_tenant_id(user_id, claims)
-    team_ids = _user_team_ids_str(user_id)
+    if user_id:
+        groups_str = ",".join(claims.get("groups") or [])
+        tenant_id = _active_tenant_id(user_id, claims)
+        team_ids = _user_team_ids_str(user_id)
+    else:
+        resolved = service_tokens.resolve(_service_token_secret(request))
+        if not resolved:
+            return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}, ""
+        user_id = resolved["userId"]
+        tenant_id = resolved["tenantId"]
+        if not _identity_in(_tenant_member_ids(tenant_id), user_id):
+            return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}, ""
+        # トークンは台帳の読み書きだけ。システム管理者の権限は載せない。
+        groups_str = "UserGroup"
+        ids = teams_store.filter_team_ids_for_tenant(
+            teams_store.list_effective_team_ids_for_user(user_id), tenant_id
+        )
+        team_ids = ",".join(ids)
     headers = {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
