@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import assist, io, store
+from app import assist, ingest, io, material, store
 
 
 @pytest.fixture()
@@ -364,6 +364,110 @@ def test_material_proposal_drops_secrets_and_keeps_known_types() -> None:
     assert [item["label"] for item in fields] == ["氏名", "区分", "メモ"]
     assert fields[1]["options"] == ["甲", "乙"]
     assert fields[2]["type"] == "text"
+
+
+def test_weaker_origin_does_not_replace_entered(db: str) -> None:
+    ledger, _ = store.create_ledger(
+        actor(),
+        {
+            "name": "備品",
+            "statuses": ["受付"],
+            "fields": [{"id": "place", "label": "場所", "type": "text"}],
+            "grants": [{"team_id": "team-a", "role": "admin"}],
+        },
+    )
+    assert ledger is not None
+    row, err = store.upsert_row(
+        actor(),
+        ledger["id"],
+        {"fields": {"place": "倉庫"}, "origins": {"place": {"origin": "entered"}}},
+    )
+    assert err is None and row is not None
+    assert row["origins"]["place"]["origin"] == "entered"
+    kept, err = store.upsert_row(
+        actor(),
+        ledger["id"],
+        {
+            "business_key": row["business_key"],
+            "fields": {"place": "会議室"},
+            "origins": {"place": {"origin": "inferred"}},
+        },
+    )
+    assert err is None and kept is not None
+    assert kept["fields"]["place"] == "倉庫"
+    assert kept["kept"][0]["origin"] == "entered"
+    imported, err = store.upsert_row(
+        actor(),
+        ledger["id"],
+        {"business_key": row["business_key"], "fields": {"place": "廊下"}},
+    )
+    assert err is None and imported is not None
+    assert imported["fields"]["place"] == "倉庫"
+    typed, err = store.upsert_row(
+        actor(),
+        ledger["id"],
+        {
+            "business_key": row["business_key"],
+            "fields": {"place": "会議室"},
+            "origins": {"place": {"origin": "entered"}},
+        },
+    )
+    assert err is None and typed is not None
+    assert typed["fields"]["place"] == "会議室"
+    assert typed["origins"]["place"]["origin"] == "entered"
+
+
+def test_ingest_splits_excel_rows_and_attaches_the_file(db: str) -> None:
+    import io as bytesio
+
+    import openpyxl
+
+    ledger, _ = store.create_ledger(
+        actor(),
+        {
+            "name": "備品",
+            "statuses": ["受付"],
+            "fields": [
+                {"id": "name", "label": "名前", "type": "text"},
+                {"id": "place", "label": "場所", "type": "text"},
+            ],
+            "grants": [{"team_id": "team-a", "role": "admin"}],
+        },
+    )
+    assert ledger is not None
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "備品"
+    sheet.append(["名前", "場所"])
+    sheet.append(["机", "倉庫"])
+    sheet.append(["椅子", "会議室"])
+    buf = bytesio.BytesIO()
+    book.save(buf)
+    raw = buf.getvalue()
+    text = material.text_from_bytes("備品.xlsx", raw)
+    parsed = ingest.rows_from_table(text, ledger["fields"], 0)
+    assert len(parsed) == 2
+    assert parsed[0]["fields"]["place"] == "倉庫"
+    assert parsed[0]["origins"]["place"]["origin"] == "imported"
+    assert parsed[1]["fields"]["name"] == "椅子"
+    batch = ingest.stage_batch(
+        ledger["id"],
+        "user-1",
+        [{"name": "備品.xlsx", "mime": "application/vnd.ms-excel", "raw": raw}],
+        parsed,
+    )
+    count, err = ingest.commit_batch(actor(), ledger["id"], batch, [0, 1])
+    assert err is None
+    assert count == 2
+    page, _ = store.list_rows(actor(), ledger["id"])
+    assert page is not None
+    places = {row["fields"]["place"]: row for row in page["rows"]}
+    assert set(places) == {"倉庫", "会議室"}
+    sample = places["倉庫"]
+    assert sample["origins"]["place"]["origin"] == "imported"
+    assert sample["files"][0]["name"] == "備品.xlsx"
+    assert sample["origins"]["place"]["file_id"] == sample["files"][0]["file_id"]
+    assert sample["status"] == "受付"
 
 
 def test_query_parser_finds_last_month() -> None:

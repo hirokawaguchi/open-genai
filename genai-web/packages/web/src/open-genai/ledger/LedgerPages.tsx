@@ -26,7 +26,7 @@ import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { LEDGER_EXAPP_ID } from '@/layout/navItems';
 import { teamApi } from '@/lib/fetcher';
-import type { LedgerExtra, LedgerField, LedgerGrant, LedgerRow, LedgerSystemField } from './types';
+import type { LedgerExtra, LedgerField, LedgerFile, LedgerGrant, LedgerRow, LedgerSystemField } from './types';
 import {
   deleteLedger,
   ledgerError,
@@ -453,6 +453,137 @@ const COLUMN_KIND = {
   extra: '追加項目',
 } as const;
 
+const ORIGIN_LABEL = { imported: '取込', inferred: '推測', entered: '入力' } as const;
+
+const OriginMark = ({ origin }: { origin?: string }) => {
+  if (origin !== 'imported' && origin !== 'inferred') return null;
+  return (
+    <span
+      className='inline-flex size-3 shrink-0 items-center justify-center'
+      title={ORIGIN_LABEL[origin]}
+      aria-label={ORIGIN_LABEL[origin]}
+    >
+      {origin === 'imported' ? <span className='size-2 border border-blue-900' /> : null}
+      {origin === 'inferred' ? <span className='size-1.5 rotate-45 border border-solid-gray-700' /> : null}
+    </span>
+  );
+};
+
+const findFieldFile = (files: LedgerFile[] | undefined, fieldId: string, value: string) =>
+  (files || []).find((file) => file.field_id === fieldId || file.file_id === value || (value && file.name === value)) || null;
+
+const sourceFiles = (files: LedgerFile[] | undefined) => (files || []).filter((file) => !file.field_id);
+
+const previewKind = (file: LedgerFile, blob: Blob) => {
+  const mime = blob.type || file.mime || '';
+  const name = file.name.toLowerCase();
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/.test(name)) return 'image' as const;
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf' as const;
+  if (mime.startsWith('text/') || /\.(txt|csv|md|json|jsonl)$/.test(name)) return 'text' as const;
+  return 'other' as const;
+};
+
+const FilePreviewDialog = ({
+  rowId,
+  file,
+  onClose,
+}: {
+  rowId: string;
+  file: LedgerFile | null;
+  onClose: () => void;
+}) => {
+  const [url, setUrl] = useState('');
+  const [text, setText] = useState('');
+  const [kind, setKind] = useState<'image' | 'pdf' | 'text' | 'other' | ''>('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const blobRef = useRef<Blob | null>(null);
+
+  useEffect(() => {
+    if (!file) return;
+    let cancelled = false;
+    let objectUrl = '';
+    setBusy(true);
+    setError('');
+    setText('');
+    setKind('');
+    setUrl('');
+    blobRef.current = null;
+    void (async () => {
+      try {
+        const res = await teamApi.getBlob(`ledger/rows/${rowId}/files/${file.file_id}`);
+        if (cancelled) return;
+        blobRef.current = res.blob;
+        const next = previewKind(file, res.blob);
+        setKind(next);
+        if (next === 'text') {
+          setText(await res.blob.text());
+        } else if (next === 'image' || next === 'pdf') {
+          objectUrl = URL.createObjectURL(res.blob);
+          setUrl(objectUrl);
+        }
+      } catch (e) {
+        if (!cancelled) setError(ledgerError(e, 'ファイルを表示できませんでした'));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file, rowId]);
+
+  const download = () => {
+    const blob = blobRef.current;
+    if (!blob || !file) return;
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = file.name || 'file';
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  return (
+    <CustomDialog isOpen={!!file} onClose={onClose}>
+      <CustomDialogPanel className='max-w-4xl'>
+        <CustomDialogHeader hasClose onClose={onClose}>
+          {file?.name || 'ファイル'}
+        </CustomDialogHeader>
+        <CustomDialogBody>
+          <div className='flex flex-col gap-3'>
+            {busy ? <p className='text-std-16N-170 text-solid-gray-700'>表示しています。</p> : null}
+            {error ? (
+              <p className='text-red-700' role='alert'>
+                {error}
+              </p>
+            ) : null}
+            {kind === 'pdf' && url ? <iframe title={file?.name || 'PDF'} src={url} className='h-[70vh] w-full rounded-8 border border-solid-gray-300 bg-white' /> : null}
+            {kind === 'image' && url ? <img alt={file?.name || ''} src={url} className='max-h-[70vh] w-full object-contain' /> : null}
+            {kind === 'text' ? (
+              <pre className='max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-8 border border-solid-gray-300 bg-white p-3 text-std-16N-170 text-solid-gray-900'>
+                {text}
+              </pre>
+            ) : null}
+            {kind === 'other' ? (
+              <p className='text-std-16N-170 text-solid-gray-700'>この形式は画面では表示できません。ダウンロードして確認してください。</p>
+            ) : null}
+            <div className='flex justify-end gap-2'>
+              <Button variant='outline' size='sm' type='button' onClick={onClose}>
+                閉じる
+              </Button>
+              <Button variant='solid-fill' size='sm' type='button' aria-disabled={!blobRef.current || busy} onClick={download}>
+                ダウンロード
+              </Button>
+            </div>
+          </div>
+        </CustomDialogBody>
+      </CustomDialogPanel>
+    </CustomDialog>
+  );
+};
+
 const KindMark = ({ kind }: { kind: keyof typeof COLUMN_KIND }) => (
   <span className='inline-flex size-3 shrink-0 items-center justify-center' title={COLUMN_KIND[kind]} aria-hidden={true}>
     {kind === 'defined' ? <span className='size-2 rounded-[2px] bg-blue-900' /> : null}
@@ -532,6 +663,15 @@ export const LedgerRowsPage = () => {
   const [q, setQ] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [ingestOpen, setIngestOpen] = useState(false);
+  const [ingestFiles, setIngestFiles] = useState<File[]>([]);
+  const [ingestBusy, setIngestBusy] = useState(false);
+  const [ingestError, setIngestError] = useState('');
+  const [ingestBatch, setIngestBatch] = useState('');
+  const [ingestRows, setIngestRows] = useState<{ index: number; values: { id: string; label: string; value: string; origin: string; file_name: string }[] }[]>([]);
+  const [ingestPicked, setIngestPicked] = useState<Record<number, boolean>>({});
+  const ingestFileRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<{ rowId: string; file: LedgerFile } | null>(null);
   const [draftNatural, setDraftNatural] = useState('');
   const [draftStatus, setDraftStatus] = useState('');
   const [draftQ, setDraftQ] = useState('');
@@ -613,6 +753,7 @@ export const LedgerRowsPage = () => {
         assignee: row.assignee,
         comment: row.comment,
         fields: row.fields,
+        origins: row.origins,
         extras: row.extras,
       });
       chooseRow(created.id);
@@ -675,6 +816,64 @@ export const LedgerRowsPage = () => {
     });
     saveChains.current.set(rowId, job);
     return job;
+  };
+
+  const readIngest = async () => {
+    if (!ingestFiles.length) {
+      setIngestError('資料を1つ以上選んでください');
+      return;
+    }
+    setIngestError('');
+    setIngestBusy(true);
+    try {
+      const files = await Promise.all(
+        ingestFiles.map(async (file) => ({
+          name: file.name,
+          media_type: file.type,
+          data: await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = String(reader.result || '');
+              const comma = result.indexOf(',');
+              resolve(comma >= 0 ? result.slice(comma + 1) : result);
+            };
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          }),
+        })),
+      );
+      const res = await teamApi.post<{
+        batch_id: string;
+        rows: { index: number; values: { id: string; label: string; value: string; origin: string; file_name: string }[] }[];
+      }>(`ledger/ledgers/${ledgerId}/ingest`, { files });
+      setIngestBatch(res.data.batch_id);
+      setIngestRows(res.data.rows || []);
+      setIngestPicked(Object.fromEntries((res.data.rows || []).map((row) => [row.index, true])));
+    } catch (e) {
+      setIngestError(ledgerError(e, '資料から値を読めませんでした'));
+    } finally {
+      setIngestBusy(false);
+    }
+  };
+
+  const commitIngest = async () => {
+    const indexes = ingestRows.filter((row) => ingestPicked[row.index]).map((row) => row.index);
+    if (!indexes.length) {
+      setIngestError('登録する行を選んでください');
+      return;
+    }
+    setIngestError('');
+    setIngestBusy(true);
+    try {
+      await teamApi.post(`ledger/ledgers/${ledgerId}/ingest/${ingestBatch}`, { indexes });
+      setIngestOpen(false);
+      await mutate();
+    } catch (e) {
+      setIngestError(ledgerError(e, '登録できませんでした'));
+      await mutate();
+    } finally {
+      setIngestBusy(false);
+    }
   };
 
   const filterLabel = [status, q, showDeleted ? '削除を含む' : ''].filter(Boolean).join(' / ');
@@ -776,7 +975,7 @@ export const LedgerRowsPage = () => {
         if (key.startsWith('field:')) {
           const id = key.slice(6);
           if ((current.fields[id] || '') === value) return null;
-          return { fields: { [id]: value } };
+          return { fields: { [id]: value }, origins: { [id]: { origin: 'entered' } } };
         }
         if (key.startsWith('extra:')) {
           const label = key.slice(6);
@@ -808,6 +1007,23 @@ export const LedgerRowsPage = () => {
           <Button variant='solid-fill' size='sm' type='button' onClick={() => void createRow()}>
             レコードを追加
           </Button>
+          {ledger?.role === 'admin' || ledger?.role === 'editor' ? (
+            <Button
+              variant='outline'
+              size='sm'
+              type='button'
+              onClick={() => {
+                setIngestFiles([]);
+                setIngestError('');
+                setIngestBatch('');
+                setIngestRows([]);
+                setIngestPicked({});
+                setIngestOpen(true);
+              }}
+            >
+              資料から登録
+            </Button>
+          ) : null}
           <Button variant='outline' size='sm' type='button' onClick={openSearch}>
             検索
           </Button>
@@ -833,6 +1049,15 @@ export const LedgerRowsPage = () => {
             {COLUMN_KIND[kind]}
           </span>
         ))}
+        <span className='inline-flex items-center gap-1.5'>
+          <OriginMark origin='imported' />
+          取込
+        </span>
+        <span className='inline-flex items-center gap-1.5'>
+          <OriginMark origin='inferred' />
+          推測
+        </span>
+        <span>印の無い値は入力</span>
       </p>
       <div className='min-h-0 flex-1 overflow-auto rounded-8 border border-solid-gray-300'>
         <table className='table-fixed border-collapse text-dns-14N-130' style={{ width: '100%', minWidth: tableWidth }}>
@@ -896,6 +1121,7 @@ export const LedgerRowsPage = () => {
                   >
                     {sheetColumns.map((column) => {
                       const value = shownValue(row, column.key);
+                      const origin = column.key.startsWith('field:') ? row.origins?.[column.key.slice(6)]?.origin : undefined;
                       const field = 'field' in column ? column.field : undefined;
                       const readOnly = !editable || column.key === 'business_key' || field?.type === 'file';
                       const cellClass = 'border-r border-solid-gray-200 px-1 py-1 align-top';
@@ -910,6 +1136,13 @@ export const LedgerRowsPage = () => {
                               : `overflow-hidden ${cellClass}`
                           }
                         >
+                          <div className='flex items-start gap-1'>
+                          {origin && origin !== 'entered' ? (
+                            <span className='mt-2'>
+                              <OriginMark origin={origin} />
+                            </span>
+                          ) : null}
+                          <div className='min-w-0 flex-1'>
                           {column.key === 'registered_at' ? (
                             <span className='block truncate px-2 py-1 text-std-16N-170 text-solid-gray-900'>{value}</span>
                           ) : column.key === 'status' ? (
@@ -941,6 +1174,21 @@ export const LedgerRowsPage = () => {
                                 </option>
                               ))}
                             </select>
+                          ) : field?.type === 'file' ? (
+                            (() => {
+                              const linked = findFieldFile(row.files, field.id, value);
+                              return linked ? (
+                                <button
+                                  type='button'
+                                  className={`${inputClass} text-left text-blue-900 underline`}
+                                  onClick={() => setPreview({ rowId: row.id, file: linked })}
+                                >
+                                  {linked.name}
+                                </button>
+                              ) : (
+                                <span className='block truncate px-2 py-1 text-solid-gray-500'>ファイルはまだありません</span>
+                              );
+                            })()
                           ) : field?.type === 'longtext' || column.key === 'comment' ? (
                             <textarea
                               className={`${inputClass} min-h-10 min-w-0`}
@@ -969,6 +1217,8 @@ export const LedgerRowsPage = () => {
                               ) : null}
                             </span>
                           )}
+                          </div>
+                          </div>
                         </td>
                       );
                     })}
@@ -1028,6 +1278,117 @@ export const LedgerRowsPage = () => {
         </table>
       </div>
 
+      <CustomDialog isOpen={ingestOpen} onClose={() => setIngestOpen(false)}>
+        <CustomDialogPanel className='max-w-2xl'>
+          <CustomDialogHeader hasClose onClose={() => setIngestOpen(false)}>
+            {ingestBatch ? '登録する値' : '資料から登録'}
+          </CustomDialogHeader>
+          <CustomDialogBody>
+            {ingestBatch ? (
+              <div className='flex flex-col gap-3'>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  残す行に印を付けてください。□は資料に書いてあった値、◇は推測した値です。登録すると、出典のファイルをそのレコードに添付します。状態は変えません。
+                </p>
+                <ul className='flex flex-col gap-3'>
+                  {ingestRows.map((row) => (
+                    <li key={row.index} className='rounded-8 border border-solid-gray-300 p-3'>
+                      <label className='flex items-center gap-2 text-std-16B-150'>
+                        <input
+                          type='checkbox'
+                          checked={!!ingestPicked[row.index]}
+                          onChange={(e) => setIngestPicked((current) => ({ ...current, [row.index]: e.target.checked }))}
+                        />
+                        {row.index + 1}件目
+                      </label>
+                      <ul className='mt-2 flex flex-col gap-1'>
+                        {row.values.map((item) => (
+                          <li key={item.id} className='flex flex-wrap items-center gap-2 text-std-16N-170'>
+                            <OriginMark origin={item.origin} />
+                            <span>
+                              {item.label}: {item.value}（{item.origin === 'imported' ? '取込' : '推測'}）
+                            </span>
+                            {item.file_name ? <span className='text-dns-14N-130 text-solid-gray-600'>{item.file_name}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+                {ingestError ? (
+                  <p className='text-red-700' role='alert'>
+                    {ingestError}
+                  </p>
+                ) : null}
+                <div className='flex justify-end gap-2'>
+                  <Button variant='outline' size='sm' type='button' onClick={() => setIngestBatch('')}>
+                    戻る
+                  </Button>
+                  <Button
+                    variant='solid-fill'
+                    size='sm'
+                    type='button'
+                    aria-disabled={ingestBusy || !ingestRows.some((row) => ingestPicked[row.index])}
+                    onClick={() => void commitIngest()}
+                  >
+                    {ingestBusy ? '登録しています' : '登録する'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className='flex flex-col gap-3'>
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  PDF、Word、Excel、CSV、テキスト、画像を、3つまで選べます。設定項目に入る値だけを案にします。1つの資料に複数の対象があるときは、行を分けて出します。
+                </p>
+                <input
+                  ref={ingestFileRef}
+                  type='file'
+                  multiple
+                  accept='.pdf,.docx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/csv,text/plain,image/png,image/jpeg,image/webp'
+                  className='hidden'
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files || []).slice(0, 3);
+                    e.target.value = '';
+                    setIngestError('');
+                    setIngestFiles(picked);
+                  }}
+                />
+                <div>
+                  <Button variant='outline' size='sm' type='button' aria-disabled={ingestBusy} onClick={() => ingestFileRef.current?.click()}>
+                    ファイルを選ぶ
+                  </Button>
+                </div>
+                {ingestFiles.length ? (
+                  <ul className='text-std-16N-170 text-solid-gray-800'>
+                    {ingestFiles.map((file) => (
+                      <li key={file.name}>{file.name}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {ingestError ? (
+                  <p className='text-red-700' role='alert'>
+                    {ingestError}
+                  </p>
+                ) : null}
+                <div className='flex justify-end gap-2'>
+                  <Button variant='outline' size='sm' type='button' onClick={() => setIngestOpen(false)}>
+                    閉じる
+                  </Button>
+                  <Button
+                    variant='solid-fill'
+                    size='sm'
+                    type='button'
+                    aria-disabled={ingestBusy || ingestFiles.length === 0}
+                    onClick={() => void readIngest()}
+                  >
+                    {ingestBusy ? '読んでいます' : '次へ'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CustomDialogBody>
+        </CustomDialogPanel>
+      </CustomDialog>
+      <FilePreviewDialog rowId={preview?.rowId || ''} file={preview?.file || null} onClose={() => setPreview(null)} />
       <CustomDialog isOpen={searchOpen} onClose={() => setSearchOpen(false)}>
         <CustomDialogPanel>
           <CustomDialogHeader hasClose onClose={() => setSearchOpen(false)}>
@@ -1782,9 +2143,11 @@ export const LedgerCardPage = () => {
   const { data: ledger } = useLedger(ledgerId || row?.ledger_id);
   const { data: listData, mutate: reloadRows } = useLedgerRows(ledgerId || row?.ledger_id, 'status=&q=&include_deleted=0');
   const [draft, setDraft] = useState<LedgerRow | null>(null);
+  const [touched, setTouched] = useState<Record<string, true>>({});
   const [pendingExtras, setPendingExtras] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [preview, setPreview] = useState<LedgerFile | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [frameHeight, setFrameHeight] = useState(360);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -1792,6 +2155,7 @@ export const LedgerCardPage = () => {
 
   const setField = (id: string, value: string) => {
     if (!current) return;
+    setTouched((items) => ({ ...items, [id]: true }));
     setDraft({ ...current, fields: { ...current.fields, [id]: value } });
   };
 
@@ -1807,13 +2171,16 @@ export const LedgerCardPage = () => {
         if (index >= 0) extras[index] = { label, value: value.trim() };
         else extras.push({ label, value: value.trim() });
       }
+      const origins = Object.fromEntries(Object.keys(touched).map((id) => [id, { origin: 'entered' }]));
       const saved = await updateRow(current.id, {
         status: current.status,
         assignee: current.assignee,
         comment: current.comment,
         fields: current.fields,
+        origins,
         extras,
       });
+      setTouched({});
       setPendingExtras({});
       setDraft(saved);
       await mutate();
@@ -1824,6 +2191,7 @@ export const LedgerCardPage = () => {
 
   useEffect(() => {
     setDraft(null);
+    setTouched({});
     setPendingExtras({});
     setPageIndex(0);
     setHistoryOpen(false);
@@ -1912,7 +2280,14 @@ export const LedgerCardPage = () => {
   };
 
   const cells: { key: string; tall: boolean; node: ReactNode }[] = [];
-  const pushCell = (key: string, kind: keyof typeof COLUMN_KIND, label: string, control: ReactNode, tall = false) => {
+  const pushCell = (
+    key: string,
+    kind: keyof typeof COLUMN_KIND,
+    label: string,
+    control: ReactNode,
+    tall = false,
+    origin?: string,
+  ) => {
     cells.push({
       key,
       tall,
@@ -1921,6 +2296,7 @@ export const LedgerCardPage = () => {
           <span className='flex items-center gap-1.5'>
             <KindMark kind={kind} />
             {label}
+            <OriginMark origin={origin} />
           </span>
           {control}
         </label>
@@ -1971,7 +2347,16 @@ export const LedgerCardPage = () => {
       ) : field.type === 'longtext' ? (
         <textarea className={fieldClass} rows={3} value={current.fields[field.id] || ''} onChange={(e) => setField(field.id, e.target.value)} />
       ) : field.type === 'file' ? (
-        <input className={fieldClass} value={current.fields[field.id] || ''} readOnly />
+        (() => {
+          const linked = findFieldFile(current.files, field.id, current.fields[field.id] || '');
+          return linked ? (
+            <Button variant='outline' size='sm' type='button' onClick={() => setPreview(linked)}>
+              {linked.name}
+            </Button>
+          ) : (
+            <p className='mt-1 text-std-16N-170 text-solid-gray-600'>ファイルはまだありません</p>
+          );
+        })()
       ) : (
         <input
           className={fieldClass}
@@ -1980,7 +2365,7 @@ export const LedgerCardPage = () => {
           onChange={(e) => setField(field.id, e.target.value)}
         />
       );
-    pushCell(field.id, 'defined', field.label, control, tall);
+    pushCell(field.id, 'defined', field.label, control, tall, current.origins?.[field.id]?.origin);
   }
   current.extras.forEach((extra, index) => {
     cells.push({
@@ -2112,6 +2497,17 @@ export const LedgerCardPage = () => {
           </Button>
         </div>
       </div>
+      {sourceFiles(current.files).length ? (
+        <div className='flex shrink-0 flex-wrap items-center gap-2'>
+          <span className='text-dns-14N-130 text-solid-gray-600'>出典</span>
+          {sourceFiles(current.files).map((file) => (
+            <Button key={file.file_id} variant='outline' size='sm' type='button' onClick={() => setPreview(file)}>
+              {file.name}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      <FilePreviewDialog rowId={current.id} file={preview} onClose={() => setPreview(null)} />
       <form className='flex min-h-0 flex-1 flex-col gap-3' onSubmit={save}>
         <div ref={frameRef} className='min-h-0 flex-1 overflow-hidden'>
           <div className='grid h-full grid-cols-2 items-start gap-x-8'>

@@ -129,6 +129,9 @@ def _init(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE ledgers ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''")
     if "system_json" not in columns:
         db.execute("ALTER TABLE ledgers ADD COLUMN system_json TEXT NOT NULL DEFAULT ''")
+    row_columns = {row[1] for row in db.execute("PRAGMA table_info(ledger_rows)")}
+    if "origins_json" not in row_columns:
+        db.execute("ALTER TABLE ledger_rows ADD COLUMN origins_json TEXT NOT NULL DEFAULT '{}'")
     db.commit()
 
 
@@ -559,6 +562,7 @@ def _public_row(ledger: sqlite3.Row, row: sqlite3.Row, actor: Actor, *, with_rev
             if isinstance(item, dict)
         ],
         "files": _loads(row["files_json"], []),
+        "origins": _public_origins(defs, _loads(row["origins_json"], {}), role),
         "deleted_at": row["deleted_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -602,29 +606,97 @@ def _normalize_extras(raw: Any) -> tuple[list[dict[str, str]] | None, str | None
     return extras[:80], None
 
 
+ORIGIN_RANK = {"inferred": 1, "imported": 2, "entered": 3}
+
+
+def _origin_name(raw: Any) -> str:
+    if isinstance(raw, dict):
+        origin = str(raw.get("origin") or "")
+        return origin if origin in ORIGIN_RANK else ""
+    if isinstance(raw, str) and raw in ORIGIN_RANK:
+        return raw
+    return ""
+
+
+def _public_origins(
+    defs: dict[str, dict[str, Any]], raw: Any, role: str | None
+) -> dict[str, dict[str, str]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for fid, item in raw.items():
+        origin = _origin_name(item)
+        if not origin:
+            continue
+        spec = defs.get(str(fid)) or {}
+        if role not in ("admin", "editor") and spec.get("masked"):
+            continue
+        entry = {"origin": origin}
+        file_id = str(item.get("file_id") or "").strip() if isinstance(item, dict) else ""
+        if file_id:
+            entry["file_id"] = file_id[:80]
+        out[str(fid)] = entry
+    return out
+
+
 def _apply_fields(
     defs: dict[str, dict[str, Any]],
     current: dict[str, str],
+    current_origins: dict[str, Any],
     incoming: Any,
-) -> tuple[dict[str, str] | None, list[dict[str, str]], str | None]:
+    incoming_origins: Any,
+    default_origin: str,
+) -> tuple[dict[str, str] | None, dict[str, dict[str, str]], list[dict[str, str]], list[dict[str, str]], str | None]:
     if incoming is None:
-        return current, [], None
+        return current, _public_origins(defs, current_origins, "admin"), [], [], None
     if not isinstance(incoming, dict):
-        return None, [], "項目の値を読めません"
+        return None, {}, [], [], "項目の値を読めません"
+    if default_origin not in ORIGIN_RANK:
+        return None, {}, [], [], "値の出自を読めません"
+    stated = incoming_origins if isinstance(incoming_origins, dict) else {}
     nxt = dict(current)
+    origins = _public_origins(defs, current_origins, "admin")
     changes: list[dict[str, str]] = []
+    kept: list[dict[str, str]] = []
     for key, raw in incoming.items():
         fid = str(key)
         spec = defs.get(fid)
         value = "" if raw is None else str(raw).strip()
         if spec is None:
-            return None, [], "定義に無い項目です"
+            return None, {}, [], [], "定義に無い項目です"
         err = _check_value(spec, value)
         if err:
-            return None, [], err
+            return None, {}, [], [], err
+        given = stated.get(fid)
+        origin = _origin_name(given) or default_origin
         before = current.get(fid, "")
+        previous = _origin_name(current_origins.get(fid))
+        if previous:
+            old_rank = ORIGIN_RANK[previous]
+        elif before:
+            old_rank = ORIGIN_RANK["entered"]
+        else:
+            old_rank = 0
+        new_rank = ORIGIN_RANK[origin]
+        file_id = str(given.get("file_id") or "").strip()[:80] if isinstance(given, dict) else ""
+        if old_rank and new_rank < old_rank and before != value:
+            kept.append({"id": fid, "label": str(spec.get("label") or fid), "origin": previous or "entered"})
+            continue
+        chosen = origin
+        chosen_file = file_id
+        if before == value and old_rank > new_rank:
+            chosen = previous or "entered"
+            prior = current_origins.get(fid) if isinstance(current_origins.get(fid), dict) else {}
+            chosen_file = str(prior.get("file_id") or "")
+        elif before == value and not chosen_file:
+            prior = current_origins.get(fid) if isinstance(current_origins.get(fid), dict) else {}
+            chosen_file = str(prior.get("file_id") or "")
+        nxt[fid] = value
+        entry = {"origin": chosen}
+        if chosen_file:
+            entry["file_id"] = chosen_file
+        origins[fid] = entry
         if before != value:
-            nxt[fid] = value
             changes.append(
                 {
                     "key": f"field:{fid}",
@@ -633,7 +705,7 @@ def _apply_fields(
                     "after": value,
                 }
             )
-    return nxt, changes, None
+    return nxt, origins, changes, kept, None
 
 
 def _save_revision(
@@ -673,7 +745,15 @@ def upsert_row(actor: Actor, ledger_id: str, body: dict[str, Any]) -> tuple[dict
         current_fields = (
             {str(k): str(v) for k, v in _loads(existing["fields_json"], {}).items()} if existing else {}
         )
-        fields, field_changes, ferr = _apply_fields(defs, current_fields, body.get("fields"))
+        current_origins = _loads(existing["origins_json"], {}) if existing else {}
+        fields, origins, field_changes, kept, ferr = _apply_fields(
+            defs,
+            current_fields,
+            current_origins if isinstance(current_origins, dict) else {},
+            body.get("fields"),
+            body.get("origins"),
+            "imported",
+        )
         if ferr or fields is None:
             return None, ferr
         if "extras" in body:
@@ -703,25 +783,40 @@ def upsert_row(actor: Actor, ledger_id: str, body: dict[str, Any]) -> tuple[dict
                 )
             db.execute(
                 "UPDATE ledger_rows SET assignee = ?, status = ?, comment = ?, fields_json = ?, "
-                "extras_json = ?, updated_at = ?, deleted_at = '' WHERE id = ?",
-                (_dump(assignee) if False else assignee, status, comment, _dump(fields), _dump(extras), now, existing["id"]),
+                "extras_json = ?, origins_json = ?, updated_at = ?, deleted_at = '' WHERE id = ?",
+                (
+                    _dump(assignee) if False else assignee,
+                    status,
+                    comment,
+                    _dump(fields),
+                    _dump(extras),
+                    _dump(origins),
+                    now,
+                    existing["id"],
+                ),
             )
             _save_revision(db, existing["id"], actor, changes, now)
             db.commit()
             saved = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (existing["id"],)).fetchone()
-            return _public_row(ledger, saved, actor), None
+            payload = _public_row(ledger, saved, actor)
+            if kept:
+                payload["kept"] = kept
+            return payload, None
         row_id = _new_id()
         changes.insert(0, {"key": "created", "label": "作成", "before": "", "after": key})
         db.execute(
             "INSERT INTO ledger_rows (id, ledger_id, business_key, assignee, status, comment, "
-            "fields_json, extras_json, files_json, deleted_at, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?)",
-            (row_id, ledger_id, key[:80], assignee, status, comment, _dump(fields), _dump(extras), now, now),
+            "fields_json, extras_json, files_json, origins_json, deleted_at, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, '', ?, ?)",
+            (row_id, ledger_id, key[:80], assignee, status, comment, _dump(fields), _dump(extras), _dump(origins), now, now),
         )
         _save_revision(db, row_id, actor, changes, now)
         db.commit()
         saved = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (row_id,)).fetchone()
-        return _public_row(ledger, saved, actor), None
+        payload = _public_row(ledger, saved, actor)
+        if kept:
+            payload["kept"] = kept
+        return payload, None
 
 
 def _like(term: str) -> str:

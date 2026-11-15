@@ -30,6 +30,11 @@ def export_document(ledger: dict[str, Any], rows: list[dict[str, Any]], *, role:
                 "status": row.get("status") or "",
                 "comment": row.get("comment") or "",
                 "fields": values,
+                "origins": {
+                    key: value
+                    for key, value in (row.get("origins") or {}).items()
+                    if key in allowed and isinstance(value, dict)
+                },
                 "extras": row.get("extras") or [],
                 "files": [
                     {"file_id": item.get("file_id"), "name": item.get("name")}
@@ -112,6 +117,7 @@ def parse_json_import(text: str, ledger: dict[str, Any]) -> tuple[list[dict[str,
                 "assignee": row.get("assignee"),
                 "comment": row.get("comment"),
                 "fields": fields,
+                "origins": row.get("origins") if isinstance(row.get("origins"), dict) else {},
                 "extras": extras,
             }
         )

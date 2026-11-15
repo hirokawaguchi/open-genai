@@ -10687,7 +10687,7 @@ async def _proxy_ledger(request: Request, suffix: str) -> Response:
     if content_type:
         headers["Content-Type"] = content_type
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             res = await client.request(request.method, url, headers=headers, content=body)
     except httpx.HTTPError as exc:
         return JSONResponse(

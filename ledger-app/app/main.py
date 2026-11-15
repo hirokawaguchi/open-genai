@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI, File, Header, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import assist, io, intauth, material, store
+from . import assist, ingest, io, intauth, material, store
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 SERVICE_KEY = os.environ.get("LEDGER_SERVICE_KEY", "")
@@ -682,6 +682,116 @@ async def assist_material(
     if not fields:
         return _fail("資料から項目の案を見つけられませんでした")
     return JSONResponse({"fields": fields, "note": "保存するまで台帳は変わりません。"})
+
+
+@app.post("/ledgers/{ledger_id}/ingest")
+async def ingest_files(
+    ledger_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, actor = _actor(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    ledger, msg = store.get_ledger(actor, ledger_id)
+    if msg or ledger is None:
+        return _fail(msg)
+    if ledger.get("role") not in ("admin", "editor"):
+        return _fail("この台帳を操作する権限がありません")
+    fields = [item for item in ledger.get("fields") or [] if isinstance(item, dict)]
+    if not fields:
+        return _fail("設定項目がまだありません")
+    body = await request.json()
+    incoming = body.get("files") if isinstance(body, dict) else None
+    if not isinstance(incoming, list) or not incoming:
+        return _fail("資料を1つ以上選んでください")
+    if len(incoming) > ingest.MAX_FILES:
+        return _fail("一度に読み込める資料は3つまでです")
+    prepared: list[dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
+    table_rows: list[dict[str, Any]] = []
+    for index, item in enumerate(incoming):
+        if not isinstance(item, dict):
+            return _fail("資料を読めませんでした")
+        name = str(item.get("name") or "")
+        try:
+            raw = base64.b64decode(str(item.get("data") or ""), validate=False)
+            ext = material.extension(name)
+        except binascii.Error:
+            return _fail("ファイルを読めませんでした")
+        except ValueError as exc:
+            return _fail(str(exc))
+        if len(raw) > material.MAX_BYTES:
+            return _fail("ファイルが大きすぎます。8MB までの資料を選んでください。")
+        if ext in material.IMAGE_EXTS:
+            mime = str(item.get("media_type") or "")
+            if not mime.startswith("image/"):
+                mime = "image/png" if ext == "png" else "image/jpeg"
+            text = await assist.transcribe_image(f"data:{mime};base64,{item.get('data')}", timeout=20)
+            if not text:
+                return _fail(f"{name} から文字を取れませんでした")
+        else:
+            mime = str(item.get("media_type") or "application/octet-stream")
+            try:
+                text = material.text_from_bytes(name, raw)
+            except ValueError as exc:
+                return _fail(str(exc))
+        text = assist.sanitize_material(text)
+        prepared.append({"name": name, "mime": mime, "raw": raw})
+        parsed = ingest.rows_from_table(text, fields, index)
+        if parsed:
+            table_rows.extend(parsed)
+        elif text:
+            documents.append({"name": name, "text": text, "index": index})
+    model_rows = await ingest.rows_from_model(fields, documents) if documents else []
+    rows = (table_rows + model_rows)[: ingest.MAX_ROWS]
+    shown = ingest.public_rows(rows, prepared, fields)
+    if not shown:
+        return _fail("資料から入れられる値は見つかりませんでした")
+    batch_id = ingest.stage_batch(ledger_id, actor.user_id, prepared, rows)
+    return JSONResponse({"batch_id": batch_id, "rows": shown, "note": "登録するまで台帳は変わりません。"})
+
+
+@app.post("/ledgers/{ledger_id}/ingest/{batch_id}")
+async def ingest_commit(
+    ledger_id: str,
+    batch_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, actor = _actor(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    raw_indexes = body.get("indexes") if isinstance(body, dict) else None
+    if not isinstance(raw_indexes, list) or not raw_indexes:
+        return _fail("登録する行を選んでください")
+    indexes: list[int] = []
+    for item in raw_indexes:
+        try:
+            indexes.append(int(item))
+        except (TypeError, ValueError):
+            return _fail("登録する行を選んでください")
+    count, msg = ingest.commit_batch(actor, ledger_id, batch_id, indexes)
+    if msg:
+        return JSONResponse(status_code=400, content={"error": msg, "created": count})
+    return JSONResponse({"created": count})
 
 
 @app.post("/ledgers/{ledger_id}/assist/query")

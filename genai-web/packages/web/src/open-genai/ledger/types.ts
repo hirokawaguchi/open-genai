@@ -31,6 +31,13 @@ export type LedgerDef = {
 
 export type LedgerExtra = { label: string; value: string };
 
+export type FieldOrigin = {
+  origin: 'entered' | 'imported' | 'inferred';
+  file_id?: string;
+};
+
+export type LedgerFile = { file_id: string; name: string; mime?: string; field_id?: string };
+
 export type LedgerRow = {
   id: string;
   ledger_id: string;
@@ -39,8 +46,9 @@ export type LedgerRow = {
   status: string;
   comment: string;
   fields: Record<string, string>;
+  origins?: Record<string, FieldOrigin>;
   extras: LedgerExtra[];
-  files: { file_id: string; name: string; mime?: string }[];
+  files: LedgerFile[];
   deleted_at: string;
   created_at: string;
   updated_at: string;
