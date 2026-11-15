@@ -220,6 +220,7 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "doccheck",
     "patchform",
     "docmaker",
+    "ledger",
     "procuretech-navigator",
     "procuretech-editor",
     "knowledge",
@@ -243,7 +244,7 @@ ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
 )
 RECOMMENDED_SETTING_KEY = "recommendedExAppIds"
 # 後からおすすめ候補に足した ID。保存済み設定に無ければ一度だけ既定オンにする。
-RECOMMENDED_BACKFILL_IDS = ("rag", "lms", "worldmonitor", "shimen", "budget")
+RECOMMENDED_BACKFILL_IDS = ("rag", "lms", "worldmonitor", "shimen", "budget", "ledger")
 RECOMMENDED_BACKFILL_KEY = "recommendedExAppIdsBackfill"
 
 

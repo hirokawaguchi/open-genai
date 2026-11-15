@@ -10,18 +10,20 @@ import { LayoutBody } from '@/layout/LayoutBody';
 import { USERMGMT_EXAPP_ID } from '@/layout/navItems';
 import { PageTitle } from '@/components/PageTitle';
 import { useMyTenants } from '@/open-genai/tenants/useTenants';
+import { ServiceTokenSection } from './ServiceTokenSection';
 import { UserCreateSection } from './UserCreateSection';
 import { UserCsvSection } from './UserCsvSection';
 import { UserEditDialog } from './UserEditDialog';
 import type { ManagedUser } from './types';
 import { useUsers } from './useUserMgmt';
 
-type Mode = 'list' | 'create' | 'csv';
+type Mode = 'list' | 'create' | 'csv' | 'tokens';
 
 const MODES: { id: Mode; label: string }[] = [
   { id: 'list', label: '利用者一覧' },
   { id: 'create', label: '利用者登録' },
   { id: 'csv', label: 'CSV一括処理' },
+  { id: 'tokens', label: 'サービストークン' },
 ];
 
 const LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
@@ -119,8 +121,10 @@ export const UserMgmtPage = () => {
           <UserListSection isSystemAdmin={isSystemAdmin} />
         ) : mode === 'create' ? (
           <UserCreateSection isSystemAdmin={isSystemAdmin} onCreated={() => setMode('list')} />
-        ) : (
+        ) : mode === 'csv' ? (
           <UserCsvSection onApplied={() => setMode('list')} />
+        ) : (
+          <ServiceTokenSection />
         )}
       </div>
     </LayoutBody>

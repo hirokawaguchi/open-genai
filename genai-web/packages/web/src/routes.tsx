@@ -41,7 +41,17 @@ import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
 import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
 import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
 import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
-import { PatchformLedgerPage } from '@/open-genai/patchform/PatchformLedgerPage';
+import {
+  LedgerAccessPage,
+  LedgerApiPage,
+  LedgerCardPage,
+  LedgerExportPage,
+  LedgerFieldsPage,
+  LedgerHomePage,
+  LedgerRowPage,
+  LedgerRowsPage,
+  LegacyLedgerRowRedirect,
+} from '@/open-genai/ledger/LedgerPages';
 import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
 import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProcedureEditPage';
 import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
@@ -160,6 +170,16 @@ export const createRoutes = (): RouteObject[] => {
     // 自治体予算（Compose profiles: ["budget"]）。
     { path: 'budget', element: <BudgetPage /> },
     { path: 'apps/:teamId/budget', element: <Navigate to='/budget' replace /> },
+    { path: 'ledger', element: <LedgerHomePage /> },
+    { path: 'ledger/rows/:rowId', element: <LedgerRowPage /> },
+    { path: 'ledger/:ledgerId/access', element: <LedgerAccessPage /> },
+    { path: 'ledger/:ledgerId/fields', element: <LedgerFieldsPage /> },
+    { path: 'ledger/:ledgerId/export', element: <LedgerExportPage /> },
+    { path: 'ledger/:ledgerId/api', element: <LedgerApiPage /> },
+    { path: 'ledger/:ledgerId/card/:rowId', element: <LedgerCardPage /> },
+    { path: 'ledger/:ledgerId/card', element: <LedgerCardPage /> },
+    { path: 'ledger/:ledgerId', element: <LedgerRowsPage /> },
+    { path: 'apps/:teamId/ledger', element: <Navigate to='/ledger' replace /> },
     // 戦国国取り（お遊び・Compose profiles: ["sengoku"]）。
     { path: 'sengoku', element: <SengokuPage /> },
     { path: 'apps/:teamId/sengoku', element: <Navigate to='/sengoku' replace /> },
@@ -168,9 +188,9 @@ export const createRoutes = (): RouteObject[] => {
     // フォームは専用ページへ（Compose profiles: ["patchform"]）。
     { path: 'patchform', element: <PatchformPage /> },
     { path: 'patchform/inbox', element: <PatchformInboxPage /> },
-    { path: 'patchform/ledger', element: <PatchformLedgerPage /> },
-    { path: 'patchform/ledger/procedure/:procedureId', element: <PatchformLedgerPage /> },
-    { path: 'patchform/ledger/:rowId', element: <PatchformLedgerPage /> },
+    { path: 'patchform/ledger', element: <Navigate to='/ledger' replace /> },
+    { path: 'patchform/ledger/procedure/:procedureId', element: <Navigate to='/ledger' replace /> },
+    { path: 'patchform/ledger/:rowId', element: <LegacyLedgerRowRedirect /> },
     { path: 'patchform/inbox/:procedureId', element: <PatchformInboxPage /> },
     { path: 'patchform/procedures', element: <PatchformProceduresPage /> },
     { path: 'patchform/procedures/:procedureId', element: <PatchformProcedureEditPage /> },

@@ -24,6 +24,7 @@ const FOOTER_HIDDEN_PATHS = [
   '/worldmonitor',
   '/diagram',
   '/shimen',
+  '/ledger',
 ];
 
 export const Layout = () => {

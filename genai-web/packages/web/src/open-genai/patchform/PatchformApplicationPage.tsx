@@ -676,7 +676,7 @@ export const PatchformApplicationPage = () => {
                   application.ledger_id ? (
                     <p>
                       <Link
-                        to={`/patchform/ledger/${application.ledger_id}`}
+                        to={`/ledger/rows/${application.ledger_id}`}
                         className='text-blue-900 underline-offset-2 hover:underline'
                       >
                         台帳の行を開く

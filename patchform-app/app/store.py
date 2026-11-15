@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import bcrypt
 
-from . import crypto, delivery, files, ledger, notify, procedure, review_engine, spec
+from . import crypto, delivery, files, ledger, ledger_client, notify, procedure, review_engine, spec
 
 DB_PATH = os.environ.get("PATCHFORM_DB_PATH", "/data/patchform.db")
 RETENTION_DAYS = int(os.environ.get("PATCHFORM_RETENTION_DAYS", "365"))
@@ -508,6 +508,7 @@ def _ensure_columns(db: sqlite3.Connection) -> None:
         ("applications", "delivery_json", "TEXT NOT NULL DEFAULT ''"),
         # 提出した瞬間の審査項目。あとから手続きを直しても、この申請の項目は変えない。
         ("applications", "review_json", "TEXT NOT NULL DEFAULT ''"),
+        ("applications", "ledger_row_id", "TEXT NOT NULL DEFAULT ''"),
         # 変更履歴: 記入内容の差分（変更前→後）を JSON で保持
         ("application_events", "changes", "TEXT NOT NULL DEFAULT ''"),
         # 添付ファイルの由来（internal=庁内 / external=庁外アップロード）。
@@ -3943,7 +3944,11 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
             "exit": _handling_of_row(proc)["exit"] if proc else "ledger",
             "current": _meta("reception_stage"),
         },
-        "ledger_id": ledger.row_id_for(str(row["id"])),
+        "ledger_id": (
+            str(row["ledger_row_id"])
+            if "ledger_row_id" in keys and row["ledger_row_id"]
+            else ledger.row_id_for(str(row["id"]))
+        ),
         "delivery": _app_delivery(row) if _app_delivery(row)["state"] else None,
         "guide_form_id": row["guide_form_id"],
         "guide_submission_id": row["guide_submission_id"],
@@ -5149,6 +5154,7 @@ def move_application_route(
     action: str,
     actor_user_id: str,
     actor_groups: list[str] | None = None,
+    forwarded_headers: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """受付確認、担当課、確定を進める・戻す・差戻しする。"""
     send_job: dict[str, Any] | None = None
@@ -5200,18 +5206,50 @@ def move_application_route(
                 ),
                 "",
             )
-            ledger.open_row(
-                application_id=application_id,
-                procedure_id=str(row["procedure_id"]),
-                procedure_name=str(proc["name"]) if proc else "",
-                confirmed_by=actor_user_id,
-                assignee=section_role,
-                status=str(handling["statuses"][0]),
-                snapshot=snapshot,
-                review=review,
-                copies=_confirm_copies(db, payload),
-                confirmed_at=now,
-            )
+            if ledger_client.enabled():
+                try:
+                    remote_ledger_id, remote_row_id = ledger_client.publish(
+                        forwarded=forwarded_headers or {},
+                        procedure_id=str(row["procedure_id"]),
+                        procedure_name=str(proc["name"]) if proc else "",
+                        ledger_id=str(handling.get("ledger_id") or ""),
+                        statuses=[str(item) for item in handling["statuses"]],
+                        grants=[],
+                        field_map=list(handling.get("field_map") or []),
+                        application_id=application_id,
+                        assignee=section_role,
+                        status=str(handling["statuses"][0]),
+                        snapshot=snapshot,
+                        copies=_confirm_copies(db, payload),
+                    )
+                except ledger_client.LedgerError as exc:
+                    return None, str(exc)
+                handling = {**handling, "ledger_id": remote_ledger_id}
+                db.execute(
+                    "UPDATE procedures SET handling_json = ? WHERE id = ?",
+                    (json.dumps(handling, ensure_ascii=False), row["procedure_id"]),
+                )
+                db.execute(
+                    "UPDATE applications SET ledger_row_id = ? WHERE id = ?",
+                    (remote_row_id, application_id),
+                )
+            else:
+                opened = ledger.open_row(
+                    application_id=application_id,
+                    procedure_id=str(row["procedure_id"]),
+                    procedure_name=str(proc["name"]) if proc else "",
+                    confirmed_by=actor_user_id,
+                    assignee=section_role,
+                    status=str(handling["statuses"][0]),
+                    snapshot=snapshot,
+                    review=review,
+                    copies=_confirm_copies(db, payload),
+                    confirmed_at=now,
+                )
+                db.execute(
+                    "UPDATE applications SET ledger_row_id = ? WHERE id = ?",
+                    (str(opened.get("id") or ""), application_id),
+                )
         db.execute(
             "UPDATE applications SET reception_status = ?, reception_stage = ?, updated_at = ? "
             "WHERE id = ?",

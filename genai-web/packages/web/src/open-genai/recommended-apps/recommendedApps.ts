@@ -10,6 +10,7 @@ export const RECOMMENDED_APP_OPTIONS = [
   { id: 'doccheck', label: '書類読取とチェック' },
   { id: 'patchform', label: 'フォーム' },
   { id: 'docmaker', label: 'マイ手続き' },
+  { id: 'ledger', label: '台帳' },
   { id: 'procuretech-navigator', label: '情報化企画書ナビ' },
   { id: 'procuretech-editor', label: 'Markdown エディタ' },
   { id: 'knowledge', label: 'ナレッジ管理' },

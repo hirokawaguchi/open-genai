@@ -63,6 +63,7 @@ from . import (
     portal_login,
     policy,
     security_warn,
+    service_tokens,
     sessions,
     storage,
     teams_store,
@@ -135,6 +136,8 @@ DOCCHECK_PUBLIC_ENDPOINT = (os.environ.get("DOCCHECK_PUBLIC_ENDPOINT") or "").rs
 # フォーム（Compose profiles: ["patchform"]）。実 API は /patchform/* プロキシ。
 PATCHFORM_APP_URL = os.environ.get("PATCHFORM_APP_URL", "http://patchform-app:8012/invoke")
 PATCHFORM_PUBLIC_ENDPOINT = (os.environ.get("PATCHFORM_PUBLIC_ENDPOINT") or "").rstrip("/")
+# 台帳（Compose profiles: ["ledger"]）。実 API は /ledger/* プロキシ。
+LEDGER_APP_URL = os.environ.get("LEDGER_APP_URL", "http://ledger-app:8023/invoke")
 # procureTech Navigator（Compose profiles: ["procuretech-navigator"]）。実 API は /procuretech-navigator/* プロキシ。
 PROCURETECH_APP_URL = os.environ.get(
     "PROCURETECH_APP_URL", "http://procuretech-navigator-app:8014/invoke"
@@ -764,6 +767,30 @@ PATCHFORM_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+LEDGER_SEED: dict[str, Any] = {
+    "exAppId": "ledger",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "台帳",
+    "endpoint": (
+        LEDGER_APP_URL
+        if LEDGER_APP_URL.endswith("/invoke")
+        else LEDGER_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": "手続きの確定後や、直接の登録で行を管理します。項目は後から足せます。",
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 「台帳選択」で台帳を作り、開きます。台帳のオーナーは、作った人の所属チームです。\n"
+        "- 「アクセス権設定」で、読み書きを許すチームと、読み取りだけ許すチームを選びます。\n"
+        "- 定義に無い項目は、その行の追加項目として残せます。\n"
+        "- 有効化: `docker compose --profile ledger up -d` または `COMPOSE_PROFILES=ledger`。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 # マイ手続き（docmaker）。UI は専用ページ /docmaker。patchform-app を共有するため、
 # 同じ /health で出し分ける（フォームと同時に表示/非表示になる）。
 DOCMAKER_SEED: dict[str, Any] = {
@@ -1082,6 +1109,7 @@ EXAPP_SEEDS = [
     DOCCHECK_SEED,
     PATCHFORM_SEED,
     DOCMAKER_SEED,
+    LEDGER_SEED,
     PROCURETECH_SEED,
     PROCURETECH_EDITOR_SEED,
     PROCURETECH_HEARING_SEED,
@@ -4083,6 +4111,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("doccheck", _as_invoke_url(DOCCHECK_APP_URL)),
         ("patchform", _as_invoke_url(PATCHFORM_APP_URL)),
         ("docmaker", _as_invoke_url(PATCHFORM_APP_URL)),
+        ("ledger", _as_invoke_url(LEDGER_APP_URL)),
         ("procuretech-navigator", _as_invoke_url(PROCURETECH_APP_URL)),
         ("procuretech-editor", _as_invoke_url(PROCURETECH_EDITOR_APP_URL)),
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
@@ -8094,14 +8123,19 @@ def _patchform_headers(request: Request) -> tuple[JSONResponse | None, dict[str,
         groups_str = "SystemAdminGroup"
     team_ids = _user_team_ids_str(user_id) if user_id != PATCHFORM_SERVICE_USER else ""
     teams_hdr = _user_teams_header(user_id) if user_id != PATCHFORM_SERVICE_USER else ""
+    scope = (
+        COMMON_TEAM_ID
+        if user_id == PATCHFORM_SERVICE_USER
+        else _active_tenant_id(user_id, claims)
+    )
     headers = {
         "x-api-key": RAG_API_KEY,
         "x-user-id": user_id,
         "x-user-groups": groups_str,
         "x-user-tags": team_ids,
         "x-user-teams": teams_hdr,
-        "x-scope": COMMON_TEAM_ID,
-        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "x-scope": scope,
+        **intauth.signed_headers(user_id, groups_str, scope, team_ids),
         "Content-Type": "application/json",
     }
     return None, headers
@@ -9715,6 +9749,53 @@ async def plan_admin_users(request: Request) -> JSONResponse:
     return JSONResponse(content={"rows": rows, "count": len(rows)})
 
 
+@app.get("/admin/users/service-tokens")
+async def list_service_tokens(request: Request) -> JSONResponse:
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    return JSONResponse(content={"tokens": service_tokens.list_tokens(ctx["tenant_id"])})
+
+
+@app.post("/admin/users/service-tokens")
+async def issue_service_token(request: Request) -> JSONResponse:
+    """台帳専用のトークンを1枚出す。文字列はこの応答で一度だけ返す。"""
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    email = teams_store.normalize_email(str(body.get("email") or ""))
+    label = str(body.get("label") or "").strip()
+    groups = body.get("groups") if isinstance(body.get("groups"), list) else []
+    if not email or not _identity_in(_tenant_member_ids(ctx["tenant_id"]), email):
+        return JSONResponse(status_code=400, content={"error": _NOT_IN_TENANT})
+    if any(str(group) == "SystemAdminGroup" for group in groups):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "システム管理者にはトークンを発行できません"},
+        )
+    if not label or len(label) > 80:
+        return JSONResponse(status_code=400, content={"error": "名前は1文字以上80文字以内にしてください"})
+    claims = _claims_from_request(request)
+    secret, row = service_tokens.issue(email, ctx["tenant_id"], label, _user_id(claims))
+    return JSONResponse(content={"token": secret, **row})
+
+
+@app.post("/admin/users/service-tokens/{token_id}/revoke")
+async def revoke_service_token(token_id: str, request: Request) -> JSONResponse:
+    err, _headers, ctx = _usermgmt_headers(request)
+    if err:
+        return err
+    if not service_tokens.revoke(token_id, ctx["tenant_id"]):
+        return JSONResponse(status_code=404, content={"error": "トークンが見つかりません"})
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/admin/users/sessions/revoke")
 async def revoke_admin_user_sessions(request: Request) -> JSONResponse:
     """いま開いている組織の利用者について、アプリのログインと庁内 SSO を切る。"""
@@ -10585,3 +10666,127 @@ async def delete_exapp_history(
             team_id, ex_app_id, createdDate, owner_id, tenant_id
         )
     return JSONResponse(content={})
+
+
+def _ledger_base() -> str:
+    raw = LEDGER_APP_URL
+    if raw.endswith("/invoke"):
+        raw = raw[: -len("/invoke")]
+    return raw.rstrip("/")
+
+
+def _service_token_secret(request: Request) -> str:
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return ""
+    return header.split(" ", 1)[1].strip()
+
+
+def _ledger_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str], str]:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if user_id:
+        groups_str = ",".join(claims.get("groups") or [])
+        tenant_id = _active_tenant_id(user_id, claims)
+        team_ids = _user_team_ids_str(user_id)
+    else:
+        resolved = service_tokens.resolve(_service_token_secret(request))
+        if not resolved:
+            return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}, ""
+        user_id = resolved["userId"]
+        tenant_id = resolved["tenantId"]
+        if not _identity_in(_tenant_member_ids(tenant_id), user_id):
+            return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}, ""
+        # トークンは台帳の読み書きだけ。システム管理者の権限は載せない。
+        groups_str = "UserGroup"
+        ids = teams_store.filter_team_ids_for_tenant(
+            teams_store.list_effective_team_ids_for_user(user_id), tenant_id
+        )
+        team_ids = ",".join(ids)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-scope": tenant_id,
+        **intauth.signed_headers(user_id, groups_str, tenant_id, team_ids),
+    }
+    return None, headers, tenant_id
+
+
+def _foreign_ledger_grants(body: bytes, tenant_id: str) -> JSONResponse | None:
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or "grants" not in data:
+        return None
+    grants = data.get("grants") or []
+    if not isinstance(grants, list):
+        return None
+    allowed = _tenant_team_ids(tenant_id)
+    foreign = [
+        str(item.get("team_id") or "")
+        for item in grants
+        if isinstance(item, dict) and str(item.get("team_id") or "") not in allowed
+    ]
+    if foreign:
+        return JSONResponse(status_code=400, content={"error": "そのチームはこの棟にありません"})
+    return None
+
+
+async def _proxy_ledger(request: Request, suffix: str) -> Response:
+    err, headers, tenant_id = _ledger_headers(request)
+    if err:
+        return err
+    body = await request.body()
+    if request.method in ("POST", "PATCH") and (
+        suffix in ("/ledgers",) or (suffix.startswith("/ledgers/") and suffix.count("/") == 2)
+    ):
+        blocked = _foreign_ledger_grants(body, tenant_id)
+        if blocked:
+            return blocked
+    url = _ledger_base() + suffix
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+    content_type = request.headers.get("content-type")
+    if content_type:
+        headers["Content-Type"] = content_type
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            res = await client.request(request.method, url, headers=headers, content=body)
+    except httpx.HTTPError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "enabled": False,
+                "error": (
+                    "台帳サービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile ledger up -d` "
+                    "または `COMPOSE_PROFILES=ledger` を設定してください。"
+                    f"（詳細: {exc}）"
+                ),
+            },
+        )
+    media = (res.headers.get("content-type") or "application/json").split(";")[0]
+    if suffix == "/config" and res.status_code == 200:
+        try:
+            data = res.json()
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            data["teams"] = _admin_teams_list(tenant_id)
+            return JSONResponse(data)
+    return Response(content=res.content, status_code=res.status_code, media_type=media)
+
+
+@app.api_route("/ledger", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
+async def ledger_root(request: Request) -> Response:
+    return await _proxy_ledger(request, "")
+
+
+@app.api_route("/ledger/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
+async def ledger_proxy(path: str, request: Request) -> Response:
+    return await _proxy_ledger(request, "/" + path.lstrip("/"))

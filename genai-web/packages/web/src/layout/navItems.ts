@@ -12,6 +12,7 @@ import {
   useLmsAvailable,
   useNishukanAvailable,
   useNotebookAvailable,
+  useLedgerAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
@@ -58,6 +59,12 @@ export const PATCHFORM_PATH = '/patchform';
 
 /** フォーム exApp の識別子（専用ページへ振り替える対象） */
 export const PATCHFORM_EXAPP_ID = 'patchform';
+
+/** 台帳は汎用 exApp フォームではなく専用ページで提供する */
+export const LEDGER_PATH = '/ledger';
+
+/** 台帳 exApp の識別子（専用ページへ振り替える対象） */
+export const LEDGER_EXAPP_ID = 'ledger';
 
 /** マイ手続きは汎用 exApp フォームではなく専用ページで提供する */
 export const DOCMAKER_PATH = '/docmaker';
@@ -168,6 +175,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const imageAvailable = useImageAvailable();
   const doccheckAvailable = useDoccheckAvailable();
   const patchformAvailable = usePatchformAvailable();
+  const ledgerAvailable = useLedgerAvailable();
   const procuretechAvailable = useProcuretechAvailable();
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
   const notebookAvailable = useNotebookAvailable();
@@ -281,6 +289,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
         description: descOf(
           DOCCHECK_EXAPP_ID,
           '申請書類の領域分割 OCR と分散チェック。専用画面で投入・配信・合意形成できます。',
+        ),
+      });
+    }
+
+    if (ledgerAvailable && listed(LEDGER_EXAPP_ID)) {
+      items.push({
+        label: nameOf(LEDGER_EXAPP_ID, '台帳'),
+        to: LEDGER_PATH,
+        description: descOf(
+          LEDGER_EXAPP_ID,
+          '棟とチームで分ける台帳。項目の追加と、追加項目からの提案ができます。',
         ),
       });
     }
@@ -422,6 +441,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     imageAvailable,
     doccheckAvailable,
     patchformAvailable,
+    ledgerAvailable,
     procuretechAvailable,
     procuretechEditorAvailable,
     notebookAvailable,
@@ -465,6 +485,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   // フォームは専用ページへ振り替える
   if (item.app.value === PATCHFORM_EXAPP_ID) {
     return PATCHFORM_PATH;
+  }
+  if (item.app.value === LEDGER_EXAPP_ID) {
+    return LEDGER_PATH;
   }
   if (item.app.value === DOCMAKER_EXAPP_ID) {
     return DOCMAKER_PATH;

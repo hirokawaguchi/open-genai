@@ -580,7 +580,7 @@ export const PatchformInboxPage = () => {
                               <span className='text-dns-16N-130'>受理</span>
                               {item.ledger_id ? (
                                 <Link
-                                  to={`/patchform/ledger/${item.ledger_id}`}
+                                  to={`/ledger/rows/${item.ledger_id}`}
                                   className='text-blue-900 underline-offset-2 hover:underline'
                                 >
                                   台帳に残しています
