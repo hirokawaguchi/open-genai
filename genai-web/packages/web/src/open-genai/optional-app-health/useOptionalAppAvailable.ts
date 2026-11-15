@@ -37,6 +37,8 @@ export const useDoccheckAvailable = (): boolean => useOptionalAppAvailable('docc
 
 export const usePatchformAvailable = (): boolean => useOptionalAppAvailable('patchform/config');
 
+export const useLedgerAvailable = (): boolean => useOptionalAppAvailable('ledger/config');
+
 export const useProcuretechAvailable = (): boolean =>
   useOptionalAppAvailable('procuretech-navigator/config');
 

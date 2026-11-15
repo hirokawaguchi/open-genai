@@ -96,6 +96,8 @@ services:
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
       # 自治体予算（profiles: ["budget"]。未起動時は専用ページが案内を表示）
       - BUDGET_APP_URL=${BUDGET_APP_URL:-http://budget-app:8022/invoke}
+      # 台帳（profiles: ["ledger"]。未起動時は専用ページが案内を表示）
+      - LEDGER_APP_URL=${LEDGER_APP_URL:-http://ledger-app:8023/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
       # ワールドモニター（profiles: ["worldmonitor"]。未起動時は専用ページが案内を表示）
@@ -563,6 +565,7 @@ services:
       - PATCHFORM_DB_PATH=/data/patchform.db
       - PATCHFORM_LEDGER_DB_PATH=/data/patchform-ledger.db
       - PATCHFORM_LEDGER_FILES_DIR=/data/ledger-files
+      - LEDGER_APP_URL=${LEDGER_APP_URL:-http://ledger-app:8023}
       - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
       - PATCHFORM_RETENTION_DAYS=${PATCHFORM_RETENTION_DAYS:-365}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -801,6 +804,35 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: 台帳 (`docker compose --profile ledger up -d` または COMPOSE_PROFILES=ledger)
+  # 庁内は backend → 本サービス。手続きの確定は patchform から同じ API を呼ぶ。
+  ledger-app:
+    profiles: ["ledger"]
+    build:
+      context: .
+      dockerfile: ledger-app/Dockerfile
+    container_name: open-genai-ledger-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - LEDGER_DB_PATH=/data/ledger.db
+      - LEDGER_FILES_DIR=/data/ledger-files
+      - LEDGER_IMPORT_DB=/import/patchform-ledger.db
+      - LEDGER_IMPORT_FILES=/import/ledger-files
+      - LEDGER_DEFAULT_TENANT_ID=${LEDGER_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-0000000000t1}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - LEDGER_MODEL=${LEDGER_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
+    volumes:
+      - ledger_app_data:/data
+      - patchform_app_data:/import:ro
+    ports:
+      - "${LEDGER_PORT:-8023}:8023"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   # 任意: 自治体予算（市区町村の普通会計決算）
   # (`docker compose --profile budget up -d` または COMPOSE_PROFILES=budget)
   budget-app:
@@ -949,6 +981,7 @@ volumes:
   chosei_app_data:
   doccheck_app_data:
   patchform_app_data:
+  ledger_app_data:
   procuretech_app_data:
   procuretech_editor_app_data:
   # ノートブック用。既存環境のボリューム名を維持する。

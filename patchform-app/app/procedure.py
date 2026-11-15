@@ -740,7 +740,21 @@ def normalize_handling(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
             statuses.append(text[:40])
     if not statuses:
         return None, "台帳の状態を1つ以上書いてください"
-    return {"route": route, "exit": exit_to, "statuses": statuses[:12]}, None
+    result: dict[str, Any] = {"route": route, "exit": exit_to, "statuses": statuses[:12]}
+    ledger_id = str(raw.get("ledger_id") or "").strip()
+    if ledger_id:
+        result["ledger_id"] = ledger_id[:80]
+    field_map: list[dict[str, str]] = []
+    for item in raw.get("field_map") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        field_id = str(item.get("field_id") or "").strip()
+        if label and field_id:
+            field_map.append({"label": label[:80], "field_id": field_id[:40]})
+    if field_map:
+        result["field_map"] = field_map[:80]
+    return result, None
 
 
 def route_step(stage: str, status: str, action: str) -> tuple[str, str, str | None]:

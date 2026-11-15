@@ -1031,6 +1031,14 @@ async def move_application_route(
         action=str(body.get("action") or ""),
         actor_user_id=uid,
         actor_groups=_groups(x_user_groups),
+        forwarded_headers={
+            "x-user-id": x_user_id or "",
+            "x-user-groups": x_user_groups or "",
+            "x-user-tags": x_user_tags or "",
+            "x-scope": x_scope or "",
+            "x-user-ts": x_user_ts or "",
+            "x-user-sig": x_user_sig or "",
+        },
     )
     if msg or result is None:
         return _application_error(msg)

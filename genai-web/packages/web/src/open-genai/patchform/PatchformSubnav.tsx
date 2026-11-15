@@ -33,7 +33,7 @@ const tabs: {
   },
   {
     id: 'ledger',
-    to: '/patchform/ledger',
+    to: '/ledger',
     label: '台帳',
     description: '確定した申請を進める',
     icon: PiBookOpenBold,
