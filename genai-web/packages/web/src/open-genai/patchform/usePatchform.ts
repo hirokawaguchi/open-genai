@@ -20,7 +20,6 @@ import type {
   Application,
   MyApplication,
   Inbox,
-  LedgerRow,
   PatchformExportBundle,
   Procedure,
   ProcedureCatalog,
@@ -1713,64 +1712,3 @@ export const usePatchformRuntime = () => {
   };
 };
 
-export const usePatchformLedger = (procedureId?: string) => {
-  const fetcher = useApiFetcher();
-  const query = procedureId
-    ? `?procedure_id=${encodeURIComponent(procedureId)}`
-    : '';
-  const { data, error, isLoading, mutate } = useSWR<{ rows: LedgerRow[] }>(
-    `patchform/ledger${query}`,
-    fetcher,
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  );
-  return {
-    rows: data?.rows ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, '台帳の取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
-export const usePatchformLedgerRow = (rowId: string | undefined) => {
-  const fetcher = useApiFetcher();
-  const key = rowId ? `patchform/ledger/${encodeURIComponent(rowId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<LedgerRow>(key, fetcher, {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
-  });
-  return {
-    row: data,
-    isLoading,
-    loadError: error ? errorMessage(error, '台帳の行を取得できませんでした。') : null,
-    mutate,
-  };
-};
-
-export const usePatchformLedgerActions = () => {
-  const api = usePatchformApi();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = useCallback(
-    async (
-      rowId: string,
-      patch: { assignee?: string; status?: string; comment?: string },
-    ): Promise<LedgerRow | null> => {
-      setBusy(true);
-      setError(null);
-      try {
-        const res = await api.post<LedgerRow>(
-          `patchform/ledger/${encodeURIComponent(rowId)}`,
-          patch,
-        );
-        return res.data ?? null;
-      } catch (e) {
-        setError(errorMessage(e, '台帳の更新に失敗しました。'));
-        return null;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [api],
-  );
-  return { save, busy, error };
-};

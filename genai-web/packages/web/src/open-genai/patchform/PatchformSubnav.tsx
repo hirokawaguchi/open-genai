@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
-import { PiBookOpenBold, PiNotePencilBold, PiTrayBold, PiTreeStructureBold } from 'react-icons/pi';
+import { PiNotePencilBold, PiTrayBold, PiTreeStructureBold } from 'react-icons/pi';
 
-type Tab = 'forms' | 'procedures' | 'inbox' | 'ledger';
+type Tab = 'forms' | 'procedures' | 'inbox';
 
 const tabs: {
   id: Tab;
@@ -30,13 +30,6 @@ const tabs: {
     label: '申請受付',
     description: '受付した内容を見る',
     icon: PiTrayBold,
-  },
-  {
-    id: 'ledger',
-    to: '/ledger',
-    label: '台帳',
-    description: '確定した申請を進める',
-    icon: PiBookOpenBold,
   },
 ];
 

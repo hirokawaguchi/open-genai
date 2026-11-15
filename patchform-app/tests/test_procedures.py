@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -20,7 +19,7 @@ os.environ["PATCHFORM_SEED"] = ""
 
 from fastapi.testclient import TestClient
 
-from app import assist, ledger, review_engine, spec, store
+from app import assist, review_engine, spec, store
 from app.main import app
 
 
@@ -38,11 +37,6 @@ def _setup() -> tuple[TestClient, str]:
     os.close(fd)
     files_dir = tempfile.mkdtemp(prefix="pf-files-")
     os.environ["PATCHFORM_FILES_DIR"] = files_dir
-    ledger_fd, ledger_path = tempfile.mkstemp(suffix="-ledger.db")
-    os.close(ledger_fd)
-    os.environ["PATCHFORM_LEDGER_DB_PATH"] = ledger_path
-    os.environ["PATCHFORM_LEDGER_FILES_DIR"] = tempfile.mkdtemp(prefix="pf-ledger-")
-    ledger.reset_connection()
     store.reset_connection()
     store.DB_PATH = path
     store.init_db()
@@ -58,16 +52,6 @@ def _teardown(path: str) -> None:
     files_dir = os.environ.pop("PATCHFORM_FILES_DIR", "")
     if files_dir:
         shutil.rmtree(files_dir, ignore_errors=True)
-    ledger.reset_connection()
-    ledger_path = os.environ.pop("PATCHFORM_LEDGER_DB_PATH", "")
-    if ledger_path:
-        try:
-            os.remove(ledger_path)
-        except OSError:
-            pass
-    ledger_files = os.environ.pop("PATCHFORM_LEDGER_FILES_DIR", "")
-    if ledger_files:
-        shutil.rmtree(ledger_files, ignore_errors=True)
 
 
 def _form(title: str, options: list[str] | None = None) -> dict:
@@ -1460,7 +1444,7 @@ def test_route_confirm_opens_one_ledger_row() -> None:
         assert res.status_code == 400, res.text
 
         seen: list[tuple[str, str]] = []
-        for _ in range(4):
+        for _ in range(3):
             res = client.post(
                 f"/applications/{app_id}/route",
                 headers=_headers(),
@@ -1472,42 +1456,45 @@ def test_route_confirm_opens_one_ledger_row() -> None:
             ("確認中", "desk"),
             ("確認中", "section"),
             ("確認中", "confirm"),
-            ("受理", "confirm"),
         ]
-        ledger_id = res.json()["ledger_id"]
-        assert ledger_id
-        res = client.get(f"/ledger/{ledger_id}", headers=_headers())
-        assert res.status_code == 200, res.text
-        labeled = [
-            f"{line['label']}={line['value']}"
-            for block in res.json()["snapshot"]["answers"]
-            for line in block["lines"]
-        ]
-        assert "氏名=山田" in labeled
-        assert "事由=子ども" in labeled
-
-        ldb = sqlite3.connect(os.environ["PATCHFORM_LEDGER_DB_PATH"])
-        ldb.execute(
-            "UPDATE ledger_rows SET snapshot_json = ? WHERE id = ?",
-            (
-                json.dumps(
-                    {
-                        "answers": [
-                            {"title": "案内", "lines": ["name.last_name: 山田", "event: 子ども"]}
-                        ]
-                    },
-                    ensure_ascii=False,
-                ),
-                ledger_id,
-            ),
+        res = client.post(
+            f"/applications/{app_id}/route",
+            headers=_headers(),
+            json={"action": "advance"},
         )
-        ldb.commit()
-        ldb.close()
-        res = client.get(f"/ledger/{ledger_id}", headers=_headers())
-        assert res.status_code == 200, res.text
-        shown = json.dumps(res.json()["snapshot"]["answers"], ensure_ascii=False)
-        assert "last_name" not in shown
-        assert "氏名" in shown
+        assert res.status_code == 400, res.text
+        assert "台帳" in res.json()["error"]
+
+        published: list[dict] = []
+
+        def fake_publish(**kwargs):
+            published.append(kwargs)
+            return ("ledger-app-1", "row-9")
+
+        original_enabled = store.ledger_client.enabled
+        original_publish = store.ledger_client.publish
+        store.ledger_client.enabled = lambda: True
+        store.ledger_client.publish = fake_publish
+        try:
+            res = client.post(
+                f"/applications/{app_id}/route",
+                headers=_headers(),
+                json={"action": "advance"},
+            )
+            assert res.status_code == 200, res.text
+            assert res.json()["reception_status"] == "受理"
+            assert res.json()["ledger_id"] == "row-9"
+            assert published[0]["application_id"] == app_id
+            labels = [
+                f"{line['label']}={line['value']}"
+                for block in published[0]["snapshot"]["answers"]
+                for line in block["lines"]
+            ]
+            assert "氏名=山田" in labels
+            assert "事由=子ども" in labels
+        finally:
+            store.ledger_client.enabled = original_enabled
+            store.ledger_client.publish = original_publish
 
         res = client.post(
             f"/applications/{app_id}/route",
@@ -1515,22 +1502,6 @@ def test_route_confirm_opens_one_ledger_row() -> None:
             json={"action": "advance"},
         )
         assert res.status_code == 400, res.text
-
-        res = client.get("/ledger", headers=_headers())
-        assert res.status_code == 200, res.text
-        assert len(res.json()["rows"]) == 1
-        assert res.json()["rows"][0]["status"] == "受理"
-        assert res.json()["rows"][0]["assignee"] == "担当課"
-
-        res = client.post(
-            f"/ledger/{ledger_id}",
-            headers=_headers(),
-            json={"assignee": "山田", "status": "処理中", "comment": "確認した"},
-        )
-        assert res.status_code == 200, res.text
-        assert res.json()["status"] == "処理中"
-        assert res.json()["assignee"] == "山田"
-        assert any(ev["action"] == "状態を変えた" for ev in res.json()["events"])
 
         res = client.put(
             f"/procedures/{proc['id']}",
@@ -1691,8 +1662,6 @@ def test_external_delivery_retries_same_revision() -> None:
         assert mn not in json.dumps(capture.hits[0]["body"], ensure_ascii=False)
         assert capture.hits[0]["auth"] == f"Bearer {secret}"
         assert capture.hits[0]["idem"] == f"{app_id}:1"
-        res = client.get("/ledger", headers=_headers())
-        assert res.json()["rows"] == []
 
         capture.status = 200
         res = client.put(

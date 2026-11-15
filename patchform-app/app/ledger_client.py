@@ -1,4 +1,4 @@
-"""手続きの確定から ledger-app へ行を書く。未設定のときは呼ばない。"""
+"""手続きの確定から ledger-app へ行を書く。接続先が無いときは確定できない。"""
 
 from __future__ import annotations
 

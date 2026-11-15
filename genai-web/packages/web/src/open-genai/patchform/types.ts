@@ -494,34 +494,6 @@ export const RECEPTION_STATUS_VALUES: ReceptionStatus[] = [
   '差戻し',
 ];
 
-export type LedgerEvent = {
-  id: string;
-  actor_user_id: string;
-  action: string;
-  detail: string;
-  created_at: string;
-};
-
-export type LedgerRow = {
-  id: string;
-  application_id: string;
-  procedure_id: string;
-  procedure_name: string;
-  confirmed_at: string;
-  confirmed_by: string;
-  assignee: string;
-  status: string;
-  comment: string;
-  snapshot: {
-    items?: { title?: string; kind?: string; status?: string }[];
-    answers?: { title?: string; lines?: (string | { label?: string; value?: string })[] }[];
-    files?: { file_id: string; name: string; copied?: boolean }[];
-  };
-  review?: ApplicationReview;
-  events: LedgerEvent[];
-  updated_at: string;
-};
-
 export type InboxItem = {
   kind: 'bundle' | 'form';
   id: string;

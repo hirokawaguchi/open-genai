@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import bcrypt
 
-from . import crypto, delivery, files, ledger, ledger_client, notify, procedure, review_engine, spec
+from . import crypto, delivery, files, ledger_client, notify, procedure, review_engine, spec
 
 DB_PATH = os.environ.get("PATCHFORM_DB_PATH", "/data/patchform.db")
 RETENTION_DAYS = int(os.environ.get("PATCHFORM_RETENTION_DAYS", "365"))
@@ -390,6 +390,8 @@ def init_db() -> None:
         )
         _ensure_columns(db)
         _migrate_applications_optional_submission(db)
+        # 申請テーブルの作り直しで、直前に足した台帳の行 ID が落ちる。
+        _ensure_columns(db)
         file_moves = _migrate_legacy_receptions(db)
         _migrate_slot_templates_to_forms(db)
         # owner_kind / owner_key は _ensure_columns で追加し、上記マイグレーションで
@@ -3944,11 +3946,7 @@ def _application_payload(db: sqlite3.Connection, row: sqlite3.Row) -> dict[str, 
             "exit": _handling_of_row(proc)["exit"] if proc else "ledger",
             "current": _meta("reception_stage"),
         },
-        "ledger_id": (
-            str(row["ledger_row_id"])
-            if "ledger_row_id" in keys and row["ledger_row_id"]
-            else ledger.row_id_for(str(row["id"]))
-        ),
+        "ledger_id": _saved_ledger_row_id(row),
         "delivery": _app_delivery(row) if _app_delivery(row)["state"] else None,
         "guide_form_id": row["guide_form_id"],
         "guide_submission_id": row["guide_submission_id"],
@@ -5148,6 +5146,12 @@ def _finish_delivery(
             )
 
 
+def _saved_ledger_row_id(row: sqlite3.Row) -> str:
+    if "ledger_row_id" in row.keys() and row["ledger_row_id"]:
+        return str(row["ledger_row_id"])
+    return ""
+
+
 def move_application_route(
     *,
     application_id: str,
@@ -5185,8 +5189,9 @@ def move_application_route(
         handling = _handling_of_row(proc) if proc else procedure.default_handling()
         now = _now_iso()
         if next_status == RECEPTION_ACCEPTED and handling.get("exit") == "ledger":
+            if not ledger_client.enabled():
+                return None, "台帳アプリを起動してください"
             payload = _application_payload(db, row)
-            review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
             snapshot = {
                 "items": [
                     {
@@ -5206,50 +5211,32 @@ def move_application_route(
                 ),
                 "",
             )
-            if ledger_client.enabled():
-                try:
-                    remote_ledger_id, remote_row_id = ledger_client.publish(
-                        forwarded=forwarded_headers or {},
-                        procedure_id=str(row["procedure_id"]),
-                        procedure_name=str(proc["name"]) if proc else "",
-                        ledger_id=str(handling.get("ledger_id") or ""),
-                        statuses=[str(item) for item in handling["statuses"]],
-                        grants=[],
-                        field_map=list(handling.get("field_map") or []),
-                        application_id=application_id,
-                        assignee=section_role,
-                        status=str(handling["statuses"][0]),
-                        snapshot=snapshot,
-                        copies=_confirm_copies(db, payload),
-                    )
-                except ledger_client.LedgerError as exc:
-                    return None, str(exc)
-                handling = {**handling, "ledger_id": remote_ledger_id}
-                db.execute(
-                    "UPDATE procedures SET handling_json = ? WHERE id = ?",
-                    (json.dumps(handling, ensure_ascii=False), row["procedure_id"]),
-                )
-                db.execute(
-                    "UPDATE applications SET ledger_row_id = ? WHERE id = ?",
-                    (remote_row_id, application_id),
-                )
-            else:
-                opened = ledger.open_row(
-                    application_id=application_id,
+            try:
+                remote_ledger_id, remote_row_id = ledger_client.publish(
+                    forwarded=forwarded_headers or {},
                     procedure_id=str(row["procedure_id"]),
                     procedure_name=str(proc["name"]) if proc else "",
-                    confirmed_by=actor_user_id,
+                    ledger_id=str(handling.get("ledger_id") or ""),
+                    statuses=[str(item) for item in handling["statuses"]],
+                    grants=[],
+                    field_map=list(handling.get("field_map") or []),
+                    application_id=application_id,
                     assignee=section_role,
                     status=str(handling["statuses"][0]),
                     snapshot=snapshot,
-                    review=review,
                     copies=_confirm_copies(db, payload),
-                    confirmed_at=now,
                 )
-                db.execute(
-                    "UPDATE applications SET ledger_row_id = ? WHERE id = ?",
-                    (str(opened.get("id") or ""), application_id),
-                )
+            except ledger_client.LedgerError as exc:
+                return None, str(exc)
+            handling = {**handling, "ledger_id": remote_ledger_id}
+            db.execute(
+                "UPDATE procedures SET handling_json = ? WHERE id = ?",
+                (json.dumps(handling, ensure_ascii=False), row["procedure_id"]),
+            )
+            db.execute(
+                "UPDATE applications SET ledger_row_id = ? WHERE id = ?",
+                (remote_row_id, application_id),
+            )
         db.execute(
             "UPDATE applications SET reception_status = ?, reception_stage = ?, updated_at = ? "
             "WHERE id = ?",
@@ -5257,7 +5244,7 @@ def move_application_route(
         )
         detail = _stage_label(handling, next_stage) or next_status
         if next_status == RECEPTION_ACCEPTED and handling.get("exit") == "external":
-            if not ledger.row_id_for(application_id):
+            if not _saved_ledger_row_id(row):
                 send_job = _delivery_job(db, row, proc, actor_user_id)
                 _store_delivery(
                     db,
@@ -5312,7 +5299,7 @@ def resend_application_delivery(
         )
         if status != RECEPTION_ACCEPTED:
             return None, "確定してから送ります"
-        if ledger.row_id_for(application_id):
+        if _saved_ledger_row_id(row):
             return None, "この申請は台帳で進めています"
         proc = db.execute(
             "SELECT * FROM procedures WHERE id = ?", (row["procedure_id"],)
@@ -5340,94 +5327,6 @@ def resend_application_delivery(
             "SELECT * FROM applications WHERE id = ?", (application_id,)
         ).fetchone()
         return _application_payload(db, saved), None
-
-
-def _ledger_visible(
-    db: sqlite3.Connection,
-    procedure_id: str,
-    actor_user_id: str,
-    actor_groups: list[str] | None,
-) -> bool:
-    proc = db.execute(
-        "SELECT * FROM procedures WHERE id = ?", (procedure_id,)
-    ).fetchone()
-    return bool(proc and _can_edit_procedure(proc, actor_user_id, actor_groups))
-
-
-def list_ledger_rows(
-    *,
-    actor_user_id: str,
-    actor_groups: list[str] | None = None,
-    procedure_id: str | None = None,
-    unrestricted: bool = False,
-) -> list[dict[str, Any]]:
-    rows = ledger.list_rows(procedure_id=(procedure_id or "").strip() or None)
-    db = connect()
-    with _lock:
-        shown: list[dict[str, Any]] = []
-        for row in rows:
-            if not unrestricted and not _ledger_visible(
-                db, str(row["procedure_id"]), actor_user_id, actor_groups
-            ):
-                continue
-            shown.append(_present_ledger_answers(db, row))
-        return shown
-
-
-def get_ledger_row(
-    row_id: str,
-    *,
-    actor_user_id: str,
-    actor_groups: list[str] | None = None,
-    unrestricted: bool = False,
-) -> tuple[dict[str, Any] | None, str | None]:
-    row = ledger.get_row(row_id)
-    if row is None:
-        return None, "台帳の行が見つかりません"
-    db = connect()
-    with _lock:
-        if not unrestricted and not _ledger_visible(
-            db, str(row["procedure_id"]), actor_user_id, actor_groups
-        ):
-            return None, "この手続きを操作する権限がありません"
-        return _present_ledger_answers(db, row), None
-
-
-def update_ledger_row(
-    *,
-    row_id: str,
-    actor_user_id: str,
-    actor_groups: list[str] | None = None,
-    assignee: str | None = None,
-    status: str | None = None,
-    comment: str | None = None,
-) -> tuple[dict[str, Any] | None, str | None]:
-    current, err = get_ledger_row(
-        row_id, actor_user_id=actor_user_id, actor_groups=actor_groups
-    )
-    if err or current is None:
-        return None, err
-    db = connect()
-    with _lock:
-        proc = db.execute(
-            "SELECT * FROM procedures WHERE id = ?", (current["procedure_id"],)
-        ).fetchone()
-    handling = _handling_of_row(proc) if proc else procedure.default_handling()
-    allowed = list(handling["statuses"])
-    if current["status"] not in allowed:
-        allowed.append(str(current["status"]))
-    return ledger.update_row(
-        row_id=row_id,
-        actor_user_id=actor_user_id,
-        assignee=assignee,
-        status=status,
-        comment=comment,
-        allowed_statuses=allowed,
-    )
-
-
-def ledger_file(row_id: str, file_id: str):
-    return ledger.file_path(row_id, file_id)
 
 
 def _load_review(row: sqlite3.Row) -> dict[str, Any] | None:
@@ -5631,34 +5530,6 @@ def _ledger_answer_blocks(forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if lines:
             blocks.append({"title": str(form.get("title") or ""), "lines": lines})
     return blocks
-
-
-def _present_ledger_answers(db: sqlite3.Connection, row: dict[str, Any]) -> dict[str, Any]:
-    """古い行は内部キーのままなので、申請が残っていればラベルに直して見せる。"""
-    snap = row.get("snapshot") if isinstance(row.get("snapshot"), dict) else {}
-    raw = False
-    for block in snap.get("answers") or []:
-        if not isinstance(block, dict):
-            continue
-        for line in block.get("lines") or []:
-            if isinstance(line, str):
-                raw = True
-                break
-        if raw:
-            break
-    if not raw:
-        return row
-    app = db.execute(
-        "SELECT * FROM applications WHERE id = ?", (row.get("application_id"),)
-    ).fetchone()
-    if app is None:
-        return row
-    blocks = _ledger_answer_blocks(_application_payload(db, app).get("forms") or [])
-    if not blocks:
-        return row
-    shown = dict(row)
-    shown["snapshot"] = {**snap, "answers": blocks}
-    return shown
 
 
 def _flat_answer_lines(value: Any, prefix: str = "") -> list[str]:

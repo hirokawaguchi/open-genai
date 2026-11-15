@@ -550,10 +550,14 @@ services:
     restart: unless-stopped
 
   # 任意: フォーム (`docker compose --profile patchform up -d`)
+  # 台帳アプリも同じ profile で起動し、健康になるまで待つ。
   # 庁内は backend → 本サービス。外部ゲストは PATCHFORM_PUBLIC_ENDPOINT（開発時は :8012）。
   # 本番の外部公開は /public のみを別プロキシで露出すること（proxy/patchform.public.conf.example）。
   patchform-app:
     profiles: ["patchform"]
+    depends_on:
+      ledger-app:
+        condition: service_healthy
     build:
       context: .
       dockerfile: patchform-app/Dockerfile
@@ -563,8 +567,6 @@ services:
       - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       - PATCHFORM_DB_PATH=/data/patchform.db
-      - PATCHFORM_LEDGER_DB_PATH=/data/patchform-ledger.db
-      - PATCHFORM_LEDGER_FILES_DIR=/data/ledger-files
       - LEDGER_APP_URL=${LEDGER_APP_URL:-http://ledger-app:8023}
       - PATCHFORM_PUBLIC_ENDPOINT=${PATCHFORM_PUBLIC_ENDPOINT:-http://localhost:8012}
       - PATCHFORM_RETENTION_DAYS=${PATCHFORM_RETENTION_DAYS:-365}
@@ -805,9 +807,9 @@ services:
     restart: unless-stopped
 
   # 任意: 台帳 (`docker compose --profile ledger up -d` または COMPOSE_PROFILES=ledger)
-  # 庁内は backend → 本サービス。手続きの確定は patchform から同じ API を呼ぶ。
+  # フォームの profile でも起動する。庁内は backend → 本サービス。手続きの確定は patchform から同じ API を呼ぶ。
   ledger-app:
-    profiles: ["ledger"]
+    profiles: ["ledger", "patchform"]
     build:
       context: .
       dockerfile: ledger-app/Dockerfile
@@ -817,8 +819,6 @@ services:
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       - LEDGER_DB_PATH=/data/ledger.db
       - LEDGER_FILES_DIR=/data/ledger-files
-      - LEDGER_IMPORT_DB=/import/patchform-ledger.db
-      - LEDGER_IMPORT_FILES=/import/ledger-files
       - LEDGER_DEFAULT_TENANT_ID=${LEDGER_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-0000000000t1}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
@@ -826,9 +826,14 @@ services:
       - LEDGER_MODEL=${LEDGER_MODEL:-${DEFAULT_MODEL:-qwen2.5:7b}}
     volumes:
       - ledger_app_data:/data
-      - patchform_app_data:/import:ro
     ports:
       - "${LEDGER_PORT:-8023}:8023"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8023/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
