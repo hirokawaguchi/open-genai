@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 MAX_BYTES = 8 * 1024 * 1024
+_PREVIEW_NOTE = "文字と表だけを表示しています。図やレイアウトは含まれません。"
+_OFFICE_EXTS = frozenset({"doc", "docx", "xls", "xlsx", "ppt", "pptx"})
 DOCUMENT_EXTS = frozenset({"pdf", "docx", "xlsx", "xls", "csv", "txt"})
 IMAGE_EXTS = frozenset({"png", "jpg", "jpeg", "webp"})
 _FORMAT_ERROR = "資料は PDF、Word、Excel、CSV、テキスト、画像（PNG、JPEG）で選んでください。"
@@ -18,6 +20,30 @@ def extension(name: str) -> str:
     if ext not in DOCUMENT_EXTS and ext not in IMAGE_EXTS:
         raise ValueError(_FORMAT_ERROR)
     return ext
+
+
+def office_preview(name: str, raw: bytes) -> dict | None:
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if ext not in _OFFICE_EXTS:
+        return None
+    if len(raw) > MAX_BYTES:
+        raise ValueError("ファイルが大きすぎます。8MB までの資料を選んでください。")
+    if ext in ("xlsx", "xls"):
+        sheets = _xlsx_sheets(raw) if ext == "xlsx" else _xls_sheets(raw)
+        if not sheets:
+            raise ValueError("このファイルから文字を取れませんでした。")
+        return {"kind": "sheets", "sheets": sheets, "note": _PREVIEW_NOTE}
+    if ext == "pptx":
+        slides = _pptx_slides(raw)
+        if not slides:
+            raise ValueError("このファイルから文字を取れませんでした。")
+        return {"kind": "slides", "slides": slides, "note": _PREVIEW_NOTE}
+    text = _office_text(ext, raw)
+    if not text.strip():
+        raise ValueError("このファイルから文字を取れませんでした。")
+    if len(text) > 20000:
+        text = text[:20000] + "\n…"
+    return {"kind": "text", "text": text, "note": _PREVIEW_NOTE}
 
 
 def text_from_bytes(name: str, raw: bytes) -> str:
@@ -114,6 +140,81 @@ def _decode(raw: bytes) -> str:
     from shared.docextract import decode_text_bytes
 
     return decode_text_bytes(raw)
+
+
+def _xlsx_sheets(raw: bytes) -> list[dict]:
+    import openpyxl
+
+    book = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    try:
+        sheets = []
+        for ws in book.worksheets[:3]:
+            rows = _limited_rows(ws.iter_rows(values_only=True))
+            if rows:
+                sheets.append({"name": ws.title, "rows": rows})
+        return sheets
+    finally:
+        book.close()
+
+
+def _xls_sheets(raw: bytes) -> list[dict]:
+    import xlrd
+
+    book = xlrd.open_workbook(file_contents=raw)
+    sheets = []
+    for sheet in book.sheets()[:3]:
+        rows = _limited_rows(sheet.row_values(r) for r in range(sheet.nrows))
+        if rows:
+            sheets.append({"name": sheet.name, "rows": rows})
+    return sheets
+
+
+def _limited_rows(source) -> list[list[str]]:
+    rows: list[list[str]] = []
+    extra = False
+    for raw in source:
+        cells = ["" if cell is None else str(cell).strip()[:200] for cell in list(raw)[:12]]
+        while cells and not cells[-1]:
+            cells.pop()
+        if not cells:
+            continue
+        if len(rows) >= 40:
+            extra = True
+            break
+        rows.append(cells)
+    if extra:
+        rows.append(["…"])
+    return rows
+
+
+def _pptx_slides(raw: bytes) -> list[dict]:
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(raw))
+    slides = []
+    for index, slide in enumerate(deck.slides, start=1):
+        lines = []
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                text = (shape.text or "").strip()
+                if text:
+                    lines.append(text[:2000])
+        if lines:
+            slides.append({"title": f"スライド {index}", "lines": lines[:20]})
+        if len(slides) >= 30:
+            break
+    return slides
+
+
+def _office_text(ext: str, raw: bytes) -> str:
+    _ensure_shared()
+    if ext == "docx":
+        from shared.docextract import _docx_extract_text
+
+        return _docx_extract_text(raw)
+    from shared.docextract import _ole_text
+
+    return _ole_text(raw)
 
 
 def _ensure_shared() -> None:

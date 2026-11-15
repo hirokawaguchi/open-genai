@@ -423,6 +423,35 @@ def download_file(
     return FileResponse(path, filename=name or file_id)
 
 
+@app.get("/rows/{row_id}/files/{file_id}/preview")
+def preview_file(
+    row_id: str,
+    file_id: str,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, actor = _actor(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    path, name, msg = store.file_path(actor, row_id, file_id)
+    if msg or path is None:
+        return _fail(msg)
+    try:
+        preview = material.office_preview(name or "", path.read_bytes())
+    except ValueError as exc:
+        return _fail(str(exc))
+    if preview is None:
+        return _fail("この形式は画面では表示できません")
+    return JSONResponse(preview)
+
+
 @app.get("/ledgers/{ledger_id}/export")
 def export_ledger(
     ledger_id: str,

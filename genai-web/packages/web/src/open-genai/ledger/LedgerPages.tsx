@@ -474,6 +474,16 @@ const findFieldFile = (files: LedgerFile[] | undefined, fieldId: string, value: 
 
 const sourceFiles = (files: LedgerFile[] | undefined) => (files || []).filter((file) => !file.field_id);
 
+type OfficePreview = {
+  kind: 'sheets' | 'text' | 'slides';
+  note?: string;
+  text?: string;
+  sheets?: { name: string; rows: string[][] }[];
+  slides?: { title: string; lines: string[] }[];
+};
+
+const isOfficeName = (name: string) => /\.(docx?|xlsx?|pptx?)$/i.test(name);
+
 const previewKind = (file: LedgerFile, blob: Blob) => {
   const mime = blob.type || file.mime || '';
   const name = file.name.toLowerCase();
@@ -494,7 +504,8 @@ const FilePreviewDialog = ({
 }) => {
   const [url, setUrl] = useState('');
   const [text, setText] = useState('');
-  const [kind, setKind] = useState<'image' | 'pdf' | 'text' | 'other' | ''>('');
+  const [office, setOffice] = useState<OfficePreview | null>(null);
+  const [kind, setKind] = useState<'image' | 'pdf' | 'text' | 'office' | 'other' | ''>('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const blobRef = useRef<Blob | null>(null);
@@ -506,11 +517,23 @@ const FilePreviewDialog = ({
     setBusy(true);
     setError('');
     setText('');
+    setOffice(null);
     setKind('');
     setUrl('');
     blobRef.current = null;
     void (async () => {
       try {
+        if (isOfficeName(file.name)) {
+          const [preview, res] = await Promise.all([
+            teamApi.get<OfficePreview>(`ledger/rows/${rowId}/files/${file.file_id}/preview`),
+            teamApi.getBlob(`ledger/rows/${rowId}/files/${file.file_id}`),
+          ]);
+          if (cancelled) return;
+          blobRef.current = res.blob;
+          setOffice(preview.data);
+          setKind('office');
+          return;
+        }
         const res = await teamApi.getBlob(`ledger/rows/${rowId}/files/${file.file_id}`);
         if (cancelled) return;
         blobRef.current = res.blob;
@@ -566,6 +589,44 @@ const FilePreviewDialog = ({
                 {text}
               </pre>
             ) : null}
+            {kind === 'office' && office?.kind === 'text' ? (
+              <pre className='max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-8 border border-solid-gray-300 bg-white p-3 text-std-16N-170 text-solid-gray-900'>
+                {office.text}
+              </pre>
+            ) : null}
+            {kind === 'office' && office?.kind === 'sheets'
+              ? office.sheets?.map((sheet) => (
+                  <div key={sheet.name} className='max-h-[70vh] overflow-auto rounded-8 border border-solid-gray-300'>
+                    <p className='sticky top-0 bg-solid-gray-50 px-3 py-2 text-std-16B-150 text-solid-gray-900'>{sheet.name}</p>
+                    <table className='w-full border-collapse text-dns-14N-130'>
+                      <tbody>
+                        {sheet.rows.map((row, index) => (
+                          <tr key={index} className='border-t border-solid-gray-200'>
+                            {row.map((cell, cellIndex) => (
+                              <td key={cellIndex} className='px-2 py-1 align-top text-solid-gray-900'>
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              : null}
+            {kind === 'office' && office?.kind === 'slides'
+              ? office.slides?.map((slide, index) => (
+                  <section key={`${slide.title}-${index}`} className='rounded-8 border border-solid-gray-300 p-3'>
+                    <h3 className='text-std-16B-150 text-solid-gray-900'>{slide.title}</h3>
+                    {slide.lines.map((line) => (
+                      <p key={line} className='mt-1 whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'>
+                        {line}
+                      </p>
+                    ))}
+                  </section>
+                ))
+              : null}
+            {kind === 'office' && office?.note ? <p className='text-dns-14N-130 text-solid-gray-600'>{office.note}</p> : null}
             {kind === 'other' ? (
               <p className='text-std-16N-170 text-solid-gray-700'>この形式は画面では表示できません。ダウンロードして確認してください。</p>
             ) : null}

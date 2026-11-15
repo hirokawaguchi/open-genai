@@ -470,6 +470,26 @@ def test_ingest_splits_excel_rows_and_attaches_the_file(db: str) -> None:
     assert sample["status"] == "受付"
 
 
+def test_office_preview_shows_excel_cells() -> None:
+    import io
+
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "備品"
+    sheet.append(["名前", "場所"])
+    sheet.append(["机", "倉庫"])
+    buf = io.BytesIO()
+    book.save(buf)
+    preview = material.office_preview("備品.xlsx", buf.getvalue())
+    assert preview is not None
+    assert preview["kind"] == "sheets"
+    assert preview["sheets"][0]["name"] == "備品"
+    assert preview["sheets"][0]["rows"][1] == ["机", "倉庫"]
+    assert material.office_preview("写真.png", b"png") is None
+
+
 def test_query_parser_finds_last_month() -> None:
     parsed = assist.parse_query("先月、処理中の山田", ["処理中", "完了"])
     assert parsed["status"] == "処理中"
