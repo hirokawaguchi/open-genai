@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { ReplayIcon } from '@/components/ui/icons/ReplayIcon';
 import { DiagramSupplement } from '@/features/chat/components/DiagramSupplement';
+import { ExportAnswerWord } from '@/features/chat/components/ExportAnswerWord';
 import { ImageSupplement } from '@/features/chat/components/ImageSupplement';
 import { FileCard } from '@/features/chat/components/FileCard';
 import { ZoomUpImage } from '@/features/chat/components/ZoomUpImage';
@@ -164,6 +165,7 @@ export const AssistantMessage = ({
                 text={chatContent.content || ''}
                 targetRef={copyTextRef}
               />
+              <ExportAnswerWord text={chatContent.content || ''} targetRef={copyTextRef} />
             </>
           )}
         </div>
