@@ -22,6 +22,7 @@ const FOOTER_HIDDEN_PATHS = [
   '/sengoku',
   '/budget',
   '/worldmonitor',
+  '/office',
   '/diagram',
   '/shimen',
   '/ledger',

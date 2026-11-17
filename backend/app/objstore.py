@@ -141,6 +141,19 @@ def put_and_presign(
         return None, None
 
 
+def get_bytes(key: str) -> bytes | None:
+    """管理下のオブジェクトを内部エンドポイントから読む。無ければ None。"""
+    if not is_configured() or not _is_managed_key(key):
+        return None
+    try:
+        client = _client(S3_ENDPOINT_URL)
+        res = client.get_object(Bucket=S3_BUCKET, Key=key)
+        return res["Body"].read()
+    except Exception as e:  # noqa: BLE001
+        print(f"[objstore] get 失敗 key={key}: {e}")
+        return None
+
+
 def _managed_prefixes() -> tuple[str, ...]:
     return (
         S3_KEY_PREFIX.rstrip("/") + "/",

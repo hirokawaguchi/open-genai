@@ -56,6 +56,8 @@ export const useBudgetAvailable = (): boolean => useOptionalAppAvailable('budget
 export const useWorldmonitorAvailable = (): boolean =>
   useOptionalAppAvailable('worldmonitor/config');
 
+export const useOfficeAvailable = (): boolean => useOptionalAppAvailable('office/config');
+
 export const useNishukanAvailable = (): boolean => useOptionalAppAvailable('nishukan/config');
 
 export const useLmsAvailable = (): boolean => useOptionalAppAvailable('lms/config');

@@ -26,7 +26,7 @@ import {
   PiTreeStructure,
   PiUploadSimple,
 } from 'react-icons/pi';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -54,7 +54,11 @@ import {
 } from '@/features/generate-diagram/utils/extractDiagram';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { PROCURETECH_EDITOR_EXAPP_ID } from '@/layout/navItems';
+import { useOfficeAvailable } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
+import { stageOfficeFile } from '@/open-genai/office/handoff';
+import { officePathForFormat } from '@/open-genai/office/kinds';
 import { predict } from '@/lib/chatApi';
+import { teamApi } from '@/lib/fetcher';
 import { findModelByModelId, resolveSelectedModelId } from '@/models';
 import { getPrompter } from '@/prompts';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -73,6 +77,7 @@ import {
 } from './format';
 import { bindEditorImeTabGuard } from './imeTab';
 import type {
+  EditorComposeFile,
   EditorComposeFormat,
   EditorComposeResult,
   EditorComposition,
@@ -471,6 +476,8 @@ type ComposeUiState =
     }
   | {
       phase: 'done';
+      pack?: 'zip' | 'files';
+      files?: EditorComposeFile[];
       url?: string;
       objectKey?: string;
       delivery?: 'open' | 'carrier';
@@ -482,10 +489,30 @@ type ComposeUiState =
 
 const composeStatus = (res: EditorComposeResult): string => String(res.status ?? '').toLowerCase();
 
+const composeFileLabel = (format: string): string => {
+  if (format === 'docx') return '文書で開く';
+  if (format === 'xlsx') return '表計算で開く';
+  if (format === 'pptx') return 'スライドで開く';
+  if (format === 'html') return 'ブラウザで開く';
+  return 'ダウンロード';
+};
+
 /** 合成 API の応答を待ち画面 / 完了 / エラーへ写す。 */
 const composeUiFromResult = (res: EditorComposeResult, requestId?: string): ComposeUiState => {
   if (composeStatus(res) === 'error' || res.error) {
     return { phase: 'error', message: res.error || '書き出しに失敗しました。' };
+  }
+  if (composeStatus(res) === 'success' && res.pack === 'files') {
+    if (!res.files?.length) {
+      return { phase: 'error', message: '個別に開けるファイルがありませんでした。' };
+    }
+    return {
+      phase: 'done',
+      pack: 'files',
+      files: res.files,
+      names: res.outputs,
+      skipped: res.skipped,
+    };
   }
   if (composeStatus(res) === 'success' || res.download_url || res.object_key) {
     return {
@@ -514,6 +541,8 @@ const composeUiFromResult = (res: EditorComposeResult, requestId?: string): Comp
 const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const { data, isLoading, mutate } = useEditorComposition(projectId);
   const actions = useEditorActions();
+  const officeAvailable = useOfficeAvailable();
+  const navigate = useNavigate();
   const { downloadCarrier } = useDownloadArtifactCarrier();
   const [outputs, setOutputs] = useState<EditorCompositionOutput[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -521,6 +550,8 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
   const [newOutputFormat, setNewOutputFormat] = useState<EditorComposeFormat>('docx');
   const [savedNotice, setSavedNotice] = useState(false);
   const [carrierLoading, setCarrierLoading] = useState(false);
+  const [openingKey, setOpeningKey] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
   const [compose, setCompose] = useState<ComposeUiState>({ phase: 'idle' });
   const [composeWaitingSrc, setComposeWaitingSrc] = useState<string | null>(null);
   const composeWaitingRef = useRef<string | null>(null);
@@ -791,8 +822,9 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     return overrides;
   }, [outputs, fileByKey, fileById, projectId, actions]);
 
-  const onCompose = useCallback(async () => {
+  const onCompose = useCallback(async (pack: 'zip' | 'files') => {
     setCompose({ phase: 'running', progress: 0, currentStep: '図を画像化しています' });
+    setOpenError(null);
     setComposeWaitingUrl(null);
     void fetchProjectWaitingBlob(projectId)
       .then((blob) => {
@@ -809,13 +841,51 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     if (Object.keys(overrides).length > 0) {
       await mutate(); // 追加した画像ファイルを一覧へ反映
     }
-    const res = await actions.composeProject(projectId, currentComposition(), overrides);
+    const res = await actions.composeProject(projectId, currentComposition(), overrides, pack);
     setCompose(
       composeUiFromResult(
         res ?? { error: '書き出しを開始できませんでした。もう一度お試しください。' },
       ),
     );
   }, [actions, projectId, currentComposition, materializeMermaid, mutate, setComposeWaitingUrl]);
+
+  const openComposeFile = useCallback(
+    async (file: EditorComposeFile) => {
+      setOpeningKey(file.object_key);
+      setOpenError(null);
+      const officePath = officePathForFormat(file.format);
+      const htmlTab = file.format === 'html' ? window.open('about:blank', '_blank') : null;
+      try {
+        const { blob } = await teamApi.getBlob(
+          `procuretech-editor/exports/content?objectKey=${encodeURIComponent(file.object_key)}`,
+        );
+        if (officePath) {
+          await stageOfficeFile(file.name, new Uint8Array(await blob.arrayBuffer()));
+          navigate(`${officePath}?local=1`);
+          return;
+        }
+        const url = URL.createObjectURL(
+          file.format === 'html' ? new Blob([blob], { type: 'text/html' }) : blob,
+        );
+        if (file.format === 'html') {
+          if (htmlTab) htmlTab.location.href = url;
+          else window.open(url, '_blank');
+          return;
+        }
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        link.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        htmlTab?.close();
+        setOpenError(`${file.name} を開けませんでした。もう一度お試しください。`);
+      } finally {
+        setOpeningKey(null);
+      }
+    },
+    [navigate],
+  );
 
   if (isLoading && !data) {
     return (
@@ -1088,10 +1158,26 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
               compose.phase === 'running' ||
               enabledCount === 0
             }
-            onClick={onCompose}
+            onClick={() => onCompose('zip')}
           >
-            書き出す
+            Zipで書き出す
           </Button>
+          {officeAvailable && (
+            <Button
+              type='button'
+              variant='outline'
+              size='md'
+              disabled={
+                !composeConfigured ||
+                actions.submitting ||
+                compose.phase === 'running' ||
+                enabledCount === 0
+              }
+              onClick={() => onCompose('files')}
+            >
+              個別に開く
+            </Button>
+          )}
           {savedNotice && (
             <span className='text-dns-14N-130 text-blue-700'>定義を保存しました。</span>
           )}
@@ -1110,7 +1196,38 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
           </div>
         )}
 
-        {compose.phase === 'done' && (
+        {compose.phase === 'done' && compose.pack === 'files' && (
+          <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
+            個別のファイルができました{compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
+            <ul className='mt-3 flex flex-col gap-2'>
+              {(compose.files ?? []).map((file) => (
+                <li key={file.object_key} className='flex flex-wrap items-center gap-3'>
+                  <span className='text-dns-14N-130'>{file.name}</span>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    disabled={openingKey === file.object_key}
+                    onClick={() => openComposeFile(file)}
+                  >
+                    {openingKey === file.object_key ? '開いています…' : composeFileLabel(file.format)}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            {openError && <p className='mt-2 text-dns-14N-130 text-error-1'>{openError}</p>}
+            {compose.skipped && compose.skipped.length > 0 && (
+              <ul className='mt-2 list-disc pl-5 text-dns-14N-130 text-amber-800'>
+                {compose.skipped.map((s) => (
+                  <li key={s.name}>
+                    {s.name}: {s.reason}（生成をスキップしました）
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {compose.phase === 'done' && compose.pack !== 'files' && (
           <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
             合成が完了しました{compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
             {compose.delivery === 'carrier' && compose.objectKey && (

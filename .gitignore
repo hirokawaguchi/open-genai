@@ -72,6 +72,7 @@ deletion-report-*.txt
 !/docs/spark.md
 !/docs/procuretech-generate-contract.md
 !/docs/procuretech-editor.md
+!/docs/office.md
 !/docs/notebook.md
 !/docs/agent.md
 !/docs/procuretech-hearing.md

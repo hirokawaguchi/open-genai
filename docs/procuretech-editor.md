@@ -65,11 +65,14 @@ docker compose up -d --build
    ヒアリングシートテーマは、生成指示の成果物（`section_key=generated`、
    ファイル名 `生成文書.md`）だけを既定の「文書」へ入れる。設問ごとの材料ファイルは
    「Markdownファイルを追加」から足せる。成果物が無ければ文書は空のまま。
-   「書き出す」を押すと、ExApp が定義に従い各出力を組み立てる**非同期ジョブ**を開始し、
+   「Zipで書き出す」を押すと、ExApp が定義に従い各出力を組み立てる**非同期ジョブ**を開始し、
    待ち画面に進捗パーセントと作業中ステップ（文書合成／Excel 作成／保存）を出す。
    成果物は 1 つの zip にまとめる。配信は AI アプリ成果物と同じ
    `ARTIFACT_DELIVERY_MODE` に従う（`open`=署名付き URL、`carrier`=案内ファイル、
    `auto`=Host が `*.lgwan.jp` なら案内ファイル）。
+   文書・表計算・スライドが起動しているときは「個別に開く」も出る。生成は同じで、
+   まとめ方だけが違う。完了後はファイルごとに、docx は文書、xlsx は表計算、pptx はスライドで開き、
+   html は別タブ、txt / md はそのファイルだけを保存する。オフィスが止まっているときはこのボタンは出さない。
    - 出力ファイルには 2 種類ある。
      - **kind=markdown**: 含める章を順に集約する。`format=docx`（省略時）はテーマの `{api_url}/compose`、
        `html` / `pptx` / `txt` / `md` は汎用合成サービス（`EDITOR_COMPOSE_URL`＝generate-app）へ送る。
@@ -105,8 +108,9 @@ docker compose up -d --build
 | `GET /procuretech-editor/projects/{id}/waiting-picture` | 書き出し待ち用の画像（Markdown 生成時の既存 PNG。無ければフォールバック） |
 | `GET /procuretech-editor/projects/{id}/composition` | 合成定義（保存済み or テーマ既定）と参照可能ファイル一覧 |
 | `PUT /procuretech-editor/projects/{id}/composition` | 合成定義を保存（`{composition:{theme, outputs}}`） |
-| `POST /procuretech-editor/projects/{id}/compose` | 合成ジョブ開始（`request_id`。進捗は GET） |
-| `GET /procuretech-editor/projects/{id}/composes/{request_id}` | 合成進捗（`progress` / `current_step`。完了時は zip の `object_key`。LGWAN の `carrier` では案内ファイル） |
+| `POST /procuretech-editor/projects/{id}/compose` | 合成ジョブ開始（`pack` は `zip` 既定 / `files`。`request_id`。進捗は GET） |
+| `GET /procuretech-editor/projects/{id}/composes/{request_id}` | 合成進捗（`progress` / `current_step`。zip は `object_key`、個別は `files`。LGWAN の `carrier` は zip の案内ファイル） |
+| `GET /procuretech-editor/exports/content?objectKey=` | 個別ファイルの中身（ログインユーザーが所有するキーだけ。公開 URL は使わない） |
 | `POST /procuretech-editor/projects/{id}/composes/{request_id}/mermaid` | 書き出し中の Mermaid を PNG（`{assets:{相対パス: base64}}`）で渡す |
 
 すべて `user_id`（backend が JWT から付与し HMAC 署名）でスコープし、他ユーザーの
@@ -211,8 +215,9 @@ ExApp は成功を検知すると結果 zip を展開し、プロジェクトへ
 ExApp（`POST /projects/{id}/compose`）は、保存済み合成定義（無ければテーマ既定）に従い、有効な出力ごとに
 section key／file_id を解決して本文を順に集約し、形式に応じて合成 API へ送信します。`kind=excel` の出力は書き出し時に
 `{api_url}/excel` を呼び、その時点の章 Markdown＋保存パラメータから Excel を生成します（対象章が無い等で
-生成できない出力は `skipped` として理由を返す）。成果物を 1 つの zip にまとめて S3 に置き、
-署名付き URL（`download_url`）として返します。
+生成できない出力は `skipped` として理由を返す）。`pack` を省略するか `zip` のときは成果物を 1 つの zip にまとめて S3 に置き、
+署名付き URL（`download_url`）として返します。`pack=files` のときは zip にせず、ファイルごとに S3 へ置き
+`files`（`name` / `format` / `object_key`）を返します。中身は `GET /procuretech-editor/exports/content` が内部エンドポイントから読みます。
 
 ### 画像・Mermaid 図の埋め込み
 

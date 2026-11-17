@@ -88,7 +88,7 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/
 # /health は完全一致のみ（/health/details は JWT 必須）。
 # /files/ は Authorization を付けられない img/PUT 用。認可は HMAC クエリで行う。
 # /ssh/ws はブラウザが Upgrade に Authorization を付けられない。JWT は accept 後の最初の JSON で検証する。
-PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws", "/worldmonitor/gate"})
+PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws", "/worldmonitor/gate", "/office/gate"})
 PUBLIC_PATH_PREFIXES = (
     "/auth/",
     "/files/",
@@ -159,6 +159,9 @@ SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
 WORLDMONITOR_UPSTREAM = os.environ.get(
     "WORLDMONITOR_UPSTREAM", "http://worldmonitor:8080"
 ).rstrip("/")
+# オフィス（Compose profiles: ["office"]）。UI は /office。実体は静的なブラウザー版。
+# endpoint の /invoke はヘルスチェック導出用（実体なし）。到達確認は /health。
+OFFICE_UPSTREAM = os.environ.get("OFFICE_UPSTREAM", "http://office:8080").rstrip("/")
 # 戦国国取り（Compose profiles: ["sengoku"] でオプション起動。お遊びのシミュレーションゲーム）。
 # 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
@@ -1005,6 +1008,53 @@ WORLDMONITOR_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+def _office_seed(ex_app_id: str, name: str, description: str, focus: str) -> dict[str, Any]:
+    return {
+        "exAppId": ex_app_id,
+        "teamId": COMMON_TEAM_ID,
+        "exAppName": name,
+        "endpoint": f"{OFFICE_UPSTREAM}/invoke",
+        "apiKey": RAG_API_KEY,
+        "config": "",
+        "placeholder": "",
+        "description": description,
+        "howToUse": (
+            "## 使い方\n\n"
+            f"- 専用ページ「{name}」で{focus}を開きます。\n"
+            "- ファイルメニューから手元のファイルを開けます。編集はブラウザの中で行います。\n"
+            "- 右上のダウンロードは、成果物の配信設定に従います。\n"
+            "  直接ダウンロードできる環境では、今の内容を端末へ保存します。中身はサーバへ送りません。\n"
+            "  リンクファイルの環境では、中身を保存領域へ書き、案内ファイルを端末へ渡します。"
+            "案内ファイルをインターネット接続端末で開くと本体を取得できます。\n"
+            "- WebGPU に対応したブラウザ（新しい Chrome、Edge、Safari）が必要です。\n"
+            "- 有効化: `docker compose --profile office up -d --build` "
+            "または `COMPOSE_PROFILES=office`。\n"
+            "- 本体は ibisOffice のブラウザー版（AGPL-3.0-only）を、改変せず配信しています。\n"
+        ),
+        "copyable": False,
+        "status": "published",
+    }
+
+
+OFFICE_WORD_SEED = _office_seed(
+    "office-word",
+    "文書",
+    "Word 形式の文書を、ブラウザの中で開いて編集します。",
+    "文書",
+)
+OFFICE_EXCEL_SEED = _office_seed(
+    "office-excel",
+    "表計算",
+    "Excel 形式のブックを、ブラウザの中で開いて編集します。",
+    "ブック",
+)
+OFFICE_POWERPOINT_SEED = _office_seed(
+    "office-powerpoint",
+    "スライド",
+    "PowerPoint 形式のスライドを、ブラウザの中で開いて編集します。",
+    "スライド",
+)
+
 
 def _team_rag_search_app(team_name: str) -> dict[str, Any]:
     return {
@@ -1117,6 +1167,9 @@ EXAPP_SEEDS = [
     SENGOKU_SEED,
     BUDGET_SEED,
     WORLDMONITOR_SEED,
+    OFFICE_WORD_SEED,
+    OFFICE_EXCEL_SEED,
+    OFFICE_POWERPOINT_SEED,
 ]
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
@@ -1129,6 +1182,7 @@ RETIRED_SEED_EXAPP_IDS = [
     "rag-maintain",
     "procuretech",
     "procuretech-hearing",
+    "office",
 ]
 
 
@@ -1919,7 +1973,11 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def audit_access_middleware(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in {"/ssh/ws", "/worldmonitor/gate"}:
+    if request.method == "OPTIONS" or request.url.path in {
+        "/ssh/ws",
+        "/worldmonitor/gate",
+        "/office/gate",
+    }:
         return await call_next(request)
     started = time.monotonic()
     response = await call_next(request)
@@ -4119,6 +4177,9 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
         ("budget", _as_invoke_url(BUDGET_APP_URL)),
         ("worldmonitor", f"{WORLDMONITOR_UPSTREAM}/invoke"),
+        ("office-word", f"{OFFICE_UPSTREAM}/invoke"),
+        ("office-excel", f"{OFFICE_UPSTREAM}/invoke"),
+        ("office-powerpoint", f"{OFFICE_UPSTREAM}/invoke"),
         ("lms", _as_invoke_url(LMS_APP_URL)),
     ]
 
@@ -5782,6 +5843,146 @@ async def worldmonitor_gate(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# オフィス専用ページ(/office)
+#
+# 到達確認と入場クッキーだけを出す。エディターは nginx が /office-ui/ で中継する。
+# /office/gate は auth_request 用。Authorization を付けられないので公開パスにし、
+# クッキーだけで判定する。署名はワールドモニターと同じで、クッキー名と path だけ分ける。
+# ---------------------------------------------------------------------------
+OFFICE_GATE_COOKIE = "og_office"
+
+
+@app.get("/office/config")
+async def office_config(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    enabled = await _is_app_up(f"{OFFICE_UPSTREAM}/invoke")
+    body: dict[str, Any] = {
+        "enabled": enabled,
+        "delivery": artifact_delivery.resolve_delivery(ARTIFACT_DELIVERY_MODE, request),
+    }
+    if not enabled:
+        body["error"] = (
+            "オフィスに接続できませんでした。"
+            "有効化するには `docker compose --profile office up -d --build` "
+            "または `COMPOSE_PROFILES=office` を設定してください。"
+        )
+    response = JSONResponse(content=body)
+    sid = str(claims.get("sid") or "")
+    if enabled and sid:
+        token = wm_gate.sign(_wm_secret(), sid)
+        response.set_cookie(
+            key=OFFICE_GATE_COOKIE,
+            value=token,
+            max_age=wm_gate.TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=request.headers.get("x-forwarded-proto", "").lower() == "https",
+            path="/office-ui/",
+        )
+    return response
+
+
+@app.get("/office/gate")
+async def office_gate(request: Request) -> Response:
+    token = request.cookies.get(OFFICE_GATE_COOKIE, "")
+    sid = wm_gate.session_id_from_token(_wm_secret(), token)
+    if sid and sessions.is_active(sid):
+        return Response(status_code=200)
+    return Response(status_code=403)
+
+
+_OFFICE_EXPORT_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "dotx": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+    "docm": "application/vnd.ms-word.document.macroEnabled.12",
+    "rtf": "application/rtf",
+    "odt": "application/vnd.oasis.opendocument.text",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "ods": "application/vnd.oasis.opendocument.spreadsheet",
+    "csv": "text/csv",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "ppsx": "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    "potx": "application/vnd.openxmlformats-officedocument.presentationml.template",
+    "pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+    "odp": "application/vnd.oasis.opendocument.presentation",
+    "pdf": "application/pdf",
+}
+
+
+def _office_export_name(raw: str) -> tuple[str, str] | None:
+    name = (raw or "").replace("\\", "/").split("/")[-1].strip()
+    if not name or len(name) > 180 or "\x00" in name or "." not in name:
+        return None
+    ext = name.rsplit(".", 1)[-1].lower()
+    mime = _OFFICE_EXPORT_TYPES.get(ext)
+    if not mime:
+        return None
+    return name, mime
+
+
+@app.put("/office/export")
+async def office_export(request: Request, name: str = Query(default="")) -> JSONResponse:
+    """編集中のファイルを成果物の配信設定で渡す。
+
+    open のときは保存しない（呼び出し側が手元のバイト列をそのまま保存する）。
+    carrier のときは SeaweedFS へ書き、案内ファイル用の object_key を返す。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    parsed = _office_export_name(name)
+    if not parsed:
+        return JSONResponse(status_code=400, content={"error": "ファイル名が不正です"})
+    filename, mime = parsed
+    data = await request.body()
+    if not data:
+        return JSONResponse(status_code=400, content={"error": "ファイルが空です"})
+    if len(data) > _ARTIFACT_MAX_BYTES:
+        return JSONResponse(status_code=413, content={"error": "ファイルが大きすぎます"})
+    if not artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request):
+        return JSONResponse(content={"delivery": "open", "display_name": filename})
+    object_key = None
+    if objstore.is_configured():
+        _presigned, object_key = objstore.put_and_presign(
+            data, filename=filename, content_type=mime, user_id=user_id
+        )
+    if not object_key:
+        return JSONResponse(
+            content={
+                "delivery": "open",
+                "display_name": filename,
+                "error": "保存領域へ書けなかったため、ファイル本体を保存してください。",
+            }
+        )
+    try:
+        audit.record(
+            request,
+            action="file.output",
+            usecase="office",
+            output_text=f"{filename} -> objstore",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse(
+        content={
+            "delivery": "carrier",
+            "display_name": filename,
+            "mime_type": mime,
+            "file_url": "",
+            "object_key": object_key,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # 自治体予算専用ページ(/budget) 用プロキシ
 # ---------------------------------------------------------------------------
 def _budget_app_url(path: str) -> str:
@@ -6967,11 +7168,31 @@ async def procuretech_editor_put_composition(
     )
 
 
+_EDITOR_EXPORT_MEDIA = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "html": "text/html; charset=utf-8",
+    "txt": "text/plain; charset=utf-8",
+    "md": "text/markdown; charset=utf-8",
+}
+
+
+def _editor_export_media(filename: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _EDITOR_EXPORT_MEDIA.get(ext, "application/octet-stream")
+
+
 def _apply_editor_delivery(
     payload: dict[str, Any], request: Request
 ) -> dict[str, Any]:
     """成功した書き出し結果に、このリクエストの配信方式を載せる。"""
     if str(payload.get("status") or "") != "success":
+        return payload
+    # 個別ファイルは公開 URL を出さない。開く側が同じオリジンで中身を読む。
+    if str(payload.get("pack") or "") == "files":
+        payload["download_url"] = ""
+        payload.pop("object_key", None)
         return payload
     key = str(payload.get("object_key") or "").strip()
     if (
@@ -6984,6 +7205,42 @@ def _apply_editor_delivery(
     else:
         payload["delivery"] = "open"
     return payload
+
+
+@app.get("/procuretech-editor/exports/content")
+async def procuretech_editor_export_content(
+    request: Request, objectKey: str = Query(default="")
+) -> Response:
+    """書き出した個別ファイルを、ログイン中の所有者へ内部ストレージから渡す。
+
+    公開の署名 URL は使わない。オフィスで開く、HTML を別タブで開く、
+    テキストを保存する、のいずれもこの応答のバイト列を使う。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    key = (objectKey or "").strip()
+    if not objstore.is_managed_key(key):
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+    if not objstore.owns_key(key, user_id) and not _is_system_admin(claims):
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+    data = objstore.get_bytes(key)
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+    filename = objstore.filename_from_key(key)
+    ascii_name = "".join(c if c.isascii() and c not in '"\\' else "_" for c in filename)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; ' f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=data,
+        media_type=_editor_export_media(filename),
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.post("/procuretech-editor/projects/{project_id}/compose")

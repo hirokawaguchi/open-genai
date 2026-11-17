@@ -292,9 +292,14 @@ export const useEditorActions = () => {
   );
 
   const composeProject = useCallback(
-    (projectId: string, composition?: EditorComposition, overrides?: Record<string, string>) =>
+    (
+      projectId: string,
+      composition?: EditorComposition,
+      overrides?: Record<string, string>,
+      pack: 'zip' | 'files' = 'zip',
+    ) =>
       run(async (): Promise<EditorComposeResult> => {
-        const body: Record<string, unknown> = {};
+        const body: Record<string, unknown> = { pack };
         if (composition) body.composition = composition;
         if (overrides && Object.keys(overrides).length > 0) body.overrides = overrides;
         try {

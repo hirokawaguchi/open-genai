@@ -66,6 +66,7 @@ import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { ShimenPage } from '@/open-genai/shimen/ShimenPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
+import { OfficePage } from '@/open-genai/office/OfficePage';
 import { WorldmonitorPage } from '@/open-genai/worldmonitor/WorldmonitorPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -167,6 +168,15 @@ export const createRoutes = (): RouteObject[] => {
     // ワールドモニター（Compose profiles: ["worldmonitor"]）。
     { path: 'worldmonitor', element: <WorldmonitorPage /> },
     { path: 'apps/:teamId/worldmonitor', element: <Navigate to='/worldmonitor' replace /> },
+    // オフィス（Compose profiles: ["office"]）。文書・表計算・スライド。
+    { path: 'office/word', element: <OfficePage appId='office-word' /> },
+    { path: 'office/excel', element: <OfficePage appId='office-excel' /> },
+    { path: 'office/powerpoint', element: <OfficePage appId='office-powerpoint' /> },
+    { path: 'office', element: <Navigate to='/office/word' replace /> },
+    { path: 'apps/:teamId/office', element: <Navigate to='/office/word' replace /> },
+    { path: 'apps/:teamId/office-word', element: <Navigate to='/office/word' replace /> },
+    { path: 'apps/:teamId/office-excel', element: <Navigate to='/office/excel' replace /> },
+    { path: 'apps/:teamId/office-powerpoint', element: <Navigate to='/office/powerpoint' replace /> },
     // 自治体予算（Compose profiles: ["budget"]）。
     { path: 'budget', element: <BudgetPage /> },
     { path: 'apps/:teamId/budget', element: <Navigate to='/budget' replace /> },
