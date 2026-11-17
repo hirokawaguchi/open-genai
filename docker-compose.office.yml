@@ -1,0 +1,18 @@
+# ibisOffice ブラウザー版（AGPL-3.0-only）。配布物はこのリポジトリに置かない。
+# 起動: docker compose --profile office up -d
+# 詳細: docs/office.md
+
+services:
+  office:
+    profiles: ["office"]
+    build:
+      context: ./office-ui
+      dockerfile: Dockerfile
+      args:
+        IBIS_OFFICE_VERSION: ${IBIS_OFFICE_VERSION:-0.8.7}
+        IBIS_OFFICE_SOURCE_SHA256: ${IBIS_OFFICE_SOURCE_SHA256:-bcc4779588b5a3e5ec15cd831a98ef132f908c797d6851f054071397d34cad84}
+    image: open-genai-office:${IBIS_OFFICE_VERSION:-0.8.7}
+    container_name: open-genai-office
+    expose:
+      - "8080"
+    restart: unless-stopped

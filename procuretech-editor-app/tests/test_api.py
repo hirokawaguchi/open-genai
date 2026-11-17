@@ -776,6 +776,44 @@ def test_compose_assembles_and_returns_url(client, monkeypatch):
     assert all("xlsx" not in (s.get("filename", "") or "") for s in spec["sections"])
 
 
+def test_compose_files_pack_stores_each_output(client, monkeypatch, _mem_objstore):
+    from app import generate
+
+    p = _create_project(client)
+    _run_generation_with_sections(client, monkeypatch, p["id"])
+
+    async def fake_compose(outputs, *, base_url, api_key="", reference=None, assets=None, on_progress=None):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for o in outputs:
+                zf.writestr(f"{o['name']}.docx", b"DOCX")
+            zf.writestr("案内.html", b"<p>hi</p>")
+            zf.writestr("memo.txt", b"hello")
+        return buf.getvalue()
+
+    monkeypatch.setattr(generate, "compose", fake_compose)
+
+    async def fake_build_excel(
+        builder, *, base_url, api_key="", params=None, sections=None, on_progress=None
+    ):
+        raise generate.ExcelSkip("テスト: スキップ")
+
+    monkeypatch.setattr(generate, "build_excel", fake_build_excel)
+
+    body = _compose_until_done(client, p["id"], {"pack": "files"})
+    assert body["status"] == "success"
+    assert body["pack"] == "files"
+    assert not body.get("download_url")
+    assert not body.get("object_key")
+    by_name = {f["name"]: f for f in body["files"]}
+    assert by_name["案内.html"]["format"] == "html"
+    assert by_name["memo.txt"]["format"] == "txt"
+    docx = next(f for f in body["files"] if f["format"] == "docx")
+    assert _mem_objstore[docx["object_key"]] == b"DOCX"
+    assert _mem_objstore[by_name["案内.html"]["object_key"]] == b"<p>hi</p>"
+    assert _mem_objstore[by_name["memo.txt"]["object_key"]] == b"hello"
+
+
 def test_compose_overrides_and_embeds_image(client, monkeypatch):
     """overrides で本文を差し替え、参照画像を assets として compose へ渡す。"""
     from app import generate

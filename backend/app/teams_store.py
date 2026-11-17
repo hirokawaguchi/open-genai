@@ -223,6 +223,9 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "ledger",
     "procuretech-navigator",
     "procuretech-editor",
+    "office-word",
+    "office-excel",
+    "office-powerpoint",
     "knowledge",
     "rag",
     "notebook",
@@ -244,7 +247,17 @@ ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
 )
 RECOMMENDED_SETTING_KEY = "recommendedExAppIds"
 # 後からおすすめ候補に足した ID。保存済み設定に無ければ一度だけ既定オンにする。
-RECOMMENDED_BACKFILL_IDS = ("rag", "lms", "worldmonitor", "shimen", "budget", "ledger")
+RECOMMENDED_BACKFILL_IDS = (
+    "rag",
+    "lms",
+    "worldmonitor",
+    "shimen",
+    "budget",
+    "ledger",
+    "office-word",
+    "office-excel",
+    "office-powerpoint",
+)
 RECOMMENDED_BACKFILL_KEY = "recommendedExAppIdsBackfill"
 
 

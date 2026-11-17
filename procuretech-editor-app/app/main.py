@@ -1476,6 +1476,40 @@ def _collect_output_sections(
     return sections
 
 
+_EXPORT_CONTENT_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "html": "text/html; charset=utf-8",
+    "txt": "text/plain; charset=utf-8",
+    "md": "text/markdown; charset=utf-8",
+}
+
+
+def _flatten_compose_outputs(
+    compose_zips: list[bytes],
+    excel_files: list[tuple[str, bytes]],
+    used_names: set[str],
+) -> list[tuple[str, bytes]] | None:
+    """合成 zip と Excel を個別ファイルへ展開する。壊れた zip は None。"""
+    entries: list[tuple[str, bytes]] = []
+    try:
+        for composed in compose_zips:
+            with zipfile.ZipFile(io.BytesIO(composed)) as dz:
+                for n in dz.namelist():
+                    if n.endswith("/"):
+                        continue
+                    arc = n.rsplit("/", 1)[-1]
+                    if not arc or arc in used_names:
+                        continue
+                    used_names.add(arc)
+                    entries.append((arc, dz.read(n)))
+    except zipfile.BadZipFile:
+        return None
+    entries.extend(excel_files)
+    return entries
+
+
 def _compose_job_payload(job: dict[str, Any]) -> dict[str, Any]:
     """合成ジョブの公開応答。成功時は result を展開する。"""
     body: dict[str, Any] = {
@@ -1498,6 +1532,9 @@ async def _run_compose_job(
     def step(progress: int, label: str) -> None:
         store.update_compose_job(request_id, uid, progress=progress, current_step=label)
 
+    pack = str(payload.get("pack") or "zip").strip().lower()
+    if pack not in ("zip", "files"):
+        pack = "zip"
     try:
         project = store.get_project(project_id, uid)
         if project is None:
@@ -1818,29 +1855,61 @@ async def _run_compose_job(
             return
 
         step(work_progress(), "書き出しファイルを保存しています")
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for composed in compose_zips:
-                try:
-                    with zipfile.ZipFile(io.BytesIO(composed)) as dz:
-                        for n in dz.namelist():
-                            if n.endswith("/"):
-                                continue
-                            arc = n.rsplit("/", 1)[-1]
-                            if arc in used_names:
-                                continue
-                            used_names.add(arc)
-                            zf.writestr(arc, dz.read(n))
-                except zipfile.BadZipFile:
+        entries = _flatten_compose_outputs(compose_zips, excel_files, used_names)
+        if entries is None:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="合成結果の展開に失敗しました。",
+                current_step="エラー",
+            )
+            return
+        if not entries:
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="error",
+                error="出力できる内容がありません。",
+                current_step="エラー",
+            )
+            return
+
+        if pack == "files":
+            stored: list[dict[str, str]] = []
+            for arc, data in entries:
+                fmt = arc.rsplit(".", 1)[-1].lower() if "." in arc else ""
+                key = objstore.build_export_key(uid, arc)
+                if not objstore.put_bytes(
+                    key, data, content_type=_EXPORT_CONTENT_TYPES.get(fmt)
+                ):
                     store.update_compose_job(
                         request_id,
                         uid,
                         status="error",
-                        error="合成結果の展開に失敗しました。",
+                        error="合成結果の保存に失敗しました。",
                         current_step="エラー",
                     )
                     return
-            for arc, data in excel_files:
+                stored.append({"name": arc, "format": fmt, "object_key": key})
+            store.update_compose_job(
+                request_id,
+                uid,
+                status="success",
+                progress=100,
+                current_step="完了",
+                result={
+                    "pack": "files",
+                    "files": stored,
+                    "outputs": included_names,
+                    "skipped": skipped,
+                },
+            )
+            return
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arc, data in entries:
                 zf.writestr(arc, data)
 
         project_name = objstore.sanitize_filename(project["name"]) or "project"
@@ -1863,6 +1932,7 @@ async def _run_compose_job(
             progress=100,
             current_step="完了",
             result={
+                "pack": "zip",
                 "download_url": url,
                 "download_filename": download_filename,
                 "object_key": key,

@@ -18,8 +18,10 @@ import {
   useProcuretechEditorAvailable,
   useSengokuAvailable,
   useSshAvailable,
+  useOfficeAvailable,
   useWorldmonitorAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
+import { OFFICE_APPS, officeAppById } from '@/open-genai/office/kinds';
 import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -98,6 +100,9 @@ export const SSH_PATH = '/ssh';
 
 /** Web SSH exApp の識別子（専用ページへ振り替える対象） */
 export const SSH_EXAPP_ID = 'ssh';
+
+/** 文書・表計算・スライドの親パス。旧「オフィス」もここへ寄せる */
+export const OFFICE_PATH = '/office/word';
 
 /** ワールドモニターは汎用 exApp フォームではなく専用ページで提供する */
 export const WORLDMONITOR_PATH = '/worldmonitor';
@@ -182,6 +187,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const sshAvailable = useSshAvailable();
   const sengokuAvailable = useSengokuAvailable();
   const budgetAvailable = useBudgetAvailable();
+  const officeAvailable = useOfficeAvailable();
   const worldmonitorAvailable = useWorldmonitorAvailable();
   const nishukanAvailable = useNishukanAvailable();
   const lmsAvailable = useLmsAvailable();
@@ -381,6 +387,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (officeAvailable) {
+      for (const app of OFFICE_APPS) {
+        if (!listed(app.id)) continue;
+        items.push({
+          label: nameOf(app.id, app.label),
+          to: app.path,
+          description: descOf(app.id, app.description),
+        });
+      }
+    }
+
     if (worldmonitorAvailable && listed(WORLDMONITOR_EXAPP_ID)) {
       items.push({
         label: nameOf(WORLDMONITOR_EXAPP_ID, 'ワールドモニター'),
@@ -448,6 +465,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     sshAvailable,
     sengokuAvailable,
     budgetAvailable,
+    officeAvailable,
     worldmonitorAvailable,
     nishukanAvailable,
     lmsAvailable,
@@ -518,6 +536,13 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   }
   if (item.app.value === WORLDMONITOR_EXAPP_ID) {
     return WORLDMONITOR_PATH;
+  }
+  if (item.app.value === 'office') {
+    return OFFICE_PATH;
+  }
+  const officeApp = officeAppById(item.app.value);
+  if (officeApp) {
+    return officeApp.path;
   }
   if (item.app.value === NISHUKAN_EXAPP_ID) {
     return NISHUKAN_PATH;

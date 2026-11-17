@@ -1,0 +1,186 @@
+diff -ruN a/crates/ibis-office-app/src/lib.rs b/crates/ibis-office-app/src/lib.rs
+--- a/crates/ibis-office-app/src/lib.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-app/src/lib.rs	2026-11-17 16:45:04
+@@ -702,11 +702,16 @@
+     /// cannot be read) the editor shows the start view.
+     #[wasm_bindgen]
+     pub async fn run(asset_base: Option<String>, file_name: Option<String>, file: Option<Vec<u8>>) -> Result<(), JsValue> {
+-        let document = file.and_then(|data| match ibis_pptx::read(&data) {
+-            Ok(presentation) => Some((presentation, file_name.unwrap_or_default().into())),
+-            Err(err) => {
+-                log::error!("{err}");
+-                None
++        // `read` drops the package saving writes from, so the download button
++        // treats an opened file as a new document. `open` keeps that package.
++        let opened = file.and_then(|data| {
++            let name = file_name.unwrap_or_default();
++            match ibis_pptx::open(data) {
++                Ok(opened) => Some((opened.presentation, name, std::sync::Arc::new(opened.source))),
++                Err(err) => {
++                    log::error!("{err}");
++                    None
++                }
+             }
+         });
+         // The fonts downloaded with セットアップ are kept in the browser's IndexedDB; they are given to the text system when the
+@@ -745,8 +750,12 @@
+                 .expect("failed to load the UI font");
+             super::init(cx);
+             Theme::global_mut(cx).font_family = "IBM Plex Sans".into();
+-            let blank = document.is_none().then(crate::shell::web::new_kind_of_address).flatten();
+-            super::open_editor(document, None, cx);
++            let blank = opened.is_none().then(crate::shell::web::new_kind_of_address).flatten();
++            if let Some((presentation, name, source)) = opened {
++                super::open_editor_keeping_source(presentation, name.into(), source, cx);
++            } else {
++                super::open_editor(None, None, cx);
++            }
+             if let Some(kind) = blank {
+                 crate::shell::app::new_file_in_page(kind, cx);
+             }
+diff -ruN a/crates/ibis-office-shell/src/app.rs b/crates/ibis-office-shell/src/app.rs
+--- a/crates/ibis-office-shell/src/app.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-shell/src/app.rs	2026-11-17 16:45:04
+@@ -151,6 +151,21 @@
+     });
+ }
+ 
++/// Open an editor on a file read with `ibis_pptx::open`, keeping the package
++/// saving writes from. The browser `run` uses this: `read` alone drops the
++/// package, and the download button then refuses the file as a new document.
++pub fn open_editor_keeping_source(
++    presentation: ibis_doc_model::Presentation,
++    name: SharedString,
++    source: std::sync::Arc<ibis_pptx::Source>,
++    cx: &mut App,
++) {
++    open_window_sized(1280., cx, move |editor, window, cx| {
++        editor.load(presentation, name, window, cx);
++        editor.set_loaded_source(source);
++    });
++}
++
+ /// A new editor window, its editor set up by `setup`.
+ pub fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
+     open_window_sized(1280., cx, setup);
+diff -ruN a/crates/ibis-office-shell/src/chrome.rs b/crates/ibis-office-shell/src/chrome.rs
+--- a/crates/ibis-office-shell/src/chrome.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-shell/src/chrome.rs	2026-11-17 16:52:15
+@@ -1888,7 +1888,7 @@
+         {
+             let mut buttons = Vec::new();
+             if crate::embed::show_download() {
+-                let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.embed_download(window, cx));
++                let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| { this.embed_download(window, cx); });
+                 buttons.push(title_button("embed-download", "download", "shell.embed.download", Some(handler), editor));
+             }
+             if crate::embed::show_close() {
+diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src/embed.rs
+--- a/crates/ibis-office-shell/src/embed.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-shell/src/embed.rs	2026-11-17 16:45:04
+@@ -103,18 +103,27 @@
+     }
+ 
+     /// The download button: the document as it is now, in its own format, goes to the embedding page.
+-    pub(crate) fn embed_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++    /// The bytes go to the embedding page. True when they were handed over.
++    pub(crate) fn embed_download(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+         // What is typed in a cell is entered first, as a save does (`commit_pending_edit`): the file is the workbook as it is now.
+         self.commit_pending_edit(window, cx);
+         let Some(source) = self.source.clone() else {
+             self.status = Some(crate::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
+-            return cx.notify();
++            cx.notify();
++            return false;
+         };
+         match source.save(&self.presentation_for_save(), ibis_pptx::SaveOptions::default()) {
+-            Ok(bytes) => embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes)),
++            Ok(bytes) => {
++                embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes));
++                self.document.mark_clean();
++                self.status = Some(crate::i18n::text("_shell.saved").into());
++                cx.notify();
++                true
++            }
+             Err(err) => {
+                 self.status = Some(crate::i18n::format("file.save-failed", &[("error", &err)]).into());
+                 cx.notify();
++                false
+             }
+         }
+     }
+diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/save.rs
+--- a/crates/ibis-office-shell/src/save.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-shell/src/save.rs	2026-11-17 16:45:04
+@@ -86,9 +86,15 @@
+         }
+         #[cfg(target_family = "wasm")]
+         {
+-            let _ = window;
+-            self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
+-            cx.notify();
++            // The browser has no folder to write. When the page asked for the
++            // download button, Save hands it the bytes and the page stores them.
++            if crate::embed::show_download() {
++                self.embed_download(window, cx);
++            } else {
++                let _ = window;
++                self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
++                cx.notify();
++            }
+         }
+     }
+ 
+@@ -144,9 +150,15 @@
+         }
+         #[cfg(target_family = "wasm")]
+         {
+-            let _ = (window, then);
+-            self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
+-            cx.notify();
++            if crate::embed::show_download() {
++                if self.embed_download(window, cx) {
++                    then(self, window, cx);
++                }
++            } else {
++                let _ = (window, then);
++                self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
++                cx.notify();
++            }
+         }
+     }
+ 
+@@ -204,9 +216,15 @@
+         }
+         #[cfg(target_family = "wasm")]
+         {
+-            let _ = (window, then);
+-            self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
+-            cx.notify();
++            if crate::embed::show_download() {
++                if self.embed_download(window, cx) {
++                    then(self, window, cx);
++                }
++            } else {
++                let _ = (window, then);
++                self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
++                cx.notify();
++            }
+         }
+     }
+ 
+diff -ruN a/scripts/build-web.sh b/scripts/build-web.sh
+--- a/scripts/build-web.sh	2026-11-13 21:35:17
++++ b/scripts/build-web.sh	2026-11-17 16:45:04
+@@ -48,7 +48,10 @@
+ # The wasm's size, for the download's progress bar: a server that compresses
+ # it (GitHub Pages sends gzip) gives Content-Length of the compressed bytes,
+ # while the browser hands main.ts the uncompressed ones.
+-stat -f %z www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size
++# GNU stat, else BSD (the script is also run on Linux).
++if ! stat -c %s www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size 2>/dev/null; then
++  stat -f %z www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size
++fi
+ 
+ # main.ts imports the typings wasm-bindgen just wrote.
+ if [[ ! -x node_modules/.bin/tsc ]]; then

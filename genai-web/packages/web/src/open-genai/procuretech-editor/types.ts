@@ -151,12 +151,22 @@ export type EditorCompositionResponse = {
   error?: string;
 };
 
+/** 個別書き出しの 1 ファイル。object_key は同じオリジンの読み出しに使う。 */
+export type EditorComposeFile = {
+  name: string;
+  format: string;
+  object_key: string;
+};
+
 /** POST /compose および GET /composes/{id} の応答。 */
 export type EditorComposeResult = {
   request_id?: string;
   status?: 'processing' | 'success' | 'error' | string;
   progress?: number;
   current_step?: string;
+  /** zip=1 つの zip / files=ファイルごとの object_key */
+  pack?: 'zip' | 'files';
+  files?: EditorComposeFile[];
   download_url?: string;
   download_filename?: string;
   object_key?: string;
