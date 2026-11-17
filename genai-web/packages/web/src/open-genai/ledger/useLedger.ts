@@ -13,7 +13,7 @@ const message = (e: unknown, fallback: string): string => {
 };
 
 export const useLedgerConfig = () => {
-  const { data, error, isLoading } = useSWR<LedgerConfig>(
+  const { data, isLoading } = useSWR<LedgerConfig>(
     'ledger/config',
     async () => {
       try {
