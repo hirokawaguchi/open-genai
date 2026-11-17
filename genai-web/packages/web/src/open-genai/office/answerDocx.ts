@@ -23,13 +23,19 @@ const crc32 = (data: Uint8Array): number => {
 const u16 = (view: DataView, offset: number) => view.getUint16(offset, true);
 const u32 = (view: DataView, offset: number) => view.getUint32(offset, true);
 
+const blobBytes = (data: Uint8Array): ArrayBuffer => {
+  const copy = new ArrayBuffer(data.byteLength);
+  new Uint8Array(copy).set(data);
+  return copy;
+};
+
 const inflate = async (data: Uint8Array): Promise<Uint8Array> => {
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const stream = new Blob([blobBytes(data)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
 
 const deflate = async (data: Uint8Array): Promise<Uint8Array> => {
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const stream = new Blob([blobBytes(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
 
