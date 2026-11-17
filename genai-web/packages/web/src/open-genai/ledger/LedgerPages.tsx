@@ -43,8 +43,6 @@ import {
 
 const fieldClass =
   'mt-1 w-full rounded-8 border border-solid-gray-420 bg-white px-3 py-2 text-std-16N-170';
-const inlineClass =
-  'min-w-40 rounded-8 border border-solid-gray-420 bg-white px-3 py-2 text-std-16N-170';
 
 const SELECTED_KEY = 'open-genai-ledger-selected';
 
