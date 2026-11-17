@@ -1,6 +1,6 @@
 diff -ruN a/crates/ibis-office-app/src/lib.rs b/crates/ibis-office-app/src/lib.rs
 --- a/crates/ibis-office-app/src/lib.rs	2026-11-13 21:35:17
-+++ b/crates/ibis-office-app/src/lib.rs	2026-11-17 16:45:04
++++ b/crates/ibis-office-app/src/lib.rs	2026-11-17 18:14:55
 @@ -702,11 +702,16 @@
      /// cannot be read) the editor shows the start view.
      #[wasm_bindgen]
@@ -40,7 +40,7 @@ diff -ruN a/crates/ibis-office-app/src/lib.rs b/crates/ibis-office-app/src/lib.r
              }
 diff -ruN a/crates/ibis-office-shell/src/app.rs b/crates/ibis-office-shell/src/app.rs
 --- a/crates/ibis-office-shell/src/app.rs	2026-11-13 21:35:17
-+++ b/crates/ibis-office-shell/src/app.rs	2026-11-17 16:45:04
++++ b/crates/ibis-office-shell/src/app.rs	2026-11-17 18:14:55
 @@ -151,6 +151,21 @@
      });
  }
@@ -65,7 +65,7 @@ diff -ruN a/crates/ibis-office-shell/src/app.rs b/crates/ibis-office-shell/src/a
      open_window_sized(1280., cx, setup);
 diff -ruN a/crates/ibis-office-shell/src/chrome.rs b/crates/ibis-office-shell/src/chrome.rs
 --- a/crates/ibis-office-shell/src/chrome.rs	2026-11-13 21:35:17
-+++ b/crates/ibis-office-shell/src/chrome.rs	2026-11-17 16:52:15
++++ b/crates/ibis-office-shell/src/chrome.rs	2026-11-17 18:14:55
 @@ -1888,7 +1888,7 @@
          {
              let mut buttons = Vec::new();
@@ -77,8 +77,8 @@ diff -ruN a/crates/ibis-office-shell/src/chrome.rs b/crates/ibis-office-shell/sr
              if crate::embed::show_close() {
 diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src/embed.rs
 --- a/crates/ibis-office-shell/src/embed.rs	2026-11-13 21:35:17
-+++ b/crates/ibis-office-shell/src/embed.rs	2026-11-17 16:45:04
-@@ -103,18 +103,27 @@
++++ b/crates/ibis-office-shell/src/embed.rs	2026-11-17 18:16:10
+@@ -103,23 +103,91 @@
      }
  
      /// The download button: the document as it is now, in its own format, goes to the embedding page.
@@ -109,9 +109,88 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
              }
          }
      }
++
++    /// 名前を付けて保存: the browser has no folder, so the name is asked here and the bytes go out under it.
++    /// Cancel, or an empty name, leaves the open file's name as it is.
++    pub(crate) fn embed_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
++        let current = self.file_name.clone().unwrap_or_default();
++        let Some(name) = prompt_save_as_name(current.as_ref()) else {
++            return false;
++        };
++        let previous = self.file_name.clone();
++        self.file_name = Some(name.into());
++        if self.embed_download(window, cx) {
++            return true;
++        }
++        self.file_name = previous;
++        cx.notify();
++        false
++    }
+ }
+ 
++/// The name 名前を付けて保存 keeps: the open file's extension stays, so a workbook is not handed out as a document.
++pub(crate) fn save_as_file_name(current: &str, entered: &str) -> Option<String> {
++    let ext = current.rsplit_once('.').map(|(_, ext)| ext).filter(|ext| !ext.is_empty()).unwrap_or("");
++    let cleaned = entered.trim().replace(['/', '\\'], "_");
++    if cleaned.is_empty() || cleaned.chars().any(|c| c.is_control()) {
++        return None;
++    }
++    let stem = match cleaned.rsplit_once('.') {
++        Some((stem, suffix)) if !stem.is_empty() && !ext.is_empty() && suffix.eq_ignore_ascii_case(ext) => stem,
++        Some((stem, suffix)) if !stem.is_empty() && is_known_office_extension(suffix) => stem,
++        _ => cleaned.as_str(),
++    };
++    let stem = stem.trim().trim_end_matches('.').trim();
++    if stem.is_empty() || stem.ends_with(' ') {
++        return None;
++    }
++    if ext.is_empty() {
++        return Some(stem.to_string());
++    }
++    Some(format!("{stem}.{ext}"))
++}
++
++fn is_known_office_extension(suffix: &str) -> bool {
++    matches!(
++        suffix.to_ascii_lowercase().as_str(),
++        "docx" | "xlsx" | "pptx" | "doc" | "xls" | "ppt" | "pdf" | "png" | "txt" | "md" | "html" | "odt" | "ods" | "odp"
++    )
++}
++
++#[cfg(target_arch = "wasm32")]
++fn prompt_save_as_name(current: &str) -> Option<String> {
++    let window = js_sys::global();
++    let prompt = js_sys::Reflect::get(&window, &JsValue::from_str("prompt")).ok()?;
++    let function = prompt.dyn_ref::<js_sys::Function>()?;
++    let message = crate::i18n::text("shell.rename-file.name");
++    let result = function.call2(&window, &JsValue::from_str(&message.to_string()), &JsValue::from_str(current)).ok()?;
++    if result.is_null() || result.is_undefined() {
++        return None;
++    }
++    save_as_file_name(current, &result.as_string()?)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -152,5 +220,14 @@
+ 
+         // Reset defaults
+         set_embed_options(false, false, false, true, true);
++    }
++
++    #[test]
++    fn save_as_keeps_the_open_file_extension() {
++        assert_eq!(super::save_as_file_name("文書.docx", "改善提案").as_deref(), Some("改善提案.docx"));
++        assert_eq!(super::save_as_file_name("文書.docx", "改善提案.docx").as_deref(), Some("改善提案.docx"));
++        assert_eq!(super::save_as_file_name("文書.docx", "改善提案.xlsx").as_deref(), Some("改善提案.docx"));
++        assert_eq!(super::save_as_file_name("book.xlsx", "  ").as_deref(), None);
++        assert_eq!(super::save_as_file_name("文書.docx", "").as_deref(), None);
+     }
+ }
 diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/save.rs
 --- a/crates/ibis-office-shell/src/save.rs	2026-11-13 21:35:17
-+++ b/crates/ibis-office-shell/src/save.rs	2026-11-17 16:45:04
++++ b/crates/ibis-office-shell/src/save.rs	2026-11-17 18:15:34
 @@ -86,9 +86,15 @@
          }
          #[cfg(target_family = "wasm")]
@@ -131,15 +210,16 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
          }
      }
  
-@@ -144,9 +150,15 @@
+@@ -144,9 +150,16 @@
          }
          #[cfg(target_family = "wasm")]
          {
 -            let _ = (window, then);
 -            self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
 -            cx.notify();
++            // 保存 writes the current name. 名前を付けて保存 asks for another name first.
 +            if crate::embed::show_download() {
-+                if self.embed_download(window, cx) {
++                if self.embed_save_as(window, cx) {
 +                    then(self, window, cx);
 +                }
 +            } else {
@@ -150,7 +230,7 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
          }
      }
  
-@@ -204,9 +216,15 @@
+@@ -204,9 +217,15 @@
          }
          #[cfg(target_family = "wasm")]
          {
@@ -171,7 +251,7 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
  
 diff -ruN a/scripts/build-web.sh b/scripts/build-web.sh
 --- a/scripts/build-web.sh	2026-11-13 21:35:17
-+++ b/scripts/build-web.sh	2026-11-17 16:45:04
++++ b/scripts/build-web.sh	2026-11-17 18:14:55
 @@ -48,7 +48,10 @@
  # The wasm's size, for the download's progress bar: a server that compresses
  # it (GitHub Pages sends gzip) gives Content-Length of the compressed bytes,
