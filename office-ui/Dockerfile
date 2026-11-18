@@ -51,7 +51,7 @@ RUN curl -fsSL -o source.tar.gz \
  && test -f www/license.md \
  && test -f www/pkg/ibis_office_app_bg.wasm
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30.7-alpine
 ARG IBIS_OFFICE_VERSION=0.8.7
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/ibis-office-${IBIS_OFFICE_VERSION}/www /usr/share/nginx/html

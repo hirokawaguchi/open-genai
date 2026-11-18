@@ -16,7 +16,7 @@ include:
 services:
   # 唯一の公開点: HTTP で /、/api/、/kc/ を内部サービスへ振り分ける
   proxy:
-    image: nginx:1.27-alpine
+    image: nginx:1.30.7-alpine
     container_name: open-genai-proxy
     ports:
       - "${PROXY_HTTP_PORT:-80}:80"
