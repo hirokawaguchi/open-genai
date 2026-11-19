@@ -1,9 +1,13 @@
+import 'katex/dist/katex.min.css';
 import React, { ComponentProps, useEffect, useState } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ExtraProps, default as ReactMarkdown } from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import { BundledLanguage, codeToHtml } from 'shiki';
+import { normalizeMathDelimiters } from '@/components/latexToPlain';
 import { Link } from '@/components/ui/dads/Link';
 import { MermaidRenderer } from '@/features/exapp/components/MermaidRenderer';
 import { ButtonCopy } from './ui/ButtonCopy';
@@ -105,13 +109,16 @@ const components: ComponentProps<typeof ReactMarkdown>['components'] = {
 export const Markdown = React.memo(({ className, prefix, children }: Props) => {
   return (
     <ErrorBoundary fallback={<ErrorText>コンテンツの表示中にエラーが発生しました。</ErrorText>}>
-      <div className={`prose prose-sm max-w-full ${className ?? ''}`}>
+      <div
+        className={`prose prose-sm max-w-full [&_.katex-display]:my-2 [&_.katex-display]:overflow-x-auto [&_.katex-mathml]:select-none ${className ?? ''}`}
+      >
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkBreaks]}
+          remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+          rehypePlugins={[[rehypeKatex, { throwOnError: false, output: 'htmlAndMathml', strict: 'ignore' }]]}
           remarkRehypeOptions={{ clobberPrefix: prefix }}
           components={components}
         >
-          {children}
+          {normalizeMathDelimiters(children)}
         </ReactMarkdown>
       </div>
     </ErrorBoundary>

@@ -1,6 +1,7 @@
 import type { ShownMessage } from 'genai-web';
 import { useEffect, useRef, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
+import { latexToPlain } from '@/components/latexToPlain';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
@@ -38,6 +39,7 @@ export const AssistantMessage = ({
   const copyTextRef = useRef<HTMLDivElement>(null);
 
   const { typingTextOutput } = useTyping(loading, chatContent.content);
+  const answerText = latexToPlain(chatContent.content || '');
 
   const [signedUrls, setSignedUrls] = useState<string[]>([]);
 
@@ -127,7 +129,7 @@ export const AssistantMessage = ({
           </div>
         </div>
 
-        <div className='mt-1 flex items-center justify-end gap-0.5 print:hidden'>
+        <div className='mt-1 flex flex-wrap items-center justify-end gap-x-1 gap-y-1 print:hidden [&_button]:shrink-0 [&_button]:whitespace-nowrap'>
           {!loading && (
             <>
               {usecase === '/chat' &&
@@ -161,16 +163,9 @@ export const AssistantMessage = ({
                   再生成
                 </Button>
               )}
-              <ButtonCopy
-                className='mr-0.5'
-                text={chatContent.content || ''}
-                targetRef={copyTextRef}
-              />
-              <ExportAnswerWord text={chatContent.content || ''} targetRef={copyTextRef} />
-              <ExportAnswerPowerPoint
-                text={chatContent.content || ''}
-                modelId={chatContent.llmType}
-              />
+              <ButtonCopy className='mr-0.5' text={answerText} targetRef={copyTextRef} />
+              <ExportAnswerWord text={answerText} targetRef={copyTextRef} />
+              <ExportAnswerPowerPoint text={answerText} modelId={chatContent.llmType} />
             </>
           )}
         </div>
