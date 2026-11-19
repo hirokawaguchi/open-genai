@@ -23,15 +23,21 @@ vi.mock('react-router', () => ({
   }),
 }));
 
-vi.mock('@/features/chat/stores/useChatStore', () => ({
-  useChatStore: () => ({
+vi.mock('@/features/chat/stores/useChatStore', () => {
+  const useChatStore = () => ({
     content: mockStoreState.content,
     setContent: mockSetContent,
     inputSystemContext: mockStoreState.inputSystemContext,
     shouldAutoSubmit: mockStoreState.shouldAutoSubmit,
     setShouldAutoSubmit: mockSetShouldAutoSubmit,
-  }),
-}));
+  });
+  useChatStore.getState = () => ({
+    content: mockStoreState.content,
+    knowledgePicks: [],
+    setKnowledgeSearching: vi.fn(),
+  });
+  return { useChatStore };
+});
 
 vi.mock('@/hooks/useFiles', () => ({
   useFiles: () => ({

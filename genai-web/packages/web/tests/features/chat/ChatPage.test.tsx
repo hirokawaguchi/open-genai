@@ -44,7 +44,11 @@ vi.mock('@/features/chat/stores/useChatStore', () => {
     setIsDragOver: vi.fn(),
     setShouldAutoSubmit: mockSetShouldAutoSubmit,
   });
-  useChatStore.getState = () => ({ ...mockStoreState });
+  useChatStore.getState = () => ({
+    knowledgePicks: [],
+    setKnowledgeSearching: vi.fn(),
+    ...mockStoreState,
+  });
   return { useChatStore };
 });
 
