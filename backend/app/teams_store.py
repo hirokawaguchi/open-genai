@@ -390,9 +390,38 @@ def remove_audit_viewer(user_id: str) -> None:
         conn.execute("DELETE FROM audit_viewers WHERE userId = ?", (uid,))
 
 
-def normalize_recommended_exapp_ids(ids: list[str] | None) -> list[str]:
-    wanted = {str(i).strip() for i in (ids or []) if str(i).strip()}
-    return [i for i in DEFAULT_RECOMMENDED_EXAPP_IDS if i in wanted]
+def _published_common_extra_ids(conn: sqlite3.Connection, wanted: list[str]) -> list[str]:
+    """公式カタログ以外で、共通チームに公開されているアプリ ID。入力順を保つ。"""
+    official = set(DEFAULT_RECOMMENDED_EXAPP_IDS)
+    candidates = [i for i in wanted if i not in official]
+    if not candidates:
+        return []
+    placeholders = ",".join("?" for _ in candidates)
+    rows = conn.execute(
+        "SELECT exAppId FROM exapps"
+        f" WHERE teamId = ? AND status = 'published' AND exAppId IN ({placeholders})",
+        (COMMON_TEAM_ID, *candidates),
+    ).fetchall()
+    ok = {r["exAppId"] for r in rows}
+    return [i for i in candidates if i in ok]
+
+
+def normalize_recommended_exapp_ids(
+    ids: list[str] | None, *, extra: list[str] | None = None
+) -> list[str]:
+    wanted = [str(i).strip() for i in (ids or []) if str(i).strip()]
+    wanted_set = set(wanted)
+    official = [i for i in DEFAULT_RECOMMENDED_EXAPP_IDS if i in wanted_set]
+    extra_ok = set(extra or [])
+    seen = set(official)
+    extras: list[str] = []
+    for item in wanted:
+        if item in seen or item in set(DEFAULT_RECOMMENDED_EXAPP_IDS):
+            continue
+        if item in extra_ok:
+            extras.append(item)
+            seen.add(item)
+    return official + extras
 
 
 def _read_json_list(conn: sqlite3.Connection, key: str) -> list[str] | None:
@@ -420,13 +449,17 @@ def _write_json_list(conn: sqlite3.Connection, key: str, values: list[str]) -> N
 
 
 def get_recommended_exapp_ids() -> list[str]:
-    """おすすめに出す公式アプリ。未保存なら既定の全件。"""
+    """おすすめに出すアプリ。未保存なら公式カタログの全件。
+
+    公式カタログに加え、保存値のうち共通チームで公開中のアプリも残す。
+    """
     with _lock, _connect() as conn:
         _migrate_app_settings(conn)
         raw = _read_json_list(conn, RECOMMENDED_SETTING_KEY)
         if raw is None:
             return list(DEFAULT_RECOMMENDED_EXAPP_IDS)
-        saved = normalize_recommended_exapp_ids(raw)
+        extra = _published_common_extra_ids(conn, raw)
+        saved = normalize_recommended_exapp_ids(raw, extra=extra)
         done = set(_read_json_list(conn, RECOMMENDED_BACKFILL_KEY) or [])
         add = [
             i
@@ -434,16 +467,18 @@ def get_recommended_exapp_ids() -> list[str]:
             if i in DEFAULT_RECOMMENDED_EXAPP_IDS and i not in saved and i not in done
         ]
         if add:
-            saved = normalize_recommended_exapp_ids([*saved, *add])
+            saved = normalize_recommended_exapp_ids([*saved, *add], extra=extra)
             _write_json_list(conn, RECOMMENDED_SETTING_KEY, saved)
             _write_json_list(conn, RECOMMENDED_BACKFILL_KEY, sorted(done | set(add)))
         return saved
 
 
 def set_recommended_exapp_ids(ids: list[str] | None) -> list[str]:
-    normalized = normalize_recommended_exapp_ids(ids)
     with _lock, _connect() as conn:
         _migrate_app_settings(conn)
+        raw = [str(i).strip() for i in (ids or []) if str(i).strip()]
+        extra = _published_common_extra_ids(conn, raw)
+        normalized = normalize_recommended_exapp_ids(raw, extra=extra)
         _write_json_list(conn, RECOMMENDED_SETTING_KEY, normalized)
         done = set(_read_json_list(conn, RECOMMENDED_BACKFILL_KEY) or [])
         done.update(RECOMMENDED_BACKFILL_IDS)

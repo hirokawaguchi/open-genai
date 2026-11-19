@@ -360,6 +360,32 @@ def test_recommended_apps_default_and_save(store) -> None:
     assert store.set_recommended_exapp_ids([]) == []
 
 
+def test_recommended_apps_keep_published_common_app(store) -> None:
+    deep = store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "Deep Research",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "status": "published",
+        },
+    )
+    draft = store.create_exapp(
+        store.COMMON_TEAM_ID,
+        {
+            "exAppName": "下書きアプリ",
+            "endpoint": "http://dify-app:8004/invoke",
+            "placeholder": "{}",
+            "status": "draft",
+        },
+    )
+    saved = store.set_recommended_exapp_ids(
+        ["chat", deep["exAppId"], draft["exAppId"], "unknown"]
+    )
+    assert saved == ["chat", deep["exAppId"]]
+    assert store.get_recommended_exapp_ids() == ["chat", deep["exAppId"]]
+
+
 def test_recommended_apps_backfill_rag_once(store) -> None:
     store.set_recommended_exapp_ids(["chat", "knowledge"])
     with store._lock, store._connect() as conn:

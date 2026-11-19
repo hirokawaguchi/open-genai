@@ -22,6 +22,7 @@ import {
   useWorldmonitorAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
 import { OFFICE_APPS, officeAppById } from '@/open-genai/office/kinds';
+import { RECOMMENDED_APP_OPTIONS } from '@/open-genai/recommended-apps/recommendedApps';
 import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
 
@@ -451,6 +452,23 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
           '共有ナレッジを検索し、根拠となるドキュメントとともに回答します',
         ),
       });
+    }
+
+    const officialRecommended = new Set<string>(RECOMMENDED_APP_OPTIONS.map((opt) => opt.id));
+    if (!recommendedLoading && catalogLoaded) {
+      for (const id of exAppIds) {
+        if (officialRecommended.has(id)) continue;
+        const app = (registryApps || []).find(
+          (candidate) =>
+            candidate?.exAppId === id && candidate.teamId === COMMON_EXAPPS_TEAM_ID,
+        );
+        if (!app || app.status === 'draft') continue;
+        items.push({
+          label: (app.exAppName || '').trim() || id,
+          to: `/apps/${COMMON_EXAPPS_TEAM_ID}/${id}`,
+          description: (app.description || '').trim(),
+        });
+      }
     }
 
     return items;
