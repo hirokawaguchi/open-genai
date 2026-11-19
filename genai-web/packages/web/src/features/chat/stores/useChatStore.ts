@@ -1,5 +1,11 @@
 import { createWithEqualityFn as create } from 'zustand/traditional';
 
+export type KnowledgePick = {
+  scope: string;
+  scopeName: string;
+  tag: string;
+};
+
 type ChatState = {
   content: string;
   inputSystemContext: string;
@@ -8,6 +14,8 @@ type ChatState = {
   isDragOver: boolean;
   shouldAutoSubmit: boolean;
   hasSent: boolean;
+  knowledgePicks: KnowledgePick[];
+  knowledgeSearching: boolean;
 };
 
 type ChatActions = {
@@ -18,6 +26,8 @@ type ChatActions = {
   setIsDragOver: (isDragOver: boolean) => void;
   setShouldAutoSubmit: (shouldAutoSubmit: boolean) => void;
   setHasSent: (hasSent: boolean) => void;
+  setKnowledgePicks: (knowledgePicks: KnowledgePick[]) => void;
+  setKnowledgeSearching: (knowledgeSearching: boolean) => void;
 };
 
 type ChatStore = ChatState & ChatActions;
@@ -30,6 +40,8 @@ const initialState: ChatState = {
   isDragOver: false,
   shouldAutoSubmit: false,
   hasSent: false,
+  knowledgePicks: [],
+  knowledgeSearching: false,
 };
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -41,4 +53,6 @@ export const useChatStore = create<ChatStore>((set) => ({
   setIsDragOver: (isDragOver) => set({ isDragOver }),
   setShouldAutoSubmit: (shouldAutoSubmit) => set({ shouldAutoSubmit }),
   setHasSent: (hasSent) => set({ hasSent }),
+  setKnowledgePicks: (knowledgePicks) => set({ knowledgePicks }),
+  setKnowledgeSearching: (knowledgeSearching) => set({ knowledgeSearching }),
 }));

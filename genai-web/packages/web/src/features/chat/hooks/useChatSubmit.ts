@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router';
+import { formatKnowledgeContext, searchKnowledge } from '@/features/chat/knowledgeSearch';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
@@ -7,6 +8,16 @@ import { usePrompter } from '@/hooks/usePrompter';
 import { useFileUploadable } from './useFileUploadable';
 
 type UseChatReturn = ReturnType<typeof useChat>;
+
+const errorText = (e: unknown) => {
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const data = (e as { response?: { data?: { error?: unknown } } }).response?.data;
+    if (typeof data?.error === 'string' && data.error) {
+      return data.error;
+    }
+  }
+  return e instanceof Error ? e.message : String(e);
+};
 
 export const useChatSubmit = ({
   usecase,
@@ -41,17 +52,34 @@ export const useChatSubmit = ({
     }
     setFollowing(true);
     const text = (overrideContent ?? useChatStore.getState().content) || content;
-    void Promise.resolve(
-      postChat(prompter.chatPrompt({ content: text }), {
-        uploadedFiles: fileUploadable ? uploadedFiles : undefined,
-        base64Cache,
-      }),
-    ).catch((e: unknown) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      window.alert(`送信に失敗しました: ${msg}`);
-    });
-    setContent('');
-    clearFiles();
+    const picks = useChatStore.getState().knowledgePicks;
+    const send = async () => {
+      let knowledgeContext: string | undefined;
+      if (picks.length > 0) {
+        useChatStore.getState().setKnowledgeSearching(true);
+        try {
+          const found = await searchKnowledge(text, picks);
+          knowledgeContext = formatKnowledgeContext(found.passages ?? []);
+        } catch (e: unknown) {
+          window.alert(`ナレッジの検索に失敗しました: ${errorText(e)}`);
+          return;
+        } finally {
+          useChatStore.getState().setKnowledgeSearching(false);
+        }
+      }
+      void Promise.resolve(
+        postChat(prompter.chatPrompt({ content: text }), {
+          uploadedFiles: fileUploadable ? uploadedFiles : undefined,
+          base64Cache,
+          knowledgeContext,
+        }),
+      ).catch((e: unknown) => {
+        window.alert(`送信に失敗しました: ${errorText(e)}`);
+      });
+      setContent('');
+      clearFiles();
+    };
+    void send();
   }, [
     content,
     base64Cache,

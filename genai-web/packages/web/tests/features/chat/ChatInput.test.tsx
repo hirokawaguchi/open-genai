@@ -23,11 +23,17 @@ vi.mock('react-router', async () => {
 });
 
 const mockSetHasSent = vi.fn();
+const knowledgeStore = {
+  knowledgePicks: [] as { scope: string; scopeName: string; tag: string }[],
+  setKnowledgePicks: vi.fn(),
+  knowledgeSearching: false,
+};
 const mockUseChatStore = vi.fn().mockReturnValue({
   content: '',
   setContent: vi.fn(),
   hasSent: false,
   setHasSent: mockSetHasSent,
+  ...knowledgeStore,
 });
 vi.mock('@/features/chat/stores/useChatStore', () => ({
   useChatStore: (...args: unknown[]) => mockUseChatStore(...args),
@@ -93,6 +99,10 @@ vi.mock('@/components/ui/icons/SendIcon', () => ({
   SendIcon: () => <span />,
 }));
 
+vi.mock('@/features/chat/components/KnowledgeSelectDialog', () => ({
+  KnowledgeSelectDialog: () => null,
+}));
+
 vi.mock('@/hooks/useSubmitKey', () => ({
   useSubmitKey: () => ({
     key: 'enter',
@@ -137,6 +147,7 @@ describe('ChatInput', () => {
       setContent: vi.fn(),
       hasSent: false,
       setHasSent: mockSetHasSent,
+      ...knowledgeStore,
     });
   });
 
@@ -162,6 +173,7 @@ describe('ChatInput', () => {
         setContent: vi.fn(),
         hasSent: true,
         setHasSent: mockSetHasSent,
+        ...knowledgeStore,
       });
       renderChatInput();
 
@@ -207,6 +219,7 @@ describe('ChatInput', () => {
         setContent: vi.fn(),
         hasSent: true,
         setHasSent: mockSetHasSent,
+        ...knowledgeStore,
       });
       renderChatInput();
 
@@ -237,6 +250,7 @@ describe('ChatInput', () => {
         setContent: vi.fn(),
         hasSent: true,
         setHasSent: mockSetHasSent,
+        ...knowledgeStore,
       });
 
       // ハッシュ遷移後: state が失われ key が変わっても、store の hasSent は変わらない
@@ -259,6 +273,7 @@ describe('ChatInput', () => {
         setContent: vi.fn(),
         hasSent: true,
         setHasSent: mockSetHasSent,
+        ...knowledgeStore,
       });
 
       mockUseLocation.mockReturnValue({

@@ -52,6 +52,8 @@ export type GenerateOptions = {
   overrideModelType?: Model['type'];
   setSessionId?: (sessionId: string) => void;
   base64Cache?: Record<string, string>;
+  /** 画面の発言には残さず、今回のモデル入力にだけ足すナレッジ抜粋。 */
+  knowledgeContext?: string;
 };
 
 const useChatStore = create<{
@@ -382,6 +384,7 @@ const useChatStore = create<{
       overrideModelType,
       setSessionId = () => {},
       base64Cache,
+      knowledgeContext,
     } = options;
 
     if (!get().chats[id]) {
@@ -475,6 +478,15 @@ const useChatStore = create<{
       extraData,
       base64Cache,
     );
+    if (knowledgeContext) {
+      const last = formattedMessages[formattedMessages.length - 1];
+      if (last?.role === 'user') {
+        formattedMessages[formattedMessages.length - 1] = {
+          ...last,
+          content: `${last.content}\n\n${knowledgeContext}`,
+        };
+      }
+    }
 
     const abort = new AbortController();
     streamAborts.set(id, abort);

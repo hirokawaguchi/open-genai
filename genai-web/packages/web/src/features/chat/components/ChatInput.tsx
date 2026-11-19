@@ -18,7 +18,9 @@ import {
 } from '@/components/ui/dads/FileUpload';
 import { formatSize } from '@/components/ui/dads/FileUpload/utils/formatSize';
 import { AttachmentIcon } from '@/components/ui/icons/AttachmentIcon';
+import { SearchIcon } from '@/components/ui/icons/SearchIcon';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
+import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
@@ -42,7 +44,9 @@ export const ChatInput = (props: Props) => {
   const { hint } = useSubmitKey();
 
   const { usecase, chatId } = useUsecasePath();
-  const { content, setContent, hasSent, setHasSent } = useChatStore();
+  const { content, setContent, hasSent, setHasSent, knowledgePicks, setKnowledgePicks, knowledgeSearching } =
+    useChatStore();
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
 
   const { loading, stopGeneration } = useChat(usecase, chatId);
   const {
@@ -130,7 +134,7 @@ export const ChatInput = (props: Props) => {
   const [promptWarn, setPromptWarn] = useState<PromptPiiWarn | null>(null);
   const promptWarnReq = useRef(0);
   const pendingSendRef = useRef<string | null>(null);
-  const disabledSend = loading;
+  const disabledSend = loading || knowledgeSearching;
   const fileErrorText = '選択したファイルにエラーがあります。該当ファイルをチェックしてください。';
 
   useEffect(() => {
@@ -283,8 +287,9 @@ export const ChatInput = (props: Props) => {
 
             <div className='flex w-full flex-col gap-2'>
               <div className='flex w-full items-start gap-6'>
+              <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
               {fileUpload && (
-                <FileUpload className='min-w-0 flex-1' hasError={errorMessages.length > 0}>
+                <FileUpload className='min-w-0' hasError={errorMessages.length > 0}>
                   <FileUploadInput
                     ref={fileInputRef}
                     onChange={onChangeFiles}
@@ -312,6 +317,18 @@ export const ChatInput = (props: Props) => {
                   </Button>
                 </FileUpload>
               )}
+              <Button
+                type='button'
+                variant={knowledgePicks.length > 0 ? 'solid-fill' : 'outline'}
+                size='md'
+                aria-pressed={knowledgePicks.length > 0}
+                className='inline-flex shrink-0 items-center justify-center gap-1'
+                onClick={() => setKnowledgeOpen(true)}
+              >
+                <SearchIcon aria-hidden={true} className='size-6 shrink-0' />
+                {knowledgePicks.length > 0 ? `ナレッジ選択中（${knowledgePicks.length}）` : 'ナレッジ選択'}
+              </Button>
+              </div>
 
               <LoadingButton
                 type={loading ? 'button' : 'submit'}
@@ -333,6 +350,43 @@ export const ChatInput = (props: Props) => {
               </LoadingButton>
               </div>
 
+              {knowledgeSearching && (
+                <p className='text-solid-gray-700' role='status'>
+                  ナレッジを検索しています。
+                </p>
+              )}
+              {knowledgePicks.length > 0 && (
+                <ul className='m-0 flex list-none flex-wrap gap-2 p-0'>
+                  {knowledgePicks.map((pick) => (
+                    <li key={`${pick.scope}:${pick.tag}`}>
+                      <button
+                        type='button'
+                        className='inline-flex items-center gap-1 rounded-full border border-solid-gray-420 px-3 py-1 text-dns-14N-130'
+                        aria-label={`${pick.scopeName}の${pick.tag}を外す`}
+                        onClick={() =>
+                          setKnowledgePicks(
+                            knowledgePicks.filter(
+                              (item) => item.scope !== pick.scope || item.tag !== pick.tag,
+                            ),
+                          )
+                        }
+                      >
+                        {pick.scopeName} / {pick.tag}
+                        <span aria-hidden={true}>×</span>
+                      </button>
+                    </li>
+                  ))}
+                  <li>
+                    <button
+                      type='button'
+                      className='px-2 py-1 text-dns-14N-130 underline'
+                      onClick={() => setKnowledgePicks([])}
+                    >
+                      すべて解除
+                    </button>
+                  </li>
+                </ul>
+              )}
               {fileUpload && uploadedFiles.length > 0 && (
                 <FileUpload className='w-full' hasError={errorMessages.length > 0}>
                   <FileUploadFileList className='py-1 overflow-y-auto max-h-48 overscroll-contain [scrollbar-gutter:stable]'>
@@ -430,6 +484,12 @@ export const ChatInput = (props: Props) => {
           </div>
         </div>
       </form>
+      <KnowledgeSelectDialog
+        isOpen={knowledgeOpen}
+        picks={knowledgePicks}
+        onChange={setKnowledgePicks}
+        onClose={() => setKnowledgeOpen(false)}
+      />
     </div>
   );
 };

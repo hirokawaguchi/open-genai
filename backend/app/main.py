@@ -3818,6 +3818,84 @@ async def knowledge_list_docs(
     return await _knowledge_get("/knowledge/docs", claims, scope, params)
 
 
+@app.post("/knowledge/search")
+async def knowledge_search(request: Request) -> JSONResponse:
+    """チャット用。参照できるスコープの、指定タグが付いた文書だけを検索する。"""
+    claims = _claims_from_request(request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    question = str(body.get("question") or "").strip()
+    if not question:
+        return JSONResponse(status_code=400, content={"error": "質問を入力してください"})
+    question = question[:8000]
+    raw = body.get("selections")
+    if not isinstance(raw, list) or not raw:
+        return JSONResponse(status_code=400, content={"error": "ナレッジのタグを選んでください"})
+    by_scope: dict[str, list[str]] = {}
+    for item in raw[:40]:
+        if not isinstance(item, dict):
+            continue
+        scope = str(item.get("scope") or "").strip()
+        tag = str(item.get("tag") or "").strip()
+        if not scope or not tag or len(tag) > 80:
+            continue
+        chosen = by_scope.setdefault(scope, [])
+        if tag not in chosen and len(chosen) < 20:
+            chosen.append(tag)
+    if not by_scope:
+        return JSONResponse(status_code=400, content={"error": "ナレッジのタグを選んでください"})
+    passages: list[dict[str, str]] = []
+    for scope, tags in by_scope.items():
+        err = _knowledge_authz(claims, scope)
+        if err:
+            return err
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                res = await client.post(
+                    f"{_rag_base()}/retrieve",
+                    json={"question": question, "mode": "auto", "top_k": 4, "tags": tags},
+                    headers=_knowledge_headers(claims, scope),
+                )
+        except httpx.HTTPError as e:
+            return JSONResponse(
+                status_code=502, content={"error": f"ナレッジの検索に失敗しました: {e}"}
+            )
+        try:
+            data = res.json()
+        except Exception:  # noqa: BLE001
+            data = {}
+        if res.status_code >= 400:
+            message = data.get("error") if isinstance(data, dict) else None
+            return JSONResponse(
+                status_code=502,
+                content={"error": message or "ナレッジの検索に失敗しました"},
+            )
+        nodes = data.get("nodes") if isinstance(data, dict) else []
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            text = str(node.get("text") or "").strip()
+            if not text:
+                continue
+            passages.append(
+                {
+                    "scope": scope,
+                    "source": str(node.get("source") or ""),
+                    "title": str(node.get("title") or ""),
+                    "text": text[:1500],
+                }
+            )
+            if len(passages) >= 12:
+                break
+        if len(passages) >= 12:
+            break
+    return JSONResponse(content={"passages": passages})
+
+
 @app.get("/knowledge/docs/{doc_id}/toc")
 async def knowledge_doc_toc(
     doc_id: str, request: Request, scope: str = Query(default="")
