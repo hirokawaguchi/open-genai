@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { plainFromRendered } from '@/components/latexToPlain';
 import { Button } from '@/components/ui/dads/Button';
 import { DocumentIcon } from '@/components/ui/icons/DocumentIcon';
 import { answerDocx } from '@/open-genai/office/answerDocx';
@@ -25,7 +26,7 @@ export const ExportAnswerWord = ({ text, targetRef }: Props) => {
     if (pending) return;
     setPending(true);
     try {
-      const shown = targetRef?.current?.innerText?.trim();
+      const shown = targetRef?.current ? plainFromRendered(targetRef.current) : '';
       await stageOfficeFile('回答.docx', await answerDocx(shown || text.trim()));
       navigate('/office/word?local=1');
     } catch {
@@ -39,11 +40,12 @@ export const ExportAnswerWord = ({ text, targetRef }: Props) => {
       type='button'
       size='sm'
       className='inline-flex items-center justify-center gap-x-1'
+      aria-label={pending ? '開いています' : 'Wordに出力'}
       disabled={pending}
       onClick={() => void open()}
     >
       <DocumentIcon className='shrink-0' aria-hidden={true} />
-      {pending ? '開いています' : 'Wordに出力'}
+      {pending ? '開いています' : 'Word'}
     </Button>
   );
 };

@@ -94,6 +94,7 @@ export const ExportAnswerPowerPoint = ({ text, modelId }: Props) => {
         type='button'
         size='sm'
         className='inline-flex items-center justify-center gap-x-1'
+        aria-label='PowerPointに出力'
         onClick={() => {
           cancelRef.current = false;
           setErrorText('');
@@ -102,7 +103,7 @@ export const ExportAnswerPowerPoint = ({ text, modelId }: Props) => {
         }}
       >
         <PresentationIcon className='shrink-0' aria-hidden={true} />
-        PowerPointに出力
+        スライド
       </Button>
       <CustomDialog isOpen={isOpen} onClose={close}>
         <CustomDialogPanel>

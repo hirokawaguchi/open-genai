@@ -90,7 +90,7 @@ export const ImageSupplement = (props: Props) => {
         onClick={() => void open()}
       >
         <ImageIcon className='shrink-0' aria-hidden={true} />
-        生成画像を見る
+        画像を見る
       </Button>
       <CustomDialog isOpen={isOpen} onClose={close}>
         <CustomDialogPanel className='max-w-3xl!'>
