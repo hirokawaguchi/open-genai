@@ -305,6 +305,45 @@ export const useNotebookActions = () => {
     [],
   );
 
+  const addKnowledgeRefs = useCallback(
+    async (
+      sessionId: string,
+      items: { scope: string; doc_id: string; source: string }[],
+      onProgress?: (label: string) => void,
+    ): Promise<NotebookSessionDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      let latest: NotebookSessionDetail | null = null;
+      const failed: string[] = [];
+      try {
+        for (const [index, item] of items.entries()) {
+          onProgress?.(`${item.source}（${index + 1}/${items.length}）`);
+          try {
+            const res = await teamApi.post<NotebookSessionDetail>(
+              `${BASE}/sessions/${encodeURIComponent(sessionId)}/knowledge-refs`,
+              { scope: item.scope, doc_id: item.doc_id },
+            );
+            latest = res.data ?? latest;
+          } catch (e) {
+            failed.push(`${item.source}: ${errorMessage(e, '追加に失敗しました。')}`);
+          }
+        }
+        if (failed.length > 0) {
+          setError(
+            failed.length === items.length
+              ? failed.join(' ')
+              : `一部を取り込めませんでした。${failed.join(' ')}`,
+          );
+        }
+        return latest;
+      } finally {
+        onProgress?.('');
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   const deleteKnowledgeRef = useCallback(
     async (sessionId: string, refId: string): Promise<NotebookSessionDetail | null> => {
       setError(null);
@@ -467,6 +506,7 @@ export const useNotebookActions = () => {
     addFile,
     deleteFile,
     addKnowledgeRef,
+    addKnowledgeRefs,
     deleteKnowledgeRef,
     chat,
     createSkill,

@@ -1,4 +1,6 @@
-import { useScopes, useTags } from '@/open-genai/knowledge/useKnowledge';
+import { useMemo } from 'react';
+import { tagFileChoices } from '@/open-genai/knowledge/tagFileCounts';
+import { useDocs, useScopes, useTags } from '@/open-genai/knowledge/useKnowledge';
 import type { KnowledgeScope, KnowledgeTag } from '@/open-genai/knowledge/types';
 import {
   CustomDialog,
@@ -28,6 +30,14 @@ const ScopeTags = ({
   onToggle: (tag: KnowledgeTag, checked: boolean) => void;
 }) => {
   const { tags, isLoading, error } = useTags(scope.scope);
+  const { docs, isLoading: docsLoading, error: docsError } = useDocs(scope.scope);
+  const fileCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const choice of tagFileChoices(docs)) {
+      counts.set(choice.tag, choice.files);
+    }
+    return counts;
+  }, [docs]);
   const searchable = tags.filter((tag) => tag.chunks > 0);
 
   return (
@@ -53,7 +63,10 @@ const ScopeTags = ({
                     checked={checked}
                     onChange={(event) => onToggle(tag, event.target.checked)}
                   />
-                  <span>{tag.tag}</span>
+                  <span>
+                    {tag.tag}
+                    {!docsLoading && !docsError && `（${fileCounts.get(tag.tag) ?? 0}件）`}
+                  </span>
                 </label>
               </li>
             );

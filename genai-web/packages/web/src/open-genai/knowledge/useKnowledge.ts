@@ -36,6 +36,15 @@ export const useTags = (scope: string | undefined) => {
   return { tags: (data?.tags ?? []) as KnowledgeTag[], error, isLoading, mutate };
 };
 
+export const listDocs = (scope: string, tags?: string[]) => {
+  const tagParam = (tags ?? []).filter(Boolean).join(',');
+  return teamApi
+    .get<DocsResponse>('knowledge/docs', {
+      params: { scope, ...(tagParam ? { tags: tagParam } : {}) },
+    })
+    .then((r) => r.data.documents ?? []);
+};
+
 /** スコープ内のドキュメント一覧（任意でタグ絞り込み）。 */
 export const useDocs = (scope: string | undefined, tags?: string[]) => {
   const tagParam = (tags ?? []).filter(Boolean).join(',');

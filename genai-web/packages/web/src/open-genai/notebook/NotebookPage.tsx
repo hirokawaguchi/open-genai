@@ -24,7 +24,9 @@ import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
-import { useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import { tagFileChoices } from '@/open-genai/knowledge/tagFileCounts';
+import { listDocs, useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import type { KnowledgeDoc } from '@/open-genai/knowledge/types';
 import {
   fetchGeneration,
   useEditorProjects,
@@ -230,12 +232,19 @@ export const NotebookPage = () => {
   const [skillId, setSkillId] = useState('');
   const [applyItemId, setApplyItemId] = useState('');
   const [knowledgeScope, setKnowledgeScope] = useState('');
-  const [knowledgeDocId, setKnowledgeDocId] = useState('');
+  const [knowledgeTag, setKnowledgeTag] = useState('');
+  const [addingKnowledgeLabel, setAddingKnowledgeLabel] = useState('');
+  const [knowledgeNote, setKnowledgeNote] = useState('');
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [addingFiles, setAddingFiles] = useState(false);
   const [addingFileLabel, setAddingFileLabel] = useState('');
   const { scopes } = useScopes();
-  const { docs: knowledgeDocs } = useDocs(knowledgeScope || undefined);
+  const { docs: knowledgeDocs, isLoading: knowledgeDocsLoading } = useDocs(
+    knowledgeScope || undefined,
+  );
+  const tagChoices = useMemo(() => tagFileChoices(knowledgeDocs), [knowledgeDocs]);
+  const selectedTag = tagChoices.find((choice) => choice.tag === knowledgeTag);
+  const selectedReady = selectedTag ? selectedTag.files - selectedTag.pending : 0;
 
   useEffect(() => {
     editorNameTouched.current = false;
@@ -447,15 +456,45 @@ export const NotebookPage = () => {
   };
 
   const onAddKnowledge = async () => {
-    if (!sessionId || !knowledgeScope || !knowledgeDocId) return;
-    const next = await actions.addKnowledgeRef(sessionId, {
-      scope: knowledgeScope,
-      doc_id: knowledgeDocId,
-    });
-    if (next) {
-      setKnowledgeDocId('');
-      await refresh(next);
+    if (!sessionId || !knowledgeScope || !knowledgeTag) return;
+    setKnowledgeNote('');
+    let docs: KnowledgeDoc[] = [];
+    try {
+      docs = await listDocs(knowledgeScope, [knowledgeTag]);
+    } catch {
+      actions.setError('ナレッジの文書を読み込めませんでした。');
+      return;
     }
+    const pending = docs.filter(
+      (doc) => doc.ingest_status === 'queued' || doc.ingest_status === 'processing',
+    );
+    const ready = docs.filter(
+      (doc) =>
+        doc.ingest_status !== 'failed' &&
+        doc.ingest_status !== 'queued' &&
+        doc.ingest_status !== 'processing',
+    );
+    if (ready.length === 0) {
+      actions.setError(
+        pending.length > 0
+          ? 'このタグの文書はまだ処理中です。終わってから、もう一度追加してください。'
+          : docs.length > 0
+            ? 'このタグの文書は取り込みに失敗しているため、追加できません。'
+            : 'このタグが付いた文書はありません。',
+      );
+      return;
+    }
+    const next = await actions.addKnowledgeRefs(
+      sessionId,
+      ready.map((doc) => ({ scope: knowledgeScope, doc_id: doc.doc_id, source: doc.source })),
+      setAddingKnowledgeLabel,
+    );
+    if (pending.length > 0) {
+      setKnowledgeNote(
+        `処理中の文書が ${pending.length} 件あります。終わってから、同じタグでもう一度追加してください。`,
+      );
+    }
+    if (next) await refresh(next);
   };
 
   const onDeleteKnowledge = async (refId: string) => {
@@ -943,7 +982,7 @@ export const NotebookPage = () => {
                     <div className='flex flex-col gap-2'>
                       <p className='text-dns-14N-130 text-solid-gray-700'>ナレッジを取り込む</p>
                       <p className='text-dns-14N-130 text-solid-gray-600'>
-                        選んだ文書のコピーをこのノートに入れます。「このノートのMCP」とは別です。
+                        選んだタグが付いている文書を、いまの内容でこのノートに写します。同じタグへあとから足した文書は、もう一度追加するまで入りません。「このノートのMCP」とは別です。
                       </p>
                       <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end'>
                         <Select
@@ -952,7 +991,8 @@ export const NotebookPage = () => {
                           value={knowledgeScope}
                           onChange={(e) => {
                             setKnowledgeScope(e.target.value);
-                            setKnowledgeDocId('');
+                            setKnowledgeTag('');
+                            setKnowledgeNote('');
                           }}
                           className='sm:min-w-40 sm:flex-1'
                         >
@@ -963,32 +1003,54 @@ export const NotebookPage = () => {
                           ))}
                         </Select>
                         <Select
-                          id='notebook-knowledge-doc'
+                          id='notebook-knowledge-tag'
                           blockSize='sm'
-                          value={knowledgeDocId}
-                          onChange={(e) => setKnowledgeDocId(e.target.value)}
+                          value={knowledgeTag}
+                          onChange={(e) => {
+                            setKnowledgeTag(e.target.value);
+                            setKnowledgeNote('');
+                          }}
                           className='sm:min-w-40 sm:flex-1'
                         >
-                          <option value=''>資料を選ぶ</option>
-                          {knowledgeDocs
-                            .filter((d) => d.ingest_status !== 'failed')
-                            .map((d) => (
-                              <option key={d.doc_id} value={d.doc_id}>
-                                {d.source}
-                              </option>
-                            ))}
+                          <option value=''>
+                            {knowledgeDocsLoading ? 'タグを読み込んでいます' : 'タグを選ぶ'}
+                          </option>
+                          {tagChoices.map((choice) => (
+                            <option key={choice.tag} value={choice.tag}>
+                              {choice.tag}（{choice.files}件）
+                            </option>
+                          ))}
                         </Select>
                         <Button
                           type='button'
                           variant='solid-fill'
                           size='sm'
                           className='w-fit'
-                          aria-disabled={actions.submitting || !knowledgeDocId || undefined}
+                          aria-disabled={
+                            actions.submitting || !knowledgeTag || selectedReady === 0 || undefined
+                          }
                           onClick={() => void onAddKnowledge()}
                         >
-                          ナレッジから追加
+                          {selectedTag
+                            ? `ナレッジから追加（${selectedReady}件）`
+                            : 'ナレッジから追加'}
                         </Button>
                       </div>
+                      {selectedTag && selectedTag.pending > 0 && (
+                        <p className='text-dns-14N-130 text-solid-gray-700'>
+                          処理中が {selectedTag.pending} 件あるため、いま写すのは {selectedReady}{' '}
+                          件です。
+                        </p>
+                      )}
+                      {addingKnowledgeLabel && (
+                        <p className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
+                          <Spinner />
+                          {addingKnowledgeLabel} を取り込んでいます
+                        </p>
+                      )}
+                      {knowledgeNote && (
+                        <p className='text-dns-14N-130 text-solid-gray-700'>{knowledgeNote}</p>
+                      )}
                     </div>
                   </div>
                   <div className='flex flex-col gap-2 border-t border-solid-gray-200 pt-3'>
@@ -1413,7 +1475,9 @@ export const NotebookPage = () => {
             ) : (
               <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
                 <p>・「ノート一覧」でノートを作り、開きます。</p>
-                <p>・「参考資料」にファイルやナレッジを取り込みます。項目の根拠になります。</p>
+                <p>
+                  ・「参考資料」にファイルを追加するか、ナレッジのタグを選んで文書を写します。項目の根拠になります。タグに後から足した文書は、もう一度追加するまで入りません。
+                </p>
                 <p>
                   ・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。
                 </p>
