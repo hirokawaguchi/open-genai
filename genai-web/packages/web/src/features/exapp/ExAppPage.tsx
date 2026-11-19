@@ -1,7 +1,6 @@
 import { Suspense, useEffect, useMemo } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { Navigate, useLocation, useParams } from 'react-router';
-import { builtinRouteOf } from '@/features/exapps/utils/builtinExApp';
 import { PageTitle } from '@/components/PageTitle';
 import { Divider } from '@/components/ui/dads/Divider';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
@@ -13,6 +12,8 @@ import { ExAppForm } from '@/features/exapp/components/ExAppForm';
 import { ExAppHeader } from '@/features/exapp/components/ExAppHeader';
 import { ExAppInvokedHistories } from '@/features/exapp/components/ExAppInvokedHistories';
 import { ExAppResult } from '@/features/exapp/components/ExAppResult';
+import { WhisperLivePanel } from '@/features/exapp/components/WhisperLivePanel';
+import { builtinRouteOf } from '@/features/exapps/utils/builtinExApp';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { isJSON } from '@/utils/isJSON';
@@ -146,11 +147,12 @@ export const ExAppPage = () => {
                   {shouldFetchSchema && isSchemaLoading ? (
                     <ProgressIndicator label='入力フォームを読み込み中...' />
                   ) : (
-                    <ExAppForm
-                      exApp={exApp}
-                      uiJson={uiJson}
-                      defaultValues={defaultValuesJson}
-                    />
+                    <>
+                      {exApp.exAppId === 'whisper' ? (
+                        <WhisperLivePanel teamId={exApp.teamId} exAppId={exApp.exAppId} />
+                      ) : null}
+                      <ExAppForm exApp={exApp} uiJson={uiJson} defaultValues={defaultValuesJson} />
+                    </>
                   )}
                   <Divider className='my-6' />
 

@@ -70,6 +70,7 @@ from . import (
     teams_store,
     think_text,
     titlegen,
+    whisper_live,
 )
 
 # ファイル添付の保存先と、ブラウザから見たバックエンドの公開 URL
@@ -421,7 +422,9 @@ WHISPER_SEED: dict[str, Any] = {
     "howToUse": (
         "## このアプリでできること\n\n"
         "会議やインタビューの録音などの音声・動画ファイルを、テキストに書き起こします。"
-        "音声はクラウドに送信されないため、機微な内容も扱えます。\n\n"
+        "ファイルとして添付した音声はクラウドに送信されないため、機微な内容も扱えます。"
+        "マイクからその場で文字にする機能は、OpenAI の API キーがあり、棟の管理で許可しているときだけ表示されます。"
+        "マイクの音声は OpenAI（gpt-live-transcribe）へ送信されます。\n\n"
         "実際に読める形式は、PyAV の同梱 FFmpeg がデコードできるものが上限です。"
         "実務上は次が通ります。\n\n"
         "### 音声\n\n"
@@ -452,6 +455,9 @@ WHISPER_SEED: dict[str, Any] = {
         "（代表例: mp3 / wav / m4a / mp4 / webm。対応形式の一覧は上記）。\n"
         "2. 「言語」を選びます（迷ったら「自動判定」でOK。日本語/英語は明示指定も可）。\n"
         "3. 「実行」を押すと、タイムスタンプ付きの文字起こし結果が表示されます。\n\n"
+        "マイクで文字にする場合は、OpenAI の API キーがあり、棟の管理で「文字起こし（マイク）」がオンのとき「マイクで開始」が出ます。"
+        "話し終わったら「停止」すると、結果が利用履歴に残ります。"
+        "マイクの音声にタイムスタンプと話者分離はありません。\n\n"
         "## コツ・注意\n\n"
         "- 長い音声は処理に時間がかかります。区切って投入すると安定します。\n"
         "- ファイルの目安は 180MB までです。それを超える場合は分割してください。\n"
@@ -1262,6 +1268,17 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
         ),
         "old_howto_markers": ("対話でも同じソースを使えます",),
+    },
+    {
+        "seed": WHISPER_SEED,
+        "old_name": "文字起こし（クラウド非送信の旧説明）",
+        "old_description": "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き・旧説明）。",
+        "old_howto_markers": (
+            "書き起こします。音声はクラウドに送信されないため",
+            "表示されます。\nマイクで文字にする場合は",
+            "OpenAI の API キーを設定した環境だけで表示されます。",
+            "OpenAI の API キーがある環境に「マイクで開始」が出ます。",
+        ),
     },
 ]
 
@@ -4653,6 +4670,191 @@ async def _accept_whisper_invoke(
             },
         }
     )
+
+
+def _whisper_live_block_message(user_id: str, claims: dict[str, Any]) -> str | None:
+    """マイク文字起こしを止める理由。使えるときは None。"""
+    app_def = teams_store.get_exapp(COMMON_TEAM_ID, "whisper")
+    if not app_def:
+        return "文字起こしが見つかりません。"
+    active = _active_tenant_id(user_id, claims) if user_id else ""
+    if not _has_no_tenant(active) and not teams_store.builtin_feature_enabled(active, "whisper"):
+        return "この棟ではこのアプリを利用できません。"
+    if not _has_no_tenant(active) and not teams_store.builtin_feature_enabled(
+        active, "whisper-live"
+    ):
+        return "この棟ではマイクの文字起こしを利用できません。"
+    return None
+
+
+def _save_whisper_live(
+    *,
+    claims: dict[str, Any],
+    user_id: str,
+    language: str,
+    transcript: str,
+    started: float,
+) -> tuple[str | None, str | None]:
+    """確定した文字起こしを利用履歴と監査ログへ残す。
+
+    戻り値は (createdDate, 禁止ワードで止めた理由)。空の文字起こしは保存しない。
+    """
+    text = transcript.strip()
+    if not text:
+        return None, None
+    app_def = teams_store.get_exapp(COMMON_TEAM_ID, "whisper") or {}
+    team = teams_store.get_team(COMMON_TEAM_ID)
+    tenant_id = _active_tenant_id(user_id, claims)
+    blocked, reason = ngwords.check(text, tenant_id)
+    if blocked:
+        outputs = reason or "入力に使用できない語句が含まれています。"
+        status = "ERROR"
+        audit_action = "input.blocked"
+        audit_status = 403
+    else:
+        outputs = whisper_live.format_output(text)
+        status = "COMPLETED"
+        audit_action = "exapp.invoke"
+        audit_status = 200
+    try:
+        saved = teams_store.create_exapp_history(
+            {
+                "teamId": COMMON_TEAM_ID,
+                "teamName": team["teamName"] if team else "",
+                "exAppId": "whisper",
+                "exAppName": app_def.get("exAppName") or "文字起こし",
+                "userId": user_id,
+                "tenantId": tenant_id,
+                "inputs": {
+                    "source": "microphone",
+                    "language": language,
+                    "destination": "api.openai.com",
+                },
+                "outputs": outputs,
+                "status": status,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[whisper-live] 履歴の保存に失敗: {exc}")
+        return None, reason if blocked else "利用履歴の保存に失敗しました。"
+    try:
+        audit.record(
+            None,
+            action=audit_action,
+            usecase="exapp:whisper",
+            teamId=COMMON_TEAM_ID,
+            exAppId="whisper",
+            model=whisper_live.LIVE_MODEL,
+            status=audit_status,
+            input_text=(
+                text
+                if blocked
+                else f"microphone language={language} destination=api.openai.com"
+            ),
+            output_text=outputs,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            user_id=user_id,
+            user_email=claims.get("email") or "",
+            user_name=claims.get("name") or "",
+            groups=list(claims.get("groups") or []),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[whisper-live] 監査ログの記録に失敗: {exc}")
+    created = str(saved.get("createdDate") or "")
+    return created or None, reason if blocked else None
+
+
+@app.get("/whisper/live/config")
+async def whisper_live_config(request: Request) -> JSONResponse:
+    """マイク文字起こしを出してよいか。キーの有無以外は返さない。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    enabled = (
+        _whisper_live_block_message(user_id, claims) is None
+        and whisper_live.resolve_api_key(os.environ) is not None
+    )
+    return JSONResponse(content={"enabled": enabled})
+
+
+@app.websocket("/whisper/live")
+async def whisper_live_ws(websocket: WebSocket) -> None:
+    """ブラウザのマイク音声を OpenAI のリアルタイム文字起こしへ中継する。"""
+    await websocket.accept()
+    started = time.monotonic()
+    claims: dict[str, Any] = {}
+    language = "auto"
+    first: dict[str, Any] = {}
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), 15)
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("payload")
+        first = parsed
+        claims = auth.verify_token(str(first.get("token") or ""))
+    except Exception:  # noqa: BLE001
+        await _send_ws_json(websocket, {"type": "error", "message": "認証が必要です"})
+        await _close_ws(websocket, 4401)
+        return
+
+    user_id = _user_id(claims)
+    blocked = _whisper_live_block_message(user_id, claims)
+    if blocked:
+        await _send_ws_json(websocket, {"type": "error", "message": blocked})
+        await _close_ws(websocket, 4403)
+        return
+    api_key = whisper_live.resolve_api_key(os.environ)
+    if not api_key:
+        await _send_ws_json(
+            websocket,
+            {"type": "error", "message": "この環境ではマイク文字起こしを利用できません。"},
+        )
+        await _close_ws(websocket, 4403)
+        return
+    language = whisper_live.normalize_language(first.get("language") if isinstance(first, dict) else "auto")
+
+    transcript = ""
+    error_message = ""
+    try:
+        transcript = await whisper_live.run_live_session(
+            websocket, api_key, language=language
+        )
+    except whisper_live.WhisperLiveError as exc:
+        error_message = exc.message
+        transcript = exc.transcript or transcript
+    except Exception as exc:  # noqa: BLE001
+        print(f"[whisper-live] セッション失敗: {exc!r}")
+        error_message = "マイクの文字起こしが中断されました。"
+
+    created, block_reason = _save_whisper_live(
+        claims=claims,
+        user_id=user_id,
+        language=language,
+        transcript=transcript,
+        started=started,
+    )
+    if block_reason:
+        error_message = block_reason
+    if error_message:
+        await _send_ws_json(websocket, {"type": "error", "message": error_message})
+    if created:
+        await _send_ws_json(websocket, {"type": "saved", "createdDate": created})
+    await _close_ws(websocket, 1000)
+
+
+async def _send_ws_json(websocket: WebSocket, payload: dict[str, str]) -> None:
+    try:
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+    except Exception:  # noqa: BLE001
+        return
+
+
+async def _close_ws(websocket: WebSocket, code: int) -> None:
+    try:
+        await websocket.close(code=code)
+    except Exception:  # noqa: BLE001
+        return
 
 
 @app.post("/exapps/invoke")

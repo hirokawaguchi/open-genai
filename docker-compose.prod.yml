@@ -68,6 +68,8 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      # マイク文字起こし。未設定なら api.openai.com 向けの既存キーを使う。
+      - WHISPER_LIVE_API_KEY=${WHISPER_LIVE_API_KEY:-}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-qwen2.5:7b}
       # チャットタイトル生成方式（heuristic=LLM不使用が既定 / llm）
       - TITLE_MODE=${TITLE_MODE:-heuristic}

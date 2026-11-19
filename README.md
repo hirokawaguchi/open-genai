@@ -668,13 +668,14 @@ Open GENAI では **機能ごとに入口を分けています**（どちらも�
 **文字起こしで exApp を選んだ理由**
 
 - 源内 `/transcribe` の主な差分は **話者分離（diarization）** だが、ローカルの faster-whisper では Transcribe 相当の話者認識は提供していない。**あえて外し**、言語指定・タイムスタンプ付き出力・**exApp 利用履歴**に寄せた
-- 音声は exApp 実行時にコンテナ内で処理され、クラウドへ送信されない（源内 `/transcribe` のコードはリポジトリに残るが、Open GENAI では `/apps/.../whisper` から利用する）
+- ファイルとして添付した音声は exApp 実行時にコンテナ内で処理され、クラウドへ送信されない（源内 `/transcribe` のコードはリポジトリに残るが、Open GENAI では `/apps/.../whisper` から利用する）
+- マイクのリアルタイム文字起こしは、OpenAI の API キー（`api.openai.com`）がある環境だけで「マイクで開始」を出す。音声は OpenAI の `gpt-live-transcribe` へ送る。Ollama や Azure のキーでは出さない
 
 ### 文字起こし（ローカル Whisper）
 
 - `whisper-app`（faster-whisper / CPU）。音声・動画を添付して実行すると文字起こし（タイムスタンプ付き）を返します。使い方に対応形式の表があります。
 - モデルは `.env` の `WHISPER_MODEL`（既定 `medium`。`small`/`large-v3` も可）。初回実行時にモデルを取得し `whisper_cache` ボリュームにキャッシュします。
-- クラウドの Amazon Transcribe + S3 への依存を置き換えています。
+- クラウドの Amazon Transcribe + S3 への依存を置き換えています。マイク入力だけは OpenAI のリアルタイム文字起こしを使い、API キーはサーバーに置きます。
 
 ### 画像生成（源内 Web `/image` + Stable Diffusion）
 

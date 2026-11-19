@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import type { Tenant, TenantMembership } from 'genai-web';
+import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { PageTitle } from '@/components/PageTitle';
 import { Button } from '@/components/ui/dads/Button';
@@ -22,6 +22,7 @@ const FEATURE_OPTIONS = [
   { id: 'image', label: '画像を生成' },
   { id: 'diagram', label: 'ダイアグラムを生成' },
   { id: 'whisper', label: '文字起こし' },
+  { id: 'whisper-live', label: '文字起こし（マイク）' },
   { id: 'prompt', label: 'プロンプトテンプレート' },
   { id: 'chosei', label: '日程調整' },
   { id: 'doccheck', label: '書類読取とチェック' },
@@ -72,7 +73,10 @@ export const TenantsPage = () => {
       setMembers([]);
       return;
     }
-    void actions.listMembers(selected.tenantId).then(setMembers).catch(() => setMembers([]));
+    void actions
+      .listMembers(selected.tenantId)
+      .then(setMembers)
+      .catch(() => setMembers([]));
   }, [selected?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async (fn: () => Promise<void>) => {
@@ -170,9 +174,7 @@ export const TenantsPage = () => {
               value={selected?.tenantId ?? ''}
               onChange={(e) => setSelectedId(e.target.value)}
             >
-              {adminTenants.length === 0 && (
-                <option value=''>棟が読み込めていません</option>
-              )}
+              {adminTenants.length === 0 && <option value=''>棟が読み込めていません</option>}
               {adminTenants.map((t) => (
                 <option key={t.tenantId} value={t.tenantId}>
                   {t.tenantName}
@@ -306,11 +308,7 @@ const RenameEditor = ({
       <div className='flex flex-wrap items-end gap-3'>
         <div className='flex flex-col gap-1'>
           <Label htmlFor='rename-tenant'>棟の名前</Label>
-          <Input
-            id='rename-tenant'
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
+          <Input id='rename-tenant' value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <Button
           type='button'
@@ -357,7 +355,8 @@ const FeatureEditor = ({
       <h2 className='text-std-20B-150'>この棟で出す機能</h2>
       <SupportText>
         オフにすると、この棟のカタログとメニューから隠れ、実行もできません。未設定はすべて出します。公式アプリに加え、共通チームの公開アプリ（Dify
-        連携など）もここで選べます。未起動の公式アプリは利用者のメニューには出ません。監査などの管理者ツールは対象外です。
+        連携など）もここで選べます。未起動の公式アプリは利用者のメニューには出ません。監査などの管理者ツールは対象外です。「文字起こし（マイク）」をオフにしても、ファイルの文字起こしは残ります。OpenAI
+        のキーが無い環境では、オンでもマイクは出ません。
       </SupportText>
       <div className='flex flex-col gap-2'>
         {FEATURE_OPTIONS.map((opt) => (
@@ -368,7 +367,13 @@ const FeatureEditor = ({
               onChange={(e) => toggle(opt.id, e.target.checked)}
             />
             <span>{opt.label}</span>
-            <OfficialAppRuntimeStatus id={opt.id} running={running} />
+            {opt.id === 'whisper-live' ? (
+              <span className='text-dns-14N-130 text-solid-gray-600'>
+                オフにしてもファイルの文字起こしは残ります
+              </span>
+            ) : (
+              <OfficialAppRuntimeStatus id={opt.id} running={running} />
+            )}
           </label>
         ))}
         {commonApps.length > 0 && (

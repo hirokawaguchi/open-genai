@@ -300,6 +300,14 @@ def test_common_app_respects_feature_flag(store) -> None:
     assert store.builtin_feature_enabled(tenant["tenantId"], "notebook") is True
 
 
+def test_whisper_live_can_be_disabled_without_hiding_files(store) -> None:
+    tenant = store.create_tenant("川口市", features={"whisper-live": False})
+    assert store.builtin_feature_enabled(tenant["tenantId"], "whisper-live") is False
+    assert store.builtin_feature_enabled(tenant["tenantId"], "whisper") is True
+    untouched = store.create_tenant("さいたま市")
+    assert store.builtin_feature_enabled(untouched["tenantId"], "whisper-live") is True
+
+
 def test_builtin_feature_flag(store) -> None:
     other = store.create_tenant(
         "川口市", features={"ssh": False, "procuretech-editor": False}
