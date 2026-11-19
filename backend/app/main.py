@@ -23,6 +23,7 @@ import os
 import re
 import time
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -162,6 +163,14 @@ WORLDMONITOR_UPSTREAM = os.environ.get(
 # オフィス（Compose profiles: ["office"]）。UI は /office。実体は静的なブラウザー版。
 # endpoint の /invoke はヘルスチェック導出用（実体なし）。到達確認は /health。
 OFFICE_UPSTREAM = os.environ.get("OFFICE_UPSTREAM", "http://office:8080").rstrip("/")
+# 文書生成（procuretech-generate-app）。チャットの PowerPoint 書き出しが /compose を使う。
+# /invoke はヘルスチェック導出用。到達確認は /health。
+GENERATE_APP_URL = os.environ.get(
+    "PROCURETECH_GENERATE_APP_URL", "http://procuretech-generate-app:8016"
+).rstrip("/")
+GENERATE_APP_API_KEY = os.environ.get("EDITOR_COMPOSE_API_KEY") or os.environ.get(
+    "GENERATE_API_KEY", ""
+)
 # 戦国国取り（Compose profiles: ["sengoku"] でオプション起動。お遊びのシミュレーションゲーム）。
 # 実 API は /sengoku/* プロキシ。endpoint 末尾の /invoke はヘルスチェック導出用（実体なし可）。
 SENGOKU_APP_URL = os.environ.get("SENGOKU_APP_URL", "http://sengoku-app:8019/invoke")
@@ -5979,6 +5988,244 @@ async def office_export(request: Request, name: str = Query(default="")) -> JSON
             "file_url": "",
             "object_key": object_key,
         }
+    )
+
+
+# チャットの PowerPoint 書き出し。文書生成の合成ジョブを、ログイン利用者に紐づけて中継する。
+_PPTX_JOBS: dict[str, str] = {}
+_PPTX_JOB_ID = re.compile(r"^[0-9a-f]{32}$")
+_PPTX_MARKDOWN_LIMIT = 300_000
+_PPTX_ASSET_LIMIT = 40
+_PPTX_ASSET_CHARS = 12_000_000
+
+
+def _generate_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if GENERATE_APP_API_KEY:
+        headers["X-API-Key"] = GENERATE_APP_API_KEY
+    return headers
+
+
+def _pptx_user(request: Request) -> str | JSONResponse:
+    user_id = _user_id(_claims_from_request(request))
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    return user_id
+
+
+def _pptx_assets(raw: Any) -> dict[str, str] | None:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > _PPTX_ASSET_LIMIT:
+        return None
+    assets: dict[str, str] = {}
+    for key, value in raw.items():
+        rel = str(key).replace("\\", "/").lstrip("./")
+        if (
+            not rel.startswith("images/")
+            or ".." in rel
+            or len(rel) > 180
+            or not isinstance(value, str)
+            or len(value) > _PPTX_ASSET_CHARS
+        ):
+            return None
+        try:
+            decoded = base64.b64decode(value, validate=False)
+        except Exception:  # noqa: BLE001
+            return None
+        if not decoded:
+            return None
+        assets[rel] = value
+    return assets
+
+
+def _remember_pptx_job(user_id: str, job_id: str) -> None:
+    _PPTX_JOBS[job_id] = user_id
+    if len(_PPTX_JOBS) > 200:
+        for old in list(_PPTX_JOBS)[:50]:
+            _PPTX_JOBS.pop(old, None)
+
+
+def _pptx_title(raw: str) -> str:
+    title = re.sub(r"[\r\n\t]+", " ", raw).strip()
+    title = re.sub(r'[\\/:*?"<>|]', "", title)
+    title = title[:80].strip()
+    return title or "回答"
+
+
+def _pptx_from_zip(data: bytes) -> bytes | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = [
+                name
+                for name in archive.namelist()
+                if name.lower().endswith(".pptx") and not name.endswith("/")
+            ]
+            if not names:
+                return None
+            return archive.read(names[0])
+    except zipfile.BadZipFile:
+        return None
+
+
+async def _generate_json(
+    method: str, path: str, body: dict[str, Any] | None = None, timeout: float = 30.0
+) -> tuple[int, dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(
+                method, f"{GENERATE_APP_URL}{path}", json=body, headers=_generate_headers()
+            )
+    except httpx.HTTPError:
+        return 503, {"error": "文書生成に接続できませんでした。"}
+    try:
+        payload = res.json() if res.content else {}
+    except Exception:  # noqa: BLE001
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return res.status_code, payload
+
+
+@app.get("/procuretech-generate/config")
+async def procuretech_generate_config(request: Request) -> JSONResponse:
+    user = _pptx_user(request)
+    if isinstance(user, JSONResponse):
+        return user
+    enabled = await _is_app_up(f"{GENERATE_APP_URL}/invoke")
+    return JSONResponse(content={"enabled": enabled})
+
+
+@app.post("/procuretech-generate/compose")
+async def procuretech_generate_compose(request: Request) -> JSONResponse:
+    user = _pptx_user(request)
+    if isinstance(user, JSONResponse):
+        return user
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    markdown = str((body or {}).get("markdown") or "")
+    if not markdown.strip():
+        return JSONResponse(status_code=400, content={"error": "原稿がありません"})
+    if len(markdown) > _PPTX_MARKDOWN_LIMIT:
+        return JSONResponse(status_code=400, content={"error": "原稿が長すぎます"})
+    assets = _pptx_assets((body or {}).get("assets"))
+    if assets is None:
+        return JSONResponse(status_code=400, content={"error": "画像の指定が不正です"})
+    title = _pptx_title(str((body or {}).get("title") or ""))
+    instruction = str((body or {}).get("instruction") or "").strip()[:1000]
+    status, payload = await _generate_json(
+        "POST",
+        "/compose/jobs",
+        {
+            "outputs": [
+                {
+                    "name": title,
+                    "format": "pptx",
+                    "instruction": instruction,
+                    "sections": [{"filename": "回答.md", "content": markdown}],
+                }
+            ],
+            "assets": assets,
+        },
+    )
+    job_id = str(payload.get("job_id") or "")
+    if status not in (200, 202) or not _PPTX_JOB_ID.fullmatch(job_id):
+        return JSONResponse(
+            status_code=503 if status >= 500 or status == 0 else 502,
+            content={"error": str(payload.get("error") or "スライドの作成を開始できませんでした。")},
+        )
+    _remember_pptx_job(user, job_id)
+    return JSONResponse(status_code=202, content={"jobId": job_id})
+
+
+def _pptx_job_for(request: Request, job_id: str) -> JSONResponse | None:
+    if not _PPTX_JOB_ID.fullmatch(job_id):
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    user = _pptx_user(request)
+    if isinstance(user, JSONResponse):
+        return user
+    if _PPTX_JOBS.get(job_id) != user:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return None
+
+
+@app.get("/procuretech-generate/compose/{job_id}")
+async def procuretech_generate_compose_status(request: Request, job_id: str) -> JSONResponse:
+    denied = _pptx_job_for(request, job_id)
+    if denied:
+        return denied
+    status, payload = await _generate_json("GET", f"/compose/jobs/{job_id}")
+    if status == 404:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    if status != 200:
+        return JSONResponse(
+            status_code=503 if status >= 500 else 502,
+            content={"error": str(payload.get("error") or "スライドの状況を取得できませんでした。")},
+        )
+    body: dict[str, Any] = {
+        "status": payload.get("status") or "",
+        "progress": payload.get("progress") or 0,
+        "step": payload.get("step") or "",
+    }
+    if payload.get("error"):
+        body["error"] = payload["error"]
+    mermaid = payload.get("mermaid")
+    if isinstance(mermaid, list):
+        body["mermaid"] = [
+            {"path": item.get("path"), "code": item.get("code")}
+            for item in mermaid
+            if isinstance(item, dict)
+        ]
+    return JSONResponse(content=body)
+
+
+@app.post("/procuretech-generate/compose/{job_id}/mermaid")
+async def procuretech_generate_compose_mermaid(request: Request, job_id: str) -> JSONResponse:
+    denied = _pptx_job_for(request, job_id)
+    if denied:
+        return denied
+    try:
+        incoming = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": "invalid json"})
+    assets = _pptx_assets((incoming or {}).get("assets"))
+    if not assets:
+        return JSONResponse(status_code=400, content={"error": "図の画像がありません"})
+    status, payload = await _generate_json(
+        "POST", f"/compose/jobs/{job_id}/mermaid", {"assets": assets}, timeout=120.0
+    )
+    if status not in (200, 202):
+        return JSONResponse(
+            status_code=503 if status >= 500 else 502,
+            content={"error": str(payload.get("error") or "図をスライドへ入れられませんでした。")},
+        )
+    return JSONResponse(content={"status": payload.get("status") or "success"})
+
+
+@app.get("/procuretech-generate/compose/{job_id}/file")
+async def procuretech_generate_compose_file(request: Request, job_id: str) -> Response:
+    denied = _pptx_job_for(request, job_id)
+    if denied:
+        return denied
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.get(
+                f"{GENERATE_APP_URL}/compose/jobs/{job_id}/result",
+                headers=_generate_headers(),
+            )
+    except httpx.HTTPError:
+        return JSONResponse(status_code=503, content={"error": "文書生成に接続できませんでした。"})
+    if res.status_code != 200:
+        return JSONResponse(status_code=409, content={"error": "スライドはまだできていません。"})
+    pptx = _pptx_from_zip(res.content)
+    if not pptx:
+        return JSONResponse(status_code=502, content={"error": "スライドを取り出せませんでした。"})
+    return Response(
+        content=pptx,
+        media_type=_OFFICE_EXPORT_TYPES["pptx"],
+        headers={"Content-Disposition": 'attachment; filename="answer.pptx"'},
     )
 
 

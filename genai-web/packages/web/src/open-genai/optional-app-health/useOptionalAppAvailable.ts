@@ -58,6 +58,9 @@ export const useWorldmonitorAvailable = (): boolean =>
 
 export const useOfficeAvailable = (): boolean => useOptionalAppAvailable('office/config');
 
+export const useProcuretechGenerateAvailable = (): boolean =>
+  useOptionalAppAvailable('procuretech-generate/config');
+
 export const useNishukanAvailable = (): boolean => useOptionalAppAvailable('nishukan/config');
 
 export const useLmsAvailable = (): boolean => useOptionalAppAvailable('lms/config');

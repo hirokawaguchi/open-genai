@@ -482,6 +482,7 @@ def _render_output(
     sections: list[dict[str, Any]],
     assets: dict[str, bytes],
     on_progress: Any = None,
+    instruction: str = "",
 ) -> bytes:
     # HTML はブラウザでの庁内情報伝達を目的とし、常に縦スクロールの単一文書にする。
     # スライド（LLM デッキ）は PPTX 専用に残す。
@@ -491,7 +492,9 @@ def _render_output(
             on_progress(1.0, "書き出し")
         return data
     if fmt == "pptx":
-        deck = plan_deck(name, sections, assets, on_progress=on_progress)
+        deck = plan_deck(
+            name, sections, assets, on_progress=on_progress, instruction=instruction
+        )
         if deck:
             print(f"[generate] pptx: LLM deck ({len(deck.get('slides') or [])} slides)")
             if on_progress:
@@ -549,7 +552,14 @@ def _render_all(
                 pct = int(_lo + (_hi - _lo) * max(0.0, min(1.0, frac)))
                 progress_cb(pct, f"{_name}: {label}")
 
-        data = _render_output(fmt, name, sections, assets, on_progress=_op if progress_cb else None)
+        data = _render_output(
+            fmt,
+            name,
+            sections,
+            assets,
+            on_progress=_op if progress_cb else None,
+            instruction=str(o.get("instruction") or ""),
+        )
         arc = f"{name}.{fmt}"
         n = 2
         while arc in used:
@@ -618,7 +628,13 @@ def _prepare_compose(
 
         op = _op if progress_cb else None
         if fmt == "pptx" and defer_mermaid:
-            deck = plan_deck(name, sections, assets, on_progress=op)
+            deck = plan_deck(
+                name,
+                sections,
+                assets,
+                on_progress=op,
+                instruction=str(o.get("instruction") or ""),
+            )
             if deck:
                 needed = pending_mermaid(deck, assets)
                 if needed:
@@ -637,7 +653,14 @@ def _prepare_compose(
                 if op:
                     op(1.0, "書き出し")
         else:
-            data = _render_output(fmt, name, sections, assets, on_progress=op)
+            data = _render_output(
+                fmt,
+                name,
+                sections,
+                assets,
+                on_progress=op,
+                instruction=str(o.get("instruction") or ""),
+            )
         rendered.append((_unique_arc(name, fmt, used), data))
         idx += 1
     return rendered, unknown, deferred, mermaid

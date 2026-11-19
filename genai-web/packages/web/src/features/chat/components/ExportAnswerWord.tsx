@@ -2,6 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/dads/Button';
+import { DocumentIcon } from '@/components/ui/icons/DocumentIcon';
 import { answerDocx } from '@/open-genai/office/answerDocx';
 import { stageOfficeFile } from '@/open-genai/office/handoff';
 import { useOfficeAvailable } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
@@ -37,10 +38,11 @@ export const ExportAnswerWord = ({ text, targetRef }: Props) => {
       variant='text'
       type='button'
       size='sm'
-      className='inline-flex items-center justify-center'
+      className='inline-flex items-center justify-center gap-x-1'
       disabled={pending}
       onClick={() => void open()}
     >
+      <DocumentIcon className='shrink-0' aria-hidden={true} />
       {pending ? '開いています' : 'Wordに出力'}
     </Button>
   );

@@ -692,15 +692,25 @@ def _mk_sub(on_progress: Any, lo: float, hi: float) -> Any:
 
 
 def _notes_for_batch(
-    complete: Any, name: str, subset: list[SourceBlock]
+    complete: Any,
+    name: str,
+    subset: list[SourceBlock],
+    instruction: str = "",
 ) -> dict[tuple[str, str], SectionNotes]:
     outline = _outline_for_prompt(name, subset)
+    brief = instruction.strip()
+    guide = ""
+    if brief:
+        guide = (
+            "利用者の指示（強調・順序・言葉づかいをこれに合わせる。原稿に無い事実は足さない）:\n"
+            f"{brief[:500]}\n\n"
+        )
     try:
         data = _call_json(
             complete,
             "あなたは日本語の要点整理係。各節の用途・役割と要点だけを返す。本文は書かない。JSON のみ。",
             (
-                f"{outline}\n\n"
+                f"{guide}{outline}\n\n"
                 "各節を次の JSON だけに圧縮する。\n"
                 '{"slides":[{"source":{"filename":"...","heading":"..."},'
                 '"purpose":"explain","role":"explanation",'
@@ -906,6 +916,7 @@ def _plan_notes(
     name: str,
     blocks: list[SourceBlock],
     on_progress: Any = None,
+    instruction: str = "",
 ) -> dict[tuple[str, str], SectionNotes]:
     """節ごとに {purpose, role, points} を取る。LLM は圧縮だけ。失敗した節は機械推定。"""
     organized: dict[tuple[str, str], SectionNotes] = {}
@@ -913,7 +924,7 @@ def _plan_notes(
     for i in range(0, len(blocks), _NOTES_BATCH):
         subset = blocks[i : i + _NOTES_BATCH]
         if complete:
-            organized.update(_notes_for_batch(complete, name, subset))
+            organized.update(_notes_for_batch(complete, name, subset, instruction))
         for block in subset:
             key = _block_key(block)
             if not organized.get(key):
@@ -1547,6 +1558,7 @@ def plan_deck(
     *,
     complete: Any = chat,
     on_progress: Any = None,
+    instruction: str = "",
 ) -> dict[str, Any] | None:
     """見出し骨格のうえに、節ごとの {purpose, role, title, points} を載せる。失敗時は None。"""
     if not llm_enabled():
@@ -1562,7 +1574,11 @@ def plan_deck(
         planned = _planned_from_blocks(name, blocks)
         op(0.15, "見出しを整理")
         organized = _plan_notes(
-            complete, name, blocks, on_progress=_mk_sub(on_progress, 0.15, 0.7)
+            complete,
+            name,
+            blocks,
+            on_progress=_mk_sub(on_progress, 0.15, 0.7),
+            instruction=instruction,
         )
         deck = _complete_slides(
             name,
