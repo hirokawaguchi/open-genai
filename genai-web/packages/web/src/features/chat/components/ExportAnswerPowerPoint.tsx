@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
-import { Textarea } from '@/components/ui/dads/TextArea';
+import { Textarea } from '@/components/ui/dads/Textarea';
 import { PresentationIcon } from '@/components/ui/icons/PresentationIcon';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import {
