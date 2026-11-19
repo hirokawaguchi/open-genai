@@ -30,10 +30,11 @@ export const useRecommendedAppsActions = () => {
     save: async (exAppIds: string[]) => {
       const res = await teamApi.put<RecommendedAppsResponse>('recommended-apps', { exAppIds });
       const returned = new Set(res.data?.exAppIds ?? []);
-      for (const id of exAppIds) {
-        returned.add(id);
-      }
-      const next = RECOMMENDED_APP_OPTIONS.map((o) => o.id).filter((id) => returned.has(id));
+      const official = new Set<string>(RECOMMENDED_APP_OPTIONS.map((o) => o.id));
+      const next = [
+        ...RECOMMENDED_APP_OPTIONS.map((o) => o.id).filter((id) => returned.has(id)),
+        ...(res.data?.exAppIds ?? []).filter((id) => !official.has(id)),
+      ];
       await mutate(
         RECOMMENDED_APPS_KEY,
         (current: RecommendedAppsResponse | undefined) => ({
