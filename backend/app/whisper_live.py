@@ -15,8 +15,6 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import WebSocketDisconnect
-
 LIVE_MODEL = "gpt-live-transcribe"
 LIVE_WS_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 OPENAI_API_HOST = "api.openai.com"
@@ -243,6 +241,11 @@ async def _configure(upstream: Any, language: str) -> None:
     raise WhisperLiveError("OpenAI の文字起こしを開始できませんでした。")
 
 
+def _client_disconnected(exc: BaseException) -> bool:
+    """ブラウザ切断。回帰テストは fastapi を入れないので、型名で判定する。"""
+    return type(exc).__name__ == "WebSocketDisconnect"
+
+
 async def _send_browser(browser: Any, payload: dict[str, str]) -> None:
     try:
         await browser.send_text(json.dumps(payload, ensure_ascii=False))
@@ -283,10 +286,10 @@ async def run_live_session(browser: Any, api_key: str, *, language: str) -> str:
                         )
                     try:
                         message = await browser.receive()
-                    except WebSocketDisconnect:
-                        if audio_since_commit:
-                            await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))
-                        return
+                    except Exception as exc:  # noqa: BLE001 - 切断以外はそのまま上げる
+                        if not _client_disconnected(exc):
+                            raise
+                        message = {"type": "websocket.disconnect"}
                     if message.get("type") == "websocket.disconnect":
                         if audio_since_commit:
                             await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))

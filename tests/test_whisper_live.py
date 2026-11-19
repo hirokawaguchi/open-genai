@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.whisper_live import (
     TranscriptBook,
+    _client_disconnected,
     client_audio_event,
     format_output,
     normalize_language,
@@ -70,6 +71,14 @@ def test_session_update_sets_language_hint_only_when_chosen() -> None:
     assert chosen_tx["languages"] == ["ja"]
     assert chosen["session"]["audio"]["input"]["turn_detection"] is None
     assert normalize_language("fr") == "auto"
+
+
+def test_client_disconnected_matches_fastapi_name_without_import() -> None:
+    class WebSocketDisconnect(Exception):
+        pass
+
+    assert _client_disconnected(WebSocketDisconnect())
+    assert not _client_disconnected(RuntimeError("boom"))
 
 
 def test_client_audio_event_rejects_invalid_audio() -> None:
