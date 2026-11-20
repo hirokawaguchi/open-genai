@@ -70,6 +70,7 @@ from . import (
     teams_store,
     think_text,
     titlegen,
+    whisper_file,
     whisper_live,
 )
 
@@ -388,7 +389,7 @@ WHISPER_APP_URL = os.environ.get("WHISPER_APP_URL", "http://whisper-app:8002/inv
 WHISPER_JOB_TIMEOUT = 3600.0
 WHISPER_PROGRESS = "文字起こしを実行しています。完了まで数分かかることがあります。"
 WHISPER_ACCEPTED_MESSAGE = (
-    "文字起こしを開始しました。この画面のまま待つか、あとで利用履歴を開いてください。"
+    "文字起こしを開始しました。この案件のまま待つか、あとで案件一覧から開いてください。"
 )
 WHISPER_INTERRUPTED_MESSAGE = "処理が中断されました。再度実行してください。"
 _whisper_tasks: set[asyncio.Task[None]] = set()
@@ -402,7 +403,7 @@ _WHISPER_ACCEPT = (
 _WHISPER_FORM = (
     '{'
     '"audio":{"type":"file","title":"音声・動画ファイル",'
-    '"desc":"文字起こしする音声または動画を添付してください（目安180MBまで）。'
+    '"desc":"文字起こしする音声または動画を添付してください。動画は音声だけを送ります（送るデータは目安180MBまで）。'
     '代表例: mp3 / wav / m4a / mp4 / webm。対応形式の一覧は使い方を参照。",'
     f'"accept":"{_WHISPER_ACCEPT}","multiple":false,"required":true}},'
     '"language":{"type":"select","title":"言語",'
@@ -418,13 +419,16 @@ WHISPER_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": _WHISPER_FORM,
-    "description": "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き）。",
+    "description": "音声・動画ファイル、またはマイクの音声をテキストに書き起こします。",
     "howToUse": (
         "## このアプリでできること\n\n"
-        "会議やインタビューの録音などの音声・動画ファイルを、テキストに書き起こします。"
-        "ファイルとして添付した音声はクラウドに送信されないため、機微な内容も扱えます。"
-        "マイクからその場で文字にする機能は、OpenAI の API キーがあり、棟の管理で許可しているときだけ表示されます。"
-        "マイクの音声は OpenAI（gpt-live-transcribe）へ送信されます。\n\n"
+        "会議やインタビューの録音などの音声・動画をテキストに書き起こします。"
+        "画面では、使える方式だけを選べます。\n\n"
+        "- ファイルから（ローカル処理）: このサーバーの中で処理します。添付した音声はクラウドに送りません。\n"
+        "- ファイルから（クラウド処理）: 棟の管理で許可され、OpenAI の API キーがあるときだけ選べます。"
+        "選んだときだけ、添付した音声を OpenAI（gpt-transcribe）へ送ります。\n"
+        "- マイクから（リアルタイム処理）: API キーがあり、棟の管理で許可しているときだけ選べます。"
+        "マイクの音声はクラウドAI（海外リージョン）へ送信されます。\n\n"
         "実際に読める形式は、PyAV の同梱 FFmpeg がデコードできるものが上限です。"
         "実務上は次が通ります。\n\n"
         "### 音声\n\n"
@@ -451,16 +455,18 @@ WHISPER_SEED: dict[str, Any] = {
         "| MPEG | `.mpeg`, `.mpg` |\n\n"
         "動画でも、中に音声があれば文字起こしできます。\n\n"
         "## 操作手順\n\n"
-        "1. 「音声・動画ファイル」に録音データまたは動画を添付します"
+        "1. 「案件一覧」で名前を付けて案件を作成します。\n"
+        "2. 開いた案件で方式を選びます。選択肢が1つのときは、そのまま音声を入れます。\n"
+        "3. 言語を選び、ファイルを読み込むか、マイクで開始します"
         "（代表例: mp3 / wav / m4a / mp4 / webm。対応形式の一覧は上記）。\n"
-        "2. 「言語」を選びます（迷ったら「自動判定」でOK。日本語/英語は明示指定も可）。\n"
-        "3. 「実行」を押すと、タイムスタンプ付きの文字起こし結果が表示されます。\n\n"
-        "マイクで文字にする場合は、OpenAI の API キーがあり、棟の管理で「文字起こし（マイク）」がオンのとき「マイクで開始」が出ます。"
-        "話し終わったら「停止」すると、結果が利用履歴に残ります。"
-        "マイクの音声にタイムスタンプと話者分離はありません。\n\n"
+        "4. 結果はその案件の中に残ります。画面を離れても、一覧から開き直せます。\n\n"
+        "ローカル処理の結果にはタイムスタンプが付きます。"
+        "クラウド処理とマイクには、発話ごとの時刻と話者分離はありません。"
+        "クラウドで録音を分割したときは、区間の見出しだけが付きます。\n\n"
+        "マイクは「停止」すると結果が利用履歴に残ります。\n\n"
         "## コツ・注意\n\n"
         "- 長い音声は処理に時間がかかります。区切って投入すると安定します。\n"
-        "- ファイルの目安は 180MB までです。それを超える場合は分割してください。\n"
+        "- 送るデータは 180MB までです。動画は音声だけを送るので、映像が大きくても受けられます。音声そのものが 180MB を超えるときや、音声を取り出せない形式のときは、分割してください。\n"
         "- 雑音が少なくクリアな音声ほど精度が上がります。\n"
         "- 固有名詞や専門用語は誤変換されることがあります。結果は必ず確認してください。\n"
         "- 文字起こし結果はコピーして、そのままチャットで要約・議事録化に使えます。"
@@ -4533,10 +4539,15 @@ async def _finish_whisper_job(
                 f"[whisper] 文字起こし呼び出し失敗 status={res.status_code} "
                 f"error_code={data.get('error_code')} body={raw_body or data}"
             )
-            status_code, outputs, _error_code = _normalize_exapp_error(
-                data.get("error_code"), http_status=res.status_code
-            )
-            job_status = "ERROR"
+            if res.status_code == 409 and data.get("error"):
+                status_code = 409
+                outputs = str(data.get("error"))
+                job_status = "ERROR"
+            else:
+                status_code, outputs, _error_code = _normalize_exapp_error(
+                    data.get("error_code"), http_status=res.status_code
+                )
+                job_status = "ERROR"
         else:
             data = res.json()
             raw_outputs = data.get("outputs", "")
@@ -4547,6 +4558,9 @@ async def _finish_whisper_job(
             )
             status_code = 200
             job_status = "COMPLETED"
+            if "ファイルが添付されていません" in outputs:
+                status_code = 400
+                job_status = "ERROR"
     except httpx.HTTPError as e:
         print(f"[whisper] 文字起こし接続失敗: {e!r}")
         status_code, outputs, _error_code = _normalize_exapp_error("CONNECTION")
@@ -4593,6 +4607,72 @@ async def _finish_whisper_job(
     )
 
 
+
+def _whisper_service_root() -> str:
+    url = WHISPER_APP_URL
+    if url.endswith("/invoke"):
+        return url[: -len("/invoke")]
+    return url.rstrip("/")
+
+
+def _first_audio_probe(inputs: dict[str, Any]) -> tuple[int, bytes] | None:
+    """最初の添付音声の全体サイズと、ビットレート判定用の先頭だけを返す。"""
+    for entry in inputs.get("files") or []:
+        if not isinstance(entry, dict):
+            continue
+        for item in entry.get("files") or []:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content") or ""
+            if not isinstance(content, str) or not content:
+                continue
+            try:
+                raw = base64.b64decode(content)
+            except Exception:  # noqa: BLE001
+                continue
+            if raw:
+                return len(raw), raw[:65536]
+    return None
+
+
+async def _whisper_queue_view(
+    *,
+    api_key: str,
+    nbytes: int = 0,
+    head: bytes = b"",
+    audio_seconds: float = 0,
+) -> dict[str, Any] | JSONResponse:
+    """文字起こしサーバの待ち見積もり。失敗時は応答を返す。"""
+    body = {
+        "nbytes": nbytes,
+        "headB64": base64.b64encode(head).decode("ascii") if head else "",
+        "audioSeconds": audio_seconds,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(
+                _whisper_service_root() + "/queue",
+                json=body,
+                headers={"x-api-key": api_key},
+            )
+    except httpx.HTTPError as e:
+        print(f"[whisper] 待ち状況の確認に失敗: {e!r}")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "待ち状況を確認できませんでした。時間をおいて再度実行してください。"},
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = None
+    if res.status_code != 200 or not isinstance(data, dict):
+        return JSONResponse(
+            status_code=503,
+            content={"error": "待ち状況を確認できませんでした。時間をおいて再度実行してください。"},
+        )
+    return data
+
+
 async def _accept_whisper_invoke(
     *,
     user_id: str,
@@ -4605,9 +4685,49 @@ async def _accept_whisper_invoke(
     started: str,
     invoke_headers: dict[str, str],
 ) -> JSONResponse:
-    """文字起こしを履歴へ受け付け、応答を返してから本体を走らせる。"""
-    team = teams_store.get_team(team_id)
+    """文字起こしを履歴へ受け付け、応答を返してから本体を走らせる。
+
+    結果が返る60分に収まらない見込みのときは、履歴を作らず受け付けない。
+    クラウドを選んだときは、その待ち見積もりは使わない。
+    """
     active = _active_tenant_id(user_id, claims)
+    engine = whisper_file.file_engine(inputs)
+    endpoint = app_def["endpoint"]
+    headers = invoke_headers
+    if engine == whisper_file.CLOUD:
+        tenant = teams_store.get_tenant(active) if active and not _has_no_tenant(active) else None
+        features = tenant.get("features") if isinstance(tenant, dict) else None
+        api_key = whisper_live.resolve_api_key(os.environ)
+        if not whisper_file.cloud_allowed(features if isinstance(features, dict) else None, api_key):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "この棟ではファイルから（クラウド処理）を利用できません。"},
+            )
+        endpoint = _whisper_service_root() + "/invoke-cloud"
+        headers = {**invoke_headers, "x-openai-key": api_key or ""}
+    else:
+        probed = _first_audio_probe(inputs)
+        given_seconds = 0.0
+        try:
+            given_seconds = float(inputs.get("audioSeconds") or 0)
+        except (TypeError, ValueError):
+            given_seconds = 0.0
+        if probed is not None or given_seconds > 0:
+            nbytes, head = probed if probed is not None else (0, b"")
+            view = await _whisper_queue_view(
+                api_key=str(app_def.get("apiKey") or ""),
+                nbytes=nbytes,
+                head=head,
+                audio_seconds=given_seconds,
+            )
+            if isinstance(view, JSONResponse):
+                return view
+            if view.get("canStart") is False:
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": str(view.get("message") or "今は文字起こしを受け付けできません。")},
+                )
+    team = teams_store.get_team(team_id)
     try:
         if _has_no_tenant(active):
             raise ValueError("棟が指定されていません")
@@ -4639,8 +4759,8 @@ async def _accept_whisper_invoke(
     )
     _spawn_whisper_task(
         _finish_whisper_job(
-            endpoint=app_def["endpoint"],
-            headers=invoke_headers,
+            endpoint=endpoint,
+            headers=headers,
             inputs=inputs if isinstance(inputs, dict) else {},
             team_id=team_id,
             ex_app_id=ex_app_id,
@@ -4694,6 +4814,7 @@ def _save_whisper_live(
     language: str,
     transcript: str,
     started: float,
+    case_title: str = "",
 ) -> tuple[str | None, str | None]:
     """確定した文字起こしを利用履歴と監査ログへ残す。
 
@@ -4729,6 +4850,7 @@ def _save_whisper_live(
                     "source": "microphone",
                     "language": language,
                     "destination": "api.openai.com",
+                    **({"caseTitle": case_title} if case_title else {}),
                 },
                 "outputs": outputs,
                 "status": status,
@@ -4762,6 +4884,49 @@ def _save_whisper_live(
         print(f"[whisper-live] 監査ログの記録に失敗: {exc}")
     created = str(saved.get("createdDate") or "")
     return created or None, reason if blocked else None
+
+
+
+@app.get("/whisper/queue")
+async def whisper_queue(
+    request: Request,
+    nbytes: int = 0,
+    audioSeconds: float = 0,
+) -> JSONResponse:
+    """実行前の待ち順と開始見込み。他の依頼のファイル名は返さない。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    app_def = teams_store.get_exapp(COMMON_TEAM_ID, "whisper")
+    if not app_def:
+        return JSONResponse(status_code=404, content={"error": "文字起こしが見つかりません。"})
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
+    view = await _whisper_queue_view(
+        api_key=str(app_def.get("apiKey") or ""),
+        nbytes=max(0, nbytes),
+        audio_seconds=max(0.0, audioSeconds),
+    )
+    if isinstance(view, JSONResponse):
+        return view
+    return JSONResponse(content=view)
+
+
+@app.get("/whisper/file/config")
+async def whisper_file_config(request: Request) -> JSONResponse:
+    """ファイルのクラウド処理を選べるか。キーの有無以外は返さない。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    active = _active_tenant_id(user_id, claims)
+    tenant = teams_store.get_tenant(active) if active and not _has_no_tenant(active) else None
+    features = tenant.get("features") if isinstance(tenant, dict) else None
+    allowed = whisper_file.cloud_allowed(
+        features if isinstance(features, dict) else None,
+        whisper_live.resolve_api_key(os.environ),
+    )
+    return JSONResponse(content={"cloud": allowed})
 
 
 @app.get("/whisper/live/config")
@@ -4813,6 +4978,7 @@ async def whisper_live_ws(websocket: WebSocket) -> None:
         await _close_ws(websocket, 4403)
         return
     language = whisper_live.normalize_language(first.get("language") if isinstance(first, dict) else "auto")
+    live_case_title = whisper_live.case_title(first.get("caseTitle") if isinstance(first, dict) else "")
 
     transcript = ""
     error_message = ""
@@ -4833,6 +4999,7 @@ async def whisper_live_ws(websocket: WebSocket) -> None:
         language=language,
         transcript=transcript,
         started=started,
+        case_title=live_case_title,
     )
     if block_reason:
         error_message = block_reason
@@ -10641,6 +10808,48 @@ async def get_exapp_history(
         _active_tenant_id(user_id, claims),
     )
     return {"history": hist}
+
+
+@app.post("/exapps/history/title")
+async def rename_exapp_history_title(request: Request) -> JSONResponse:
+    """文字起こし案件の名前だけを、本人の履歴に書き戻す。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    team_id = str(body.get("teamId") or "")
+    ex_app_id = str(body.get("exAppId") or "")
+    created = str(body.get("createdDate") or "")
+    title = str(body.get("caseTitle") or "").strip()
+    if ex_app_id != "whisper":
+        return JSONResponse(status_code=400, content={"error": "この履歴の名前は変更できません。"})
+    if not team_id or not created or not title:
+        return JSONResponse(status_code=400, content={"error": "案件名を指定してください。"})
+    if len(title) > 200:
+        return JSONResponse(status_code=400, content={"error": "案件名は200文字までです。"})
+    if (
+        team_id != COMMON_TEAM_ID
+        and not _is_system_admin(claims)
+        and not teams_store.can_read_team(team_id, user_id)
+    ):
+        return _forbidden("この案件の名前は変更できません。")
+    updated = teams_store.rename_exapp_history_case(
+        team_id,
+        ex_app_id,
+        created,
+        user_id=user_id,
+        tenant_id=_active_tenant_id(user_id, claims),
+        case_title=title,
+    )
+    if not updated:
+        return JSONResponse(status_code=404, content={"error": "案件が見つかりません。"})
+    return JSONResponse(content={"history": updated})
 
 
 @app.get("/exapps/artifact-carrier")

@@ -569,6 +569,20 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             name = (exists["exAppName"] or "").strip() or app.get("exAppName", "")
             description = (exists["description"] or "").strip() or app.get("description", "")
             how_to_use = (exists["howToUse"] or "").strip() or app.get("howToUse", "")
+            # 以前の文面は「ファイルはクラウドに送らない」と断定していた。
+            # 方式を選べるようにしたので、その文面が残っているときだけ使い方を差し替える。
+            if app.get("exAppId") == "whisper" and (
+                "ファイルとして添付した音声はクラウドに送信されない" in how_to_use
+                or "方式を選びます。選択肢が1つのときは、そのまま入力します。" in how_to_use
+                or "マイクの音声は OpenAI（gpt-live-transcribe）へ送信されます。" in how_to_use
+                or "ファイルの目安は 180MB までです。それを超える場合は分割してください。" in how_to_use
+            ):
+                how_to_use = app.get("howToUse", "")
+            if (
+                app.get("exAppId") == "whisper"
+                and description == "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き）。"
+            ):
+                description = app.get("description", "")
             # 公開ステータスは管理者がメニュー表示の切り替えに使うので上書きしない
             status = (exists["status"] or "").strip() or app.get("status", "published")
             # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）
@@ -2205,6 +2219,58 @@ def update_exapp_history(
             (team_id, ex_app_id, created_date, user_id, tenant_id),
         ).fetchone()
     return _row_to_history(r) if r else None
+
+
+def rename_exapp_history_case(
+    team_id: str,
+    ex_app_id: str,
+    created_date: str,
+    *,
+    user_id: str,
+    tenant_id: str,
+    case_title: str,
+) -> dict[str, Any] | None:
+    """本人の履歴について、入力の案件名だけを差し替える。"""
+    title = case_title.strip()
+    if not title:
+        return None
+    tenant_id = _scope_tenant_id(tenant_id)
+    with _lock, _connect() as conn:
+        r = conn.execute(
+            "SELECT inputs FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+            " AND userId = ? AND tenantId = ?",
+            (team_id, ex_app_id, created_date, user_id, tenant_id),
+        ).fetchone()
+        if not r:
+            return None
+        try:
+            inputs = json.loads(r["inputs"] or "{}")
+        except json.JSONDecodeError:
+            inputs = {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+        inputs["caseTitle"] = title
+        conn.execute(
+            "UPDATE exapp_histories SET inputs = ?"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+            " AND userId = ? AND tenantId = ?",
+            (
+                json.dumps(inputs, ensure_ascii=False),
+                team_id,
+                ex_app_id,
+                created_date,
+                user_id,
+                tenant_id,
+            ),
+        )
+        updated = conn.execute(
+            "SELECT * FROM exapp_histories"
+            " WHERE teamId = ? AND exAppId = ? AND createdDate = ?"
+            " AND userId = ? AND tenantId = ?",
+            (team_id, ex_app_id, created_date, user_id, tenant_id),
+        ).fetchone()
+    return _row_to_history(updated) if updated else None
 
 
 def fail_in_progress_exapp_histories(ex_app_id: str, message: str) -> int:

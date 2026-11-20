@@ -16,6 +16,9 @@ import os
 import tempfile
 from typing import Any
 
+from .cloud import CloudTranscribeError, transcribe_file
+from .queue import TranscribeQueue, estimate_audio_seconds, seconds_for_queue
+
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
@@ -30,6 +33,12 @@ _model = None
 _model_error: str | None = None
 # モデルと展開した音声でメモリを使うため、文字起こしは1本ずつ行う。
 _transcribe_lock = asyncio.Lock()
+# クラウド送信はモデルを使わない。ローカルの変換とは別の列にする。
+_cloud_lock = asyncio.Lock()
+
+# 受付順と開始見込み。変換ロックとは別に、列の更新だけを守る。
+_queue = TranscribeQueue()
+_queue_lock = asyncio.Lock()
 
 
 def _get_model():
@@ -89,6 +98,59 @@ def _extract_audio(inputs: dict[str, Any]) -> tuple[str, bytes] | None:
     return None
 
 
+
+def _queue_seconds(body: dict[str, Any]) -> float:
+    """再生時間が渡されていればそれを使う。無ければバイト列から見積もる。"""
+    try:
+        given = float(body.get("audioSeconds") or 0)
+    except (TypeError, ValueError):
+        given = 0.0
+    if given > 0:
+        return given
+    try:
+        nbytes = int(body.get("nbytes") or 0)
+    except (TypeError, ValueError):
+        nbytes = 0
+    head = b""
+    encoded = body.get("headB64") or ""
+    if encoded:
+        try:
+            head = base64.b64decode(encoded)
+        except Exception:  # noqa: BLE001
+            head = b""
+    if nbytes <= 0:
+        nbytes = len(head)
+    return estimate_audio_seconds(head, total_bytes=nbytes)
+
+
+@app.get("/queue")
+async def queue_status(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    nbytes: int = 0,
+    audioSeconds: float = 0,
+) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    async with _queue_lock:
+        view = _queue.forecast(_queue_seconds({"nbytes": nbytes, "audioSeconds": audioSeconds}))
+    return JSONResponse(content=view)
+
+
+@app.post("/queue")
+async def queue_preview(request: Request, x_api_key: str | None = Header(default=None)) -> JSONResponse:
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
+    async with _queue_lock:
+        view = _queue.forecast(_queue_seconds(body))
+    return JSONResponse(content=view)
+
+
 @app.post("/invoke")
 async def invoke(request: Request, x_api_key: str | None = Header(default=None)) -> Any:
     err = _check_key(x_api_key)
@@ -105,6 +167,12 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
     filename, raw = audio
     language = inputs.get("language") or "auto"
     lang_arg = None if language in ("auto", "", None) else language
+    audio_seconds = seconds_for_queue(inputs.get("audioSeconds"), raw)
+
+    async with _queue_lock:
+        view, slot = _queue.try_reserve(audio_seconds)
+    if slot is None:
+        return JSONResponse(status_code=409, content={"error": view["message"], "error_code": "WHISPER_QUEUE", **view})
 
     suffix = os.path.splitext(filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -113,15 +181,48 @@ async def invoke(request: Request, x_api_key: str | None = Header(default=None))
     del raw
 
     as_segments = str(inputs.get("format") or "") == "segments"
-    async with _transcribe_lock:
-        try:
+    try:
+        async with _transcribe_lock:
+            async with _queue_lock:
+                _queue.mark_started(slot)
             outputs = await asyncio.to_thread(_transcribe_file, tmp_path, lang_arg, as_segments)
             return {"outputs": outputs}
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+    finally:
+        async with _queue_lock:
+            _queue.release(slot)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+@app.post("/invoke-cloud")
+async def invoke_cloud(request: Request, x_api_key: str | None = Header(default=None)) -> Any:
+    """gpt-transcribe。モデルは読み込まず、ローカルの待ち列にも入れない。"""
+    err = _check_key(x_api_key)
+    if err:
+        return err
+    openai_key = request.headers.get("x-openai-key") or ""
+    body = await request.json()
+    inputs = body.get("inputs", body)
+    if not isinstance(inputs, dict):
+        inputs = {}
+    audio = _extract_audio(inputs)
+    if not audio:
+        return {"outputs": "音声または動画ファイルが添付されていません。ファイルを添付してください。"}
+    raw = audio[1]
+    language = inputs.get("language") or "auto"
+    async with _cloud_lock:
+        try:
+            outputs = await asyncio.to_thread(transcribe_file, raw, language, openai_key)
+        except CloudTranscribeError as exc:
+            return JSONResponse(status_code=502, content={"error": str(exc)})
+        except Exception:  # noqa: BLE001
+            return JSONResponse(
+                status_code=502,
+                content={"error": "クラウドの文字起こしに失敗しました。"},
+            )
+    return {"outputs": outputs}
 
 
 def _transcribe_file(tmp_path: str, lang_arg: str | None, as_segments: bool = False) -> Any:

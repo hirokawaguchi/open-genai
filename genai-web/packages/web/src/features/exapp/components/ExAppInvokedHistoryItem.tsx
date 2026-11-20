@@ -13,6 +13,7 @@ import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 import { ExAppCitations } from './ExAppCitations';
 import { ExAppInvokedHistoryDeleteDialog } from './ExAppInvokedHistoryDeleteDialog';
 import { ExAppInvokeHistoryItemStatusLabel } from './ExAppInvokeHistoryItemStatusLabel';
+import { WhisperHandoff } from './WhisperHandoff';
 
 type Props = ComponentProps<'details'> & {
   history: InvokeExAppHistory;
@@ -20,11 +21,19 @@ type Props = ComponentProps<'details'> & {
   isReloading: boolean;
   onReload: (history: InvokeExAppHistory) => void;
   onDeleted: () => void;
+  handoff?: boolean;
 };
 
 export const ExAppInvokedHistoryItem = (props: Props) => {
-  const { className, history, shouldShowConversationHistory, isReloading, onReload, onDeleted } =
-    props;
+  const {
+    className,
+    history,
+    shouldShowConversationHistory,
+    isReloading,
+    onReload,
+    onDeleted,
+    handoff = false,
+  } = props;
 
   const historyId = useId();
 
@@ -168,7 +177,10 @@ export const ExAppInvokedHistoryItem = (props: Props) => {
                     <Markdown>{parsedOutputs}</Markdown>
                     <ExAppCitations artifacts={history.artifacts} />
                   </div>
-                  <div className='mt-1 flex w-full justify-end'>
+                  <div className='mt-1 flex w-full flex-wrap items-center justify-end gap-2'>
+                    {handoff && typeof parsedOutputs === 'string' ? (
+                      <WhisperHandoff text={parsedOutputs} />
+                    ) : null}
                     <ButtonCopy text={parsedOutputs} targetRef={copyTextRef} />
                   </div>
 

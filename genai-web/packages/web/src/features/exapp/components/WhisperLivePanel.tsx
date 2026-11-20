@@ -17,6 +17,12 @@ import { applyLiveMessage, type LiveTurn, liveTranscript } from '../whisperTrans
 type Props = {
   teamId: string;
   exAppId: string;
+  shown?: boolean;
+  /** 親が言語を持つとき、このパネルでは選ばせない。 */
+  language?: string;
+  caseTitle?: string;
+  embedded?: boolean;
+  onSaved?: (createdDate: string) => void;
 };
 
 const SPEECH_RMS = 0.015;
@@ -35,10 +41,11 @@ const rmsOf = (samples: Float32Array): number => {
 };
 
 export const WhisperLivePanel = (props: Props) => {
-  const { teamId, exAppId } = props;
+  const { teamId, exAppId, shown = false, caseTitle = '', embedded = false, onSaved } = props;
   const { mutate } = useSWRConfig();
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [language, setLanguage] = useState('auto');
+  const [ownLanguage, setOwnLanguage] = useState('auto');
+  const language = props.language ?? ownLanguage;
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -197,7 +204,14 @@ export const WhisperLivePanel = (props: Props) => {
         socket.close();
         return;
       }
-      socket.send(JSON.stringify({ type: 'start', token, language }));
+      socket.send(
+        JSON.stringify({
+          type: 'start',
+          token,
+          language,
+          ...(caseTitle.trim() ? { caseTitle: caseTitle.trim() } : {}),
+        }),
+      );
     };
     socket.onmessage = (event) => {
       if (typeof event.data !== 'string') {
@@ -227,6 +241,10 @@ export const WhisperLivePanel = (props: Props) => {
       }
       if (message.type === 'saved') {
         refreshHistories();
+        const created = (message as { createdDate?: string }).createdDate;
+        if (created) {
+          onSaved?.(created);
+        }
         return;
       }
       if (message.type === 'error') {
@@ -252,37 +270,39 @@ export const WhisperLivePanel = (props: Props) => {
     }, 8000);
   };
 
-  if (!enabled) {
+  if (enabled === false || (enabled === null && !shown)) {
     return null;
   }
 
   const transcript = liveTranscript(turns);
 
   return (
-    <section className='mb-8 flex flex-col gap-4' aria-labelledby='whisper-live-heading'>
-      <h2 id='whisper-live-heading' className='text-std-18B-160'>
-        マイクから文字起こし
+    <section
+      className={embedded ? 'flex min-h-0 flex-1 flex-col gap-4' : 'mb-8 flex flex-col gap-4'}
+      aria-labelledby='whisper-live-heading'
+    >
+      <h2 id='whisper-live-heading' className='sr-only'>
+        マイクから（リアルタイム処理）
       </h2>
-      <SupportText>
-        音声は
-        OpenAI（gpt-live-transcribe）へ送信されます。ファイルを添付する文字起こしは、これまでどおりこのサーバー内で処理します。
-      </SupportText>
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='whisper-live-language' size='lg'>
-          言語
-        </Label>
-        <Select
-          id='whisper-live-language'
-          blockSize='md'
-          value={language}
-          disabled={active}
-          onChange={(event) => setLanguage(event.target.value)}
-        >
-          <option value='auto'>自動判定</option>
-          <option value='ja'>日本語</option>
-          <option value='en'>英語</option>
-        </Select>
-      </div>
+      <SupportText>マイクの音声はクラウドAI（海外リージョン）へ送信されます。</SupportText>
+      {props.language === undefined ? (
+        <div className='flex flex-col gap-1.5'>
+          <Label htmlFor='whisper-live-language' size='lg'>
+            言語
+          </Label>
+          <Select
+            id='whisper-live-language'
+            blockSize='md'
+            value={language}
+            disabled={active}
+            onChange={(event) => setOwnLanguage(event.target.value)}
+          >
+            <option value='auto'>自動判定</option>
+            <option value='ja'>日本語</option>
+            <option value='en'>英語</option>
+          </Select>
+        </div>
+      ) : null}
       <div className='flex flex-col items-start gap-3'>
         {active ? (
           <Button type='button' variant='outline' size='md' onClick={stop}>
@@ -298,12 +318,12 @@ export const WhisperLivePanel = (props: Props) => {
       </div>
       <pre
         aria-live='polite'
-        className='min-h-24 border border-solid-gray-420 bg-solid-gray-50 px-3 py-2 text-std-16N-170 whitespace-pre-wrap wrap-break-word'
+        className='min-h-24 flex-1 border border-solid-gray-420 bg-solid-gray-50 px-3 py-2 text-std-16N-170 whitespace-pre-wrap wrap-break-word'
       >
         {transcript ||
           (active ? '話し始めると、ここに文字が出ます。' : 'まだ文字起こしはありません。')}
       </pre>
-      <Divider />
+      {embedded ? null : <Divider />}
     </section>
   );
 };

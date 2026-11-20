@@ -1,5 +1,5 @@
 import { ExApp, InvokeExAppHistory } from 'genai-web';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FieldValues, useForm } from 'react-hook-form';
 import { useSWRConfig } from 'swr';
 import { unstable_serialize } from 'swr/infinite';
@@ -13,10 +13,17 @@ import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { teamApi } from '@/lib/fetcher';
 import { isJSON } from '@/utils/isJSON';
 import { ENTER_SUBMIT_HINT } from '@/utils/keyboard';
 import { newId } from '@/utils/uuid';
 import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
+import {
+  firstFormFile,
+  readAudioDurationSeconds,
+  whisperQueueParams,
+  type WhisperQueueView,
+} from '../whisperQueue';
 import { getExAppHistoriesKey } from '../hooks/useFetchInvokedExAppHistories';
 import { useResolveExAppSchema } from '../hooks/useResolveExAppSchema';
 import { ConversationHistory, GovAIFormDefaultValue, GovAIFormUI, GovAIFormUIJson } from '../types';
@@ -34,10 +41,11 @@ type Props = {
   exApp: ExApp;
   uiJson: GovAIFormUIJson;
   defaultValues: GovAIFormDefaultValue;
+  fileEngine?: 'local' | 'cloud';
 };
 
 export const ExAppForm = (props: Props) => {
-  const { exApp, uiJson, defaultValues } = props;
+  const { exApp, uiJson, defaultValues, fileEngine = 'local' } = props;
 
   const {
     requestLoading,
@@ -45,7 +53,19 @@ export const ExAppForm = (props: Props) => {
     setError: setInvokeError,
     setExAppResponse,
     invokeRequest,
+    resumeLatest,
   } = useExAppInvokeState();
+  const resumeRef = useRef(resumeLatest);
+  resumeRef.current = resumeLatest;
+  useEffect(() => {
+    if (exApp.exAppId !== 'whisper') {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void resumeRef.current(exApp.teamId, exApp.exAppId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [exApp.exAppId, exApp.teamId]);
   const { mutate: mutateHistories } = useSWRConfig();
 
   const [validationError, setValidationError] = useState('');
@@ -202,6 +222,51 @@ ${parsedHistory.outputs}
   // 不可逆操作の確認ダイアログ（OpenGENAI Form Spec v1: item.confirm）
   const [pendingData, setPendingData] = useState<FieldValues | null>(null);
   const [confirmMessage, setConfirmMessage] = useState('');
+  const [confirmIsQueue, setConfirmIsQueue] = useState(false);
+
+  const closeConfirm = () => {
+    setPendingData(null);
+    setConfirmMessage('');
+    setConfirmIsQueue(false);
+  };
+
+  // 文字起こしは実行前に待ち順を見て、60分を超える見込みなら受け付けない。
+  const beginInvoke = async (data: FieldValues, queueConfirmed: boolean) => {
+    if (requestLoading) {
+      return;
+    }
+    if (exApp.exAppId === 'whisper' && fileEngine !== 'cloud') {
+      const file = firstFormFile(data);
+      if (file) {
+        setRequestLoading(true);
+        try {
+          const seconds = await readAudioDurationSeconds(file);
+          const res = await teamApi.get<WhisperQueueView>('whisper/queue', {
+            params: whisperQueueParams(file, seconds),
+          });
+          const view = res.data;
+          if (!view.canStart) {
+            setValidationError(view.message);
+            return;
+          }
+          if (view.ahead > 0 && !queueConfirmed) {
+            setPendingData(data);
+            setConfirmMessage(view.message);
+            setConfirmIsQueue(true);
+            return;
+          }
+        } catch {
+          setValidationError(
+            '待ち状況を確認できませんでした。時間をおいて再度実行してください。',
+          );
+          return;
+        } finally {
+          setRequestLoading(false);
+        }
+      }
+    }
+    await performInvoke(data);
+  };
 
   // 送信ゲート: 選択内容に confirm が必要ならダイアログを挟み、確定後に実行する。
   const onSubmit = (data: FieldValues) => {
@@ -212,9 +277,10 @@ ${parsedHistory.outputs}
     if (message) {
       setPendingData(data);
       setConfirmMessage(message);
+      setConfirmIsQueue(false);
       return;
     }
-    void performInvoke(data);
+    void beginInvoke(data, false);
   };
 
   const performInvoke = async (data: FieldValues) => {
@@ -239,12 +305,13 @@ ${parsedHistory.outputs}
       }
     }
 
-    const payload = buildPayload({
+    const built = buildPayload({
       data: transformedData,
       files,
       invokeHistory,
       systemPromptKey: exApp.systemPromptKeyName,
     });
+    const payload = fileEngine === 'cloud' ? { ...built, engine: 'cloud' } : built;
 
     try {
       setRequestLoading(true);
@@ -318,10 +385,7 @@ ${parsedHistory.outputs}
 
       <CustomDialog
         isOpen={pendingData !== null}
-        onClose={() => {
-          setPendingData(null);
-          setConfirmMessage('');
-        }}
+        onClose={closeConfirm}
       >
         <CustomDialogPanel>
           <CustomDialogHeader>実行の確認</CustomDialogHeader>
@@ -333,10 +397,10 @@ ${parsedHistory.outputs}
                 size='md'
                 onClick={() => {
                   const data = pendingData;
-                  setPendingData(null);
-                  setConfirmMessage('');
+                  const confirmed = confirmIsQueue;
+                  closeConfirm();
                   if (data) {
-                    void performInvoke(data);
+                    void beginInvoke(data, confirmed);
                   }
                 }}
               >
@@ -345,10 +409,7 @@ ${parsedHistory.outputs}
               <Button
                 variant='text'
                 size='md'
-                onClick={() => {
-                  setPendingData(null);
-                  setConfirmMessage('');
-                }}
+                onClick={closeConfirm}
               >
                 キャンセル
               </Button>

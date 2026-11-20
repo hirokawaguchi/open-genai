@@ -12,7 +12,7 @@ import { ExAppForm } from '@/features/exapp/components/ExAppForm';
 import { ExAppHeader } from '@/features/exapp/components/ExAppHeader';
 import { ExAppInvokedHistories } from '@/features/exapp/components/ExAppInvokedHistories';
 import { ExAppResult } from '@/features/exapp/components/ExAppResult';
-import { WhisperLivePanel } from '@/features/exapp/components/WhisperLivePanel';
+import { WhisperWorkspace } from '@/features/exapp/components/WhisperWorkspace';
 import { builtinRouteOf } from '@/features/exapps/utils/builtinExApp';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { LayoutBody } from '@/layout/LayoutBody';
@@ -39,8 +39,11 @@ export const ExAppPage = () => {
   const builtinRoute = builtinRouteOf(exApp?.config);
 
   useEffect(() => {
+    if (exAppId === 'whisper') {
+      return;
+    }
     clear();
-  }, [pathname, clear]);
+  }, [pathname, exAppId, clear]);
 
   const placeholderUiJson = useMemo(() => {
     return exApp && isJSON(exApp.placeholder) ? JSON.parse(exApp.placeholder) : {};
@@ -126,6 +129,10 @@ export const ExAppPage = () => {
     return <Navigate to={builtinRoute} replace />;
   }
 
+  if (!isExAppLoading && exApp?.exAppId === 'whisper') {
+    return <WhisperWorkspace exApp={exApp} pageTitle={pageTitle} />;
+  }
+
   return (
     <LayoutBody>
       <PageTitle title={pageTitle} />
@@ -148,9 +155,6 @@ export const ExAppPage = () => {
                     <ProgressIndicator label='入力フォームを読み込み中...' />
                   ) : (
                     <>
-                      {exApp.exAppId === 'whisper' ? (
-                        <WhisperLivePanel teamId={exApp.teamId} exAppId={exApp.exAppId} />
-                      ) : null}
                       <ExAppForm exApp={exApp} uiJson={uiJson} defaultValues={defaultValuesJson} />
                     </>
                   )}
