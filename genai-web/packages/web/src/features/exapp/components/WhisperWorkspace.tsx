@@ -3,8 +3,8 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { PiBookOpenBold, PiFilePlus } from 'react-icons/pi';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
-import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
+import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import {
   CustomDialog,
   CustomDialogBody,
@@ -18,18 +18,24 @@ import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { Select } from '@/components/ui/dads/Select';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { teamApi } from '@/lib/fetcher';
-import { newId } from '@/utils/uuid';
 import { formatDateTime } from '@/utils/formatDateTime';
-import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
+import { newId } from '@/utils/uuid';
 import { useExAppInvokedHistories } from '../hooks/useExAppInvokedHistories';
+import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
+import { prepareWhisperUpload } from '../whisperAudioExtract';
 import {
   defaultWhisperCaseTitle,
+  type WhisperDraft,
   whisperCaseTitle,
   whisperInputModeLabel,
-  type WhisperDraft,
 } from '../whisperCases';
 import { availableWhisperModes, type WhisperModeId } from '../whisperModes';
-import { readAudioDurationSeconds, whisperQueueParams, type WhisperQueueView } from '../whisperQueue';
+import {
+  processEstimateLabel,
+  readAudioDurationSeconds,
+  type WhisperQueueView,
+  whisperQueueParams,
+} from '../whisperQueue';
 import {
   beginWhisperFileTransfer,
   readWhisperDrafts,
@@ -38,16 +44,16 @@ import {
   subscribeWhisperTransfers,
   upsertWhisperDraft,
 } from '../whisperTransfer';
-import { ExAppUsageMarkdownRenderer } from './ExAppUsageMarkdownRenderer';
+import { rejectOversizedAudio, whisperFileKind } from '../whisperUploadLimit';
 import { ExAppInvokedHistoriesLoading } from './ExAppInvokedHistoriesLoading';
 import { ExAppInvokedHistoryDeleteDialog } from './ExAppInvokedHistoryDeleteDialog';
 import { ExAppInvokeHistoryItemStatusLabel } from './ExAppInvokeHistoryItemStatusLabel';
+import { ExAppUsageMarkdownRenderer } from './ExAppUsageMarkdownRenderer';
 import { WhisperHandoff } from './WhisperHandoff';
 import { WhisperLivePanel } from './WhisperLivePanel';
 
 const ACCEPT =
   'audio/*,video/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.mp4,.webm,.opus,.wma,.aiff,.aif,.amr,.3gp,.mkv,.mov,.avi,.mpeg,.mpg';
-const MAX_BYTES = 180 * 1024 * 1024;
 
 type Props = {
   exApp: ExApp;
@@ -60,7 +66,9 @@ export const WhisperWorkspace = (props: Props) => {
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const [modes, setModes] = useState(availableWhisperModes({ cloud: false, live: false }));
-  const [drafts, setDrafts] = useState<WhisperDraft[]>(() => settleInterruptedWhisperDrafts(exApp.teamId));
+  const [drafts, setDrafts] = useState<WhisperDraft[]>(() =>
+    settleInterruptedWhisperDrafts(exApp.teamId),
+  );
   const [draft, setDraft] = useState<WhisperDraft | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -73,7 +81,9 @@ export const WhisperWorkspace = (props: Props) => {
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [queueAhead, setQueueAhead] = useState(false);
-  const [checkingQueue, setCheckingQueue] = useState(false);
+  const [preparing, setPreparing] = useState<'extract' | 'queue' | null>(null);
+  const [fileEstimate, setFileEstimate] = useState('');
+  const [estimatingFile, setEstimatingFile] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const copyRef = useRef<HTMLDivElement>(null);
   const decidedRef = useRef(false);
@@ -151,6 +161,43 @@ export const WhisperWorkspace = (props: Props) => {
   }, [exApp.exAppId, exApp.exAppName, exApp.teamId]);
 
   const activeMode = modes.some((item) => item.id === mode) ? mode : 'local';
+
+  useEffect(() => {
+    if (!file || activeMode === 'cloud') {
+      setFileEstimate('');
+      setEstimatingFile(false);
+      return;
+    }
+    let cancelled = false;
+    setEstimatingFile(true);
+    setFileEstimate('');
+    void (async () => {
+      try {
+        const seconds = await readAudioDurationSeconds(file);
+        if (cancelled) {
+          return;
+        }
+        const queued = await teamApi.get<WhisperQueueView>('whisper/queue', {
+          params: whisperQueueParams(file, seconds),
+        });
+        if (cancelled) {
+          return;
+        }
+        setFileEstimate(processEstimateLabel(queued.data.ownSeconds));
+      } catch {
+        if (!cancelled) {
+          setFileEstimate('');
+        }
+      } finally {
+        if (!cancelled) {
+          setEstimatingFile(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMode, file]);
 
   const backToList = () => {
     clear();
@@ -240,17 +287,21 @@ export const WhisperWorkspace = (props: Props) => {
   const takeFile = (next: File | null) => {
     setQueueAhead(false);
     setNotice('');
-    if (next && next.size > MAX_BYTES) {
-      setFile(null);
-      setNotice('ファイルの目安は 180MB までです。音声トラックだけ抽出するか、ファイルを分割してから読み込んでください。');
-      return;
+    if (next) {
+      const blocked = rejectOversizedAudio(next);
+      if (blocked) {
+        setFile(null);
+        setNotice(blocked);
+        return;
+      }
     }
     setFile(next);
   };
 
   const startFile = async (queueConfirmed: boolean) => {
-    const titleSource = draft?.title || (opened ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate) : '');
-    if ((!draft && !opened) || !file || draft?.phase === 'sending' || checkingQueue) {
+    const titleSource =
+      draft?.title || (opened ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate) : '');
+    if ((!draft && !opened) || !file || draft?.phase === 'sending' || preparing) {
       return;
     }
     const title = titleSource.trim() || defaultWhisperCaseTitle();
@@ -261,13 +312,27 @@ export const WhisperWorkspace = (props: Props) => {
     setNotice('');
     setQueueAhead(false);
     setError(null);
+    let payload = chosen;
+    if (whisperFileKind(chosen) === 'video') {
+      setPreparing('extract');
+      try {
+        payload = await prepareWhisperUpload(chosen);
+      } catch (caught: unknown) {
+        const message = caught instanceof Error ? caught.message : '音声を取り出せませんでした。';
+        setNotice(message);
+        return;
+      } finally {
+        setPreparing(null);
+      }
+      setFile(payload);
+    }
     let seconds: number | null = null;
     if (fileMode !== 'cloud') {
-      setCheckingQueue(true);
+      setPreparing('queue');
       try {
-        seconds = await readAudioDurationSeconds(chosen);
+        seconds = await readAudioDurationSeconds(payload);
         const queued = await teamApi.get<WhisperQueueView>('whisper/queue', {
-          params: whisperQueueParams(chosen, seconds),
+          params: whisperQueueParams(payload, seconds),
         });
         if (!queued.data.canStart) {
           const refused: WhisperDraft = {
@@ -298,11 +363,12 @@ export const WhisperWorkspace = (props: Props) => {
           return;
         }
       } catch (caught: unknown) {
-        const message = caught instanceof Error ? caught.message : '待ち状況を確認できませんでした。';
+        const message =
+          caught instanceof Error ? caught.message : '待ち状況を確認できませんでした。';
         setNotice(message);
         return;
       } finally {
-        setCheckingQueue(false);
+        setPreparing(null);
       }
     }
     setDraft({
@@ -320,7 +386,7 @@ export const WhisperWorkspace = (props: Props) => {
       createdAt,
       mode: fileMode,
       language,
-      file: chosen,
+      file: payload,
       queueConfirmed,
       audioSeconds: seconds,
     });
@@ -347,7 +413,9 @@ export const WhisperWorkspace = (props: Props) => {
   };
 
   const retry = () => {
-    const title = opened ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate) : defaultWhisperCaseTitle();
+    const title = opened
+      ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate)
+      : defaultWhisperCaseTitle();
     const created: WhisperDraft = { id: newId(), title, createdAt: new Date().toISOString() };
     upsertWhisperDraft(exApp.teamId, created);
     openDraft(created);
@@ -355,16 +423,17 @@ export const WhisperWorkspace = (props: Props) => {
 
   const sendingFile = draft?.phase === 'sending';
   const waiting =
-    sendingFile ||
-    exAppResponse?.status === 'IN_PROGRESS' ||
-    exAppResponse?.status === 'ACCEPTED';
+    sendingFile || exAppResponse?.status === 'IN_PROGRESS' || exAppResponse?.status === 'ACCEPTED';
   const transcript = (!waiting && !error ? (exAppResponse?.outputs ?? '') : '').replace(
     '**音声の送信先**: OpenAI（gpt-live-transcribe）',
     '**音声の送信先**: クラウドAI（海外リージョン）',
   );
-  const recoverFile = !!opened && !draft && !!error && error.includes('ファイルが添付されていません');
-  const showFileIntake = ((!!draft && draft.phase !== 'sending') || recoverFile) && activeMode !== 'live';
-  const caseTitle = draft?.title || (opened ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate) : '');
+  const recoverFile =
+    !!opened && !draft && !!error && error.includes('ファイルが添付されていません');
+  const showFileIntake =
+    ((!!draft && draft.phase !== 'sending') || recoverFile) && activeMode !== 'live';
+  const caseTitle =
+    draft?.title || (opened ? whisperCaseTitle(opened.inputs ?? {}, opened.createdDate) : '');
 
   return (
     <div className='mx-auto flex h-[calc(100dvh-var(--header-height))] w-full max-w-(--page-width) flex-col overflow-hidden px-4 py-2 lg:px-6'>
@@ -420,7 +489,10 @@ export const WhisperWorkspace = (props: Props) => {
               </Button>
               <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{exApp.exAppName}</h1>
               {exApp.description ? (
-                <p className='truncate text-dns-14N-130 text-solid-gray-600' title={exApp.description}>
+                <p
+                  className='truncate text-dns-14N-130 text-solid-gray-600'
+                  title={exApp.description}
+                >
                   {exApp.description}
                 </p>
               ) : null}
@@ -454,7 +526,9 @@ export const WhisperWorkspace = (props: Props) => {
                     />
                   </label>
                 ) : (
-                  <h2 className='min-w-0 flex-1 truncate text-std-16B-150 text-solid-gray-900'>{caseTitle}</h2>
+                  <h2 className='min-w-0 flex-1 truncate text-std-16B-150 text-solid-gray-900'>
+                    {caseTitle}
+                  </h2>
                 )}
                 {opened ? (
                   <p className='text-dns-14N-130 text-solid-gray-600'>
@@ -463,7 +537,11 @@ export const WhisperWorkspace = (props: Props) => {
                 ) : null}
               </div>
               {(draft || recoverFile) && draft?.phase !== 'sending' && modes.length > 1 ? (
-                <div className='flex flex-wrap gap-1 border-b border-solid-gray-300' role='radiogroup' aria-label='方式'>
+                <div
+                  className='flex flex-wrap gap-1 border-b border-solid-gray-300'
+                  role='radiogroup'
+                  aria-label='方式'
+                >
                   {modes.map((item) => (
                     <button
                       key={item.id}
@@ -487,7 +565,9 @@ export const WhisperWorkspace = (props: Props) => {
                 </div>
               ) : null}
               {(draft || recoverFile) && draft?.phase !== 'sending' && activeMode === 'cloud' ? (
-                <SupportText>この方式では、読み込んだ音声をクラウドAI（海外リージョン）へ送信します。</SupportText>
+                <SupportText>
+                  この方式では、読み込んだ音声をクラウドAI（海外リージョン）へ送信します。
+                </SupportText>
               ) : null}
               {notice ? <ErrorText>＊{notice}</ErrorText> : null}
               {(draft || recoverFile) && activeMode === 'live' ? (
@@ -525,9 +605,13 @@ export const WhisperWorkspace = (props: Props) => {
                     isLarge
                     label={
                       sendingFile
-                        ? 'ファイルを送信しています'
+                        ? fileEstimate
+                          ? `ファイルを送信しています。${fileEstimate}`
+                          : 'ファイルを送信しています'
                         : exAppResponse?.outputs ||
-                          '文字起こしを実行しています。完了まで数分かかることがあります。'
+                          (fileEstimate
+                            ? `文字起こしを実行しています。${fileEstimate}`
+                            : '文字起こしを実行しています。完了まで数分かかることがあります。')
                     }
                   />
                 </div>
@@ -536,7 +620,9 @@ export const WhisperWorkspace = (props: Props) => {
                 <div className='flex min-h-0 flex-1 flex-col gap-3'>
                   <div
                     className={`flex min-h-48 flex-1 flex-col items-center justify-center gap-3 rounded-8 border border-dashed px-6 py-8 text-center ${
-                      dragging ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-420 bg-solid-gray-50'
+                      dragging
+                        ? 'border-blue-900 bg-blue-50'
+                        : 'border-solid-gray-420 bg-solid-gray-50'
                     }`}
                     onDragOver={(event) => {
                       event.preventDefault();
@@ -556,8 +642,15 @@ export const WhisperWorkspace = (props: Props) => {
                           ? '前回は選んだファイルが届きませんでした。ここに入れ直してください'
                           : '音声または動画を、この枠へドロップ'}
                     </p>
+                    {file && activeMode !== 'cloud' && (estimatingFile || fileEstimate) ? (
+                      <p className='text-std-16B-150 text-solid-gray-900'>
+                        {estimatingFile ? '処理見込みを計算しています。' : fileEstimate}
+                      </p>
+                    ) : null}
                     <p className='max-w-xl text-dns-14N-130 text-solid-gray-600'>
-                      mp3 / wav / m4a / mp4 / webm など。目安 180MB まで。対応形式は使い方を参照してください。
+                      mp3 / wav / m4a / mp4 / webm
+                      など。動画は音声だけを送ります。送る音声、または音声を取り出せない形式のファイルは
+                      180MB までです。
                     </p>
                     <input
                       ref={fileRef}
@@ -569,7 +662,12 @@ export const WhisperWorkspace = (props: Props) => {
                         event.target.value = '';
                       }}
                     />
-                    <Button type='button' variant='outline' size='sm' onClick={() => fileRef.current?.click()}>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => fileRef.current?.click()}
+                    >
                       ファイルを選択
                     </Button>
                   </div>
@@ -593,30 +691,38 @@ export const WhisperWorkspace = (props: Props) => {
                           type='button'
                           variant='solid-fill'
                           size='md'
-                          aria-disabled={checkingQueue ? true : undefined}
+                          aria-disabled={preparing ? true : undefined}
                           onClick={() => {
-                            if (checkingQueue) {
+                            if (preparing) {
                               return;
                             }
                             void startFile(true);
                           }}
                         >
-                          {checkingQueue ? '待ちを確認しています' : '待ちに加える'}
+                          {preparing === 'extract'
+                            ? '音声を取り出しています'
+                            : preparing === 'queue'
+                              ? '待ちを確認しています'
+                              : '待ちに加える'}
                         </Button>
                       ) : (
                         <Button
                           type='button'
                           variant='solid-fill'
                           size='md'
-                          aria-disabled={!file || checkingQueue ? true : undefined}
+                          aria-disabled={!file || preparing ? true : undefined}
                           onClick={() => {
-                            if (!file || checkingQueue) {
+                            if (!file || preparing) {
                               return;
                             }
                             void startFile(false);
                           }}
                         >
-                          {checkingQueue ? '待ちを確認しています' : '文字起こしを開始'}
+                          {preparing === 'extract'
+                            ? '音声を取り出しています'
+                            : preparing === 'queue'
+                              ? '待ちを確認しています'
+                              : '文字起こしを開始'}
                         </Button>
                       )}
                     </div>
@@ -687,6 +793,8 @@ const WhisperCaseList = (props: {
     props.exApp.exAppId,
   );
   const [deleting, setDeleting] = useState<InvokeExAppHistory | null>(null);
+  const [listNames, setListNames] = useState<Record<string, string>>({});
+  const [renameError, setRenameError] = useState('');
   const ime = useRef(false);
   const told = useRef(false);
   const hasPending = histories.some(
@@ -717,7 +825,9 @@ const WhisperCaseList = (props: {
       kind: 'draft' as const,
       id: item.id,
       title: item.title || '無題',
-      mode: item.mode ? whisperInputModeLabel(item.mode === 'cloud' ? { engine: 'cloud' } : {}) : '—',
+      mode: item.mode
+        ? whisperInputModeLabel(item.mode === 'cloud' ? { engine: 'cloud' } : {})
+        : '—',
       at: Date.parse(item.createdAt) || 0,
       draft: item,
     })),
@@ -731,12 +841,62 @@ const WhisperCaseList = (props: {
     })),
   ].sort((a, b) => b.at - a.at);
 
+  const saveName = async (row: (typeof rows)[number]) => {
+    const key = `${row.kind}:${row.id}`;
+    const typed = listNames[key];
+    if (typed === undefined) {
+      return;
+    }
+    const next = typed.trim();
+    const revert = () => {
+      setListNames((prev) => {
+        const copy = { ...prev };
+        delete copy[key];
+        return copy;
+      });
+    };
+    if (!next || next === row.title) {
+      revert();
+      return;
+    }
+    if (next.length > 200) {
+      setRenameError('案件名は200文字までです。');
+      return;
+    }
+    setRenameError('');
+    if (row.kind === 'draft') {
+      if (row.draft.phase === 'sending') {
+        revert();
+        return;
+      }
+      upsertWhisperDraft(props.exApp.teamId, { ...row.draft, title: next });
+      revert();
+      return;
+    }
+    try {
+      await teamApi.post('exapps/history/title', {
+        teamId: props.exApp.teamId,
+        exAppId: props.exApp.exAppId,
+        createdDate: row.history.createdDate,
+        caseTitle: next,
+      });
+      await mutate();
+      revert();
+    } catch {
+      setRenameError('案件名を保存できませんでした。');
+      revert();
+    }
+  };
+
   return (
     <section className='flex flex-col gap-3'>
       <div className='flex flex-wrap items-end justify-between gap-2'>
         <h2 className='text-std-18B-160 text-solid-gray-900'>案件一覧</h2>
         <div className='flex flex-wrap items-end gap-2'>
-          <label htmlFor='whisper-new-name' className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
+          <label
+            htmlFor='whisper-new-name'
+            className='flex flex-col gap-1 text-dns-14N-130 text-solid-gray-700'
+          >
             新規案件名
             <Input
               id='whisper-new-name'
@@ -773,6 +933,7 @@ const WhisperCaseList = (props: {
           </Button>
         </div>
       </div>
+      {renameError ? <ErrorText>＊{renameError}</ErrorText> : null}
       <div className='overflow-x-auto rounded-8 border border-solid-gray-300'>
         <table className='w-full min-w-[40rem] border-collapse text-dns-14N-130'>
           <thead>
@@ -793,8 +954,45 @@ const WhisperCaseList = (props: {
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={`${row.kind}-${row.id}`} className='border-b border-solid-gray-200 last:border-b-0'>
-                  <td className='max-w-[24rem] px-3 py-2 break-all text-solid-gray-900'>{row.title}</td>
+                <tr
+                  key={`${row.kind}-${row.id}`}
+                  className='border-b border-solid-gray-200 last:border-b-0'
+                >
+                  <td className='w-2/5 min-w-[16rem] px-3 py-2'>
+                    <Input
+                      id={`whisper-case-name-${row.kind}-${row.id}`}
+                      blockSize='sm'
+                      className='w-full min-w-0'
+                      aria-label='案件名'
+                      readOnly={row.kind === 'draft' && row.draft.phase === 'sending'}
+                      value={listNames[`${row.kind}:${row.id}`] ?? row.title}
+                      onCompositionStart={() => {
+                        ime.current = true;
+                      }}
+                      onCompositionEnd={() => {
+                        window.setTimeout(() => {
+                          ime.current = false;
+                        }, 100);
+                      }}
+                      onChange={(event) =>
+                        setListNames((prev) => ({
+                          ...prev,
+                          [`${row.kind}:${row.id}`]: event.target.value,
+                        }))
+                      }
+                      onKeyDown={(event) => {
+                        const native = event.nativeEvent;
+                        if (native.isComposing || native.keyCode === 229 || ime.current) {
+                          return;
+                        }
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      onBlur={() => void saveName(row)}
+                    />
+                  </td>
                   <td className='px-3 py-2 text-solid-gray-700'>{row.mode}</td>
                   <td className='px-3 py-2'>
                     {row.kind === 'draft' && row.draft.phase === 'sending' ? (
@@ -802,12 +1000,15 @@ const WhisperCaseList = (props: {
                         <ProgressIndicator label='処理中' />
                       </span>
                     ) : row.kind === 'draft' && row.draft.phase === 'error' ? (
-                      <span className='inline-flex rounded-full bg-error-2 px-2 py-0.5 text-white'>エラー</span>
+                      <span className='inline-flex rounded-full bg-error-2 px-2 py-0.5 text-white'>
+                        エラー
+                      </span>
                     ) : row.kind === 'draft' ? (
                       <span className='inline-flex rounded-full border border-solid-gray-420 px-2 py-0.5 text-solid-gray-700'>
                         未着手
                       </span>
-                    ) : row.history.status === 'IN_PROGRESS' || row.history.status === 'ACCEPTED' ? (
+                    ) : row.history.status === 'IN_PROGRESS' ||
+                      row.history.status === 'ACCEPTED' ? (
                       <span className='inline-flex items-center gap-2'>
                         <ProgressIndicator label='処理中' />
                       </span>
@@ -816,7 +1017,9 @@ const WhisperCaseList = (props: {
                     )}
                   </td>
                   <td className='px-3 py-2 whitespace-nowrap text-solid-gray-600'>
-                    {row.kind === 'history' ? formatDateTime(row.history.createdDate) : formatDateTime(row.at)}
+                    {row.kind === 'history'
+                      ? formatDateTime(row.history.createdDate)
+                      : formatDateTime(row.at)}
                   </td>
                   <td className='px-3 py-2 text-right'>
                     <div className='inline-flex gap-2'>
@@ -824,9 +1027,24 @@ const WhisperCaseList = (props: {
                         type='button'
                         variant='solid-fill'
                         size='xs'
-                        onClick={() =>
-                          row.kind === 'draft' ? props.onOpenDraft(row.draft) : props.onOpenHistory(row.history)
-                        }
+                        onClick={() => {
+                          if (row.kind === 'draft') {
+                            const saved = readWhisperDrafts(props.exApp.teamId).find(
+                              (item) => item.id === row.draft.id,
+                            );
+                            props.onOpenDraft(saved ?? row.draft);
+                            return;
+                          }
+                          const pending = (listNames[`history:${row.id}`] ?? '').trim();
+                          const history =
+                            pending && pending !== row.title
+                              ? {
+                                  ...row.history,
+                                  inputs: { ...(row.history.inputs ?? {}), caseTitle: pending },
+                                }
+                              : row.history;
+                          props.onOpenHistory(history);
+                        }}
                       >
                         開く
                       </Button>
@@ -834,7 +1052,9 @@ const WhisperCaseList = (props: {
                         type='button'
                         variant='outline'
                         size='xs'
-                        aria-disabled={row.kind === 'draft' && row.draft.phase === 'sending' ? true : undefined}
+                        aria-disabled={
+                          row.kind === 'draft' && row.draft.phase === 'sending' ? true : undefined
+                        }
                         onClick={() => {
                           if (row.kind === 'draft' && row.draft.phase === 'sending') {
                             return;
@@ -857,7 +1077,13 @@ const WhisperCaseList = (props: {
         </table>
       </div>
       {hasMore ? (
-        <Button type='button' variant='outline' size='sm' className='self-center' onClick={loadMore}>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          className='self-center'
+          onClick={loadMore}
+        >
           さらに読み込む
         </Button>
       ) : null}

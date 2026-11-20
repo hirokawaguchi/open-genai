@@ -46,6 +46,15 @@ export const readAudioDurationSeconds = (file: File): Promise<number | null> => 
   });
 };
 
+/** サーバーが返す処理秒を、画面の「約N分」に揃える。 */
+export const processEstimateLabel = (ownSeconds: number): string => {
+  if (!Number.isFinite(ownSeconds) || ownSeconds <= 0) {
+    return '';
+  }
+  const minutes = Math.max(1, Math.round(ownSeconds / 60));
+  return `このファイルの処理見込みは約${minutes}分です。`;
+};
+
 export const whisperQueueParams = (
   file: File,
   audioSeconds: number | null,

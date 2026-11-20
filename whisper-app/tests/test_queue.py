@@ -33,7 +33,12 @@ def test_short_job_waits_behind_a_short_job() -> None:
     view = queue.forecast(10 * 60)
     assert view["canStart"] is True
     assert view["position"] == 2
-    assert "実行しますか" in str(view["message"])
+    assert view["message"] == (
+        "現在、別の文字起こしを1件処理中です。"
+        "受付中の処理が終わり次第開始できます。"
+        "開始見込みは約12分後です。"
+        "このまま文字起こしを実行しますか？"
+    )
 
 
 def test_running_job_remaining_shrinks() -> None:

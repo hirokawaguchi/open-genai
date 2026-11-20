@@ -403,7 +403,7 @@ _WHISPER_ACCEPT = (
 _WHISPER_FORM = (
     '{'
     '"audio":{"type":"file","title":"音声・動画ファイル",'
-    '"desc":"文字起こしする音声または動画を添付してください（目安180MBまで）。'
+    '"desc":"文字起こしする音声または動画を添付してください。動画は音声だけを送ります（送るデータは目安180MBまで）。'
     '代表例: mp3 / wav / m4a / mp4 / webm。対応形式の一覧は使い方を参照。",'
     f'"accept":"{_WHISPER_ACCEPT}","multiple":false,"required":true}},'
     '"language":{"type":"select","title":"言語",'
@@ -466,7 +466,7 @@ WHISPER_SEED: dict[str, Any] = {
         "マイクは「停止」すると結果が利用履歴に残ります。\n\n"
         "## コツ・注意\n\n"
         "- 長い音声は処理に時間がかかります。区切って投入すると安定します。\n"
-        "- ファイルの目安は 180MB までです。それを超える場合は分割してください。\n"
+        "- 送るデータは 180MB までです。動画は音声だけを送るので、映像が大きくても受けられます。音声そのものが 180MB を超えるときや、音声を取り出せない形式のときは、分割してください。\n"
         "- 雑音が少なくクリアな音声ほど精度が上がります。\n"
         "- 固有名詞や専門用語は誤変換されることがあります。結果は必ず確認してください。\n"
         "- 文字起こし結果はコピーして、そのままチャットで要約・議事録化に使えます。"
@@ -10808,6 +10808,48 @@ async def get_exapp_history(
         _active_tenant_id(user_id, claims),
     )
     return {"history": hist}
+
+
+@app.post("/exapps/history/title")
+async def rename_exapp_history_title(request: Request) -> JSONResponse:
+    """文字起こし案件の名前だけを、本人の履歴に書き戻す。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    team_id = str(body.get("teamId") or "")
+    ex_app_id = str(body.get("exAppId") or "")
+    created = str(body.get("createdDate") or "")
+    title = str(body.get("caseTitle") or "").strip()
+    if ex_app_id != "whisper":
+        return JSONResponse(status_code=400, content={"error": "この履歴の名前は変更できません。"})
+    if not team_id or not created or not title:
+        return JSONResponse(status_code=400, content={"error": "案件名を指定してください。"})
+    if len(title) > 200:
+        return JSONResponse(status_code=400, content={"error": "案件名は200文字までです。"})
+    if (
+        team_id != COMMON_TEAM_ID
+        and not _is_system_admin(claims)
+        and not teams_store.can_read_team(team_id, user_id)
+    ):
+        return _forbidden("この案件の名前は変更できません。")
+    updated = teams_store.rename_exapp_history_case(
+        team_id,
+        ex_app_id,
+        created,
+        user_id=user_id,
+        tenant_id=_active_tenant_id(user_id, claims),
+        case_title=title,
+    )
+    if not updated:
+        return JSONResponse(status_code=404, content={"error": "案件が見つかりません。"})
+    return JSONResponse(content={"history": updated})
 
 
 @app.get("/exapps/artifact-carrier")

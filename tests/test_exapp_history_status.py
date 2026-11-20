@@ -61,6 +61,42 @@ def test_update_exapp_history_changes_status_and_outputs(store) -> None:
     assert updated["progress"] == ""
 
 
+def test_rename_exapp_history_case_keeps_the_rest_of_the_inputs(store) -> None:
+    store.create_exapp_history(
+        {
+            "teamId": store.COMMON_TEAM_ID,
+            "exAppId": "whisper",
+            "userId": "a@example.com",
+            "tenantId": store.DEFAULT_TENANT_ID,
+            "inputs": {"caseTitle": "朝会", "engine": "local", "files": [{"filename": "a.m4a"}]},
+            "outputs": "本文",
+            "status": "COMPLETED",
+            "createdDate": "2000",
+        }
+    )
+    renamed = store.rename_exapp_history_case(
+        store.COMMON_TEAM_ID,
+        "whisper",
+        "2000",
+        user_id="a@example.com",
+        tenant_id=store.DEFAULT_TENANT_ID,
+        case_title="  午後の打合せ  ",
+    )
+    assert renamed is not None
+    assert renamed["inputs"]["caseTitle"] == "午後の打合せ"
+    assert renamed["inputs"]["files"] == [{"filename": "a.m4a"}]
+    assert renamed["outputs"] == "本文"
+    missed = store.rename_exapp_history_case(
+        store.COMMON_TEAM_ID,
+        "whisper",
+        "2000",
+        user_id="other@example.com",
+        tenant_id=store.DEFAULT_TENANT_ID,
+        case_title="他人",
+    )
+    assert missed is None
+
+
 def test_update_exapp_history_does_not_touch_other_user(store) -> None:
     _history(
         store,

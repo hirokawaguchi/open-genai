@@ -109,7 +109,9 @@ def describe(view: dict[str, object]) -> str:
     if ahead <= 0:
         return ""
     return (
-        f"前に{ahead}件あります。開始見込みは約{start_min}分後です。"
+        f"現在、別の文字起こしを{ahead}件処理中です。"
+        "受付中の処理が終わり次第開始できます。"
+        f"開始見込みは約{start_min}分後です。"
         "このまま文字起こしを実行しますか？"
     )
 
