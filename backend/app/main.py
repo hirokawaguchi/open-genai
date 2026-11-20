@@ -4533,10 +4533,15 @@ async def _finish_whisper_job(
                 f"[whisper] 文字起こし呼び出し失敗 status={res.status_code} "
                 f"error_code={data.get('error_code')} body={raw_body or data}"
             )
-            status_code, outputs, _error_code = _normalize_exapp_error(
-                data.get("error_code"), http_status=res.status_code
-            )
-            job_status = "ERROR"
+            if res.status_code == 409 and data.get("error"):
+                status_code = 409
+                outputs = str(data.get("error"))
+                job_status = "ERROR"
+            else:
+                status_code, outputs, _error_code = _normalize_exapp_error(
+                    data.get("error_code"), http_status=res.status_code
+                )
+                job_status = "ERROR"
         else:
             data = res.json()
             raw_outputs = data.get("outputs", "")
@@ -4593,6 +4598,72 @@ async def _finish_whisper_job(
     )
 
 
+
+def _whisper_service_root() -> str:
+    url = WHISPER_APP_URL
+    if url.endswith("/invoke"):
+        return url[: -len("/invoke")]
+    return url.rstrip("/")
+
+
+def _first_audio_probe(inputs: dict[str, Any]) -> tuple[int, bytes] | None:
+    """最初の添付音声の全体サイズと、ビットレート判定用の先頭だけを返す。"""
+    for entry in inputs.get("files") or []:
+        if not isinstance(entry, dict):
+            continue
+        for item in entry.get("files") or []:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content") or ""
+            if not isinstance(content, str) or not content:
+                continue
+            try:
+                raw = base64.b64decode(content)
+            except Exception:  # noqa: BLE001
+                continue
+            if raw:
+                return len(raw), raw[:65536]
+    return None
+
+
+async def _whisper_queue_view(
+    *,
+    api_key: str,
+    nbytes: int = 0,
+    head: bytes = b"",
+    audio_seconds: float = 0,
+) -> dict[str, Any] | JSONResponse:
+    """文字起こしサーバの待ち見積もり。失敗時は応答を返す。"""
+    body = {
+        "nbytes": nbytes,
+        "headB64": base64.b64encode(head).decode("ascii") if head else "",
+        "audioSeconds": audio_seconds,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(
+                _whisper_service_root() + "/queue",
+                json=body,
+                headers={"x-api-key": api_key},
+            )
+    except httpx.HTTPError as e:
+        print(f"[whisper] 待ち状況の確認に失敗: {e!r}")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "待ち状況を確認できませんでした。時間をおいて再度実行してください。"},
+        )
+    try:
+        data = res.json()
+    except Exception:  # noqa: BLE001
+        data = None
+    if res.status_code != 200 or not isinstance(data, dict):
+        return JSONResponse(
+            status_code=503,
+            content={"error": "待ち状況を確認できませんでした。時間をおいて再度実行してください。"},
+        )
+    return data
+
+
 async def _accept_whisper_invoke(
     *,
     user_id: str,
@@ -4605,7 +4676,25 @@ async def _accept_whisper_invoke(
     started: str,
     invoke_headers: dict[str, str],
 ) -> JSONResponse:
-    """文字起こしを履歴へ受け付け、応答を返してから本体を走らせる。"""
+    """文字起こしを履歴へ受け付け、応答を返してから本体を走らせる。
+
+    結果が返る60分に収まらない見込みのときは、履歴を作らず受け付けない。
+    """
+    probed = _first_audio_probe(inputs)
+    if probed is not None:
+        nbytes, head = probed
+        view = await _whisper_queue_view(
+            api_key=str(app_def.get("apiKey") or ""),
+            nbytes=nbytes,
+            head=head,
+        )
+        if isinstance(view, JSONResponse):
+            return view
+        if view.get("canStart") is False:
+            return JSONResponse(
+                status_code=409,
+                content={"error": str(view.get("message") or "今は文字起こしを受け付けできません。")},
+            )
     team = teams_store.get_team(team_id)
     active = _active_tenant_id(user_id, claims)
     try:
@@ -4762,6 +4851,32 @@ def _save_whisper_live(
         print(f"[whisper-live] 監査ログの記録に失敗: {exc}")
     created = str(saved.get("createdDate") or "")
     return created or None, reason if blocked else None
+
+
+
+@app.get("/whisper/queue")
+async def whisper_queue(
+    request: Request,
+    nbytes: int = 0,
+    audioSeconds: float = 0,
+) -> JSONResponse:
+    """実行前の待ち順と開始見込み。他の依頼のファイル名は返さない。"""
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    app_def = teams_store.get_exapp(COMMON_TEAM_ID, "whisper")
+    if not app_def:
+        return JSONResponse(status_code=404, content={"error": "文字起こしが見つかりません。"})
+    denied = _feature_disabled(user_id, claims, app_def)
+    if denied:
+        return denied
+    view = await _whisper_queue_view(
+        api_key=str(app_def.get("apiKey") or ""),
+        nbytes=max(0, nbytes),
+        audio_seconds=max(0.0, audioSeconds),
+    )
+    if isinstance(view, JSONResponse):
+        return view
+    return JSONResponse(content=view)
 
 
 @app.get("/whisper/live/config")

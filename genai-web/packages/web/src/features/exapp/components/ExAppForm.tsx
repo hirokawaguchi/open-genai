@@ -13,10 +13,17 @@ import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { ErrorText } from '@/components/ui/dads/ErrorText';
 import { SupportText } from '@/components/ui/dads/SupportText';
+import { teamApi } from '@/lib/fetcher';
 import { isJSON } from '@/utils/isJSON';
 import { ENTER_SUBMIT_HINT } from '@/utils/keyboard';
 import { newId } from '@/utils/uuid';
 import { useExAppInvokeState } from '../hooks/useExAppInvokeState';
+import {
+  firstFormFile,
+  readAudioDurationSeconds,
+  whisperQueueParams,
+  type WhisperQueueView,
+} from '../whisperQueue';
 import { getExAppHistoriesKey } from '../hooks/useFetchInvokedExAppHistories';
 import { useResolveExAppSchema } from '../hooks/useResolveExAppSchema';
 import { ConversationHistory, GovAIFormDefaultValue, GovAIFormUI, GovAIFormUIJson } from '../types';
@@ -202,6 +209,51 @@ ${parsedHistory.outputs}
   // 不可逆操作の確認ダイアログ（OpenGENAI Form Spec v1: item.confirm）
   const [pendingData, setPendingData] = useState<FieldValues | null>(null);
   const [confirmMessage, setConfirmMessage] = useState('');
+  const [confirmIsQueue, setConfirmIsQueue] = useState(false);
+
+  const closeConfirm = () => {
+    setPendingData(null);
+    setConfirmMessage('');
+    setConfirmIsQueue(false);
+  };
+
+  // 文字起こしは実行前に待ち順を見て、60分を超える見込みなら受け付けない。
+  const beginInvoke = async (data: FieldValues, queueConfirmed: boolean) => {
+    if (requestLoading) {
+      return;
+    }
+    if (exApp.exAppId === 'whisper') {
+      const file = firstFormFile(data);
+      if (file) {
+        setRequestLoading(true);
+        try {
+          const seconds = await readAudioDurationSeconds(file);
+          const res = await teamApi.get<WhisperQueueView>('whisper/queue', {
+            params: whisperQueueParams(file, seconds),
+          });
+          const view = res.data;
+          if (!view.canStart) {
+            setValidationError(view.message);
+            return;
+          }
+          if (view.ahead > 0 && !queueConfirmed) {
+            setPendingData(data);
+            setConfirmMessage(view.message);
+            setConfirmIsQueue(true);
+            return;
+          }
+        } catch {
+          setValidationError(
+            '待ち状況を確認できませんでした。時間をおいて再度実行してください。',
+          );
+          return;
+        } finally {
+          setRequestLoading(false);
+        }
+      }
+    }
+    await performInvoke(data);
+  };
 
   // 送信ゲート: 選択内容に confirm が必要ならダイアログを挟み、確定後に実行する。
   const onSubmit = (data: FieldValues) => {
@@ -212,9 +264,10 @@ ${parsedHistory.outputs}
     if (message) {
       setPendingData(data);
       setConfirmMessage(message);
+      setConfirmIsQueue(false);
       return;
     }
-    void performInvoke(data);
+    void beginInvoke(data, false);
   };
 
   const performInvoke = async (data: FieldValues) => {
@@ -318,10 +371,7 @@ ${parsedHistory.outputs}
 
       <CustomDialog
         isOpen={pendingData !== null}
-        onClose={() => {
-          setPendingData(null);
-          setConfirmMessage('');
-        }}
+        onClose={closeConfirm}
       >
         <CustomDialogPanel>
           <CustomDialogHeader>実行の確認</CustomDialogHeader>
@@ -333,10 +383,10 @@ ${parsedHistory.outputs}
                 size='md'
                 onClick={() => {
                   const data = pendingData;
-                  setPendingData(null);
-                  setConfirmMessage('');
+                  const confirmed = confirmIsQueue;
+                  closeConfirm();
                   if (data) {
-                    void performInvoke(data);
+                    void beginInvoke(data, confirmed);
                   }
                 }}
               >
@@ -345,10 +395,7 @@ ${parsedHistory.outputs}
               <Button
                 variant='text'
                 size='md'
-                onClick={() => {
-                  setPendingData(null);
-                  setConfirmMessage('');
-                }}
+                onClick={closeConfirm}
               >
                 キャンセル
               </Button>
