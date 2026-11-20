@@ -16,15 +16,20 @@ export const processFormFiles = async (data: Record<string, unknown>): Promise<P
   for (const key of Object.keys(data)) {
     const value = data[key];
 
-    // FileList または File[] をサポート
-    const isFileList = value instanceof FileList;
+    // FileList、File[]、または File 1件を受け付ける
+    const isFileList = typeof FileList !== 'undefined' && value instanceof FileList;
     const isFileArray = Array.isArray(value) && value.length > 0 && value[0] instanceof File;
+    const isFile = typeof File !== 'undefined' && value instanceof File;
 
-    if (!isFileList && !isFileArray) {
+    if (!isFileList && !isFileArray && !isFile) {
       continue;
     }
 
-    const files = isFileList ? Array.from(value as FileList) : (value as File[]);
+    const files = isFileList
+      ? Array.from(value as FileList)
+      : isFile
+        ? [value as File]
+        : (value as File[]);
 
     if (files.length === 0) {
       continue;

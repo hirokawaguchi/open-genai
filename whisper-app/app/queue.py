@@ -100,7 +100,7 @@ def describe(view: dict[str, object]) -> str:
         if ahead <= 0:
             return (
                 "この音声は、結果を返せる60分を超える見込みです。"
-                "短く分割してから、再度実行してください。"
+                "音声トラックだけ抽出するか、ファイルを分割してから、再度実行してください。"
             )
         return (
             f"前に{ahead}件あります。開始見込みは約{start_min}分後で、"
@@ -118,6 +118,17 @@ def _minutes(seconds: int) -> int:
     if seconds <= 0:
         return 0
     return max(1, round(seconds / 60))
+
+
+def seconds_for_queue(given: object, raw: bytes) -> float:
+    """再生時間が分かっていればそれを使う。動画は全体のバイト数だと長く見積もりすぎる。"""
+    try:
+        seconds = float(given or 0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if seconds > 0:
+        return seconds
+    return estimate_audio_seconds(raw)
 
 
 def estimate_audio_seconds(raw: bytes, *, total_bytes: int | None = None) -> float:

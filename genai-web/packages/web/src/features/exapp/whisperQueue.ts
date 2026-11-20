@@ -29,18 +29,20 @@ export const readAudioDurationSeconds = (file: File): Promise<number | null> => 
   }
   const url = URL.createObjectURL(file);
   return new Promise((resolve) => {
-    const audio = document.createElement('audio');
-    audio.preload = 'metadata';
+    const media = file.type.startsWith('video/')
+      ? document.createElement('video')
+      : document.createElement('audio');
+    media.preload = 'metadata';
     const finish = (seconds: number | null) => {
       URL.revokeObjectURL(url);
       resolve(seconds);
     };
-    audio.onloadedmetadata = () => {
-      const seconds = audio.duration;
+    media.onloadedmetadata = () => {
+      const seconds = media.duration;
       finish(Number.isFinite(seconds) && seconds > 0 ? seconds : null);
     };
-    audio.onerror = () => finish(null);
-    audio.src = url;
+    media.onerror = () => finish(null);
+    media.src = url;
   });
 };
 

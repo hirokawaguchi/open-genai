@@ -6,15 +6,17 @@ import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { useExAppInvokeStore } from '../stores/useExAppInvokeStore';
 import { ContinueConversationButton } from './ContinueConversationButton';
+import { WhisperHandoff } from './WhisperHandoff';
 import { ExAppArtifactDownloads } from './ExAppArtifactDownloads';
 import { ExAppCitations } from './ExAppCitations';
 
 type Props = {
   shouldShowConversationHistory: boolean;
+  handoff?: boolean;
 };
 
 export const ExAppResult = (props: Props) => {
-  const { shouldShowConversationHistory } = props;
+  const { shouldShowConversationHistory, handoff = false } = props;
   const { exAppResponse, requestLoading, error } = useExAppInvokeStore();
   const copyTextRef = useRef<HTMLDivElement>(null);
   const waiting =
@@ -46,7 +48,8 @@ export const ExAppResult = (props: Props) => {
         {(requestLoading || waiting) && <ProgressIndicator className='my-0.5' />}
 
         {showResult && (
-          <div className='-mb-2 flex w-full justify-end'>
+          <div className='-mb-2 flex w-full flex-wrap items-center justify-end gap-2'>
+            {handoff ? <WhisperHandoff text={exAppResponse?.outputs ?? ''} /> : null}
             <ButtonCopy text={exAppResponse?.outputs ?? ''} targetRef={copyTextRef} />
           </div>
         )}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.whisper_live import (
     TranscriptBook,
     _client_disconnected,
+    case_title,
     client_audio_event,
     format_output,
     normalize_language,
@@ -113,4 +114,12 @@ def test_transcript_book_replaces_partial_with_final() -> None:
     )
     assert done == {"type": "transcript", "itemId": "item_1", "text": "こんにちは、本日は"}
     assert book.text() == "こんにちは、本日は"
-    assert "gpt-live-transcribe" in format_output(book.text())
+    rendered = format_output(book.text())
+    assert "クラウドAI（海外リージョン）" in rendered
+    assert "gpt-live-transcribe" not in rendered
+
+
+def test_case_title_collapses_space_and_limits_length() -> None:
+    assert case_title("  会議\nメモ  ") == "会議 メモ"
+    assert case_title("") == ""
+    assert len(case_title("あ" * 100)) == 80

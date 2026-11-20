@@ -1,5 +1,5 @@
 import { ExApp, InvokeExAppHistory } from 'genai-web';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FieldValues, useForm } from 'react-hook-form';
 import { useSWRConfig } from 'swr';
 import { unstable_serialize } from 'swr/infinite';
@@ -41,10 +41,11 @@ type Props = {
   exApp: ExApp;
   uiJson: GovAIFormUIJson;
   defaultValues: GovAIFormDefaultValue;
+  fileEngine?: 'local' | 'cloud';
 };
 
 export const ExAppForm = (props: Props) => {
-  const { exApp, uiJson, defaultValues } = props;
+  const { exApp, uiJson, defaultValues, fileEngine = 'local' } = props;
 
   const {
     requestLoading,
@@ -52,7 +53,19 @@ export const ExAppForm = (props: Props) => {
     setError: setInvokeError,
     setExAppResponse,
     invokeRequest,
+    resumeLatest,
   } = useExAppInvokeState();
+  const resumeRef = useRef(resumeLatest);
+  resumeRef.current = resumeLatest;
+  useEffect(() => {
+    if (exApp.exAppId !== 'whisper') {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void resumeRef.current(exApp.teamId, exApp.exAppId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [exApp.exAppId, exApp.teamId]);
   const { mutate: mutateHistories } = useSWRConfig();
 
   const [validationError, setValidationError] = useState('');
@@ -222,7 +235,7 @@ ${parsedHistory.outputs}
     if (requestLoading) {
       return;
     }
-    if (exApp.exAppId === 'whisper') {
+    if (exApp.exAppId === 'whisper' && fileEngine !== 'cloud') {
       const file = firstFormFile(data);
       if (file) {
         setRequestLoading(true);
@@ -292,12 +305,13 @@ ${parsedHistory.outputs}
       }
     }
 
-    const payload = buildPayload({
+    const built = buildPayload({
       data: transformedData,
       files,
       invokeHistory,
       systemPromptKey: exApp.systemPromptKeyName,
     });
+    const payload = fileEngine === 'cloud' ? { ...built, engine: 'cloud' } : built;
 
     try {
       setRequestLoading(true);

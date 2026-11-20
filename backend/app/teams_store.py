@@ -569,6 +569,19 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             name = (exists["exAppName"] or "").strip() or app.get("exAppName", "")
             description = (exists["description"] or "").strip() or app.get("description", "")
             how_to_use = (exists["howToUse"] or "").strip() or app.get("howToUse", "")
+            # 以前の文面は「ファイルはクラウドに送らない」と断定していた。
+            # 方式を選べるようにしたので、その文面が残っているときだけ使い方を差し替える。
+            if app.get("exAppId") == "whisper" and (
+                "ファイルとして添付した音声はクラウドに送信されない" in how_to_use
+                or "方式を選びます。選択肢が1つのときは、そのまま入力します。" in how_to_use
+                or "マイクの音声は OpenAI（gpt-live-transcribe）へ送信されます。" in how_to_use
+            ):
+                how_to_use = app.get("howToUse", "")
+            if (
+                app.get("exAppId") == "whisper"
+                and description == "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き）。"
+            ):
+                description = app.get("description", "")
             # 公開ステータスは管理者がメニュー表示の切り替えに使うので上書きしない
             status = (exists["status"] or "").strip() or app.get("status", "published")
             # teamId もシード定義へ揃える（管理者アプリを専用チームへ移設する移行も兼ねる）

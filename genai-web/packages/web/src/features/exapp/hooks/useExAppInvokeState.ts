@@ -1,4 +1,9 @@
-import type { GetInvokeExAppHistoryResponse, InvokeExAppRequest } from 'genai-web';
+import type {
+  GetInvokeExAppHistoryResponse,
+  InvokeExAppHistory,
+  InvokeExAppRequest,
+  ListInvokeExAppHistoriesResponse,
+} from 'genai-web';
 import { useEffect, useRef } from 'react';
 import { useSWRConfig } from 'swr';
 import { unstable_serialize } from 'swr/infinite';
@@ -8,6 +13,9 @@ import { getExAppHistoriesKey } from './useFetchInvokedExAppHistories';
 import { useInvokeExApp } from './useInvokeExApp';
 
 const HISTORY_POLL_MS = 4000;
+
+const missingAudioMessage = (text: string | undefined) =>
+  (text ?? '').includes('ファイルが添付されていません');
 
 export const useExAppInvokeState = () => {
   const { invokeExApp } = useInvokeExApp();
@@ -57,6 +65,12 @@ export const useExAppInvokeState = () => {
         }
         if (history.status === 'COMPLETED') {
           stopPoll();
+          if (missingAudioMessage(history.outputs)) {
+            store.setExAppResponse(null);
+            store.setError(new Error(history.outputs.trim()));
+            refreshHistories(req.teamId, req.exAppId);
+            return;
+          }
           store.setError(null);
           store.setExAppResponse({
             outputs: history.outputs,
@@ -91,13 +105,49 @@ export const useExAppInvokeState = () => {
     }, HISTORY_POLL_MS);
   };
 
+  const showHistory = (teamId: string, exAppId: string, history: InvokeExAppHistory) => {
+    const generation = ++generationRef.current;
+    stopPoll();
+    if (history.status === 'COMPLETED') {
+      if (missingAudioMessage(history.outputs)) {
+        store.setExAppResponse(null);
+        store.setError(new Error(history.outputs.trim()));
+        return;
+      }
+      store.setError(null);
+      store.setExAppResponse({
+        outputs: history.outputs,
+        artifacts: history.artifacts,
+        status: 'COMPLETED',
+        createdDate: history.createdDate,
+        timestamps: { processingStartedAt: '', processingEndedAt: '' },
+      });
+      return;
+    }
+    if (history.status === 'ERROR') {
+      store.setExAppResponse(null);
+      store.setError(
+        new Error(history.outputs?.trim() || '実行中にエラーが発生しました。再度お試しください。'),
+      );
+      return;
+    }
+    store.setError(null);
+    store.setExAppResponse({
+      outputs: history.progress || '文字起こしを実行しています。完了まで数分かかることがあります。',
+      status: history.status,
+      createdDate: history.createdDate,
+      timestamps: { processingStartedAt: '', processingEndedAt: '' },
+    });
+    pollHistory({ teamId, exAppId, inputs: {} }, history.createdDate, generation);
+  };
+
   const invokeRequest = async (req: InvokeExAppRequest) => {
     const generation = ++generationRef.current;
     stopPoll();
     try {
       const res = await invokeExApp(req);
       if (generationRef.current !== generation) {
-        return;
+        return undefined;
       }
       if (
         (res.status === 'IN_PROGRESS' || res.status === 'ACCEPTED') &&
@@ -107,9 +157,10 @@ export const useExAppInvokeState = () => {
         store.setExAppResponse(res);
         pollHistory(req, res.createdDate, generation);
         refreshHistories(req.teamId, req.exAppId);
-        return;
+        return res.createdDate;
       }
       store.setExAppResponse(res);
+      return res.createdDate;
     } catch (error: unknown) {
       store.setExAppResponse(null);
       if (isApiError(error)) {
@@ -130,8 +181,59 @@ export const useExAppInvokeState = () => {
     }
   };
 
+  const resumeLatest = async (teamId: string, exAppId: string) => {
+    const generation = generationRef.current;
+    try {
+      const q = new URLSearchParams({ teamId, exAppId }).toString();
+      const res = await teamApi.get<ListInvokeExAppHistoriesResponse>(`exapps/histories?${q}`);
+      if (generationRef.current !== generation) {
+        return;
+      }
+      const current = useExAppInvokeStore.getState();
+      if (current.exAppResponse || current.requestLoading) {
+        return;
+      }
+      const latest = res.data.history?.[0];
+      if (!latest) {
+        return;
+      }
+      if (latest.status === 'COMPLETED') {
+        store.setError(null);
+        store.setExAppResponse({
+          outputs: latest.outputs,
+          artifacts: latest.artifacts,
+          status: 'COMPLETED',
+          createdDate: latest.createdDate,
+          timestamps: { processingStartedAt: '', processingEndedAt: '' },
+        });
+        return;
+      }
+      if (latest.status === 'ERROR') {
+        store.setExAppResponse(null);
+        store.setError(
+          new Error(latest.outputs?.trim() || '実行中にエラーが発生しました。再度お試しください。'),
+        );
+        return;
+      }
+      if (latest.status === 'IN_PROGRESS' || latest.status === 'ACCEPTED') {
+        store.setError(null);
+        store.setExAppResponse({
+          outputs: latest.progress || '文字起こしを実行しています。完了まで数分かかることがあります。',
+          status: latest.status,
+          createdDate: latest.createdDate,
+          timestamps: { processingStartedAt: '', processingEndedAt: '' },
+        });
+        pollHistory({ teamId, exAppId, inputs: {} }, latest.createdDate, generation);
+      }
+    } catch {
+      // 履歴が取れなくても、新しく実行はできる。
+    }
+  };
+
   return {
     ...store,
     invokeRequest,
+    showHistory,
+    resumeLatest,
   };
 };

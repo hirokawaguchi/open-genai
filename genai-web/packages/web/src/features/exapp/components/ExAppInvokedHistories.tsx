@@ -58,6 +58,7 @@ export const ExAppInvokedHistories = (props: Props) => {
               key={`${history.teamId}-${history.exAppId}-${history.userId}-${history.createdDate}`}
               history={history}
               shouldShowConversationHistory={exApp.placeholder.includes('conversation_history')}
+              handoff={exApp.exAppId === 'whisper'}
               isReloading={
                 reloadingHistories.find((id) => id === history.createdDate) !== undefined
               }

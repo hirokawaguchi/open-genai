@@ -89,6 +89,12 @@ def normalize_language(value: Any) -> str:
     return "auto"
 
 
+def case_title(value: Any) -> str:
+    """案件名。改行は潰し、空なら空文字。長すぎる名前は切る。"""
+    text = " ".join(str(value or "").split())
+    return text[:80]
+
+
 def session_update(language: str) -> dict[str, Any]:
     """gpt-live-transcribe のセッション設定。自動判定のときは言語ヒントを付けない。"""
     transcription: dict[str, Any] = {"model": LIVE_MODEL, "delay": "low"}
@@ -184,7 +190,7 @@ class TranscriptBook:
 
 
 def format_output(text: str) -> str:
-    return f"**音声の送信先**: OpenAI（{LIVE_MODEL}）\n\n{text.strip()}"
+    return f"**音声の送信先**: クラウドAI（海外リージョン）\n\n{text.strip()}"
 
 
 def _error_message(event: Mapping[str, Any]) -> str:

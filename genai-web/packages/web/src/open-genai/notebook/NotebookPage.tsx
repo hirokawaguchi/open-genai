@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PiBookOpenBold, PiFilePlus, PiPuzzlePieceBold } from 'react-icons/pi';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -203,7 +203,14 @@ export const NotebookPage = () => {
   );
   const { config, isLoading: configLoading, unavailable } = useNotebookConfig();
   const { sessions, mutate: mutateSessions } = useNotebookSessions();
+  const location = useLocation();
   const [sessionId, setSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    const handed = (location.state as { sessionId?: string } | null)?.sessionId;
+    if (handed) {
+      setSessionId(handed);
+    }
+  }, [location.state]);
   const { detail, mutate: mutateDetail } = useNotebookSession(sessionId);
   const { skills, mutate: mutateSkills } = useNotebookSkills();
   const { mcps, mutate: mutateMcps } = useNotebookMcps();

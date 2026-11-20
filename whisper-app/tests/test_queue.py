@@ -1,6 +1,6 @@
 """文字起こしの待ち見積もり。モデルは起動しない。"""
 
-from app.queue import TranscribeQueue, estimate_audio_seconds
+from app.queue import TranscribeQueue, estimate_audio_seconds, seconds_for_queue
 
 
 def test_empty_queue_accepts_a_meeting() -> None:
@@ -52,6 +52,13 @@ def test_release_opens_the_queue() -> None:
     assert slot is not None
     queue.release(slot)
     assert queue.forecast(49 * 60)["canStart"] is True
+
+
+def test_known_duration_overrides_a_large_video_estimate() -> None:
+    huge = b"\x00" * 64
+    assert seconds_for_queue(61, huge) == 61
+    assert seconds_for_queue("61", huge) == 61
+    assert seconds_for_queue(0, b"not audio") == estimate_audio_seconds(b"not audio")
 
 
 def test_mp3_bitrate_changes_the_estimate() -> None:
