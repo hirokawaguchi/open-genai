@@ -787,7 +787,7 @@ LEDGER_SEED: dict[str, Any] = {
     "apiKey": RAG_API_KEY,
     "config": "",
     "placeholder": "",
-    "description": "手続きの確定後や、直接の登録で行を管理します。項目は後から足せます。",
+    "description": "作成文書や手続受付などあらゆる情報を管理できる汎用台帳です。管理項目は台帳ごとに自由に設定できます。",
     "howToUse": (
         "## 使い方\n\n"
         "- 「台帳選択」で台帳を作り、開きます。台帳のオーナーは、作った人の所属チームです。\n"
@@ -1270,6 +1270,12 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "OpenAI の API キーを設定した環境だけで表示されます。",
             "OpenAI の API キーがある環境に「マイクで開始」が出ます。",
         ),
+    },
+    {
+        "seed": LEDGER_SEED,
+        "old_name": "台帳",
+        "old_description": "手続きの確定後や、直接の登録で行を管理します。項目は後から足せます。",
+        "old_howto_markers": (),
     },
 ]
 

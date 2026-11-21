@@ -118,7 +118,7 @@ const Shell = ({
     COMMON_EXAPPS_TEAM_ID,
     LEDGER_EXAPP_ID,
     '台帳',
-    '手続きの確定後や、直接の登録で行を管理します。項目は後から足せます。',
+    '作成文書や手続受付などあらゆる情報を管理できる汎用台帳です。管理項目は台帳ごとに自由に設定できます。',
   );
   const [helpOpen, setHelpOpen] = useState(false);
   const openId = ledgerId || rememberedLedger();
@@ -173,7 +173,7 @@ const Shell = ({
           teamId={COMMON_EXAPPS_TEAM_ID}
           exAppId={LEDGER_EXAPP_ID}
           fallbackTitle='台帳'
-          fallbackDescription='手続きの確定後や、直接の登録で行を管理します。項目は後から足せます。'
+          fallbackDescription='作成文書や手続受付などあらゆる情報を管理できる汎用台帳です。管理項目は台帳ごとに自由に設定できます。'
           hideHowTo={true}
         />
         <div className='flex shrink-0 flex-wrap items-center justify-between gap-2'>
