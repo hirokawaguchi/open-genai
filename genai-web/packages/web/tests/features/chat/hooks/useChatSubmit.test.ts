@@ -16,7 +16,7 @@ let mockStoreState = {
 
 const mockSearchWeb = vi.fn();
 vi.mock('@/features/chat/webSearch', () => ({
-  searchWeb: (query: string) => mockSearchWeb(query),
+  searchWeb: (query: string, history?: unknown) => mockSearchWeb(query, history),
   formatWebSearchContext: (passages: unknown[]) => `web:${(passages ?? []).length}`,
 }));
 
@@ -299,7 +299,7 @@ describe('useChatSubmit', () => {
         result.current.onSend();
       });
 
-      expect(mockSearchWeb).toHaveBeenCalledWith('hello');
+      expect(mockSearchWeb).toHaveBeenCalledWith('hello', []);
       expect(props.postChat).toHaveBeenCalledWith(
         'prompted-content',
         expect.objectContaining({ webSearchContext: 'web:1' }),

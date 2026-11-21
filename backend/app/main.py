@@ -3944,6 +3944,54 @@ async def web_search_config(request: Request) -> JSONResponse:
     return JSONResponse(content={"enabled": websearch.enabled()})
 
 
+async def _web_search_rewrite(history: list[dict[str, Any]], query: str) -> str:
+    """直近の会話を踏まえ、追い質問（「もっと詳しく」等）を単独で通じる検索クエリに言い換える。
+
+    言い換えはローカル LLM で行い、外部（Firecrawl Cloud）へは言い換え後のクエリだけが出る。
+    LLM が前置きや拒否文などを返した場合はサニタイズ・検証し、怪しければ
+    非 LLM のヒューリスティック（直前のユーザー発話を前置）にフォールバックする。
+    """
+    msgs: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは Web 検索クエリ作成の補助です。"
+                "これまでの会話の文脈を踏まえ、利用者の最後の要求に答えるための"
+                "検索クエリを日本語で1つだけ作ります。"
+                "必ず <q></q> で囲んだ検索語だけを出力し、説明・前置き・引用符・箇条書きは書かないでください。\n"
+                "例:\n"
+                "直前の要求「もっと詳しく」(話題: 量子コンピュータ) → <q>量子コンピュータ 仕組み 詳細</q>\n"
+                "直前の要求「最新情報は？」(話題: 為替) → <q>為替 最新 相場 2026</q>"
+            ),
+        }
+    ]
+    for item in history[-6:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = str(item.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            msgs.append({"role": role, "content": content[:2000]})
+    msgs.append(
+        {
+            "role": "user",
+            "content": (
+                f"直前の要求:「{query}」\n"
+                "上の会話を踏まえ、この要求に答えるための検索クエリを <q></q> で囲んで出力してください。"
+            ),
+        }
+    )
+    try:
+        out = await llm.chat_once(msgs, None)
+    except Exception:  # noqa: BLE001
+        return websearch.heuristic_query(history, query)
+    candidate = websearch.sanitize_query(out or "")
+    # 妥当性チェック: 空 / 長すぎ / 拒否・説明文の混入 なら非 LLM の安全網へ。
+    if websearch.is_bad_query(candidate):
+        return websearch.heuristic_query(history, query)
+    return candidate[:2000]
+
+
 @app.post("/web-search")
 async def web_search(request: Request) -> JSONResponse:
     """チャット用。利用者の発話をクエリに Web を検索し、抜粋を返す。"""
@@ -3960,6 +4008,10 @@ async def web_search(request: Request) -> JSONResponse:
     if not query:
         return JSONResponse(status_code=400, content={"error": "検索する内容を入力してください"})
     query = query[:2000]
+    # 会話履歴があれば、文脈を踏まえた検索クエリに言い換える（追い質問対応）。
+    history = body.get("history")
+    if isinstance(history, list) and history:
+        query = await _web_search_rewrite(history, query)
     # 外に出す前に、入力制限（禁止ワード/機密情報）に該当すれば止める（監査も記録される）。
     denied = _ngword_denied(request, query, usecase="/web-search")
     if denied:
@@ -3986,7 +4038,7 @@ async def web_search(request: Request) -> JSONResponse:
         return JSONResponse(
             status_code=502, content={"error": f"Web 検索に失敗しました: {e}"}
         )
-    return JSONResponse(content={"passages": passages})
+    return JSONResponse(content={"passages": passages, "query": query})
 
 
 @app.get("/knowledge/docs/{doc_id}/toc")

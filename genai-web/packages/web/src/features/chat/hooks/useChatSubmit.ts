@@ -1,8 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { formatKnowledgeContext, searchKnowledge } from '@/features/chat/knowledgeSearch';
-import { formatWebSearchContext, searchWeb } from '@/features/chat/webSearch';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
+import { formatWebSearchContext, searchWeb } from '@/features/chat/webSearch';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
 import { usePrompter } from '@/hooks/usePrompter';
@@ -76,7 +76,11 @@ export const useChatSubmit = ({
         if (webSearchOn) {
           useChatStore.getState().setWebSearching(true);
           try {
-            const found = await searchWeb(text);
+            // 直近の会話を渡し、サーバ側で文脈を踏まえた検索クエリに言い換える。
+            const history = (messages ?? [])
+              .slice(-6)
+              .map((m) => ({ role: m.role, content: m.content }));
+            const found = await searchWeb(text, history);
             webSearchContext = formatWebSearchContext(found.passages ?? []);
           } catch (e: unknown) {
             window.alert(`Web 検索に失敗しました: ${errorText(e)}`);
@@ -113,6 +117,7 @@ export const useChatSubmit = ({
       uploadedFiles,
       setContent,
       clearFiles,
+      messages,
     ],
   );
 
@@ -139,8 +144,8 @@ export const useChatSubmit = ({
       return;
     }
     // スイッチがオンなら、直前のユーザー発話で検索し直してから再生成する。
-    const lastUser = [...(messages ?? [])].reverse().find((m) => m.role === 'user');
-    const text = (lastUser?.content ?? '').trim();
+    const lastUserIdx = (messages ?? []).map((m) => m.role).lastIndexOf('user');
+    const text = ((messages ?? [])[lastUserIdx]?.content ?? '').trim();
     if (!text) {
       retryGeneration({ base64Cache });
       return;
@@ -149,7 +154,12 @@ export const useChatSubmit = ({
       let webSearchContext: string | undefined;
       useChatStore.getState().setWebSearching(true);
       try {
-        const found = await searchWeb(text);
+        // 直前のユーザー発話より前の会話を文脈として渡す。
+        const history = (messages ?? [])
+          .slice(0, Math.max(lastUserIdx, 0))
+          .slice(-6)
+          .map((m) => ({ role: m.role, content: m.content }));
+        const found = await searchWeb(text, history);
         webSearchContext = formatWebSearchContext(found.passages ?? []);
       } catch (e: unknown) {
         window.alert(`Web 検索に失敗しました: ${errorText(e)}`);
