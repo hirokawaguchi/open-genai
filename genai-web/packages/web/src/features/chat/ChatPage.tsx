@@ -3,13 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { PiBookOpenBold } from 'react-icons/pi';
 import { useLocation, useNavigate } from 'react-router';
 import { PageTitle } from '@/components/PageTitle';
+import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import {
   CustomDialog,
   CustomDialogBody,
   CustomDialogHeader,
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
-import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { APP_TITLE } from '@/constants';
@@ -32,10 +32,10 @@ import { useSetDefaultValues } from '@/features/chat/hooks/useSetDefaultValues';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { useChat } from '@/hooks/useChat';
-import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useFollow } from '@/hooks/useFollow';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useScreen } from '@/hooks/useScreen';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useSystemContext } from './hooks/useSystemContext';
 import { ChatPageQueryParams } from './types';
 
@@ -48,6 +48,7 @@ export const ChatPage = () => {
     setIsDragOver,
     shouldAutoSubmit,
     setHasSent,
+    webSearching,
   } = useChatStore();
 
   const { search, state } = useLocation();
@@ -257,6 +258,17 @@ export const ChatPage = () => {
                       retryGeneration={onRetry}
                     />
                   ))}
+                {webSearching && (
+                  <article
+                    className='border border-solid-gray-420 bg-white p-4 rounded-12 lg:px-6'
+                    role='status'
+                  >
+                    <div className='flex items-center gap-2 text-solid-gray-700'>
+                      <ProgressIndicator />
+                      Webを検索しています…
+                    </div>
+                  </article>
+                )}
               </div>
 
               <div ref={scrollBottomAnchorRef} />

@@ -17,20 +17,20 @@ import {
   FileUploadInput,
 } from '@/components/ui/dads/FileUpload';
 import { formatSize } from '@/components/ui/dads/FileUpload/utils/formatSize';
+import { SupportText } from '@/components/ui/dads/SupportText';
 import { AttachmentIcon } from '@/components/ui/icons/AttachmentIcon';
 import { SearchIcon } from '@/components/ui/icons/SearchIcon';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
-import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
-import { SupportText } from '@/components/ui/dads/SupportText';
 import { LoadingButton } from '@/components/ui/LoadingButton';
 import { Switch } from '@/components/ui/Switch';
+import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
 import { useWebSearchConfig } from '@/features/chat/hooks/useWebSearchConfig';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
-import { warnPromptPii, type PromptPiiWarn } from '@/lib/chatApi';
-import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { type PromptPiiWarn, warnPromptPii } from '@/lib/chatApi';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { FILE_LIMIT } from '../constants';
 import { ChatFormSchema, chatFormSchema } from '../schema';
@@ -348,7 +348,7 @@ export const ChatInput = (props: Props) => {
                   </Button>
                   {webSearchEnabled && (
                     <Switch
-                      className='shrink-0'
+                      className='flex shrink-0 self-stretch items-center'
                       checked={webSearchOn}
                       onSwitch={setWebSearchOn}
                       label={webSearchOn ? 'Web検索 On' : 'Web検索 Off'}
@@ -379,11 +379,6 @@ export const ChatInput = (props: Props) => {
               {knowledgeSearching && (
                 <p className='text-solid-gray-700' role='status'>
                   ナレッジを検索しています。
-                </p>
-              )}
-              {webSearching && (
-                <p className='text-solid-gray-700' role='status'>
-                  Webを検索しています。
                 </p>
               )}
               {knowledgePicks.length > 0 && (
