@@ -100,6 +100,8 @@ services:
       # Web 検索（Firecrawl Local）。空ならチャットのスイッチも MCP も出さない。
       # インターネット接続環境のみ profile websearch と合わせて設定する（検索クエリは Firecrawl Cloud に出る）。
       - FIRECRAWL_URL=${FIRECRAWL_URL:-}
+      # firecrawl-local（0.0.0.0 待受）へ送る Bearer トークン。サイドカーと同じ値。
+      - FIRECRAWL_TOKEN=${FIRECRAWL_TOKEN:-}
       # 自治体予算（profiles: ["budget"]。未起動時は専用ページが案内を表示）
       - BUDGET_APP_URL=${BUDGET_APP_URL:-http://budget-app:8022/invoke}
       # 台帳（profiles: ["ledger"]。未起動時は専用ページが案内を表示）
@@ -806,6 +808,8 @@ services:
       - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
       # Web 検索（Firecrawl Local）。空なら MCP は非接続。backend と同じ値を使う。
       - FIRECRAWL_URL=${FIRECRAWL_URL:-}
+      # firecrawl-local（0.0.0.0 待受）へ送る Bearer トークン。サイドカーと同じ値。
+      - FIRECRAWL_TOKEN=${FIRECRAWL_TOKEN:-}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
       - NGWORD_DB_PATH=/ngword-data/ngwords.db
@@ -832,9 +836,16 @@ services:
       dockerfile: Dockerfile
     container_name: open-genai-firecrawl-local
     environment:
+      # 0.0.0.0 で待受するため Bearer トークンが必須（compose 内の他サービスが DNS 名で到達する）。
+      # backend / notebook-app が送る FIRECRAWL_TOKEN と同じ値にする。
+      - FIRECRAWL_LOCAL_TOKEN=${FIRECRAWL_TOKEN:-}
       # 任意の Firecrawl アカウント鍵。未設定ならキーレスの無料枠を使う。
       # 本番で使う場合は overlay 側（.env.prod / *-ops）に置き、公開リポジトリには入れない。
       - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY:-}
+    # 0.0.0.0 待受＋他コンテナからの到達には、service 名を Host 許可に足す必要がある
+    # （既定は自ホスト宛のみ許可。到達名を変える場合は --allowed-host も合わせる）。
+    command:
+      ["firecrawl-local", "serve", "--host", "0.0.0.0", "--port", "3002", "--allowed-host", "firecrawl-local"]
     expose:
       - "3002"
     restart: unless-stopped

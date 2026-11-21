@@ -31,6 +31,9 @@
 ```bash
 # .env
 FIRECRAWL_URL=http://firecrawl-local:3002
+# firecrawl-local を 0.0.0.0 で待受させるための Bearer トークン（本番は変更する）。
+# backend / notebook-app はこの値を Authorization: Bearer で送る。
+FIRECRAWL_TOKEN=dev-firecrawl-token-change-me
 # 任意: アカウントの鍵を使う場合（公開リポジトリには置かず overlay に置く）
 # FIRECRAWL_API_KEY=fc-...
 
@@ -38,6 +41,13 @@ docker compose --profile websearch up -d --build firecrawl-local
 ```
 
 `firecrawl-local` の起動後、`backend` と `notebook-app` は内部 DNS `http://firecrawl-local:3002` で到達します。
+
+> **トークンと Host 許可:** `firecrawl-local` は 0.0.0.0 で待受するとき Bearer トークンを要求し
+> （`FIRECRAWL_LOCAL_TOKEN`、compose では `FIRECRAWL_TOKEN` から渡す）、既定では自ホスト宛の
+> Host ヘッダしか受けません。他コンテナが service 名 `firecrawl-local` で到達できるよう、compose の
+> `command` で `--allowed-host firecrawl-local` を渡しています。クライアント（backend / notebook-app）は
+> 同じトークンを `FIRECRAWL_TOKEN` として送ります。`search` は Firecrawl Cloud に出ます（キーレスの無料枠、
+> または `FIRECRAWL_API_KEY`）。
 
 ## チャット
 

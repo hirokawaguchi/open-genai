@@ -30,9 +30,13 @@ def enabled() -> bool:
 
 def _headers() -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    key = (os.environ.get("FIRECRAWL_API_KEY") or "").strip()
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
+    # firecrawl-local に 0.0.0.0 で待受させる場合、クライアントは Bearer トークンが要る。
+    # サイドカーの FIRECRAWL_LOCAL_TOKEN と同じ値（FIRECRAWL_TOKEN）を送る。
+    token = (
+        os.environ.get("FIRECRAWL_TOKEN") or os.environ.get("FIRECRAWL_API_KEY") or ""
+    ).strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 

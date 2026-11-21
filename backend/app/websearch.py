@@ -13,7 +13,11 @@ from typing import Any
 import httpx
 
 FIRECRAWL_URL = (os.environ.get("FIRECRAWL_URL") or "").strip().rstrip("/")
-FIRECRAWL_API_KEY = (os.environ.get("FIRECRAWL_API_KEY") or "").strip()
+# firecrawl-local に 0.0.0.0 で待受させる場合、クライアントは Bearer トークンが要る。
+# サイドカーの FIRECRAWL_LOCAL_TOKEN と同じ値を渡す。
+FIRECRAWL_TOKEN = (
+    os.environ.get("FIRECRAWL_TOKEN") or os.environ.get("FIRECRAWL_API_KEY") or ""
+).strip()
 
 DEFAULT_LIMIT = 5
 MAX_RESULTS = 8
@@ -28,8 +32,8 @@ def enabled() -> bool:
 
 def _headers() -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if FIRECRAWL_API_KEY:
-        headers["Authorization"] = f"Bearer {FIRECRAWL_API_KEY}"
+    if FIRECRAWL_TOKEN:
+        headers["Authorization"] = f"Bearer {FIRECRAWL_TOKEN}"
     return headers
 
 

@@ -29,5 +29,8 @@ ENV CHROME_PATH=/usr/bin/chromium \
 
 EXPOSE 3002
 
-# v2 API を 0.0.0.0:3002 に出す。ローカルのルートは API キー不要。
+# v2 API を 0.0.0.0:3002 に出す。
+# 0.0.0.0 待受には Bearer トークン（FIRECRAWL_LOCAL_TOKEN）が必須。
+# 他コンテナが service 名で到達するので、compose 側で --allowed-host を足す
+# （既定は自ホスト宛の Host ヘッダのみ許可するため）。
 CMD ["firecrawl-local", "serve", "--host", "0.0.0.0", "--port", "3002"]
