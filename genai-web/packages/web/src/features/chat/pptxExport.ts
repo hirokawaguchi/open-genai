@@ -30,7 +30,10 @@ export const splitDeckTitle = (markdown: string): { title: string; body: string 
   const text = markdown.trim();
   const matched = text.match(/^#\s+([^\n]+)\n+([\s\S]+)$/);
   if (!matched) return { title: '回答', body: text };
-  const title = matched[1].replace(/^#+\s*/, '').trim().slice(0, 80);
+  const title = matched[1]
+    .replace(/^#+\s*/, '')
+    .trim()
+    .slice(0, 80);
   const body = matched[2].trim();
   return { title: title || '回答', body: body || text };
 };
@@ -157,7 +160,10 @@ export const fetchPptxCompose = async (jobId: string): Promise<PptxComposeStatus
   }
 };
 
-export const postPptxMermaid = async (jobId: string, assets: Record<string, string>): Promise<void> => {
+export const postPptxMermaid = async (
+  jobId: string,
+  assets: Record<string, string>,
+): Promise<void> => {
   try {
     await genUApi.post(`procuretech-generate/compose/${jobId}/mermaid`, { assets });
   } catch (error) {

@@ -112,10 +112,7 @@ export const postComposeMermaid = (
     .then(() => undefined);
 
 /** 生成ジョブの待ち画像（PNG）。失敗時は呼び出し側でフォールバックする。 */
-export const fetchGenerationWaitingBlob = (
-  projectId: string,
-  requestId: string,
-): Promise<Blob> =>
+export const fetchGenerationWaitingBlob = (projectId: string, requestId: string): Promise<Blob> =>
   teamApi
     .getBlob(`${BASE}/projects/${enc(projectId)}/generations/${enc(requestId)}/waiting`)
     .then((r) => r.blob);

@@ -296,10 +296,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
 
         <div className='flex flex-col gap-3'>
           {visibleMessages.map((m, i) => (
-            <div
-              key={i}
-              className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
-            >
+            <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
               <div
                 className={`max-w-[85%] rounded-8 px-4 py-3 ${
                   m.role === 'user'
@@ -313,12 +310,11 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
                     <ExAppCitations artifacts={m.artifacts} />
                     <ExAppArtifactDownloads artifacts={m.artifacts} />
                     {/* 生成完了後のみコピーを表示（配信途中の部分テキストは対象外） */}
-                    {m.content.length > 0 &&
-                      !(isLoading && i === visibleMessages.length - 1) && (
-                        <div className='mt-1 flex justify-end'>
-                          <ButtonCopy text={m.content} />
-                        </div>
-                      )}
+                    {m.content.length > 0 && !(isLoading && i === visibleMessages.length - 1) && (
+                      <div className='mt-1 flex justify-end'>
+                        <ButtonCopy text={m.content} />
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className='whitespace-pre-wrap break-words text-std-16N-170'>
@@ -387,11 +383,7 @@ export const ExAppChat = ({ exApp, fileAttachEnabled = false }: Props) => {
                     e.target.value = '';
                   }}
                 />
-                <Button
-                  variant='outline'
-                  size='md'
-                  onClick={() => fileInputRef.current?.click()}
-                >
+                <Button variant='outline' size='md' onClick={() => fileInputRef.current?.click()}>
                   ファイルを添付
                 </Button>
               </>

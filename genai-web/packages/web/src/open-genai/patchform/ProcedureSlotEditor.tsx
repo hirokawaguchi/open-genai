@@ -146,7 +146,13 @@ export const ProcedureSlotEditor = ({
             </Link>
           ) : null}
           {onRemove ? (
-            <Button type='button' variant='outline' size='sm' disabled={!canEdit} onClick={onRemove}>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={!canEdit}
+              onClick={onRemove}
+            >
               外す
             </Button>
           ) : null}
@@ -199,7 +205,9 @@ export const ProcedureSlotEditor = ({
             value={contentDraft[card.slotId] || ''}
             disabled={!canEdit}
             placeholder='例: 勤務先名が読める'
-            onChange={(e) => setContentDraft((prev) => ({ ...prev, [card.slotId]: e.target.value }))}
+            onChange={(e) =>
+              setContentDraft((prev) => ({ ...prev, [card.slotId]: e.target.value }))
+            }
           />
           <Button
             type='button'
@@ -279,7 +287,10 @@ export const ProcedureSlotEditor = ({
           {guideFormId ? (
             <>
               {' '}
-              <Link to={`/patchform/${guideFormId}/edit`} className='text-blue-900 underline-offset-2 hover:underline'>
+              <Link
+                to={`/patchform/${guideFormId}/edit`}
+                className='text-blue-900 underline-offset-2 hover:underline'
+              >
                 質問に選択肢を足す
               </Link>
             </>
@@ -304,7 +315,9 @@ export const ProcedureSlotEditor = ({
                       : 'border-solid-gray-300 bg-white text-solid-gray-800'
                   }`}
                 >
-                  <span className='block text-dns-14N-130 text-solid-gray-600'>{answer.question}</span>
+                  <span className='block text-dns-14N-130 text-solid-gray-600'>
+                    {answer.question}
+                  </span>
                   <span className='block text-std-16B-150'>{answer.label}</span>
                 </button>
               );
@@ -312,9 +325,7 @@ export const ProcedureSlotEditor = ({
           </div>
           {rule && current ? (
             <div className='flex flex-col gap-3'>
-              <p className='text-std-16B-150'>
-                「{current.label}」のときに出す書類
-              </p>
+              <p className='text-std-16B-150'>「{current.label}」のときに出す書類</p>
               {cards.length === 0 ? (
                 <p className='text-std-16N-170 text-solid-gray-700'>まだ書類がありません。</p>
               ) : (
@@ -334,7 +345,9 @@ export const ProcedureSlotEditor = ({
                         });
                       } else {
                         onRule(current.componentId, current.option, {
-                          prepare: (rule.prepare || []).filter((name) => `attach:${name}` !== card.slotId),
+                          prepare: (rule.prepare || []).filter(
+                            (name) => `attach:${name}` !== card.slotId,
+                          ),
                           reviews: (rule.reviews || []).filter((r) => r.slot_id !== card.slotId),
                         });
                       }
@@ -421,7 +434,9 @@ export const ProcedureSlotEditor = ({
                   rows={2}
                   value={rule.notes || ''}
                   disabled={!canEdit}
-                  onChange={(e) => onRule(current.componentId, current.option, { notes: e.target.value })}
+                  onChange={(e) =>
+                    onRule(current.componentId, current.option, { notes: e.target.value })
+                  }
                 />
               </div>
               <div>

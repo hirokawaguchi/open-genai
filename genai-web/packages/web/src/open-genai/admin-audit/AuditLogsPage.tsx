@@ -97,9 +97,14 @@ export const AuditLogsPage = () => {
       fallbackDescription='利用者単位の利用状況・利用内容ログを確認します（管理者限定）。監査ログには入力・出力の本文が含まれる場合があります。取り扱いに注意してください。'
       fallbackHowTo={
         <>
-          <p>・条件を入力して「検索」を押すと絞り込めます。日付は JST の 0:00〜23:59 で扱います。</p>
+          <p>
+            ・条件を入力して「検索」を押すと絞り込めます。日付は JST の 0:00〜23:59 で扱います。
+          </p>
           <p>・各行の「全文」を開くと、入力・出力の本文をそのまま確認できます。</p>
-          <p>・「エクスポート」で、現在の期間（開始日・終了日）の全件を JSONL でダウンロードできます。</p>
+          <p>
+            ・「エクスポート」で、現在の期間（開始日・終了日）の全件を JSONL
+            でダウンロードできます。
+          </p>
         </>
       }
     />
@@ -262,9 +267,7 @@ export const AuditLogsPage = () => {
                         key={log.id}
                         log={log}
                         expanded={expandedId === log.id}
-                        onToggle={() =>
-                          setExpandedId((cur) => (cur === log.id ? null : log.id))
-                        }
+                        onToggle={() => setExpandedId((cur) => (cur === log.id ? null : log.id))}
                       />
                     ))}
                   </tbody>
@@ -310,15 +313,8 @@ export const AuditLogsPage = () => {
  * 閲覧できる。棟では分けない。
  */
 const AuditViewerManager = () => {
-  const {
-    viewers,
-    isLoading,
-    loadError,
-    submitting,
-    actionError,
-    addViewer,
-    removeViewer,
-  } = useAuditViewers(true);
+  const { viewers, isLoading, loadError, submitting, actionError, addViewer, removeViewer } =
+    useAuditViewers(true);
   const [query, setQuery] = useState('');
   const [candidates, setCandidates] = useState<AuditViewerCandidate[]>([]);
   const [searching, setSearching] = useState(false);

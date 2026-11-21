@@ -32,7 +32,15 @@ const statusStyle = (status: string): string => {
   }
 };
 
-const STATUS_FILTERS = ['すべて', '未着手', '作業中', '準備完了', '提出済', '完了', '取下げ'] as const;
+const STATUS_FILTERS = [
+  'すべて',
+  '未着手',
+  '作業中',
+  '準備完了',
+  '提出済',
+  '完了',
+  '取下げ',
+] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 const fmtDateTime = (v: string): string => (v ? new Date(v).toLocaleString('ja-JP') : '—');
@@ -60,8 +68,7 @@ export const DocmakerPage = () => {
   const routes = usePatchformRoutes();
   const { applications, isLoading, loadError, mutate } = usePatchformMyApplications();
   const { procedures } = usePatchformProcedures();
-  const { setStatus, updateMeta, remove, busy, error, setError } =
-    usePatchformProjectActions();
+  const { setStatus, updateMeta, remove, busy, error, setError } = usePatchformProjectActions();
   const [pick, setPick] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('すべて');
@@ -315,7 +322,9 @@ export const DocmakerPage = () => {
                               className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-14N-130'
                             />
                           ) : (
-                            <span className={`whitespace-nowrap text-dns-14N-130 ${deadlineTone(a.deadline)}`}>
+                            <span
+                              className={`whitespace-nowrap text-dns-14N-130 ${deadlineTone(a.deadline)}`}
+                            >
                               {a.deadline || '—'}
                             </span>
                           )}

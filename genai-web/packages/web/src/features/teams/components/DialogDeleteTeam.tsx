@@ -64,7 +64,9 @@ export const DialogDeleteTeam = (props: Props) => {
           >
             <p className='font-bold'>⚠ この操作は取り消せません</p>
             <p>
-              チームのメンバー・AIアプリ設定に加え、<strong>このチーム専用の知識ベース（RAGに登録したドキュメント）も完全に削除</strong>されます。
+              チームのメンバー・AIアプリ設定に加え、
+              <strong>このチーム専用の知識ベース（RAGに登録したドキュメント）も完全に削除</strong>
+              されます。
             </p>
           </div>
 

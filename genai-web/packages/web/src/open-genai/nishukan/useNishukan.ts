@@ -78,10 +78,14 @@ export const useNishukanActions = () => {
     appointChief: (teamId: string, userId: string) =>
       run(() => teamApi.put(`nishukan/teams/${teamId}/chief`, { userId }).then((r) => r.data)),
     setHeadcount: (teamId: string, headcount: number) =>
-      run(() => teamApi.put(`nishukan/teams/${teamId}/headcount`, { headcount }).then((r) => r.data)),
+      run(() =>
+        teamApi.put(`nishukan/teams/${teamId}/headcount`, { headcount }).then((r) => r.data),
+      ),
     setVacation: (teamId: string, timeboxStart: string, size: number) =>
       run(() =>
-        teamApi.put(`nishukan/teams/${teamId}/vacation`, { timeboxStart, size }).then((r) => r.data),
+        teamApi
+          .put(`nishukan/teams/${teamId}/vacation`, { timeboxStart, size })
+          .then((r) => r.data),
       ),
     createProject: (body: Record<string, unknown>) =>
       run(() => teamApi.post('nishukan/projects', body).then((r) => r.data)),
@@ -106,7 +110,9 @@ export const useNishukanActions = () => {
     createIssue: (body: Record<string, unknown>) =>
       run(() => teamApi.post<NishukanIssue>('nishukan/issues', body).then((r) => r.data)),
     updateIssue: (issueId: string, body: Record<string, unknown>) =>
-      run(() => teamApi.patch<NishukanIssue>(`nishukan/issues/${issueId}`, body).then((r) => r.data)),
+      run(() =>
+        teamApi.patch<NishukanIssue>(`nishukan/issues/${issueId}`, body).then((r) => r.data),
+      ),
     setCheck: (issueId: string, checkId: string, done: boolean) =>
       run(() =>
         teamApi

@@ -218,7 +218,12 @@ export const UserCreateSection = ({ isSystemAdmin, onCreated }: Props) => {
               「{username || '(未入力)'}」を登録します。よろしいですか？
             </p>
             <div className='mt-6 flex justify-end gap-3'>
-              <Button type='button' variant='outline' size='md' onClick={() => setConfirmOpen(false)}>
+              <Button
+                type='button'
+                variant='outline'
+                size='md'
+                onClick={() => setConfirmOpen(false)}
+              >
                 キャンセル
               </Button>
               <Button

@@ -172,9 +172,7 @@ export const PatchformPage = () => {
   };
 
   const toggleTagTarget = (tag: string) =>
-    setTagTargets((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
+    setTagTargets((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
 
   const selectFilter = (id: string) => {
     setStatusFilter(id);
@@ -183,10 +181,7 @@ export const PatchformPage = () => {
     resetBulk();
   };
 
-  const summarize = (
-    results: { id: string; ok: boolean; error?: string }[],
-    okLabel: string,
-  ) => {
+  const summarize = (results: { id: string; ok: boolean; error?: string }[], okLabel: string) => {
     const ok = results.filter((r) => r.ok);
     const ng = results.filter((r) => !r.ok);
     const parts: string[] = [];
@@ -316,7 +311,9 @@ export const PatchformPage = () => {
     try {
       const bundle = await readExportBundleFile(file);
       if (bundle.kind !== 'form') {
-        setImportMsg('これは手続きの書き出しファイルです。手続き一覧の「読み込み」からお試しください。');
+        setImportMsg(
+          'これは手続きの書き出しファイルです。手続き一覧の「読み込み」からお試しください。',
+        );
         return;
       }
       const created = await importForm(bundle);
@@ -355,8 +352,8 @@ export const PatchformPage = () => {
               {config?.error || 'コンテナを profiles: ["patchform"] で起動してください。'}
             </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose --profile patchform up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=patchform
+              docker compose --profile patchform up -d{'\n'}# または .env に
+              COMPOSE_PROFILES=patchform
             </pre>
           </div>
         )}
@@ -418,7 +415,10 @@ export const PatchformPage = () => {
                   {importMsg}
                 </p>
               ) : null}
-              <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='状態で絞り込み'>
+              <fieldset
+                className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0'
+                aria-label='状態で絞り込み'
+              >
                 {(
                   [
                     { id: '', label: `すべて（${activeCount}）` },
@@ -444,7 +444,10 @@ export const PatchformPage = () => {
                 ))}
               </fieldset>
               {!trashView && knownTags.length > 0 ? (
-                <fieldset className='m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0' aria-label='タグで絞り込み'>
+                <fieldset
+                  className='m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0'
+                  aria-label='タグで絞り込み'
+                >
                   <button
                     type='button'
                     onClick={() => setTagFilter('')}
@@ -550,8 +553,15 @@ export const PatchformPage = () => {
                       : 'この条件のフォームはありません。'}
                   {!trashView && kindForms.length === 0 ? (
                     <span className='mt-3 block'>
-                      <Button type='button' variant='solid-fill' size='sm' onClick={() => openWizard(kind)}>
-                        {asGuide ? '新しいナビゲーションフォームを作る' : '新しい申請フォームを作る'}
+                      <Button
+                        type='button'
+                        variant='solid-fill'
+                        size='sm'
+                        onClick={() => openWizard(kind)}
+                      >
+                        {asGuide
+                          ? '新しいナビゲーションフォームを作る'
+                          : '新しい申請フォームを作る'}
                       </Button>
                     </span>
                   ) : null}
@@ -573,7 +583,9 @@ export const PatchformPage = () => {
                         すべて選択
                       </label>
                       <span className='text-dns-14N-130 text-solid-gray-600'>
-                        {selectedCount > 0 ? `${selectedCount} 件を選択中` : '選択して一括処理できます'}
+                        {selectedCount > 0
+                          ? `${selectedCount} 件を選択中`
+                          : '選択して一括処理できます'}
                       </span>
                       {trashView ? (
                         <div className='flex flex-wrap items-center gap-2'>
@@ -584,7 +596,9 @@ export const PatchformPage = () => {
                             aria-disabled={submitting || selectedCount === 0}
                             onClick={() => void onRestore()}
                           >
-                            {submitting ? '処理中...' : `復元する${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
+                            {submitting
+                              ? '処理中...'
+                              : `復元する${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
                           </Button>
                           <Button
                             type='button'
@@ -599,123 +613,123 @@ export const PatchformPage = () => {
                         </div>
                       ) : (
                         <>
-                        <div className='flex flex-wrap items-center gap-2'>
-                          <select
-                            className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130'
-                            value={bulkAction}
-                            onChange={(e) => chooseBulkAction(e.target.value)}
-                            aria-label='一括処理を選ぶ'
-                          >
-                            <option value=''>一括処理を選ぶ…</option>
-                            <option value='ready'>作成完了にする</option>
-                            <option value='editing'>作成に戻す</option>
-                            <option value='tag_add'>タグを付ける</option>
-                            <option value='tag_remove'>タグを外す</option>
-                            <option value='archive'>ゴミ箱へ移す</option>
-                          </select>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            aria-disabled={
-                              submitting ||
-                              selectedCount === 0 ||
-                              !bulkAction ||
-                              ((bulkAction === 'tag_add' || bulkAction === 'tag_remove') &&
-                                tagTargets.length === 0 &&
-                                !(bulkAction === 'tag_add' && tagDraft.trim()))
-                            }
-                            onClick={() => void runBulk()}
-                          >
-                            {submitting ? '処理中...' : '実行'}
-                          </Button>
-                        </div>
-                        {bulkAction === 'tag_add' ? (
-                          <div className='flex w-full flex-col gap-2'>
-                            {tagTargets.length > 0 ? (
-                              <ul className='flex flex-wrap gap-2'>
-                                {tagTargets.map((tag) => (
-                                  <li key={tag}>
-                                    <button
-                                      type='button'
-                                      className='rounded-4 border border-solid-gray-420 bg-white px-2 py-1 text-dns-14N-130 text-solid-gray-800'
-                                      onClick={() => toggleTagTarget(tag)}
-                                      aria-label={`${tag}を候補から外す`}
-                                    >
-                                      {tag} ×
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
-                            <div className='flex flex-wrap items-center gap-2'>
-                              <input
-                                className='w-full max-w-64 rounded-4 border border-solid-gray-420 px-3 py-1.5 text-std-16N-170'
-                                value={tagDraft}
-                                onChange={(e) => setTagDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ',') {
-                                    e.preventDefault();
-                                    addTagTarget(tagDraft);
-                                  }
-                                }}
-                                placeholder='付けるタグを入力（Enterで追加）'
-                              />
-                              <button
-                                type='button'
-                                className='rounded-4 border border-solid-gray-420 px-3 py-1.5 text-dns-16N-130 text-solid-gray-800'
-                                disabled={!tagDraft.trim()}
-                                onClick={() => addTagTarget(tagDraft)}
-                              >
-                                追加
-                              </button>
+                          <div className='flex flex-wrap items-center gap-2'>
+                            <select
+                              className='rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130'
+                              value={bulkAction}
+                              onChange={(e) => chooseBulkAction(e.target.value)}
+                              aria-label='一括処理を選ぶ'
+                            >
+                              <option value=''>一括処理を選ぶ…</option>
+                              <option value='ready'>作成完了にする</option>
+                              <option value='editing'>作成に戻す</option>
+                              <option value='tag_add'>タグを付ける</option>
+                              <option value='tag_remove'>タグを外す</option>
+                              <option value='archive'>ゴミ箱へ移す</option>
+                            </select>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              aria-disabled={
+                                submitting ||
+                                selectedCount === 0 ||
+                                !bulkAction ||
+                                ((bulkAction === 'tag_add' || bulkAction === 'tag_remove') &&
+                                  tagTargets.length === 0 &&
+                                  !(bulkAction === 'tag_add' && tagDraft.trim()))
+                              }
+                              onClick={() => void runBulk()}
+                            >
+                              {submitting ? '処理中...' : '実行'}
+                            </Button>
+                          </div>
+                          {bulkAction === 'tag_add' ? (
+                            <div className='flex w-full flex-col gap-2'>
+                              {tagTargets.length > 0 ? (
+                                <ul className='flex flex-wrap gap-2'>
+                                  {tagTargets.map((tag) => (
+                                    <li key={tag}>
+                                      <button
+                                        type='button'
+                                        className='rounded-4 border border-solid-gray-420 bg-white px-2 py-1 text-dns-14N-130 text-solid-gray-800'
+                                        onClick={() => toggleTagTarget(tag)}
+                                        aria-label={`${tag}を候補から外す`}
+                                      >
+                                        {tag} ×
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                              <div className='flex flex-wrap items-center gap-2'>
+                                <input
+                                  className='w-full max-w-64 rounded-4 border border-solid-gray-420 px-3 py-1.5 text-std-16N-170'
+                                  value={tagDraft}
+                                  onChange={(e) => setTagDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ',') {
+                                      e.preventDefault();
+                                      addTagTarget(tagDraft);
+                                    }
+                                  }}
+                                  placeholder='付けるタグを入力（Enterで追加）'
+                                />
+                                <button
+                                  type='button'
+                                  className='rounded-4 border border-solid-gray-420 px-3 py-1.5 text-dns-16N-130 text-solid-gray-800'
+                                  disabled={!tagDraft.trim()}
+                                  onClick={() => addTagTarget(tagDraft)}
+                                >
+                                  追加
+                                </button>
+                              </div>
+                              {knownTags.filter((t) => !tagTargets.includes(t)).length > 0 ? (
+                                <div className='flex flex-wrap gap-2'>
+                                  {knownTags
+                                    .filter((t) => !tagTargets.includes(t))
+                                    .slice(0, 12)
+                                    .map((tag) => (
+                                      <button
+                                        key={tag}
+                                        type='button'
+                                        className='rounded-4 border border-dashed border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700'
+                                        onClick={() => addTagTarget(tag)}
+                                      >
+                                        {tag}
+                                      </button>
+                                    ))}
+                                </div>
+                              ) : null}
                             </div>
-                            {knownTags.filter((t) => !tagTargets.includes(t)).length > 0 ? (
-                              <div className='flex flex-wrap gap-2'>
-                                {knownTags
-                                  .filter((t) => !tagTargets.includes(t))
-                                  .slice(0, 12)
-                                  .map((tag) => (
+                          ) : null}
+                          {bulkAction === 'tag_remove' ? (
+                            <div className='flex w-full flex-col gap-2'>
+                              {selectedTags.length === 0 ? (
+                                <p className='text-dns-14N-130 text-solid-gray-600'>
+                                  選択したフォームに付いているタグはありません。
+                                </p>
+                              ) : (
+                                <div className='flex flex-wrap gap-2'>
+                                  {selectedTags.map((tag) => (
                                     <button
                                       key={tag}
                                       type='button'
-                                      className='rounded-4 border border-dashed border-solid-gray-420 px-2 py-1 text-dns-14N-130 text-solid-gray-700'
-                                      onClick={() => addTagTarget(tag)}
+                                      className={`rounded-4 border px-2 py-1 text-dns-14N-130 ${
+                                        tagTargets.includes(tag)
+                                          ? 'border-blue-900 bg-blue-50 text-blue-900'
+                                          : 'border-solid-gray-420 text-solid-gray-700'
+                                      }`}
+                                      onClick={() => toggleTagTarget(tag)}
                                     >
                                       {tag}
+                                      {tagTargets.includes(tag) ? ' ✓' : ''}
                                     </button>
                                   ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {bulkAction === 'tag_remove' ? (
-                          <div className='flex w-full flex-col gap-2'>
-                            {selectedTags.length === 0 ? (
-                              <p className='text-dns-14N-130 text-solid-gray-600'>
-                                選択したフォームに付いているタグはありません。
-                              </p>
-                            ) : (
-                              <div className='flex flex-wrap gap-2'>
-                                {selectedTags.map((tag) => (
-                                  <button
-                                    key={tag}
-                                    type='button'
-                                    className={`rounded-4 border px-2 py-1 text-dns-14N-130 ${
-                                      tagTargets.includes(tag)
-                                        ? 'border-blue-900 bg-blue-50 text-blue-900'
-                                        : 'border-solid-gray-420 text-solid-gray-700'
-                                    }`}
-                                    onClick={() => toggleTagTarget(tag)}
-                                  >
-                                    {tag}
-                                    {tagTargets.includes(tag) ? ' ✓' : ''}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ) : null}
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
                         </>
                       )}
                     </div>

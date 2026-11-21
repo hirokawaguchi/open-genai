@@ -6,8 +6,7 @@ export type AssistantImageContent = {
   error?: boolean;
 };
 
-const DEFAULT_NEGATIVE_PROMPT =
-  'worst quality, low quality, blurry, deformed, text, watermark';
+const DEFAULT_NEGATIVE_PROMPT = 'worst quality, low quality, blurry, deformed, text, watermark';
 
 const asString = (value: unknown): string | null => {
   if (typeof value === 'string') {

@@ -59,8 +59,12 @@ type Props = {
 
 export const ChoseiCreateWizard = ({ open, onClose, onCreated }: Props) => {
   const { create, submitting, error, setError } = useChoseiActions();
-  const { parseDates, busy: assistBusy, error: assistError, setError: setAssistError } =
-    useChoseiAssist();
+  const {
+    parseDates,
+    busy: assistBusy,
+    error: assistError,
+    setError: setAssistError,
+  } = useChoseiAssist();
   const [step, setStep] = useState<StepId>('basics');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

@@ -98,7 +98,10 @@ export const OfficePage = ({ appId }: { appId: OfficeAppId }) => {
         <PageTitle title={documentTitle} />
         <div className='flex h-[calc(100dvh-var(--header-height))] flex-col'>
           {notice ? (
-            <p className='border-b border-solid-gray-420 bg-solid-gray-50 px-4 py-2 text-std-14N-160 text-solid-gray-800' role='status'>
+            <p
+              className='border-b border-solid-gray-420 bg-solid-gray-50 px-4 py-2 text-std-14N-160 text-solid-gray-800'
+              role='status'
+            >
               {notice}
             </p>
           ) : null}
@@ -124,11 +127,13 @@ export const OfficePage = ({ appId }: { appId: OfficeAppId }) => {
             className='min-h-0 flex-1 overflow-auto rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3 text-std-14N-160 text-solid-gray-800'
             role='status'
           >
-            <p className='text-std-16B-150 text-solid-gray-900'>{app.label}は現在有効化されていません</p>
+            <p className='text-std-16B-150 text-solid-gray-900'>
+              {app.label}は現在有効化されていません
+            </p>
             <p className='mt-2'>{error || 'profile office で起動してください。'}</p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130'>
-              docker compose --profile office up -d --build{'\n'}
-              # または .env に COMPOSE_PROFILES=office
+              docker compose --profile office up -d --build{'\n'}# または .env に
+              COMPOSE_PROFILES=office
             </pre>
             <p className='mt-3'>
               編集には WebGPU に対応したブラウザ（新しい Chrome、Edge、Safari）が必要です。

@@ -1,11 +1,7 @@
 import { Label } from '@/components/ui/dads/Label';
 import { catalogTypeHelp } from '../labels';
 import { parseOptionLines, serializeOptions } from '../runtime/choiceOptions';
-import {
-  COMPOSITE_SUBFIELD_LABELS,
-  COMPOSITE_SUBFIELDS,
-  IMI_PRESETS,
-} from '../runtime/imiSuggest';
+import { COMPOSITE_SUBFIELD_LABELS, COMPOSITE_SUBFIELDS, IMI_PRESETS } from '../runtime/imiSuggest';
 import type { CatalogItem, FormComponent, VisibleWhenRule } from '../types';
 
 type Props = {
@@ -121,7 +117,10 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
                   ...c,
                   properties: {
                     ...c.properties,
-                    rows: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
+                    rows: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
                   },
                 })
               }
@@ -138,7 +137,10 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
                   ...c,
                   properties: {
                     ...c.properties,
-                    columns: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
+                    columns: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
                   },
                 })
               }
@@ -153,7 +155,9 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
             className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
             rows={3}
             value={String(c.properties?.text || '')}
-            onChange={(e) => onChange({ ...c, properties: { ...c.properties, text: e.target.value } })}
+            onChange={(e) =>
+              onChange({ ...c, properties: { ...c.properties, text: e.target.value } })
+            }
           />
         </div>
       )}
@@ -163,7 +167,9 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           <input
             className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
             value={String(c.properties?.src || '')}
-            onChange={(e) => onChange({ ...c, properties: { ...c.properties, src: e.target.value } })}
+            onChange={(e) =>
+              onChange({ ...c, properties: { ...c.properties, src: e.target.value } })
+            }
           />
         </div>
       )}
@@ -173,7 +179,9 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
           <input
             className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
             value={String(c.properties?.formula || '')}
-            onChange={(e) => onChange({ ...c, properties: { ...c.properties, formula: e.target.value } })}
+            onChange={(e) =>
+              onChange({ ...c, properties: { ...c.properties, formula: e.target.value } })
+            }
           />
         </div>
       )}
@@ -228,7 +236,10 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
         {rules.map((rule, i) => {
           const mode = rule.in ? 'in' : 'eq';
           return (
-            <div key={`${rule.field}-${i}`} className='grid gap-2 rounded-8 border border-solid-gray-300 p-3 md:grid-cols-2'>
+            <div
+              key={`${rule.field}-${i}`}
+              className='grid gap-2 rounded-8 border border-solid-gray-300 p-3 md:grid-cols-2'
+            >
               <div>
                 <Label size='sm'>部品</Label>
                 <select
@@ -283,7 +294,10 @@ export const ComponentSettings = ({ component: c, catalog, siblings, onChange }:
                       mode === 'in'
                         ? {
                             field: rule.field,
-                            in: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                            in: e.target.value
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean),
                           }
                         : { field: rule.field, eq: e.target.value };
                     setRules(next);

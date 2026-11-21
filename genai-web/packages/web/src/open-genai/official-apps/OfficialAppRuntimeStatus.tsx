@@ -1,7 +1,4 @@
-import {
-  OFFICIAL_APP_RUNTIME_LABEL,
-  officialAppRuntimeKind,
-} from './runtime';
+import { OFFICIAL_APP_RUNTIME_LABEL, officialAppRuntimeKind } from './runtime';
 
 export const OfficialAppRuntimeStatus = ({
   id,

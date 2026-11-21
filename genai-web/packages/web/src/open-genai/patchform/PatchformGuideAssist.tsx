@@ -92,7 +92,10 @@ export const PatchformGuideAssist = ({
   const canApply = selectedCount > 0 && (!applyForms || formKeys.length > 0);
 
   return (
-    <div id='pf-proc-ai' className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-4'>
+    <div
+      id='pf-proc-ai'
+      className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 px-4 py-4'
+    >
       <h3 className='text-std-16B-150'>手引きファイルで候補を出す（任意）</h3>
       <p className='mt-1 text-dns-16N-130 text-solid-gray-700'>
         手引きは手続きを一度に完成させるものではありません。読み取れた様式・手続きの選択肢・案内から、反映するものを選んでください。公開はしません。
@@ -112,11 +115,13 @@ export const PatchformGuideAssist = ({
           }}
         />
         <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-          txt / md / pdf / Word（docx） / Excel（xlsx）を選べます。古い Word（doc）や PowerPoint、スキャン画像だけの PDF は読めません。
+          txt / md / pdf / Word（docx） / Excel（xlsx）を選べます。古い Word（doc）や
+          PowerPoint、スキャン画像だけの PDF は読めません。
         </p>
         {guideText.trim() ? (
           <p className='mt-2 text-dns-16N-130 text-solid-gray-700'>
-            ファイルを読み込みました（{guideText.trim().length.toLocaleString('ja-JP')}文字）。下のボタンで候補を出せます。
+            ファイルを読み込みました（{guideText.trim().length.toLocaleString('ja-JP')}
+            文字）。下のボタンで候補を出せます。
           </p>
         ) : null}
       </div>
@@ -154,9 +159,7 @@ export const PatchformGuideAssist = ({
           {preview.preview.outline?.read?.length ? (
             <p className='text-dns-14N-130 text-solid-gray-700'>
               目次から{preview.preview.outline.chapter_count}章を切り、
-              {preview.preview.outline.read
-                .map((ch) => `「${ch.title || ch.id}」`)
-                .join('、')}
+              {preview.preview.outline.read.map((ch) => `「${ch.title || ch.id}」`).join('、')}
               を読みました。
             </p>
           ) : null}
@@ -254,7 +257,8 @@ export const PatchformGuideAssist = ({
                 <span>
                   手続きの案内
                   <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-600'>
-                    名前「{preview.preview.notice.name || '（未設定）'}」と、答えと用紙の対応を下書きします。
+                    名前「{preview.preview.notice.name || '（未設定）'}
+                    」と、答えと用紙の対応を下書きします。
                     {preview.preview.notice.rule_count
                       ? ` 対応 ${preview.preview.notice.rule_count} 件。`
                       : ' 対応はまだありません。'}

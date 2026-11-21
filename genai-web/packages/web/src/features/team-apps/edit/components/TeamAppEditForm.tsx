@@ -171,136 +171,139 @@ export const TeamAppEditForm = (props: Props) => {
 
       {!builtin && (
         <>
-      <Divider className='my-6' />
+          <Divider className='my-6' />
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-endpoint-url`} size='lg'>
-          APIエンドポイントのURL<RequirementBadge>※必須</RequirementBadge>
-        </Label>
-        <Input
-          id={`team-app-endpoint-url`}
-          type='url'
-          required
-          className='w-full'
-          aria-describedby={errors.endpoint ? `team-app-endpoint-url-error` : undefined}
-          {...register('endpoint')}
-        />
-        {errors.endpoint && (
-          <ErrorText id={`team-app-endpoint-url-error`}>＊{errors.endpoint.message}</ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-endpoint-url`} size='lg'>
+              APIエンドポイントのURL<RequirementBadge>※必須</RequirementBadge>
+            </Label>
+            <Input
+              id={`team-app-endpoint-url`}
+              type='url'
+              required
+              className='w-full'
+              aria-describedby={errors.endpoint ? `team-app-endpoint-url-error` : undefined}
+              {...register('endpoint')}
+            />
+            {errors.endpoint && (
+              <ErrorText id={`team-app-endpoint-url-error`}>＊{errors.endpoint.message}</ErrorText>
+            )}
+          </div>
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-api-key`} size='lg'>
-          APIキー<RequirementBadge isOptional>※任意</RequirementBadge>
-        </Label>
-        <SupportText id={`team-app-api-key-support`}>
-          APIキーの更新が必要な場合のみ入力してください
-        </SupportText>
-        <Input
-          id={`team-app-api-key`}
-          type='text'
-          className='w-full'
-          aria-describedby={
-            errors.apiKey
-              ? `team-app-api-key-support team-app-api-key-error`
-              : `team-app-api-key-support`
-          }
-          {...register('apiKey')}
-        />
-        {errors.apiKey && (
-          <ErrorText id={`team-app-api-key-error`}>＊{errors.apiKey.message}</ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-api-key`} size='lg'>
+              APIキー<RequirementBadge isOptional>※任意</RequirementBadge>
+            </Label>
+            <SupportText id={`team-app-api-key-support`}>
+              APIキーの更新が必要な場合のみ入力してください
+            </SupportText>
+            <Input
+              id={`team-app-api-key`}
+              type='text'
+              className='w-full'
+              aria-describedby={
+                errors.apiKey
+                  ? `team-app-api-key-support team-app-api-key-error`
+                  : `team-app-api-key-support`
+              }
+              {...register('apiKey')}
+            />
+            {errors.apiKey && (
+              <ErrorText id={`team-app-api-key-error`}>＊{errors.apiKey.message}</ErrorText>
+            )}
+          </div>
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-request-data`} size='lg'>
-          APIリクエストのデータ形式(JSON)
-          <RequirementBadge isOptional>※任意</RequirementBadge>
-        </Label>
-        <SupportText id={`team-app-request-data-support`}>
-          JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify チャット）や入力不要のアプリでは空で構いません。
-          <Link href='/docs/api-request-data-format' target='_blank'>
-            APIリクエストのデータ形式解説
-          </Link>
-        </SupportText>
-        <Textarea
-          id={`team-app-request-data`}
-          className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
-          aria-describedby={
-            errors.uiFormat
-              ? `team-app-request-data-support team-app-request-data-error`
-              : `team-app-request-data-support`
-          }
-          {...register('uiFormat')}
-        />
-        {errors.uiFormat && (
-          <ErrorText id={`team-app-request-data-error`}>＊{errors.uiFormat.message}</ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-request-data`} size='lg'>
+              APIリクエストのデータ形式(JSON)
+              <RequirementBadge isOptional>※任意</RequirementBadge>
+            </Label>
+            <SupportText id={`team-app-request-data-support`}>
+              JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify
+              チャット）や入力不要のアプリでは空で構いません。
+              <Link href='/docs/api-request-data-format' target='_blank'>
+                APIリクエストのデータ形式解説
+              </Link>
+            </SupportText>
+            <Textarea
+              id={`team-app-request-data`}
+              className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
+              aria-describedby={
+                errors.uiFormat
+                  ? `team-app-request-data-support team-app-request-data-error`
+                  : `team-app-request-data-support`
+              }
+              {...register('uiFormat')}
+            />
+            {errors.uiFormat && (
+              <ErrorText id={`team-app-request-data-error`}>＊{errors.uiFormat.message}</ErrorText>
+            )}
+          </div>
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-config`} size='lg'>
-          コンフィグ（JSON）
-          <RequirementBadge isOptional>※任意</RequirementBadge>
-        </Label>
-        <SupportText id={`team-app-config-support`}>JSON形式で入力してください</SupportText>
-        <Textarea
-          id={`team-app-config`}
-          className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
-          aria-describedby={
-            errors.config
-              ? `team-app-config-support team-app-config-error`
-              : `team-app-config-support`
-          }
-          {...register('config')}
-        />
-        {errors.config && (
-          <ErrorText id={`team-app-config-error`}>＊{errors.config.message}</ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-config`} size='lg'>
+              コンフィグ（JSON）
+              <RequirementBadge isOptional>※任意</RequirementBadge>
+            </Label>
+            <SupportText id={`team-app-config-support`}>JSON形式で入力してください</SupportText>
+            <Textarea
+              id={`team-app-config`}
+              className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
+              aria-describedby={
+                errors.config
+                  ? `team-app-config-support team-app-config-error`
+                  : `team-app-config-support`
+              }
+              {...register('config')}
+            />
+            {errors.config && (
+              <ErrorText id={`team-app-config-error`}>＊{errors.config.message}</ErrorText>
+            )}
+          </div>
 
-      <Divider className='my-6' />
+          <Divider className='my-6' />
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-system-prompt`} size='lg'>
-          システムプロンプト
-          <RequirementBadge isOptional>※任意</RequirementBadge>
-        </Label>
-        <Textarea
-          id={`team-app-system-prompt`}
-          className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
-          aria-describedby={errors.systemPrompt ? `team-app-system-prompt-error` : undefined}
-          {...register('systemPrompt')}
-        />
-        {errors.systemPrompt && (
-          <ErrorText id={`team-app-system-prompt-error`}>＊{errors.systemPrompt.message}</ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-system-prompt`} size='lg'>
+              システムプロンプト
+              <RequirementBadge isOptional>※任意</RequirementBadge>
+            </Label>
+            <Textarea
+              id={`team-app-system-prompt`}
+              className='field-sizing-content min-h-[calc(3lh+2rem+2px)]'
+              aria-describedby={errors.systemPrompt ? `team-app-system-prompt-error` : undefined}
+              {...register('systemPrompt')}
+            />
+            {errors.systemPrompt && (
+              <ErrorText id={`team-app-system-prompt-error`}>
+                ＊{errors.systemPrompt.message}
+              </ErrorText>
+            )}
+          </div>
 
-      <div className='flex flex-col gap-1.5'>
-        <Label htmlFor={`team-app-system-prompt-key`} size='lg'>
-          システムプロンプトのキー名
-          <RequirementBadge isOptional>※任意</RequirementBadge>
-        </Label>
-        <SupportText id={`team-app-system-prompt-key-support`}>
-          ペイロード送信時のキー名を入力してください
-        </SupportText>
-        <Input
-          id={`team-app-system-prompt-key`}
-          aria-describedby={
-            errors.systemPromptKeyName
-              ? `team-app-system-prompt-key-support team-app-system-prompt-key-error`
-              : `team-app-system-prompt-key-support`
-          }
-          {...register('systemPromptKeyName')}
-        />
-        {errors.systemPromptKeyName && (
-          <ErrorText id={`team-app-system-prompt-key-error`}>
-            ＊{errors.systemPromptKeyName.message}
-          </ErrorText>
-        )}
-      </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor={`team-app-system-prompt-key`} size='lg'>
+              システムプロンプトのキー名
+              <RequirementBadge isOptional>※任意</RequirementBadge>
+            </Label>
+            <SupportText id={`team-app-system-prompt-key-support`}>
+              ペイロード送信時のキー名を入力してください
+            </SupportText>
+            <Input
+              id={`team-app-system-prompt-key`}
+              aria-describedby={
+                errors.systemPromptKeyName
+                  ? `team-app-system-prompt-key-support team-app-system-prompt-key-error`
+                  : `team-app-system-prompt-key-support`
+              }
+              {...register('systemPromptKeyName')}
+            />
+            {errors.systemPromptKeyName && (
+              <ErrorText id={`team-app-system-prompt-key-error`}>
+                ＊{errors.systemPromptKeyName.message}
+              </ErrorText>
+            )}
+          </div>
         </>
       )}
 
@@ -338,14 +341,14 @@ export const TeamAppEditForm = (props: Props) => {
 
       {!builtin && (
         <>
-      <Divider className='my-6' />
+          <Divider className='my-6' />
 
-      <fieldset>
-        <Legend className='mb-1.5' size='lg'>
-          その他の設定
-        </Legend>
-        <Checkbox {...register('copyable')}>このAIアプリをコピー可能にする</Checkbox>
-      </fieldset>
+          <fieldset>
+            <Legend className='mb-1.5' size='lg'>
+              その他の設定
+            </Legend>
+            <Checkbox {...register('copyable')}>このAIアプリをコピー可能にする</Checkbox>
+          </fieldset>
         </>
       )}
 

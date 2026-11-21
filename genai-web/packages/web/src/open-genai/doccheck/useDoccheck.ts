@@ -161,9 +161,7 @@ export const useDoccheckActions = () => {
 
   const getBatch = useCallback(async (batchId: string) => {
     try {
-      return await teamApiFetcher<BatchSummary>(
-        `doccheck/batches/${encodeURIComponent(batchId)}`,
-      );
+      return await teamApiFetcher<BatchSummary>(`doccheck/batches/${encodeURIComponent(batchId)}`);
     } catch (e) {
       setError(errorMessage(e, 'バッチ詳細の取得に失敗しました'));
       return null;
@@ -188,11 +186,7 @@ export const useDoccheckActions = () => {
   }, []);
 
   const downloadBatchExport = useCallback(
-    async (
-      batchId: string,
-      format: 'csv' | 'jsonl' | 'json' = 'csv',
-      status = 'completed',
-    ) => {
+    async (batchId: string, format: 'csv' | 'jsonl' | 'json' = 'csv', status = 'completed') => {
       setError(null);
       try {
         const { blob, disposition } = await teamApi.getBlob(
@@ -466,19 +460,19 @@ export const useDoccheckActions = () => {
 
   const arbitrate = useCallback(
     async (regionId: string, adopted_text: string, is_blank = false) => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      return await teamApi.post(
-        `doccheck/arbitration/${encodeURIComponent(regionId)}`,
-        { adopted_text, is_blank },
-      );
-    } catch (e) {
-      setError(errorMessage(e, '裁定に失敗しました'));
-      return null;
-    } finally {
-      setSubmitting(false);
-    }
+      setSubmitting(true);
+      setError(null);
+      try {
+        return await teamApi.post(`doccheck/arbitration/${encodeURIComponent(regionId)}`, {
+          adopted_text,
+          is_blank,
+        });
+      } catch (e) {
+        setError(errorMessage(e, '裁定に失敗しました'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
     },
     [],
   );

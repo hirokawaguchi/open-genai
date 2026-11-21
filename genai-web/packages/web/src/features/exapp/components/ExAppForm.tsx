@@ -148,9 +148,7 @@ export const ExAppForm = (props: Props) => {
       ),
     [liveUiJson],
   );
-  const reactiveSignature = reactiveKeys
-    .map((k) => `${k}=${effectiveValues?.[k] ?? ''}`)
-    .join('&');
+  const reactiveSignature = reactiveKeys.map((k) => `${k}=${effectiveValues?.[k] ?? ''}`).join('&');
 
   useEffect(() => {
     if (reactiveKeys.length === 0) {
@@ -256,9 +254,7 @@ ${parsedHistory.outputs}
             return;
           }
         } catch {
-          setValidationError(
-            '待ち状況を確認できませんでした。時間をおいて再度実行してください。',
-          );
+          setValidationError('待ち状況を確認できませんでした。時間をおいて再度実行してください。');
           return;
         } finally {
           setRequestLoading(false);
@@ -383,10 +379,7 @@ ${parsedHistory.outputs}
         </div>
       </form>
 
-      <CustomDialog
-        isOpen={pendingData !== null}
-        onClose={closeConfirm}
-      >
+      <CustomDialog isOpen={pendingData !== null} onClose={closeConfirm}>
         <CustomDialogPanel>
           <CustomDialogHeader>実行の確認</CustomDialogHeader>
           <CustomDialogBody>
@@ -406,11 +399,7 @@ ${parsedHistory.outputs}
               >
                 実行する
               </Button>
-              <Button
-                variant='text'
-                size='md'
-                onClick={closeConfirm}
-              >
+              <Button variant='text' size='md' onClick={closeConfirm}>
                 キャンセル
               </Button>
             </div>

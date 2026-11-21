@@ -72,7 +72,11 @@ export const TranscriptPanel = ({ materialId, onChanged }: Props) => {
         seenRef.current = `${saved.materialId}:${saved.updatedAt}:${saved.status}`;
       }
       await mutate(saved, { revalidate: false });
-      setNote(saved.status === 'draft' ? '下書きを保存しました。確定すると本文が残ります。' : '本文を保存しました');
+      setNote(
+        saved.status === 'draft'
+          ? '下書きを保存しました。確定すると本文が残ります。'
+          : '本文を保存しました',
+      );
       onChanged();
       return !dirtyRef.current;
     } catch (e) {
@@ -200,7 +204,12 @@ export const TranscriptPanel = ({ materialId, onChanged }: Props) => {
           </div>
           <span className='inline-flex gap-2'>
             {transcript.status === 'none' || transcript.status === 'failed' ? (
-              <Button type='button' variant='outline' size='sm' onClick={() => void startJob(false)}>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={() => void startJob(false)}
+              >
                 文字起こしを作る
               </Button>
             ) : (
@@ -208,7 +217,13 @@ export const TranscriptPanel = ({ materialId, onChanged }: Props) => {
                 やり直す
               </Button>
             )}
-            <Button type='button' variant='solid-fill' size='sm' onClick={() => void confirm()} disabled={running || confirming || !hasText}>
+            <Button
+              type='button'
+              variant='solid-fill'
+              size='sm'
+              onClick={() => void confirm()}
+              disabled={running || confirming || !hasText}
+            >
               確定する
             </Button>
           </span>
@@ -221,8 +236,17 @@ export const TranscriptPanel = ({ materialId, onChanged }: Props) => {
             className={`flex items-center gap-2 ${localError || transcript.error ? 'text-dns-14N-130 text-red-700' : 'text-dns-14N-130 text-solid-gray-700'}`}
             role='status'
           >
-            {running && <PiSpinnerGap aria-hidden={true} className='size-5 shrink-0 animate-spin text-blue-900' />}
-            {localError || transcript.error || note || transcript.notice || '文字起こしを実行しています'}
+            {running && (
+              <PiSpinnerGap
+                aria-hidden={true}
+                className='size-5 shrink-0 animate-spin text-blue-900'
+              />
+            )}
+            {localError ||
+              transcript.error ||
+              note ||
+              transcript.notice ||
+              '文字起こしを実行しています'}
           </p>
         )}
       </div>
@@ -258,89 +282,112 @@ export const TranscriptPanel = ({ materialId, onChanged }: Props) => {
           )}
         </div>
         <div className='flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain'>
-      {running && (
-        <p className='flex items-center gap-2 text-solid-gray-600' role='status'>
-          <PiSpinnerGap aria-hidden={true} className='size-5 shrink-0 animate-spin text-blue-900' />
-          文字起こしを実行しています。完了まで数分かかることがあります。
-        </p>
-      )}
-      {!running && transcript.status !== 'none' && transcript.status !== 'failed' && rows.length === 0 && !transcript.notice && (
-        <p className='text-solid-gray-700'>本文がありません</p>
-      )}
-      {!running &&
-        rows.map((row, index) => (
-          <div
-            key={row.id}
-            className={`flex h-full min-h-full shrink-0 flex-col rounded-8 border p-3 ${playing === row.id ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-420'}`}
-          >
-            <div className='mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2'>
-              {slides ? (
-                <button
-                  type='button'
-                  className={`text-std-16B-150 ${pdfPage === row.start ? 'text-blue-900' : 'text-solid-gray-900'}`}
-                  onClick={() => setPdfPage(row.start)}
-                >
-                  ページ {row.start}
-                </button>
-              ) : (
-                <button type='button' className='text-std-16B-150 text-blue-900' onClick={() => playSpan(row)}>
-                  {clock(row.start)}–{clock(row.end)} を再生
-                </button>
-              )}
-              {!slides && (
-                <span className='inline-flex gap-2'>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    disabled={row.text.trim().length < 2}
-                    onClick={() => {
-                      const cut = Math.max(1, Math.floor(row.text.length / 2));
-                      const mid = Math.round((row.start + (row.end - row.start) / 2) * 100) / 100;
-                      const right: TranscriptSegment = {
-                        id: crypto.randomUUID(),
-                        start: mid,
-                        end: row.end,
-                        text: row.text.slice(cut).trimStart(),
-                      };
-                      const left: TranscriptSegment = { ...row, end: mid, text: row.text.slice(0, cut).trimEnd() };
-                      editRows([...rows.slice(0, index), left, right, ...rows.slice(index + 1)]);
-                    }}
-                  >
-                    分割
-                  </Button>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    disabled={index === 0}
-                    onClick={() => {
-                      const prev = rows[index - 1];
-                      const merged: TranscriptSegment = {
-                        ...prev,
-                        end: row.end,
-                        text: `${prev.text}${prev.text && row.text ? '\n' : ''}${row.text}`,
-                      };
-                      editRows([...rows.slice(0, index - 1), merged, ...rows.slice(index + 1)]);
-                    }}
-                  >
-                    前と結合
-                  </Button>
-                </span>
-              )}
-            </div>
-            <textarea
-              className='min-h-0 w-full flex-1 resize-none rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
-              value={row.text}
-              aria-label={slides ? `ページ ${row.start} の本文` : `${clock(row.start)} からの本文`}
-              placeholder={slides ? 'このページから文字を読み取れませんでした' : 'この区間の本文'}
-              onChange={(event) => {
-                const text = event.target.value;
-                editRows(rows.map((item) => (item.id === row.id ? { ...item, text } : item)));
-              }}
-            />
-          </div>
-        ))}
+          {running && (
+            <p className='flex items-center gap-2 text-solid-gray-600' role='status'>
+              <PiSpinnerGap
+                aria-hidden={true}
+                className='size-5 shrink-0 animate-spin text-blue-900'
+              />
+              文字起こしを実行しています。完了まで数分かかることがあります。
+            </p>
+          )}
+          {!running &&
+            transcript.status !== 'none' &&
+            transcript.status !== 'failed' &&
+            rows.length === 0 &&
+            !transcript.notice && <p className='text-solid-gray-700'>本文がありません</p>}
+          {!running &&
+            rows.map((row, index) => (
+              <div
+                key={row.id}
+                className={`flex h-full min-h-full shrink-0 flex-col rounded-8 border p-3 ${playing === row.id ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-420'}`}
+              >
+                <div className='mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2'>
+                  {slides ? (
+                    <button
+                      type='button'
+                      className={`text-std-16B-150 ${pdfPage === row.start ? 'text-blue-900' : 'text-solid-gray-900'}`}
+                      onClick={() => setPdfPage(row.start)}
+                    >
+                      ページ {row.start}
+                    </button>
+                  ) : (
+                    <button
+                      type='button'
+                      className='text-std-16B-150 text-blue-900'
+                      onClick={() => playSpan(row)}
+                    >
+                      {clock(row.start)}–{clock(row.end)} を再生
+                    </button>
+                  )}
+                  {!slides && (
+                    <span className='inline-flex gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        disabled={row.text.trim().length < 2}
+                        onClick={() => {
+                          const cut = Math.max(1, Math.floor(row.text.length / 2));
+                          const mid =
+                            Math.round((row.start + (row.end - row.start) / 2) * 100) / 100;
+                          const right: TranscriptSegment = {
+                            id: crypto.randomUUID(),
+                            start: mid,
+                            end: row.end,
+                            text: row.text.slice(cut).trimStart(),
+                          };
+                          const left: TranscriptSegment = {
+                            ...row,
+                            end: mid,
+                            text: row.text.slice(0, cut).trimEnd(),
+                          };
+                          editRows([
+                            ...rows.slice(0, index),
+                            left,
+                            right,
+                            ...rows.slice(index + 1),
+                          ]);
+                        }}
+                      >
+                        分割
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        disabled={index === 0}
+                        onClick={() => {
+                          const prev = rows[index - 1];
+                          const merged: TranscriptSegment = {
+                            ...prev,
+                            end: row.end,
+                            text: `${prev.text}${prev.text && row.text ? '\n' : ''}${row.text}`,
+                          };
+                          editRows([...rows.slice(0, index - 1), merged, ...rows.slice(index + 1)]);
+                        }}
+                      >
+                        前と結合
+                      </Button>
+                    </span>
+                  )}
+                </div>
+                <textarea
+                  className='min-h-0 w-full flex-1 resize-none rounded-4 border border-solid-gray-420 px-3 py-2 text-std-16N-170'
+                  value={row.text}
+                  aria-label={
+                    slides ? `ページ ${row.start} の本文` : `${clock(row.start)} からの本文`
+                  }
+                  placeholder={
+                    slides ? 'このページから文字を読み取れませんでした' : 'この区間の本文'
+                  }
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    editRows(rows.map((item) => (item.id === row.id ? { ...item, text } : item)));
+                  }}
+                />
+              </div>
+            ))}
         </div>
       </div>
     </div>

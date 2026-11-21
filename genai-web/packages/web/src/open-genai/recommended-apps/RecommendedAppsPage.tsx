@@ -102,9 +102,7 @@ export const RecommendedAppsPage = () => {
                   checked={selected.includes(opt.id)}
                   onChange={(e) =>
                     setSelected((prev) =>
-                      e.target.checked
-                        ? [...prev, opt.id]
-                        : prev.filter((id) => id !== opt.id),
+                      e.target.checked ? [...prev, opt.id] : prev.filter((id) => id !== opt.id),
                     )
                   }
                 />

@@ -55,15 +55,8 @@ export const PatchformDetailPage = () => {
   const { sources: crossSources } = usePatchformApplicationImiSources(
     fromMy ? application?.id : undefined,
   );
-  const {
-    setStatus,
-    remove,
-    submitAnswers,
-    loadDraft,
-    submitting,
-    error,
-    setError,
-  } = usePatchformActions();
+  const { setStatus, remove, submitAnswers, loadDraft, submitting, error, setError } =
+    usePatchformActions();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [submitterName, setSubmitterName] = useState('');
   const [pane, setPane] = useState<'overview' | 'fill'>(applicationToken ? 'fill' : 'overview');
@@ -144,9 +137,7 @@ export const PatchformDetailPage = () => {
       setDraftNote(null);
       await mutate();
       if (ok.application) {
-        navigate(
-          `/patchform/applications/${ok.application.id}${fromMy ? '?from=my' : ''}`,
-        );
+        navigate(`/patchform/applications/${ok.application.id}${fromMy ? '?from=my' : ''}`);
         return;
       }
       navigate(fromMy ? '/docmaker' : '/patchform/inbox');
@@ -205,72 +196,78 @@ export const PatchformDetailPage = () => {
               )}
             </div>
             {applicationToken ? null : (
-            <div className='flex flex-wrap gap-2'>
-              {canEdit && (
-              <Link to={`/patchform/${form.id}/edit`} className='inline-flex'>
-                <Button type='button' variant='outline' size='sm'>
-                  編集
-                </Button>
-              </Link>
-              )}
-              {canEdit && isDefinition && !form.locked && (
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  aria-disabled={submitting}
-                  onClick={() => onStatus('draft', { locked: true })}
-                >
-                  作成完了
-                </Button>
-              )}
-              {canEdit && isDefinition && form.locked && (
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  aria-disabled={submitting}
-                  onClick={() => onStatus('draft', { locked: false })}
-                >
-                  作成に戻す
-                </Button>
-              )}
-              {form.can_delete && isDefinition ? (
-              <Button type='button' variant='text' size='sm' onClick={onDelete}>
-                削除
-              </Button>
-              ) : null}
-            </div>
+              <div className='flex flex-wrap gap-2'>
+                {canEdit && (
+                  <Link to={`/patchform/${form.id}/edit`} className='inline-flex'>
+                    <Button type='button' variant='outline' size='sm'>
+                      編集
+                    </Button>
+                  </Link>
+                )}
+                {canEdit && isDefinition && !form.locked && (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-disabled={submitting}
+                    onClick={() => onStatus('draft', { locked: true })}
+                  >
+                    作成完了
+                  </Button>
+                )}
+                {canEdit && isDefinition && form.locked && (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-disabled={submitting}
+                    onClick={() => onStatus('draft', { locked: false })}
+                  >
+                    作成に戻す
+                  </Button>
+                )}
+                {form.can_delete && isDefinition ? (
+                  <Button type='button' variant='text' size='sm' onClick={onDelete}>
+                    削除
+                  </Button>
+                ) : null}
+              </div>
             )}
-            {applicationToken ? null : error && (
-              <p className='text-error-1' role='alert'>
-                {error}
-              </p>
-            )}
+            {applicationToken
+              ? null
+              : error && (
+                  <p className='text-error-1' role='alert'>
+                    {error}
+                  </p>
+                )}
             {applicationToken || !(canFill || alreadySubmitted) ? null : (
-            <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label='詳細の表示'>
-              {(
-                [
-                  { id: 'overview', label: '概要' },
-                  { id: 'fill', label: '回答する' },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type='button'
-                  role='tab'
-                  aria-selected={pane === t.id}
-                  onClick={() => setPane(t.id)}
-                  className={`-mb-px border-b-2 px-4 py-2 text-oln-16B-100 ${
-                    pane === t.id
-                      ? 'border-blue-900 text-blue-900'
-                      : 'border-transparent text-solid-gray-600 hover:text-solid-gray-900'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+              <div
+                className='flex flex-wrap gap-2 border-b border-solid-gray-300'
+                role='tablist'
+                aria-label='詳細の表示'
+              >
+                {(
+                  [
+                    { id: 'overview', label: '概要' },
+                    { id: 'fill', label: '回答する' },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type='button'
+                    role='tab'
+                    aria-selected={pane === t.id}
+                    onClick={() => setPane(t.id)}
+                    className={`-mb-px border-b-2 px-4 py-2 text-oln-16B-100 ${
+                      pane === t.id
+                        ? 'border-blue-900 text-blue-900'
+                        : 'border-transparent text-solid-gray-600 hover:text-solid-gray-900'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             )}
 
             {pane === 'overview' && !applicationToken && (
@@ -307,33 +304,33 @@ export const PatchformDetailPage = () => {
 
             {(pane === 'fill' || applicationToken) && canFill && fillDef && (
               <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
-                <h2 className='text-std-18B-160'>{applicationToken ? form.title : '庁内から回答する'}</h2>
+                <h2 className='text-std-18B-160'>
+                  {applicationToken ? form.title : '庁内から回答する'}
+                </h2>
                 {form.identity_mode === 'required' && !form.has_name_composite ? (
                   <p className='text-std-16N-170 text-solid-gray-700'>
                     ログイン中の利用者として記録します。
                   </p>
                 ) : null}
                 {form.identity_mode === 'optional' && !form.has_name_composite ? (
-                <div>
-                  <Label htmlFor='pf-sname' size='sm'>
-                    回答者名（任意。空なら匿名）
-                  </Label>
-                  <input
-                    id='pf-sname'
-                    className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                    value={submitterName}
-                    onChange={(e) => setSubmitterName(e.target.value)}
-                  />
-                </div>
+                  <div>
+                    <Label htmlFor='pf-sname' size='sm'>
+                      回答者名（任意。空なら匿名）
+                    </Label>
+                    <input
+                      id='pf-sname'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={submitterName}
+                      onChange={(e) => setSubmitterName(e.target.value)}
+                    />
+                  </div>
                 ) : null}
                 {form.identity_mode === 'anonymous' ? (
                   <p className='text-std-16N-170 text-solid-gray-700'>
                     このフォームは匿名です。名前や職員名は記録しません。
                   </p>
                 ) : null}
-                {draftNote && (
-                  <p className='text-std-16N-170 text-solid-gray-700'>{draftNote}</p>
-                )}
+                {draftNote && <p className='text-std-16N-170 text-solid-gray-700'>{draftNote}</p>}
                 <FillForm
                   definition={fillDef}
                   values={answers}
@@ -343,10 +340,7 @@ export const PatchformDetailPage = () => {
                   onPostalLookup={lookupPatchformPostal}
                   onCorporateLookup={lookupPatchformCorporate}
                   onWizardChange={(info) => setWizardLast(info.isLast)}
-                  imiSources={[
-                    ...sourcesFromApplication(application, form.id),
-                    ...crossSources,
-                  ]}
+                  imiSources={[...sourcesFromApplication(application, form.id), ...crossSources]}
                   prepareItems={application?.notice?.prepare || []}
                 />
                 {error && (
@@ -367,14 +361,19 @@ export const PatchformDetailPage = () => {
                         {submitting ? '保存中...' : '下書きを保存'}
                       </Button>
                     )}
-                    <Button type='button' variant='solid-fill' size='md' aria-disabled={submitting} onClick={onSubmit}>
+                    <Button
+                      type='button'
+                      variant='solid-fill'
+                      size='md'
+                      aria-disabled={submitting}
+                      onClick={onSubmit}
+                    >
                       {submitting ? '送信中...' : '回答を送信'}
                     </Button>
                   </div>
                 ) : null}
               </section>
             )}
-
           </>
         )}
       </div>

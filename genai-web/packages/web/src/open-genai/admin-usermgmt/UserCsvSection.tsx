@@ -81,9 +81,9 @@ export const UserCsvSection = ({ onApplied }: Props) => {
           CSV（貼り付け）
         </Label>
         <SupportText>
-          見出し: action, username, email, lastName（姓）, firstName（名）, name（姓
-          名）, password, groups, enabled。action は create / update / delete /
-          upsert（既定 upsert）。name だけ書く場合は「山田 太郎」のように空白で姓と名を分けます。
+          見出し: action, username, email, lastName（姓）, firstName（名）, name（姓 名）, password,
+          groups, enabled。action は create / update / delete / upsert（既定 upsert）。name
+          だけ書く場合は「山田 太郎」のように空白で姓と名を分けます。
           メールアドレスは毎行必須です。ログイン名とメールアドレスは登録後に変えられません。既存の人の行では今のメールアドレスをそのまま書き、違うアドレスの行は拒否されます。
           CSV の groups は足すだけです。外す場合は一覧の「変更」を使います。
         </SupportText>
@@ -141,7 +141,8 @@ export const UserCsvSection = ({ onApplied }: Props) => {
         <div className='flex flex-col gap-2'>
           <h3 className='text-std-16B-150'>ドライラン結果（変更なし）</h3>
           <SupportText>
-            {planRows.length} 件中、エラー {planErrorCount} 件。問題なければ「適用」を実行してください。
+            {planRows.length} 件中、エラー {planErrorCount}{' '}
+            件。問題なければ「適用」を実行してください。
           </SupportText>
           <ResultTable
             headers={['#', 'username', '操作', 'groups', '判定']}
@@ -181,7 +182,8 @@ export const UserCsvSection = ({ onApplied }: Props) => {
           </CustomDialogHeader>
           <CustomDialogBody>
             <p className='text-std-16N-170 text-solid-gray-800'>
-              CSV の内容を Keycloak に反映します（利用者の作成・更新・削除を含む）。削除は元に戻せません。ドライランで確認済みですか？
+              CSV の内容を Keycloak
+              に反映します（利用者の作成・更新・削除を含む）。削除は元に戻せません。ドライランで確認済みですか？
             </p>
             <div className='mt-6 flex justify-end gap-3'>
               <Button

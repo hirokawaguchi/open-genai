@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import {
   PiArrowCounterClockwiseBold,
   PiArrowDownBold,
@@ -26,7 +33,14 @@ import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { LEDGER_EXAPP_ID } from '@/layout/navItems';
 import { teamApi } from '@/lib/fetcher';
-import type { LedgerExtra, LedgerField, LedgerFile, LedgerGrant, LedgerRow, LedgerSystemField } from './types';
+import type {
+  LedgerExtra,
+  LedgerField,
+  LedgerFile,
+  LedgerGrant,
+  LedgerRow,
+  LedgerSystemField,
+} from './types';
 import {
   deleteLedger,
   ledgerError,
@@ -67,7 +81,10 @@ const ROW_KEY = 'open-genai-ledger-row';
 
 const rememberedRow = (ledgerId: string) => {
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(ROW_KEY) || '') as { ledgerId?: string; rowId?: string };
+    const parsed = JSON.parse(sessionStorage.getItem(ROW_KEY) || '') as {
+      ledgerId?: string;
+      rowId?: string;
+    };
     return parsed.ledgerId === ledgerId ? parsed.rowId || '' : '';
   } catch {
     return '';
@@ -163,7 +180,11 @@ const Shell = ({
             <button type='button' className={tabClass('list')} onClick={() => openTab('list')}>
               台帳選択
             </button>
-            <button type='button' className={tabClass('records')} onClick={() => openTab('records')}>
+            <button
+              type='button'
+              className={tabClass('records')}
+              onClick={() => openTab('records')}
+            >
               レコード
             </button>
             <button type='button' className={tabClass('card')} onClick={() => openTab('card')}>
@@ -212,9 +233,16 @@ const Shell = ({
             {howToUse ? <ExAppUsageMarkdownRenderer content={howToUse} size='sm' /> : null}
             <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
               <p>台帳のオーナーは、作った人が所属するチームです。個人の台帳はありません。</p>
-              <p>「レコード」は表で項目を直接編集します。「カード」は同じ項目を、左の列から順に2列で開きます。入りきらない分は次の頁にします。</p>
-              <p>「定義項目」で、初期項目の表示と、この台帳の設定項目を管理します。資料を読み込むと、モデルが管理項目の案を出します。カードの追加項目は、そのレコードだけの文字です。</p>
-              <p>「書き出し」で条件を決め、JSON、JSONL、CSV を書き出します。同じ画面で、その形式のレコードを読み込めます。</p>
+              <p>
+                「レコード」は表で項目を直接編集します。「カード」は同じ項目を、左の列から順に2列で開きます。入りきらない分は次の頁にします。
+              </p>
+              <p>
+                「定義項目」で、初期項目の表示と、この台帳の設定項目を管理します。資料を読み込むと、モデルが管理項目の案を出します。カードの追加項目は、そのレコードだけの文字です。
+              </p>
+              <p>
+                「書き出し」で条件を決め、JSON、JSONL、CSV
+                を書き出します。同じ画面で、その形式のレコードを読み込めます。
+              </p>
               <p>「アクセス権設定」で、オーナー、読み書き、読み取りだけのチームを選びます。</p>
               <p>「API」に、この台帳の読み書きとファイルの呼び出し方を書いてあります。</p>
             </div>
@@ -234,8 +262,8 @@ const formatWhen = (value?: string) => {
 
 const Unavailable = () => (
   <p className='mt-4 text-std-16N-170'>
-    台帳は止まっています。有効化するには{' '}
-    <code>docker compose --profile ledger up -d</code> を実行してください。
+    台帳は止まっています。有効化するには <code>docker compose --profile ledger up -d</code>{' '}
+    を実行してください。
   </p>
 );
 
@@ -305,7 +333,9 @@ export const LedgerHomePage = () => {
   return (
     <Shell tab='list' ledgerId={selectedId}>
       {unavailable || config?.enabled === false ? <Unavailable /> : null}
-      {ready && !config?.has_tenant ? <p className='text-std-16N-170'>棟に入ってから台帳を作れます。</p> : null}
+      {ready && !config?.has_tenant ? (
+        <p className='text-std-16N-170'>棟に入ってから台帳を作れます。</p>
+      ) : null}
       {ready && (
         <section className='flex flex-col gap-3'>
           <div className='flex flex-wrap items-end justify-between gap-2'>
@@ -391,7 +421,9 @@ export const LedgerHomePage = () => {
                             ) : null}
                           </div>
                         </td>
-                        <td className='px-3 py-2 text-solid-gray-600'>{formatWhen(ledger.created_at)}</td>
+                        <td className='px-3 py-2 text-solid-gray-600'>
+                          {formatWhen(ledger.created_at)}
+                        </td>
                         <td className='px-3 py-2 text-solid-gray-700'>{ledger.row_count ?? 0}</td>
                         <td className='px-3 py-2 text-right'>
                           <span className='inline-flex gap-2'>
@@ -470,15 +502,20 @@ const OriginMark = ({ origin }: { origin?: string }) => {
       aria-label={ORIGIN_LABEL[origin]}
     >
       {origin === 'imported' ? <span className='size-2 border border-blue-900' /> : null}
-      {origin === 'inferred' ? <span className='size-1.5 rotate-45 border border-solid-gray-700' /> : null}
+      {origin === 'inferred' ? (
+        <span className='size-1.5 rotate-45 border border-solid-gray-700' />
+      ) : null}
     </span>
   );
 };
 
 const findFieldFile = (files: LedgerFile[] | undefined, fieldId: string, value: string) =>
-  (files || []).find((file) => file.field_id === fieldId || file.file_id === value || (value && file.name === value)) || null;
+  (files || []).find(
+    (file) => file.field_id === fieldId || file.file_id === value || (value && file.name === value),
+  ) || null;
 
-const sourceFiles = (files: LedgerFile[] | undefined) => (files || []).filter((file) => !file.field_id);
+const sourceFiles = (files: LedgerFile[] | undefined) =>
+  (files || []).filter((file) => !file.field_id);
 
 type OfficePreview = {
   kind: 'sheets' | 'text' | 'slides';
@@ -588,8 +625,20 @@ const FilePreviewDialog = ({
                 {error}
               </p>
             ) : null}
-            {kind === 'pdf' && url ? <iframe title={file?.name || 'PDF'} src={url} className='h-[70vh] w-full rounded-8 border border-solid-gray-300 bg-white' /> : null}
-            {kind === 'image' && url ? <img alt={file?.name || ''} src={url} className='max-h-[70vh] w-full object-contain' /> : null}
+            {kind === 'pdf' && url ? (
+              <iframe
+                title={file?.name || 'PDF'}
+                src={url}
+                className='h-[70vh] w-full rounded-8 border border-solid-gray-300 bg-white'
+              />
+            ) : null}
+            {kind === 'image' && url ? (
+              <img
+                alt={file?.name || ''}
+                src={url}
+                className='max-h-[70vh] w-full object-contain'
+              />
+            ) : null}
             {kind === 'text' ? (
               <pre className='max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-8 border border-solid-gray-300 bg-white p-3 text-std-16N-170 text-solid-gray-900'>
                 {text}
@@ -602,14 +651,22 @@ const FilePreviewDialog = ({
             ) : null}
             {kind === 'office' && office?.kind === 'sheets'
               ? office.sheets?.map((sheet) => (
-                  <div key={sheet.name} className='max-h-[70vh] overflow-auto rounded-8 border border-solid-gray-300'>
-                    <p className='sticky top-0 bg-solid-gray-50 px-3 py-2 text-std-16B-150 text-solid-gray-900'>{sheet.name}</p>
+                  <div
+                    key={sheet.name}
+                    className='max-h-[70vh] overflow-auto rounded-8 border border-solid-gray-300'
+                  >
+                    <p className='sticky top-0 bg-solid-gray-50 px-3 py-2 text-std-16B-150 text-solid-gray-900'>
+                      {sheet.name}
+                    </p>
                     <table className='w-full border-collapse text-dns-14N-130'>
                       <tbody>
                         {sheet.rows.map((row, index) => (
                           <tr key={index} className='border-t border-solid-gray-200'>
                             {row.map((cell, cellIndex) => (
-                              <td key={cellIndex} className='px-2 py-1 align-top text-solid-gray-900'>
+                              <td
+                                key={cellIndex}
+                                className='px-2 py-1 align-top text-solid-gray-900'
+                              >
                                 {cell}
                               </td>
                             ))}
@@ -622,25 +679,41 @@ const FilePreviewDialog = ({
               : null}
             {kind === 'office' && office?.kind === 'slides'
               ? office.slides?.map((slide, index) => (
-                  <section key={`${slide.title}-${index}`} className='rounded-8 border border-solid-gray-300 p-3'>
+                  <section
+                    key={`${slide.title}-${index}`}
+                    className='rounded-8 border border-solid-gray-300 p-3'
+                  >
                     <h3 className='text-std-16B-150 text-solid-gray-900'>{slide.title}</h3>
                     {slide.lines.map((line) => (
-                      <p key={line} className='mt-1 whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'>
+                      <p
+                        key={line}
+                        className='mt-1 whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'
+                      >
                         {line}
                       </p>
                     ))}
                   </section>
                 ))
               : null}
-            {kind === 'office' && office?.note ? <p className='text-dns-14N-130 text-solid-gray-600'>{office.note}</p> : null}
+            {kind === 'office' && office?.note ? (
+              <p className='text-dns-14N-130 text-solid-gray-600'>{office.note}</p>
+            ) : null}
             {kind === 'other' ? (
-              <p className='text-std-16N-170 text-solid-gray-700'>この形式は画面では表示できません。ダウンロードして確認してください。</p>
+              <p className='text-std-16N-170 text-solid-gray-700'>
+                この形式は画面では表示できません。ダウンロードして確認してください。
+              </p>
             ) : null}
             <div className='flex justify-end gap-2'>
               <Button variant='outline' size='sm' type='button' onClick={onClose}>
                 閉じる
               </Button>
-              <Button variant='solid-fill' size='sm' type='button' aria-disabled={!blobRef.current || busy} onClick={download}>
+              <Button
+                variant='solid-fill'
+                size='sm'
+                type='button'
+                aria-disabled={!blobRef.current || busy}
+                onClick={download}
+              >
                 ダウンロード
               </Button>
             </div>
@@ -652,10 +725,16 @@ const FilePreviewDialog = ({
 };
 
 const KindMark = ({ kind }: { kind: keyof typeof COLUMN_KIND }) => (
-  <span className='inline-flex size-3 shrink-0 items-center justify-center' title={COLUMN_KIND[kind]} aria-hidden={true}>
+  <span
+    className='inline-flex size-3 shrink-0 items-center justify-center'
+    title={COLUMN_KIND[kind]}
+    aria-hidden={true}
+  >
     {kind === 'defined' ? <span className='size-2 rounded-[2px] bg-blue-900' /> : null}
     {kind === 'extra' ? <span className='size-1.5 rotate-45 border border-solid-gray-600' /> : null}
-    {kind === 'system' ? <span className='size-2 rounded-full border border-solid-gray-500' /> : null}
+    {kind === 'system' ? (
+      <span className='size-2 rounded-full border border-solid-gray-500' />
+    ) : null}
   </span>
 );
 
@@ -686,10 +765,9 @@ const splitOptions = (text: string) =>
 
 const readWidths = (ledgerId: string) => {
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(`open-genai-ledger-widths:${ledgerId}`) || '{}') as Record<
-      string,
-      number
-    >;
+    const parsed = JSON.parse(
+      sessionStorage.getItem(`open-genai-ledger-widths:${ledgerId}`) || '{}',
+    ) as Record<string, number>;
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
@@ -735,7 +813,12 @@ export const LedgerRowsPage = () => {
   const [ingestBusy, setIngestBusy] = useState(false);
   const [ingestError, setIngestError] = useState('');
   const [ingestBatch, setIngestBatch] = useState('');
-  const [ingestRows, setIngestRows] = useState<{ index: number; values: { id: string; label: string; value: string; origin: string; file_name: string }[] }[]>([]);
+  const [ingestRows, setIngestRows] = useState<
+    {
+      index: number;
+      values: { id: string; label: string; value: string; origin: string; file_name: string }[];
+    }[]
+  >([]);
   const [ingestPicked, setIngestPicked] = useState<Record<number, boolean>>({});
   const ingestFileRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<{ rowId: string; file: LedgerFile } | null>(null);
@@ -864,23 +947,32 @@ export const LedgerRowsPage = () => {
     }
   }, [data]);
 
-  const commitCell = async (rowId: string, apply: (row: LedgerRow) => Record<string, unknown> | null) => {
+  const commitCell = async (
+    rowId: string,
+    apply: (row: LedgerRow) => Record<string, unknown> | null,
+  ) => {
     const prev = saveChains.current.get(rowId) ?? Promise.resolve();
-    const job = prev.catch(() => undefined).then(async () => {
-      const row = latestRows.current.get(rowId);
-      if (!row) return;
-      const body = apply(row);
-      if (!body) return;
-      const saved = await updateRow(rowId, body);
-      latestRows.current.set(rowId, { ...row, ...saved });
-      await mutate(
-        (current) =>
-          current
-            ? { rows: current.rows.map((item) => (item.id === saved.id ? { ...item, ...saved } : item)) }
-            : current,
-        { revalidate: false },
-      );
-    });
+    const job = prev
+      .catch(() => undefined)
+      .then(async () => {
+        const row = latestRows.current.get(rowId);
+        if (!row) return;
+        const body = apply(row);
+        if (!body) return;
+        const saved = await updateRow(rowId, body);
+        latestRows.current.set(rowId, { ...row, ...saved });
+        await mutate(
+          (current) =>
+            current
+              ? {
+                  rows: current.rows.map((item) =>
+                    item.id === saved.id ? { ...item, ...saved } : item,
+                  ),
+                }
+              : current,
+          { revalidate: false },
+        );
+      });
     saveChains.current.set(rowId, job);
     return job;
   };
@@ -911,7 +1003,10 @@ export const LedgerRowsPage = () => {
       );
       const res = await teamApi.post<{
         batch_id: string;
-        rows: { index: number; values: { id: string; label: string; value: string; origin: string; file_name: string }[] }[];
+        rows: {
+          index: number;
+          values: { id: string; label: string; value: string; origin: string; file_name: string }[];
+        }[];
       }>(`ledger/ledgers/${ledgerId}/ingest`, { files });
       setIngestBatch(res.data.batch_id);
       setIngestRows(res.data.rows || []);
@@ -960,8 +1055,12 @@ export const LedgerRowsPage = () => {
     ...(showSystem('business_key')
       ? [{ key: 'business_key', label: '業務キー', wide: false, kind: 'system' as const }]
       : []),
-    ...(showSystem('status') ? [{ key: 'status', label: '状態', wide: false, kind: 'system' as const }] : []),
-    ...(showSystem('assignee') ? [{ key: 'assignee', label: '担当', wide: false, kind: 'system' as const }] : []),
+    ...(showSystem('status')
+      ? [{ key: 'status', label: '状態', wide: false, kind: 'system' as const }]
+      : []),
+    ...(showSystem('assignee')
+      ? [{ key: 'assignee', label: '担当', wide: false, kind: 'system' as const }]
+      : []),
     ...(showSystem('registered_at')
       ? [{ key: 'registered_at', label: 'データ登録日時', wide: false, kind: 'system' as const }]
       : []),
@@ -972,14 +1071,28 @@ export const LedgerRowsPage = () => {
       kind: 'defined' as const,
       field,
     })),
-    ...extraLabels.map((label) => ({ key: `extra:${label}`, label, wide: false, kind: 'extra' as const })),
-    ...(showSystem('comment') ? [{ key: 'comment', label: 'コメント', wide: true, kind: 'system' as const }] : []),
+    ...extraLabels.map((label) => ({
+      key: `extra:${label}`,
+      label,
+      wide: false,
+      kind: 'extra' as const,
+    })),
+    ...(showSystem('comment')
+      ? [{ key: 'comment', label: 'コメント', wide: true, kind: 'system' as const }]
+      : []),
   ];
   const actionWidth = 132;
   const columnCount = sheetColumns.length + 2;
   const columnWidth = (key: string, wide?: boolean) => widths[key] ?? defaultColumnWidth(key, wide);
-  const tableWidth = sheetColumns.reduce((sum, column) => sum + columnWidth(column.key, column.wide), actionWidth);
-  const resizeColumn = (key: string, wide: boolean | undefined, event: ReactPointerEvent<HTMLSpanElement>) => {
+  const tableWidth = sheetColumns.reduce(
+    (sum, column) => sum + columnWidth(column.key, column.wide),
+    actionWidth,
+  );
+  const resizeColumn = (
+    key: string,
+    wide: boolean | undefined,
+    event: ReactPointerEvent<HTMLSpanElement>,
+  ) => {
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
@@ -1003,7 +1116,8 @@ export const LedgerRowsPage = () => {
   };
 
   const sourceValue = (row: LedgerRow, key: string) => {
-    if (key === 'business_key') return row.deleted_at ? `${row.business_key}（削除）` : row.business_key;
+    if (key === 'business_key')
+      return row.deleted_at ? `${row.business_key}（削除）` : row.business_key;
     if (key === 'status') return row.status;
     if (key === 'assignee') return row.assignee;
     if (key === 'registered_at') return formatWhen(row.created_at);
@@ -1016,14 +1130,17 @@ export const LedgerRowsPage = () => {
     return '';
   };
 
-  const shownValue = (row: LedgerRow, key: string) => cellDrafts[`${row.id}:${key}`] ?? sourceValue(row, key);
+  const shownValue = (row: LedgerRow, key: string) =>
+    cellDrafts[`${row.id}:${key}`] ?? sourceValue(row, key);
 
   const writeCell = (row: LedgerRow, key: string, value: string) => {
     const draftKey = `${row.id}:${key}`;
     setCellDrafts((current) => ({ ...current, [draftKey]: value }));
     const editable = (ledger?.role === 'admin' || ledger?.role === 'editor') && !row.deleted_at;
     if (!editable || key === 'business_key' || key === 'registered_at') return;
-    const field = key.startsWith('field:') ? ledger?.fields.find((item) => item.id === key.slice(6)) : undefined;
+    const field = key.startsWith('field:')
+      ? ledger?.fields.find((item) => item.id === key.slice(6))
+      : undefined;
     if (field?.type === 'file') return;
     const commit = key === 'status' || field?.type === 'select';
     if (!commit) return;
@@ -1068,456 +1185,540 @@ export const LedgerRowsPage = () => {
   return (
     <Shell tab='records' ledgerId={ledgerId}>
       <div className='flex min-h-0 flex-1 flex-col gap-3'>
-      <div className='flex shrink-0 flex-wrap items-end justify-between gap-2'>
-        <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}</h2>
-        <div className='flex flex-wrap gap-2'>
-          <Button variant='solid-fill' size='sm' type='button' onClick={() => void createRow()}>
-            レコードを追加
-          </Button>
-          {ledger?.role === 'admin' || ledger?.role === 'editor' ? (
-            <Button
-              variant='outline'
-              size='sm'
-              type='button'
-              onClick={() => {
-                setIngestFiles([]);
-                setIngestError('');
-                setIngestBatch('');
-                setIngestRows([]);
-                setIngestPicked({});
-                setIngestOpen(true);
-              }}
-            >
-              資料から登録
+        <div className='flex shrink-0 flex-wrap items-end justify-between gap-2'>
+          <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}</h2>
+          <div className='flex flex-wrap gap-2'>
+            <Button variant='solid-fill' size='sm' type='button' onClick={() => void createRow()}>
+              レコードを追加
             </Button>
-          ) : null}
-          <Button variant='outline' size='sm' type='button' onClick={openSearch}>
-            検索
-          </Button>
+            {ledger?.role === 'admin' || ledger?.role === 'editor' ? (
+              <Button
+                variant='outline'
+                size='sm'
+                type='button'
+                onClick={() => {
+                  setIngestFiles([]);
+                  setIngestError('');
+                  setIngestBatch('');
+                  setIngestRows([]);
+                  setIngestPicked({});
+                  setIngestOpen(true);
+                }}
+              >
+                資料から登録
+              </Button>
+            ) : null}
+            <Button variant='outline' size='sm' type='button' onClick={openSearch}>
+              検索
+            </Button>
+          </div>
         </div>
-      </div>
-      {filterLabel ? (
-        <div className='flex shrink-0 flex-wrap items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
-          <span>検索中: {filterLabel}</span>
-          <Button variant='outline' size='sm' type='button' onClick={clearSearch}>
-            条件をクリア
-          </Button>
-        </div>
-      ) : null}
-      {error && !searchOpen ? (
-        <p className='shrink-0 text-red-700' role='alert'>
-          {error}
-        </p>
-      ) : null}
-      <p className='flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-dns-14N-130 text-solid-gray-600'>
-        {(Object.keys(COLUMN_KIND) as (keyof typeof COLUMN_KIND)[]).map((kind) => (
-          <span key={kind} className='inline-flex items-center gap-1.5'>
-            <KindMark kind={kind} />
-            {COLUMN_KIND[kind]}
+        {filterLabel ? (
+          <div className='flex shrink-0 flex-wrap items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
+            <span>検索中: {filterLabel}</span>
+            <Button variant='outline' size='sm' type='button' onClick={clearSearch}>
+              条件をクリア
+            </Button>
+          </div>
+        ) : null}
+        {error && !searchOpen ? (
+          <p className='shrink-0 text-red-700' role='alert'>
+            {error}
+          </p>
+        ) : null}
+        <p className='flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-dns-14N-130 text-solid-gray-600'>
+          {(Object.keys(COLUMN_KIND) as (keyof typeof COLUMN_KIND)[]).map((kind) => (
+            <span key={kind} className='inline-flex items-center gap-1.5'>
+              <KindMark kind={kind} />
+              {COLUMN_KIND[kind]}
+            </span>
+          ))}
+          <span className='inline-flex items-center gap-1.5'>
+            <OriginMark origin='imported' />
+            取込
           </span>
-        ))}
-        <span className='inline-flex items-center gap-1.5'>
-          <OriginMark origin='imported' />
-          取込
-        </span>
-        <span className='inline-flex items-center gap-1.5'>
-          <OriginMark origin='inferred' />
-          推測
-        </span>
-        <span>印の無い値は入力</span>
-      </p>
-      <div className='min-h-0 flex-1 overflow-auto rounded-8 border border-solid-gray-300'>
-        <table className='table-fixed border-collapse text-dns-14N-130' style={{ width: '100%', minWidth: tableWidth }}>
-          <colgroup>
-            {sheetColumns.map((column) => (
-              <col key={column.key} style={{ width: columnWidth(column.key, column.wide) }} />
-            ))}
-            <col />
-            <col style={{ width: actionWidth }} />
-          </colgroup>
-          <thead className='sticky top-0 z-20'>
-            <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-solid-gray-600'>
+          <span className='inline-flex items-center gap-1.5'>
+            <OriginMark origin='inferred' />
+            推測
+          </span>
+          <span>印の無い値は入力</span>
+        </p>
+        <div className='min-h-0 flex-1 overflow-auto rounded-8 border border-solid-gray-300'>
+          <table
+            className='table-fixed border-collapse text-dns-14N-130'
+            style={{ width: '100%', minWidth: tableWidth }}
+          >
+            <colgroup>
               {sheetColumns.map((column) => (
-                <th
-                  key={column.key}
-                  className={
-                    column.key === 'business_key'
-                      ? 'sticky left-0 z-30 bg-solid-gray-50 px-3 py-2'
-                      : 'relative bg-solid-gray-50 px-3 py-2'
-                  }
-                  style={{ width: columnWidth(column.key, column.wide) }}
-                >
-                  <span className='flex items-center gap-1.5 pr-2'>
-                    <KindMark kind={column.kind} />
-                    <span className='truncate'>{column.label}</span>
-                  </span>
-                  <span
-                    role='separator'
-                    aria-orientation='vertical'
-                    aria-label={`${column.label}の幅`}
-                    className='absolute top-0 right-0 z-40 h-full w-2 cursor-col-resize touch-none hover:bg-blue-700'
-                    onPointerDown={(event) => resizeColumn(column.key, column.wide, event)}
-                  />
-                </th>
+                <col key={column.key} style={{ width: columnWidth(column.key, column.wide) }} />
               ))}
-              <th className='bg-solid-gray-50 p-0' aria-hidden={true} />
-              <th className='sticky right-0 z-40 bg-solid-gray-50 px-2 py-2 text-left'>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={columnCount} className='px-3 py-6 text-center text-solid-gray-500'>
-                  レコードがありません。
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => {
-                const editable = (ledger?.role === 'admin' || ledger?.role === 'editor') && !row.deleted_at;
-                const selected = row.id === selectedRowId;
-                const stickyBg = selected ? 'bg-blue-50' : 'bg-white group-hover:bg-solid-gray-50';
-                return (
-                  <tr
-                    key={row.id}
+              <col />
+              <col style={{ width: actionWidth }} />
+            </colgroup>
+            <thead className='sticky top-0 z-20'>
+              <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-solid-gray-600'>
+                {sheetColumns.map((column) => (
+                  <th
+                    key={column.key}
                     className={
-                      selected
-                        ? 'group border-b border-solid-gray-200 bg-blue-50 last:border-b-0'
-                        : 'group border-b border-solid-gray-200 last:border-b-0'
+                      column.key === 'business_key'
+                        ? 'sticky left-0 z-30 bg-solid-gray-50 px-3 py-2'
+                        : 'relative bg-solid-gray-50 px-3 py-2'
                     }
-                    onFocus={() => chooseRow(row.id)}
+                    style={{ width: columnWidth(column.key, column.wide) }}
                   >
-                    {sheetColumns.map((column) => {
-                      const value = shownValue(row, column.key);
-                      const origin = column.key.startsWith('field:') ? row.origins?.[column.key.slice(6)]?.origin : undefined;
-                      const field = 'field' in column ? column.field : undefined;
-                      const readOnly = !editable || column.key === 'business_key' || field?.type === 'file';
-                      const cellClass = 'border-r border-solid-gray-200 px-1 py-1 align-top';
-                      const inputClass =
-                        'w-full rounded-4 border border-transparent bg-transparent px-2 py-1 text-std-16N-170 text-solid-gray-900 hover:border-solid-gray-300 focus:border-blue-900 focus:bg-white focus:outline-none read-only:hover:border-transparent';
-                      return (
-                        <td
-                          key={column.key}
-                          className={
-                            column.key === 'business_key'
-                              ? `sticky left-0 z-10 overflow-hidden ${stickyBg} ${cellClass}`
-                              : `overflow-hidden ${cellClass}`
-                          }
-                        >
-                          <div className='flex items-start gap-1'>
-                          {origin && origin !== 'entered' ? (
-                            <span className='mt-2'>
-                              <OriginMark origin={origin} />
-                            </span>
-                          ) : null}
-                          <div className='min-w-0 flex-1'>
-                          {column.key === 'registered_at' ? (
-                            <span className='block truncate px-2 py-1 text-std-16N-170 text-solid-gray-900'>{value}</span>
-                          ) : column.key === 'status' ? (
-                            <select
-                              className={inputClass}
-                              aria-label={`${row.business_key}の状態`}
-                              value={value}
-                              disabled={!editable}
-                              onChange={(event) => writeCell(row, column.key, event.target.value)}
-                            >
-                              {(ledger?.statuses || []).map((item) => (
-                                <option key={item} value={item}>
-                                  {item}
-                                </option>
-                              ))}
-                            </select>
-                          ) : field?.type === 'select' ? (
-                            <select
-                              className={inputClass}
-                              aria-label={`${row.business_key}の${column.label}`}
-                              value={value}
-                              disabled={!editable}
-                              onChange={(event) => writeCell(row, column.key, event.target.value)}
-                            >
-                              <option value='' />
-                              {(field.options || []).map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          ) : field?.type === 'file' ? (
-                            (() => {
-                              const linked = findFieldFile(row.files, field.id, value);
-                              return linked ? (
-                                <button
-                                  type='button'
-                                  className={`${inputClass} text-left text-blue-900 underline`}
-                                  onClick={() => setPreview({ rowId: row.id, file: linked })}
-                                >
-                                  {linked.name}
-                                </button>
-                              ) : (
-                                <span className='block truncate px-2 py-1 text-solid-gray-500'>ファイルはまだありません</span>
-                              );
-                            })()
-                          ) : field?.type === 'longtext' || column.key === 'comment' ? (
-                            <textarea
-                              className={`${inputClass} min-h-10 min-w-0`}
-                              aria-label={`${row.business_key}の${column.label}`}
-                              rows={2}
-                              readOnly={readOnly}
-                              value={value}
-                              onChange={(event) => writeCell(row, column.key, event.target.value)}
-                              onBlur={(event) => void flushCell(row, column.key, event.target.value)}
-                            />
-                          ) : (
-                            <span className='flex items-center gap-2'>
-                              <input
-                                className={`${inputClass} min-w-0`}
-                                aria-label={`${row.business_key}の${column.label}`}
-                                type={field?.type === 'date' ? 'date' : field?.type === 'number' ? 'number' : 'text'}
-                                readOnly={readOnly}
-                                value={value}
-                                onChange={(event) => writeCell(row, column.key, event.target.value)}
-                                onBlur={(event) => void flushCell(row, column.key, event.target.value)}
-                              />
-                              {column.key === 'business_key' && selected ? (
-                                <span className='shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-dns-14N-130 text-blue-900'>
-                                  選択中
+                    <span className='flex items-center gap-1.5 pr-2'>
+                      <KindMark kind={column.kind} />
+                      <span className='truncate'>{column.label}</span>
+                    </span>
+                    <span
+                      role='separator'
+                      aria-orientation='vertical'
+                      aria-label={`${column.label}の幅`}
+                      className='absolute top-0 right-0 z-40 h-full w-2 cursor-col-resize touch-none hover:bg-blue-700'
+                      onPointerDown={(event) => resizeColumn(column.key, column.wide, event)}
+                    />
+                  </th>
+                ))}
+                <th className='bg-solid-gray-50 p-0' aria-hidden={true} />
+                <th className='sticky right-0 z-40 bg-solid-gray-50 px-2 py-2 text-left'>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={columnCount} className='px-3 py-6 text-center text-solid-gray-500'>
+                    レコードがありません。
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => {
+                  const editable =
+                    (ledger?.role === 'admin' || ledger?.role === 'editor') && !row.deleted_at;
+                  const selected = row.id === selectedRowId;
+                  const stickyBg = selected
+                    ? 'bg-blue-50'
+                    : 'bg-white group-hover:bg-solid-gray-50';
+                  return (
+                    <tr
+                      key={row.id}
+                      className={
+                        selected
+                          ? 'group border-b border-solid-gray-200 bg-blue-50 last:border-b-0'
+                          : 'group border-b border-solid-gray-200 last:border-b-0'
+                      }
+                      onFocus={() => chooseRow(row.id)}
+                    >
+                      {sheetColumns.map((column) => {
+                        const value = shownValue(row, column.key);
+                        const origin = column.key.startsWith('field:')
+                          ? row.origins?.[column.key.slice(6)]?.origin
+                          : undefined;
+                        const field = 'field' in column ? column.field : undefined;
+                        const readOnly =
+                          !editable || column.key === 'business_key' || field?.type === 'file';
+                        const cellClass = 'border-r border-solid-gray-200 px-1 py-1 align-top';
+                        const inputClass =
+                          'w-full rounded-4 border border-transparent bg-transparent px-2 py-1 text-std-16N-170 text-solid-gray-900 hover:border-solid-gray-300 focus:border-blue-900 focus:bg-white focus:outline-none read-only:hover:border-transparent';
+                        return (
+                          <td
+                            key={column.key}
+                            className={
+                              column.key === 'business_key'
+                                ? `sticky left-0 z-10 overflow-hidden ${stickyBg} ${cellClass}`
+                                : `overflow-hidden ${cellClass}`
+                            }
+                          >
+                            <div className='flex items-start gap-1'>
+                              {origin && origin !== 'entered' ? (
+                                <span className='mt-2'>
+                                  <OriginMark origin={origin} />
                                 </span>
                               ) : null}
-                            </span>
-                          )}
-                          </div>
-                          </div>
-                        </td>
-                      );
-                    })}
-                    <td className='p-0' />
-                    <td className={`sticky right-0 z-20 px-1 py-1 text-right ${stickyBg}`}>
-                      <div className='flex items-center justify-end gap-1'>
-                        <button
-                          type='button'
-                          className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-blue-900 hover:bg-blue-50'
-                          aria-label='カード'
-                          title='カード'
-                          onClick={() => openCard(row.id)}
-                        >
-                          <PiIdentificationCardBold className='size-4' aria-hidden={true} />
-                        </button>
-                        {ledger?.role === 'admin' || ledger?.role === 'editor' ? (
+                              <div className='min-w-0 flex-1'>
+                                {column.key === 'registered_at' ? (
+                                  <span className='block truncate px-2 py-1 text-std-16N-170 text-solid-gray-900'>
+                                    {value}
+                                  </span>
+                                ) : column.key === 'status' ? (
+                                  <select
+                                    className={inputClass}
+                                    aria-label={`${row.business_key}の状態`}
+                                    value={value}
+                                    disabled={!editable}
+                                    onChange={(event) =>
+                                      writeCell(row, column.key, event.target.value)
+                                    }
+                                  >
+                                    {(ledger?.statuses || []).map((item) => (
+                                      <option key={item} value={item}>
+                                        {item}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : field?.type === 'select' ? (
+                                  <select
+                                    className={inputClass}
+                                    aria-label={`${row.business_key}の${column.label}`}
+                                    value={value}
+                                    disabled={!editable}
+                                    onChange={(event) =>
+                                      writeCell(row, column.key, event.target.value)
+                                    }
+                                  >
+                                    <option value='' />
+                                    {(field.options || []).map((option) => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : field?.type === 'file' ? (
+                                  (() => {
+                                    const linked = findFieldFile(row.files, field.id, value);
+                                    return linked ? (
+                                      <button
+                                        type='button'
+                                        className={`${inputClass} text-left text-blue-900 underline`}
+                                        onClick={() => setPreview({ rowId: row.id, file: linked })}
+                                      >
+                                        {linked.name}
+                                      </button>
+                                    ) : (
+                                      <span className='block truncate px-2 py-1 text-solid-gray-500'>
+                                        ファイルはまだありません
+                                      </span>
+                                    );
+                                  })()
+                                ) : field?.type === 'longtext' || column.key === 'comment' ? (
+                                  <textarea
+                                    className={`${inputClass} min-h-10 min-w-0`}
+                                    aria-label={`${row.business_key}の${column.label}`}
+                                    rows={2}
+                                    readOnly={readOnly}
+                                    value={value}
+                                    onChange={(event) =>
+                                      writeCell(row, column.key, event.target.value)
+                                    }
+                                    onBlur={(event) =>
+                                      void flushCell(row, column.key, event.target.value)
+                                    }
+                                  />
+                                ) : (
+                                  <span className='flex items-center gap-2'>
+                                    <input
+                                      className={`${inputClass} min-w-0`}
+                                      aria-label={`${row.business_key}の${column.label}`}
+                                      type={
+                                        field?.type === 'date'
+                                          ? 'date'
+                                          : field?.type === 'number'
+                                            ? 'number'
+                                            : 'text'
+                                      }
+                                      readOnly={readOnly}
+                                      value={value}
+                                      onChange={(event) =>
+                                        writeCell(row, column.key, event.target.value)
+                                      }
+                                      onBlur={(event) =>
+                                        void flushCell(row, column.key, event.target.value)
+                                      }
+                                    />
+                                    {column.key === 'business_key' && selected ? (
+                                      <span className='shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-dns-14N-130 text-blue-900'>
+                                        選択中
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className='p-0' />
+                      <td className={`sticky right-0 z-20 px-1 py-1 text-right ${stickyBg}`}>
+                        <div className='flex items-center justify-end gap-1'>
                           <button
                             type='button'
-                            className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100 disabled:opacity-30'
-                            aria-label='複製'
-                            title='複製'
-                            disabled={!!row.deleted_at}
-                            onClick={() => void duplicateRow(row)}
+                            className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-blue-900 hover:bg-blue-50'
+                            aria-label='カード'
+                            title='カード'
+                            onClick={() => openCard(row.id)}
                           >
-                            <PiCopyBold className='size-4' aria-hidden={true} />
+                            <PiIdentificationCardBold className='size-4' aria-hidden={true} />
                           </button>
-                        ) : null}
-                        {row.deleted_at && ledger?.role === 'admin' ? (
-                          <button
-                            type='button'
-                            className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100'
-                            aria-label='戻す'
-                            title='戻す'
-                            onClick={() => void restoreRow(row)}
-                          >
-                            <PiArrowCounterClockwiseBold className='size-4' aria-hidden={true} />
-                          </button>
-                        ) : null}
-                        {!row.deleted_at && (ledger?.role === 'admin' || ledger?.role === 'editor') ? (
-                          <button
-                            type='button'
-                            className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100'
-                            aria-label='削除'
-                            title='削除'
-                            onClick={() => void removeRow(row)}
-                          >
-                            <PiTrashBold className='size-4' aria-hidden={true} />
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                          {ledger?.role === 'admin' || ledger?.role === 'editor' ? (
+                            <button
+                              type='button'
+                              className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100 disabled:opacity-30'
+                              aria-label='複製'
+                              title='複製'
+                              disabled={!!row.deleted_at}
+                              onClick={() => void duplicateRow(row)}
+                            >
+                              <PiCopyBold className='size-4' aria-hidden={true} />
+                            </button>
+                          ) : null}
+                          {row.deleted_at && ledger?.role === 'admin' ? (
+                            <button
+                              type='button'
+                              className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100'
+                              aria-label='戻す'
+                              title='戻す'
+                              onClick={() => void restoreRow(row)}
+                            >
+                              <PiArrowCounterClockwiseBold className='size-4' aria-hidden={true} />
+                            </button>
+                          ) : null}
+                          {!row.deleted_at &&
+                          (ledger?.role === 'admin' || ledger?.role === 'editor') ? (
+                            <button
+                              type='button'
+                              className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-solid-gray-800 hover:bg-solid-gray-100'
+                              aria-label='削除'
+                              title='削除'
+                              onClick={() => void removeRow(row)}
+                            >
+                              <PiTrashBold className='size-4' aria-hidden={true} />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
 
-      <CustomDialog isOpen={ingestOpen} onClose={() => setIngestOpen(false)}>
-        <CustomDialogPanel className='max-w-2xl'>
-          <CustomDialogHeader hasClose onClose={() => setIngestOpen(false)}>
-            {ingestBatch ? '登録する値' : '資料から登録'}
-          </CustomDialogHeader>
-          <CustomDialogBody>
-            {ingestBatch ? (
-              <div className='flex flex-col gap-3'>
-                <p className='text-dns-14N-130 text-solid-gray-600'>
-                  残す行に印を付けてください。□は資料に書いてあった値、◇は推測した値です。登録すると、出典のファイルをそのレコードに添付します。状態は変えません。
-                </p>
-                <ul className='flex flex-col gap-3'>
-                  {ingestRows.map((row) => (
-                    <li key={row.index} className='rounded-8 border border-solid-gray-300 p-3'>
-                      <label className='flex items-center gap-2 text-std-16B-150'>
-                        <input
-                          type='checkbox'
-                          checked={!!ingestPicked[row.index]}
-                          onChange={(e) => setIngestPicked((current) => ({ ...current, [row.index]: e.target.checked }))}
-                        />
-                        {row.index + 1}件目
-                      </label>
-                      <ul className='mt-2 flex flex-col gap-1'>
-                        {row.values.map((item) => (
-                          <li key={item.id} className='flex flex-wrap items-center gap-2 text-std-16N-170'>
-                            <OriginMark origin={item.origin} />
-                            <span>
-                              {item.label}: {item.value}（{item.origin === 'imported' ? '取込' : '推測'}）
-                            </span>
-                            {item.file_name ? <span className='text-dns-14N-130 text-solid-gray-600'>{item.file_name}</span> : null}
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
-                {ingestError ? (
-                  <p className='text-red-700' role='alert'>
-                    {ingestError}
+        <CustomDialog isOpen={ingestOpen} onClose={() => setIngestOpen(false)}>
+          <CustomDialogPanel className='max-w-2xl'>
+            <CustomDialogHeader hasClose onClose={() => setIngestOpen(false)}>
+              {ingestBatch ? '登録する値' : '資料から登録'}
+            </CustomDialogHeader>
+            <CustomDialogBody>
+              {ingestBatch ? (
+                <div className='flex flex-col gap-3'>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    残す行に印を付けてください。□は資料に書いてあった値、◇は推測した値です。登録すると、出典のファイルをそのレコードに添付します。状態は変えません。
                   </p>
-                ) : null}
-                <div className='flex justify-end gap-2'>
-                  <Button variant='outline' size='sm' type='button' onClick={() => setIngestBatch('')}>
-                    戻る
-                  </Button>
-                  <Button
-                    variant='solid-fill'
-                    size='sm'
-                    type='button'
-                    aria-disabled={ingestBusy || !ingestRows.some((row) => ingestPicked[row.index])}
-                    onClick={() => void commitIngest()}
-                  >
-                    {ingestBusy ? '登録しています' : '登録する'}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className='flex flex-col gap-3'>
-                <p className='text-dns-14N-130 text-solid-gray-600'>
-                  PDF、Word、Excel、CSV、テキスト、画像を、3つまで選べます。設定項目に入る値だけを案にします。1つの資料に複数の対象があるときは、行を分けて出します。
-                </p>
-                <input
-                  ref={ingestFileRef}
-                  type='file'
-                  multiple
-                  accept='.pdf,.docx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/csv,text/plain,image/png,image/jpeg,image/webp'
-                  className='hidden'
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files || []).slice(0, 3);
-                    e.target.value = '';
-                    setIngestError('');
-                    setIngestFiles(picked);
-                  }}
-                />
-                <div>
-                  <Button variant='outline' size='sm' type='button' aria-disabled={ingestBusy} onClick={() => ingestFileRef.current?.click()}>
-                    ファイルを選ぶ
-                  </Button>
-                </div>
-                {ingestFiles.length ? (
-                  <ul className='text-std-16N-170 text-solid-gray-800'>
-                    {ingestFiles.map((file) => (
-                      <li key={file.name}>{file.name}</li>
+                  <ul className='flex flex-col gap-3'>
+                    {ingestRows.map((row) => (
+                      <li key={row.index} className='rounded-8 border border-solid-gray-300 p-3'>
+                        <label className='flex items-center gap-2 text-std-16B-150'>
+                          <input
+                            type='checkbox'
+                            checked={!!ingestPicked[row.index]}
+                            onChange={(e) =>
+                              setIngestPicked((current) => ({
+                                ...current,
+                                [row.index]: e.target.checked,
+                              }))
+                            }
+                          />
+                          {row.index + 1}件目
+                        </label>
+                        <ul className='mt-2 flex flex-col gap-1'>
+                          {row.values.map((item) => (
+                            <li
+                              key={item.id}
+                              className='flex flex-wrap items-center gap-2 text-std-16N-170'
+                            >
+                              <OriginMark origin={item.origin} />
+                              <span>
+                                {item.label}: {item.value}（
+                                {item.origin === 'imported' ? '取込' : '推測'}）
+                              </span>
+                              {item.file_name ? (
+                                <span className='text-dns-14N-130 text-solid-gray-600'>
+                                  {item.file_name}
+                                </span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
                     ))}
                   </ul>
+                  {ingestError ? (
+                    <p className='text-red-700' role='alert'>
+                      {ingestError}
+                    </p>
+                  ) : null}
+                  <div className='flex justify-end gap-2'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      type='button'
+                      onClick={() => setIngestBatch('')}
+                    >
+                      戻る
+                    </Button>
+                    <Button
+                      variant='solid-fill'
+                      size='sm'
+                      type='button'
+                      aria-disabled={
+                        ingestBusy || !ingestRows.some((row) => ingestPicked[row.index])
+                      }
+                      onClick={() => void commitIngest()}
+                    >
+                      {ingestBusy ? '登録しています' : '登録する'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className='flex flex-col gap-3'>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    PDF、Word、Excel、CSV、テキスト、画像を、3つまで選べます。設定項目に入る値だけを案にします。1つの資料に複数の対象があるときは、行を分けて出します。
+                  </p>
+                  <input
+                    ref={ingestFileRef}
+                    type='file'
+                    multiple
+                    accept='.pdf,.docx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/csv,text/plain,image/png,image/jpeg,image/webp'
+                    className='hidden'
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files || []).slice(0, 3);
+                      e.target.value = '';
+                      setIngestError('');
+                      setIngestFiles(picked);
+                    }}
+                  />
+                  <div>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      type='button'
+                      aria-disabled={ingestBusy}
+                      onClick={() => ingestFileRef.current?.click()}
+                    >
+                      ファイルを選ぶ
+                    </Button>
+                  </div>
+                  {ingestFiles.length ? (
+                    <ul className='text-std-16N-170 text-solid-gray-800'>
+                      {ingestFiles.map((file) => (
+                        <li key={file.name}>{file.name}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {ingestError ? (
+                    <p className='text-red-700' role='alert'>
+                      {ingestError}
+                    </p>
+                  ) : null}
+                  <div className='flex justify-end gap-2'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      type='button'
+                      onClick={() => setIngestOpen(false)}
+                    >
+                      閉じる
+                    </Button>
+                    <Button
+                      variant='solid-fill'
+                      size='sm'
+                      type='button'
+                      aria-disabled={ingestBusy || ingestFiles.length === 0}
+                      onClick={() => void readIngest()}
+                    >
+                      {ingestBusy ? '読んでいます' : '次へ'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CustomDialogBody>
+          </CustomDialogPanel>
+        </CustomDialog>
+        <FilePreviewDialog
+          rowId={preview?.rowId || ''}
+          file={preview?.file || null}
+          onClose={() => setPreview(null)}
+        />
+        <CustomDialog isOpen={searchOpen} onClose={() => setSearchOpen(false)}>
+          <CustomDialogPanel>
+            <CustomDialogHeader hasClose onClose={() => setSearchOpen(false)}>
+              検索
+            </CustomDialogHeader>
+            <CustomDialogBody>
+              <div className='flex flex-col gap-4'>
+                <label className='block text-std-16B-150'>
+                  文で探す
+                  <input
+                    className={fieldClass}
+                    placeholder='先月、処理中の山田'
+                    value={draftNatural}
+                    onChange={(e) => setDraftNatural(e.target.value)}
+                  />
+                </label>
+                <label className='block text-std-16B-150'>
+                  状態
+                  <select
+                    className={fieldClass}
+                    value={draftStatus}
+                    onChange={(e) => setDraftStatus(e.target.value)}
+                  >
+                    <option value=''>すべての状態</option>
+                    {(ledger?.statuses || []).map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className='block text-std-16B-150'>
+                  キーワード
+                  <input
+                    className={fieldClass}
+                    value={draftQ}
+                    onChange={(e) => setDraftQ(e.target.value)}
+                  />
+                </label>
+                {ledger?.role === 'admin' ? (
+                  <label className='flex items-center gap-2 text-std-16N-170'>
+                    <input
+                      type='checkbox'
+                      checked={draftDeleted}
+                      onChange={(e) => setDraftDeleted(e.target.checked)}
+                    />
+                    削除したレコードも見る
+                  </label>
                 ) : null}
-                {ingestError ? (
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  文を書くと、その解釈を使います。空なら状態とキーワードを使います。
+                </p>
+                {error ? (
                   <p className='text-red-700' role='alert'>
-                    {ingestError}
+                    {error}
                   </p>
                 ) : null}
-                <div className='flex justify-end gap-2'>
-                  <Button variant='outline' size='sm' type='button' onClick={() => setIngestOpen(false)}>
-                    閉じる
-                  </Button>
+                <div className='flex gap-2'>
                   <Button
                     variant='solid-fill'
-                    size='sm'
+                    size='md'
                     type='button'
-                    aria-disabled={ingestBusy || ingestFiles.length === 0}
-                    onClick={() => void readIngest()}
+                    onClick={() => void applySearch()}
                   >
-                    {ingestBusy ? '読んでいます' : '次へ'}
+                    検索
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='md'
+                    type='button'
+                    onClick={() => setSearchOpen(false)}
+                  >
+                    閉じる
                   </Button>
                 </div>
               </div>
-            )}
-          </CustomDialogBody>
-        </CustomDialogPanel>
-      </CustomDialog>
-      <FilePreviewDialog rowId={preview?.rowId || ''} file={preview?.file || null} onClose={() => setPreview(null)} />
-      <CustomDialog isOpen={searchOpen} onClose={() => setSearchOpen(false)}>
-        <CustomDialogPanel>
-          <CustomDialogHeader hasClose onClose={() => setSearchOpen(false)}>
-            検索
-          </CustomDialogHeader>
-          <CustomDialogBody>
-            <div className='flex flex-col gap-4'>
-              <label className='block text-std-16B-150'>
-                文で探す
-                <input
-                  className={fieldClass}
-                  placeholder='先月、処理中の山田'
-                  value={draftNatural}
-                  onChange={(e) => setDraftNatural(e.target.value)}
-                />
-              </label>
-              <label className='block text-std-16B-150'>
-                状態
-                <select className={fieldClass} value={draftStatus} onChange={(e) => setDraftStatus(e.target.value)}>
-                  <option value=''>すべての状態</option>
-                  {(ledger?.statuses || []).map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className='block text-std-16B-150'>
-                キーワード
-                <input className={fieldClass} value={draftQ} onChange={(e) => setDraftQ(e.target.value)} />
-              </label>
-              {ledger?.role === 'admin' ? (
-                <label className='flex items-center gap-2 text-std-16N-170'>
-                  <input
-                    type='checkbox'
-                    checked={draftDeleted}
-                    onChange={(e) => setDraftDeleted(e.target.checked)}
-                  />
-                  削除したレコードも見る
-                </label>
-              ) : null}
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                文を書くと、その解釈を使います。空なら状態とキーワードを使います。
-              </p>
-              {error ? (
-                <p className='text-red-700' role='alert'>
-                  {error}
-                </p>
-              ) : null}
-              <div className='flex gap-2'>
-                <Button variant='solid-fill' size='md' type='button' onClick={() => void applySearch()}>
-                  検索
-                </Button>
-                <Button variant='outline' size='md' type='button' onClick={() => setSearchOpen(false)}>
-                  閉じる
-                </Button>
-              </div>
-            </div>
-          </CustomDialogBody>
-        </CustomDialogPanel>
-      </CustomDialog>
-
+            </CustomDialogBody>
+          </CustomDialogPanel>
+        </CustomDialog>
       </div>
     </Shell>
   );
@@ -1595,9 +1796,12 @@ export const LedgerFieldsPage = () => {
   const suggest = async () => {
     setError('');
     try {
-      const res = await teamApi.post<{ fields: LedgerField[] }>(`ledger/ledgers/${ledgerId}/assist/definition`, {
-        note: '',
-      });
+      const res = await teamApi.post<{ fields: LedgerField[] }>(
+        `ledger/ledgers/${ledgerId}/assist/definition`,
+        {
+          note: '',
+        },
+      );
       setProposals(res.data.fields || []);
       setSuggested(true);
     } catch (e) {
@@ -1617,7 +1821,9 @@ export const LedgerFieldsPage = () => {
   const readMaterialFile = async (file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
     if (!['pdf', 'docx', 'xlsx', 'xls', 'csv', 'txt', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
-      setMaterialError('資料は PDF、Word、Excel、CSV、テキスト、画像（PNG、JPEG）で選んでください。');
+      setMaterialError(
+        '資料は PDF、Word、Excel、CSV、テキスト、画像（PNG、JPEG）で選んでください。',
+      );
       return;
     }
     if (file.size > 8 * 1024 * 1024) {
@@ -1637,11 +1843,14 @@ export const LedgerFieldsPage = () => {
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(file);
       });
-      const res = await teamApi.post<{ text: string }>(`ledger/ledgers/${ledgerId}/assist/material/read`, {
-        name: file.name,
-        media_type: file.type,
-        data,
-      });
+      const res = await teamApi.post<{ text: string }>(
+        `ledger/ledgers/${ledgerId}/assist/material/read`,
+        {
+          name: file.name,
+          media_type: file.type,
+          data,
+        },
+      );
       setMaterialText(res.data.text || '');
     } catch (e) {
       setMaterialError(ledgerError(e, '資料を読めませんでした'));
@@ -1654,9 +1863,12 @@ export const LedgerFieldsPage = () => {
     setMaterialError('');
     setMaterialBusy(true);
     try {
-      const res = await teamApi.post<{ fields: LedgerField[] }>(`ledger/ledgers/${ledgerId}/assist/material`, {
-        text: materialText,
-      });
+      const res = await teamApi.post<{ fields: LedgerField[] }>(
+        `ledger/ledgers/${ledgerId}/assist/material`,
+        {
+          text: materialText,
+        },
+      );
       const fields = res.data.fields || [];
       setMaterialFields(fields);
       setMaterialPicked(Object.fromEntries(fields.map((field) => [field.label, true])));
@@ -1687,7 +1899,9 @@ export const LedgerFieldsPage = () => {
 
   const adopt = (field: LedgerField) => {
     setDraftFields((current) =>
-      current.some((item) => item.label === field.label) ? current : [...current, toDraft(field, true)],
+      current.some((item) => item.label === field.label)
+        ? current
+        : [...current, toDraft(field, true)],
     );
     setProposals((current) => current.filter((item) => item.label !== field.label));
     setNotice('');
@@ -1714,7 +1928,9 @@ export const LedgerFieldsPage = () => {
     try {
       const saved = await patchLedger(ledger.id, { fields, system: systemFields });
       for (const field of draftFields.filter((item) => item.promote)) {
-        const created = [...saved.fields].reverse().find((item) => item.label === field.label.trim());
+        const created = [...saved.fields]
+          .reverse()
+          .find((item) => item.label === field.label.trim());
         await teamApi.post(`ledger/ledgers/${ledgerId}/promote`, {
           label: field.label.trim(),
           type: field.type,
@@ -1741,7 +1957,9 @@ export const LedgerFieldsPage = () => {
         カードの追加項目は、そのレコードだけの文字で、ここには出ません。
       </p>
       {!canEdit && ledger ? (
-        <p className='text-std-16N-170 text-solid-gray-700'>順番と名前を変えるのは、オーナーのチームです。</p>
+        <p className='text-std-16N-170 text-solid-gray-700'>
+          順番と名前を変えるのは、オーナーのチームです。
+        </p>
       ) : null}
       <section className='flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>初期項目</h3>
@@ -1759,7 +1977,9 @@ export const LedgerFieldsPage = () => {
                   <td className='px-3 py-2 text-std-16N-170 text-solid-gray-900'>
                     {field.label}
                     {field.key === 'registered_at' ? (
-                      <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>記録した時刻</span>
+                      <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>
+                        記録した時刻
+                      </span>
                     ) : null}
                   </td>
                   <td className='px-3 py-2'>
@@ -1771,7 +1991,9 @@ export const LedgerFieldsPage = () => {
                         onChange={(e) =>
                           setSystemFields((current) =>
                             current.map((item) =>
-                              item.key === field.key ? { ...item, visible: e.target.checked } : item,
+                              item.key === field.key
+                                ? { ...item, visible: e.target.checked }
+                                : item,
                             ),
                           )
                         }
@@ -1790,160 +2012,187 @@ export const LedgerFieldsPage = () => {
         マスクを付けた項目は、読み取りだけのチームには空で見えます。オーナーと読み書きのチームには、値が見えます。保存してから効きます。
       </p>
       <div className={canEdit ? 'mt-2 grid items-start gap-8 lg:grid-cols-2' : 'mt-2'}>
-      <div className='flex flex-col gap-3'>
-        {draftFields.length === 0 ? (
-          <p className='text-std-16N-170 text-solid-gray-600'>定義項目はまだありません。</p>
-        ) : (
-          draftFields.map((field, index) => (
-            <div key={field.key} className='grid items-end gap-2 rounded-8 border border-solid-gray-300 p-3 sm:grid-cols-[auto_1fr_auto_auto]'>
-              <div className='flex flex-col gap-1'>
-                <button
-                  type='button'
-                  aria-label='上へ'
-                  className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-700 hover:bg-solid-gray-100 disabled:opacity-30'
-                  disabled={!canEdit || index === 0}
-                  onClick={() => moveField(index, -1)}
-                >
-                  <PiArrowUpBold className='size-4' aria-hidden={true} />
-                </button>
-                <button
-                  type='button'
-                  aria-label='下へ'
-                  className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-700 hover:bg-solid-gray-100 disabled:opacity-30'
-                  disabled={!canEdit || index === draftFields.length - 1}
-                  onClick={() => moveField(index, 1)}
-                >
-                  <PiArrowDownBold className='size-4' aria-hidden={true} />
-                </button>
-              </div>
-              <label className='block text-dns-14N-130 text-solid-gray-700'>
-                名前
-                <input
-                  className={fieldClass}
-                  value={field.label}
-                  readOnly={!canEdit}
-                  onChange={(e) =>
-                    setDraftFields((current) =>
-                      current.map((item) => (item.key === field.key ? { ...item, label: e.target.value } : item)),
-                    )
-                  }
-                />
-              </label>
-              <div className='pb-2 text-std-16N-170 text-solid-gray-800'>
-                <p className='text-dns-14N-130 text-solid-gray-700'>型</p>
-                <p className='mt-1'>{FIELD_TYPE_LABEL[field.type]}</p>
-              </div>
-              <label className='flex items-end gap-2 pb-2 text-std-16N-170'>
-                <input
-                  type='checkbox'
-                  checked={field.masked}
-                  disabled={!canEdit}
-                  onChange={(e) =>
-                    setDraftFields((current) =>
-                      current.map((item) => (item.key === field.key ? { ...item, masked: e.target.checked } : item)),
-                    )
-                  }
-                />
-                マスク
-              </label>
-              {field.type === 'select' ? (
-                <label className='block text-dns-14N-130 text-solid-gray-700 sm:col-span-4'>
-                  候補（読点区切り）
+        <div className='flex flex-col gap-3'>
+          {draftFields.length === 0 ? (
+            <p className='text-std-16N-170 text-solid-gray-600'>定義項目はまだありません。</p>
+          ) : (
+            draftFields.map((field, index) => (
+              <div
+                key={field.key}
+                className='grid items-end gap-2 rounded-8 border border-solid-gray-300 p-3 sm:grid-cols-[auto_1fr_auto_auto]'
+              >
+                <div className='flex flex-col gap-1'>
+                  <button
+                    type='button'
+                    aria-label='上へ'
+                    className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-700 hover:bg-solid-gray-100 disabled:opacity-30'
+                    disabled={!canEdit || index === 0}
+                    onClick={() => moveField(index, -1)}
+                  >
+                    <PiArrowUpBold className='size-4' aria-hidden={true} />
+                  </button>
+                  <button
+                    type='button'
+                    aria-label='下へ'
+                    className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-700 hover:bg-solid-gray-100 disabled:opacity-30'
+                    disabled={!canEdit || index === draftFields.length - 1}
+                    onClick={() => moveField(index, 1)}
+                  >
+                    <PiArrowDownBold className='size-4' aria-hidden={true} />
+                  </button>
+                </div>
+                <label className='block text-dns-14N-130 text-solid-gray-700'>
+                  名前
                   <input
                     className={fieldClass}
-                    value={field.optionsText}
+                    value={field.label}
                     readOnly={!canEdit}
                     onChange={(e) =>
                       setDraftFields((current) =>
                         current.map((item) =>
-                          item.key === field.key ? { ...item, optionsText: e.target.value } : item,
+                          item.key === field.key ? { ...item, label: e.target.value } : item,
                         ),
                       )
                     }
                   />
                 </label>
-              ) : null}
-            </div>
-          ))
-        )}
-        {canEdit ? (
-          <section className='mt-6 flex flex-col gap-3'>
-            <h3 className='text-std-16B-150 text-solid-gray-900'>設定項目を追加</h3>
-            <label className='block text-dns-14N-130 text-solid-gray-700'>
-              名前
-              <input className={fieldClass} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} />
-            </label>
-            <div className='flex items-end gap-2'>
-              <label className='block min-w-0 flex-1 text-dns-14N-130 text-solid-gray-700'>
-                型
-                <select
-                  className={fieldClass}
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value as LedgerField['type'])}
-                >
-                  {(Object.keys(FIELD_TYPE_LABEL) as LedgerField['type'][]).map((type) => (
-                    <option key={type} value={type}>
-                      {FIELD_TYPE_LABEL[type]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Button variant='outline' size='sm' type='button' onClick={addDraftField}>
-                追加
-              </Button>
-            </div>
-            {newType === 'select' ? (
+                <div className='pb-2 text-std-16N-170 text-solid-gray-800'>
+                  <p className='text-dns-14N-130 text-solid-gray-700'>型</p>
+                  <p className='mt-1'>{FIELD_TYPE_LABEL[field.type]}</p>
+                </div>
+                <label className='flex items-end gap-2 pb-2 text-std-16N-170'>
+                  <input
+                    type='checkbox'
+                    checked={field.masked}
+                    disabled={!canEdit}
+                    onChange={(e) =>
+                      setDraftFields((current) =>
+                        current.map((item) =>
+                          item.key === field.key ? { ...item, masked: e.target.checked } : item,
+                        ),
+                      )
+                    }
+                  />
+                  マスク
+                </label>
+                {field.type === 'select' ? (
+                  <label className='block text-dns-14N-130 text-solid-gray-700 sm:col-span-4'>
+                    候補（読点区切り）
+                    <input
+                      className={fieldClass}
+                      value={field.optionsText}
+                      readOnly={!canEdit}
+                      onChange={(e) =>
+                        setDraftFields((current) =>
+                          current.map((item) =>
+                            item.key === field.key
+                              ? { ...item, optionsText: e.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                ) : null}
+              </div>
+            ))
+          )}
+          {canEdit ? (
+            <section className='mt-6 flex flex-col gap-3'>
+              <h3 className='text-std-16B-150 text-solid-gray-900'>設定項目を追加</h3>
               <label className='block text-dns-14N-130 text-solid-gray-700'>
-                候補（読点区切り）
-                <input className={fieldClass} value={newOptions} onChange={(e) => setNewOptions(e.target.value)} />
+                名前
+                <input
+                  className={fieldClass}
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                />
               </label>
-            ) : null}
-          </section>
-        ) : null}
+              <div className='flex items-end gap-2'>
+                <label className='block min-w-0 flex-1 text-dns-14N-130 text-solid-gray-700'>
+                  型
+                  <select
+                    className={fieldClass}
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value as LedgerField['type'])}
+                  >
+                    {(Object.keys(FIELD_TYPE_LABEL) as LedgerField['type'][]).map((type) => (
+                      <option key={type} value={type}>
+                        {FIELD_TYPE_LABEL[type]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button variant='outline' size='sm' type='button' onClick={addDraftField}>
+                  追加
+                </Button>
+              </div>
+              {newType === 'select' ? (
+                <label className='block text-dns-14N-130 text-solid-gray-700'>
+                  候補（読点区切り）
+                  <input
+                    className={fieldClass}
+                    value={newOptions}
+                    onChange={(e) => setNewOptions(e.target.value)}
+                  />
+                </label>
+              ) : null}
+            </section>
+          ) : null}
+          {canEdit ? (
+            <section className='mt-6 flex flex-col gap-3'>
+              <h3 className='text-std-16B-150 text-solid-gray-900'>追加項目から提案</h3>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                カードに書いた追加項目を見て、設定項目にする案を出します。採用すると上の一覧に足されます。保存するまで台帳は変わりません。マスクした項目の値は読みません。
+              </p>
+              <div>
+                <Button variant='outline' size='sm' type='button' onClick={() => void suggest()}>
+                  項目を提案
+                </Button>
+              </div>
+              {proposals.length > 0 ? (
+                <ul className='flex flex-col gap-2'>
+                  {proposals.map((field) => (
+                    <li
+                      key={field.label}
+                      className='flex flex-wrap items-center justify-between gap-2'
+                    >
+                      <span>
+                        {field.label}（{FIELD_TYPE_LABEL[field.type] || field.type}
+                        {field.seen ? `、${field.seen}件` : ''}）
+                      </span>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        type='button'
+                        onClick={() => adopt(field)}
+                      >
+                        採用
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : suggested ? (
+                <p className='text-std-16N-170 text-solid-gray-700'>
+                  設定項目にできる追加項目は、まだありません。
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+        </div>
         {canEdit ? (
-          <section className='mt-6 flex flex-col gap-3'>
-            <h3 className='text-std-16B-150 text-solid-gray-900'>追加項目から提案</h3>
+          <aside className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+            <h3 className='text-std-16B-150 text-solid-gray-900'>資料から提案</h3>
             <p className='text-dns-14N-130 text-solid-gray-600'>
-              カードに書いた追加項目を見て、設定項目にする案を出します。採用すると上の一覧に足されます。保存するまで台帳は変わりません。マスクした項目の値は読みません。
+              PDF、Word、Excel、CSV、テキスト、画像を読み、管理項目の案を出します。この提案ではモデルを使います。マイナンバーや個人番号は送りません。採用した案は左の一覧に足され、保存するまで台帳は変わりません。
             </p>
             <div>
-              <Button variant='outline' size='sm' type='button' onClick={() => void suggest()}>
-                項目を提案
+              <Button variant='outline' size='sm' type='button' onClick={openMaterial}>
+                資料を読み込む
               </Button>
             </div>
-            {proposals.length > 0 ? (
-              <ul className='flex flex-col gap-2'>
-                {proposals.map((field) => (
-                  <li key={field.label} className='flex flex-wrap items-center justify-between gap-2'>
-                    <span>
-                      {field.label}（{FIELD_TYPE_LABEL[field.type] || field.type}
-                      {field.seen ? `、${field.seen}件` : ''}）
-                    </span>
-                    <Button variant='outline' size='sm' type='button' onClick={() => adopt(field)}>
-                      採用
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : suggested ? (
-              <p className='text-std-16N-170 text-solid-gray-700'>設定項目にできる追加項目は、まだありません。</p>
-            ) : null}
-          </section>
+          </aside>
         ) : null}
-      </div>
-      {canEdit ? (
-        <aside className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
-          <h3 className='text-std-16B-150 text-solid-gray-900'>資料から提案</h3>
-          <p className='text-dns-14N-130 text-solid-gray-600'>
-            PDF、Word、Excel、CSV、テキスト、画像を読み、管理項目の案を出します。この提案ではモデルを使います。マイナンバーや個人番号は送りません。採用した案は左の一覧に足され、保存するまで台帳は変わりません。
-          </p>
-          <div>
-            <Button variant='outline' size='sm' type='button' onClick={openMaterial}>
-              資料を読み込む
-            </Button>
-          </div>
-        </aside>
-      ) : null}
       </div>
       <CustomDialog isOpen={materialOpen} onClose={() => setMaterialOpen(false)}>
         <CustomDialogPanel className='max-w-2xl'>
@@ -1954,7 +2203,9 @@ export const LedgerFieldsPage = () => {
             {materialStep === 'source' ? (
               <div className='flex flex-col gap-3'>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  PDF、Word、Excel、CSV、テキスト、画像（PNG、JPEG）を選ぶか、文章を貼ってください。Excel は見出しと見本だけを読みます。文字の無い PDF は、ページを画像で選んでください。マイナンバーや個人番号の行は送りません。
+                  PDF、Word、Excel、CSV、テキスト、画像（PNG、JPEG）を選ぶか、文章を貼ってください。Excel
+                  は見出しと見本だけを読みます。文字の無い PDF
+                  は、ページを画像で選んでください。マイナンバーや個人番号の行は送りません。
                 </p>
                 <textarea
                   className={`${fieldClass} min-h-40`}
@@ -1989,7 +2240,12 @@ export const LedgerFieldsPage = () => {
                   </p>
                 ) : null}
                 <div className='flex justify-end gap-2'>
-                  <Button variant='outline' size='sm' type='button' onClick={() => setMaterialOpen(false)}>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    type='button'
+                    onClick={() => setMaterialOpen(false)}
+                  >
                     閉じる
                   </Button>
                   <Button
@@ -2017,7 +2273,10 @@ export const LedgerFieldsPage = () => {
                           className='mt-1'
                           checked={!!materialPicked[field.label]}
                           onChange={(e) =>
-                            setMaterialPicked((current) => ({ ...current, [field.label]: e.target.checked }))
+                            setMaterialPicked((current) => ({
+                              ...current,
+                              [field.label]: e.target.checked,
+                            }))
                           }
                         />
                         <span>
@@ -2034,7 +2293,12 @@ export const LedgerFieldsPage = () => {
                   </p>
                 ) : null}
                 <div className='flex justify-end gap-2'>
-                  <Button variant='outline' size='sm' type='button' onClick={() => setMaterialStep('source')}>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    type='button'
+                    onClick={() => setMaterialStep('source')}
+                  >
                     戻る
                   </Button>
                   <Button
@@ -2084,12 +2348,18 @@ export const LedgerApiPage = () => {
     <Shell tab='api' ledgerId={ledgerId}>
       <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}の API</h2>
       <p className='text-std-16N-170 text-solid-gray-700'>
-        呼び出し先は、この画面と同じ <span className='font-mono'>/ledger</span> です。ログインした利用者の権限がそのまま効きます。外部システムは、利用者一括管理で発行したサービストークンを <span className='font-mono'>Authorization: Bearer</span> に載せます。このトークンは台帳だけに効き、チャットや管理画面には使えません。読み取りは閲覧者、値の登録は読み書き、定義とアクセス権はオーナーです。マスクした項目は、閲覧者には空で返ります。
+        呼び出し先は、この画面と同じ <span className='font-mono'>/ledger</span>{' '}
+        です。ログインした利用者の権限がそのまま効きます。外部システムは、利用者一括管理で発行したサービストークンを{' '}
+        <span className='font-mono'>Authorization: Bearer</span>{' '}
+        に載せます。このトークンは台帳だけに効き、チャットや管理画面には使えません。読み取りは閲覧者、値の登録は読み書き、定義とアクセス権はオーナーです。マスクした項目は、閲覧者には空で返ります。
       </p>
 
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>レコードを読む</h3>
-        <p className='text-dns-14N-130 text-solid-gray-600'>条件を空にすると、見えているレコードを返します。削除した行は、オーナーが include_deleted=1 を付けたときだけ入ります。</p>
+        <p className='text-dns-14N-130 text-solid-gray-600'>
+          条件を空にすると、見えているレコードを返します。削除した行は、オーナーが include_deleted=1
+          を付けたときだけ入ります。
+        </p>
         <ApiBlock>{`GET /ledger/ledgers/${id}/rows?status=&q=&offset=0&limit=50`}</ApiBlock>
         <ApiBlock>{`GET /ledger/rows/{レコードID}`}</ApiBlock>
       </section>
@@ -2097,7 +2367,11 @@ export const LedgerApiPage = () => {
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>レコードを書く</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          同じ business_key があればその行を更新し、無ければ新しい行を作ります。fields のキーは項目 ID です。origins を省いた値は取込になります。画面から人が入れるときは entered、資料から補うときは inferred を付けます。推測は取込と入力を上書きせず、取込は入力を上書きしません。残せなかった項目は kept で返ります。
+          同じ business_key があればその行を更新し、無ければ新しい行を作ります。fields のキーは項目
+          ID です。origins を省いた値は取込になります。画面から人が入れるときは
+          entered、資料から補うときは inferred
+          を付けます。推測は取込と入力を上書きせず、取込は入力を上書きしません。残せなかった項目は
+          kept で返ります。
         </p>
         <ApiBlock>{`POST /ledger/ledgers/${id}/rows
 POST /ledger/rows/{レコードID}`}</ApiBlock>
@@ -2115,7 +2389,11 @@ POST /ledger/rows/{レコードID}`}</ApiBlock>
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>ファイルで書き出す</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          JSON は台帳の項目一覧と行です。設定項目は fields に項目 ID で入り、追加項目は extras に入ります。出自は origins に入ります。JSONL は行だけです。CSV は business_key、status、assignee、comment と設定項目の名前だけで、追加項目と出自は入りません。文字コードは UTF-8（BOM 付き）です。見られないマスク項目は、どの形式からも除きます。
+          JSON は台帳の項目一覧と行です。設定項目は fields に項目 ID で入り、追加項目は extras
+          に入ります。出自は origins に入ります。JSONL は行だけです。CSV は
+          business_key、status、assignee、comment
+          と設定項目の名前だけで、追加項目と出自は入りません。文字コードは UTF-8（BOM
+          付き）です。見られないマスク項目は、どの形式からも除きます。
         </p>
         <ApiBlock>{`GET /ledger/ledgers/${id}/export?format=json&status=&q=&include_deleted=0`}</ApiBlock>
         <p className='text-dns-14N-130 text-solid-gray-600'>format は json、jsonl、csv です。</p>
@@ -2124,7 +2402,9 @@ POST /ledger/rows/{レコードID}`}</ApiBlock>
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>ファイルから行を入れる</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          定義は変わりません。CSV は business_key が必要で、知らない列はエラーになります。追加項目は変わりません。JSON と JSONL は、知らない項目 ID を追加項目にします。ここから入れた値は取込です。
+          定義は変わりません。CSV は business_key
+          が必要で、知らない列はエラーになります。追加項目は変わりません。JSON と JSONL
+          は、知らない項目 ID を追加項目にします。ここから入れた値は取込です。
         </p>
         <ApiBlock>{`POST /ledger/ledgers/${id}/import
 { "format": "json", "text": "…" }`}</ApiBlock>
@@ -2133,7 +2413,8 @@ POST /ledger/rows/{レコードID}`}</ApiBlock>
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>添付ファイル</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          出典も、項目としてのファイルも、レコードの添付です。登録は multipart の file です。Office のプレビューは文字と表だけを返し、元のファイルは別の取得で落とします。
+          出典も、項目としてのファイルも、レコードの添付です。登録は multipart の file です。Office
+          のプレビューは文字と表だけを返し、元のファイルは別の取得で落とします。
         </p>
         <ApiBlock>{`POST /ledger/rows/{レコードID}/files
 GET  /ledger/rows/{レコードID}/files/{ファイルID}
@@ -2143,7 +2424,8 @@ GET  /ledger/rows/{レコードID}/files/{ファイルID}/preview`}</ApiBlock>
       <section className='mt-8 flex flex-col gap-2'>
         <h3 className='text-std-16B-150 text-solid-gray-900'>資料から値の案を出す</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          1回目は保存しません。files は名前と base64 です。表に書いてある値は取込、空欄を補った値は推測です。2回目で残す行の番号を送ると、レコードになり、出典ファイルが付きます。状態は変わりません。
+          1回目は保存しません。files は名前と base64
+          です。表に書いてある値は取込、空欄を補った値は推測です。2回目で残す行の番号を送ると、レコードになり、出典ファイルが付きます。状態は変わりません。
         </p>
         <ApiBlock>{`POST /ledger/ledgers/${id}/ingest
 { "files": [{ "name": "備品.xlsx", "media_type": "…", "data": "base64" }] }
@@ -2166,7 +2448,10 @@ POST  /ledger/ledgers/${id}/assist/definition
 POST  /ledger/ledgers/${id}/assist/material
 POST  /ledger/ledgers/${id}/assist/query`}</ApiBlock>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          promote は追加項目を設定項目へ移します。assist/definition は追加項目から設定項目の案、assist/material は資料から設定項目の案です。どちらも保存しません。assist/query は検索文を状態とキーワードに分けます。
+          promote は追加項目を設定項目へ移します。assist/definition
+          は追加項目から設定項目の案、assist/material
+          は資料から設定項目の案です。どちらも保存しません。assist/query
+          は検索文を状態とキーワードに分けます。
         </p>
       </section>
     </Shell>
@@ -2212,7 +2497,10 @@ export const LedgerExportPage = () => {
     setNotice('');
     try {
       const text = await file.text();
-      const res = await teamApi.post<{ imported: number }>(`ledger/ledgers/${ledgerId}/import`, { format, text });
+      const res = await teamApi.post<{ imported: number }>(`ledger/ledgers/${ledgerId}/import`, {
+        format,
+        text,
+      });
       setNotice(`${res.data.imported}件を読み込みました`);
     } catch (e) {
       setError(ledgerError(e, '読み込めませんでした'));
@@ -2225,7 +2513,8 @@ export const LedgerExportPage = () => {
       <section className='flex max-w-xl flex-col gap-3'>
         <h3 className='text-std-16B-150'>書き出し</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          条件に合うレコードを、JSON、JSONL、CSV で書き出します。条件を空にすると、見えているレコードをすべて書き出します。
+          条件に合うレコードを、JSON、JSONL、CSV
+          で書き出します。条件を空にすると、見えているレコードをすべて書き出します。
         </p>
         <label className='block text-std-16B-150'>
           状態
@@ -2244,13 +2533,23 @@ export const LedgerExportPage = () => {
         </label>
         {ledger?.role === 'admin' ? (
           <label className='flex items-center gap-2 text-std-16N-170'>
-            <input type='checkbox' checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
+            <input
+              type='checkbox'
+              checked={showDeleted}
+              onChange={(e) => setShowDeleted(e.target.checked)}
+            />
             削除したレコードも含める
           </label>
         ) : null}
         <div className='flex flex-wrap gap-2'>
           {(['json', 'jsonl', 'csv'] as const).map((format) => (
-            <Button key={format} variant='outline' size='sm' type='button' onClick={() => void download(format)}>
+            <Button
+              key={format}
+              variant='outline'
+              size='sm'
+              type='button'
+              onClick={() => void download(format)}
+            >
               {format.toUpperCase()}
             </Button>
           ))}
@@ -2259,11 +2558,18 @@ export const LedgerExportPage = () => {
       <section className='flex max-w-xl flex-col gap-3'>
         <h3 className='text-std-16B-150'>読み込み</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
-          JSON、JSONL、CSV のレコードをこの台帳へ取り込みます。定義項目の案を読むものではありません。JSON を読み込んでも、定義は変わりません。
+          JSON、JSONL、CSV
+          のレコードをこの台帳へ取り込みます。定義項目の案を読むものではありません。JSON
+          を読み込んでも、定義は変わりません。
         </p>
         {canWrite ? (
           <>
-            <Button variant='outline' size='sm' type='button' onClick={() => fileRef.current?.click()}>
+            <Button
+              variant='outline'
+              size='sm'
+              type='button'
+              onClick={() => fileRef.current?.click()}
+            >
               ファイルを選ぶ
             </Button>
             <input
@@ -2275,13 +2581,19 @@ export const LedgerExportPage = () => {
                 const file = e.target.files?.[0];
                 e.target.value = '';
                 if (!file) return;
-                const format = file.name.endsWith('.csv') ? 'csv' : file.name.endsWith('.jsonl') ? 'jsonl' : 'json';
+                const format = file.name.endsWith('.csv')
+                  ? 'csv'
+                  : file.name.endsWith('.jsonl')
+                    ? 'jsonl'
+                    : 'json';
                 void importText(format, file);
               }}
             />
           </>
         ) : (
-          <p className='text-std-16N-170 text-solid-gray-700'>読み込むには、読み書きできるチームである必要があります。</p>
+          <p className='text-std-16N-170 text-solid-gray-700'>
+            読み込むには、読み書きできるチームである必要があります。
+          </p>
         )}
       </section>
       {error ? (
@@ -2312,7 +2624,10 @@ export const LedgerCardPage = () => {
   const navigate = useNavigate();
   const { data: row, mutate } = useLedgerRow(rowId || undefined);
   const { data: ledger } = useLedger(ledgerId || row?.ledger_id);
-  const { data: listData, mutate: reloadRows } = useLedgerRows(ledgerId || row?.ledger_id, 'status=&q=&include_deleted=0');
+  const { data: listData, mutate: reloadRows } = useLedgerRows(
+    ledgerId || row?.ledger_id,
+    'status=&q=&include_deleted=0',
+  );
   const [draft, setDraft] = useState<LedgerRow | null>(null);
   const [touched, setTouched] = useState<Record<string, true>>({});
   const [pendingExtras, setPendingExtras] = useState<Record<string, string>>({});
@@ -2342,7 +2657,9 @@ export const LedgerCardPage = () => {
         if (index >= 0) extras[index] = { label, value: value.trim() };
         else extras.push({ label, value: value.trim() });
       }
-      const origins = Object.fromEntries(Object.keys(touched).map((id) => [id, { origin: 'entered' }]));
+      const origins = Object.fromEntries(
+        Object.keys(touched).map((id) => [id, { origin: 'entered' }]),
+      );
       const saved = await updateRow(current.id, {
         status: current.status,
         assignee: current.assignee,
@@ -2427,7 +2744,8 @@ export const LedgerCardPage = () => {
   const records = listData?.rows || [];
   const recordIndex = records.findIndex((item) => item.id === current.id);
   const previous = recordIndex > 0 ? records[recordIndex - 1] : undefined;
-  const following = recordIndex >= 0 && recordIndex < records.length - 1 ? records[recordIndex + 1] : undefined;
+  const following =
+    recordIndex >= 0 && recordIndex < records.length - 1 ? records[recordIndex + 1] : undefined;
   const extraLabels: string[] = [];
   const seenExtras = new Set(current.extras.map((item) => item.label.trim()).filter(Boolean));
   for (const item of records) {
@@ -2475,14 +2793,23 @@ export const LedgerCardPage = () => {
     });
   };
   if (systemShown(ledger.system, 'business_key')) {
-    pushCell('business_key', 'system', '業務キー', <input className={fieldClass} value={current.business_key} readOnly />);
+    pushCell(
+      'business_key',
+      'system',
+      '業務キー',
+      <input className={fieldClass} value={current.business_key} readOnly />,
+    );
   }
   if (systemShown(ledger.system, 'status')) {
     pushCell(
       'status',
       'system',
       '状態',
-      <select className={fieldClass} value={current.status} onChange={(e) => setDraft({ ...current, status: e.target.value })}>
+      <select
+        className={fieldClass}
+        value={current.status}
+        onChange={(e) => setDraft({ ...current, status: e.target.value })}
+      >
         {ledger.statuses.map((item) => (
           <option key={item}>{item}</option>
         ))}
@@ -2494,7 +2821,11 @@ export const LedgerCardPage = () => {
       'assignee',
       'system',
       '担当',
-      <input className={fieldClass} value={current.assignee} onChange={(e) => setDraft({ ...current, assignee: e.target.value })} />,
+      <input
+        className={fieldClass}
+        value={current.assignee}
+        onChange={(e) => setDraft({ ...current, assignee: e.target.value })}
+      />,
     );
   }
   if (systemShown(ledger.system, 'registered_at')) {
@@ -2509,14 +2840,23 @@ export const LedgerCardPage = () => {
     const tall = field.type === 'longtext';
     const control =
       field.type === 'select' ? (
-        <select className={fieldClass} value={current.fields[field.id] || ''} onChange={(e) => setField(field.id, e.target.value)}>
+        <select
+          className={fieldClass}
+          value={current.fields[field.id] || ''}
+          onChange={(e) => setField(field.id, e.target.value)}
+        >
           <option value=''>選ぶ</option>
           {(field.options || []).map((opt) => (
             <option key={opt}>{opt}</option>
           ))}
         </select>
       ) : field.type === 'longtext' ? (
-        <textarea className={fieldClass} rows={3} value={current.fields[field.id] || ''} onChange={(e) => setField(field.id, e.target.value)} />
+        <textarea
+          className={fieldClass}
+          rows={3}
+          value={current.fields[field.id] || ''}
+          onChange={(e) => setField(field.id, e.target.value)}
+        />
       ) : field.type === 'file' ? (
         (() => {
           const linked = findFieldFile(current.files, field.id, current.fields[field.id] || '');
@@ -2557,7 +2897,9 @@ export const LedgerCardPage = () => {
           />
           <input
             className={fieldClass}
-            aria-label={extra.label.trim() ? `${extra.label.trim()}の値` : `追加項目${index + 1}の値`}
+            aria-label={
+              extra.label.trim() ? `${extra.label.trim()}の値` : `追加項目${index + 1}の値`
+            }
             placeholder='値'
             value={extra.value}
             onChange={(e) => setExtra(index, { value: e.target.value })}
@@ -2575,7 +2917,9 @@ export const LedgerCardPage = () => {
         className={fieldClass}
         value={pendingExtras[label] || ''}
         placeholder='値'
-        onChange={(e) => setPendingExtras((currentValues) => ({ ...currentValues, [label]: e.target.value }))}
+        onChange={(e) =>
+          setPendingExtras((currentValues) => ({ ...currentValues, [label]: e.target.value }))
+        }
       />,
     );
   }
@@ -2603,7 +2947,12 @@ export const LedgerCardPage = () => {
       'comment',
       'system',
       'コメント',
-      <textarea className={fieldClass} rows={3} value={current.comment} onChange={(e) => setDraft({ ...current, comment: e.target.value })} />,
+      <textarea
+        className={fieldClass}
+        rows={3}
+        value={current.comment}
+        onChange={(e) => setDraft({ ...current, comment: e.target.value })}
+      />,
       true,
     );
   }
@@ -2637,110 +2986,123 @@ export const LedgerCardPage = () => {
   return (
     <Shell tab='card' ledgerId={ledger.id} rowId={current.id}>
       <div className='flex min-h-0 flex-1 flex-col gap-3'>
-      <div className='flex shrink-0 flex-wrap items-end justify-between gap-2'>
-        <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger.name}</h2>
-        <div className='flex flex-wrap items-center gap-2'>
-          {canWrite ? (
-            <Button variant='solid-fill' size='sm' type='button' onClick={() => void addRecord()}>
-              レコードを追加
-            </Button>
-          ) : null}
-          <Button
-            variant='outline'
-            size='sm'
-            type='button'
-            aria-disabled={!previous || undefined}
-            onClick={() => previous && openRecord(previous.id)}
-          >
-            前のレコード
-          </Button>
-          <span className='text-dns-14N-130 text-solid-gray-600'>
-            {recordIndex >= 0 ? `${recordIndex + 1} / ${records.length}` : current.business_key}
-          </span>
-          <Button
-            variant='outline'
-            size='sm'
-            type='button'
-            aria-disabled={!following || undefined}
-            onClick={() => following && openRecord(following.id)}
-          >
-            次のレコード
-          </Button>
-        </div>
-      </div>
-      {sourceFiles(current.files).length ? (
-        <div className='flex shrink-0 flex-wrap items-center gap-2'>
-          <span className='text-dns-14N-130 text-solid-gray-600'>出典</span>
-          {sourceFiles(current.files).map((file) => (
-            <Button key={file.file_id} variant='outline' size='sm' type='button' onClick={() => setPreview(file)}>
-              {file.name}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      <FilePreviewDialog rowId={current.id} file={preview} onClose={() => setPreview(null)} />
-      <form className='flex min-h-0 flex-1 flex-col gap-3' onSubmit={save}>
-        <div ref={frameRef} className='min-h-0 flex-1 overflow-hidden'>
-          <div className='grid h-full grid-cols-2 items-start gap-x-8'>
-            {[0, 1].map((index) => (
-              <div key={index} className='flex min-w-0 flex-col gap-4'>
-                {(visibleColumns[index] || []).map((cell) => (
-                  <div key={cell.key}>{cell.node}</div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-        {error ? <p className='shrink-0 text-red-700'>{error}</p> : null}
-        <div className='flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-solid-gray-200 pt-3'>
-          <div className='flex items-center gap-2'>
+        <div className='flex shrink-0 flex-wrap items-end justify-between gap-2'>
+          <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger.name}</h2>
+          <div className='flex flex-wrap items-center gap-2'>
+            {canWrite ? (
+              <Button variant='solid-fill' size='sm' type='button' onClick={() => void addRecord()}>
+                レコードを追加
+              </Button>
+            ) : null}
             <Button
               variant='outline'
               size='sm'
               type='button'
-              aria-disabled={safePage <= 0 || undefined}
-              onClick={() => setPageIndex(Math.max(0, safePage - 1))}
+              aria-disabled={!previous || undefined}
+              onClick={() => previous && openRecord(previous.id)}
             >
-              前の頁
+              前のレコード
             </Button>
             <span className='text-dns-14N-130 text-solid-gray-600'>
-              {cardPages.length ? safePage + 1 : 1} / {Math.max(1, cardPages.length)}
+              {recordIndex >= 0 ? `${recordIndex + 1} / ${records.length}` : current.business_key}
             </span>
             <Button
               variant='outline'
               size='sm'
               type='button'
-              aria-disabled={safePage >= cardPages.length - 1 || undefined}
-              onClick={() => setPageIndex(Math.min(cardPages.length - 1, safePage + 1))}
+              aria-disabled={!following || undefined}
+              onClick={() => following && openRecord(following.id)}
             >
-              次の頁
-            </Button>
-          </div>
-          <div className='flex flex-wrap gap-2'>
-            <Button variant='outline' size='md' type='button' onClick={() => setHistoryOpen(true)}>
-              履歴
-            </Button>
-            <Button
-              variant='outline'
-              size='md'
-              type='button'
-              onClick={async () => {
-                try {
-                  await teamApi.post(`ledger/rows/${current.id}/${current.deleted_at ? 'restore' : 'delete'}`);
-                  await mutate();
-                } catch (e) {
-                  setError(ledgerError(e, '操作できませんでした'));
-                }
-              }}
-            >
-              {current.deleted_at ? '戻す' : '削除'}
-            </Button>
-            <Button variant='solid-fill' size='md' type='submit'>
-              保存
+              次のレコード
             </Button>
           </div>
         </div>
-      </form>
+        {sourceFiles(current.files).length ? (
+          <div className='flex shrink-0 flex-wrap items-center gap-2'>
+            <span className='text-dns-14N-130 text-solid-gray-600'>出典</span>
+            {sourceFiles(current.files).map((file) => (
+              <Button
+                key={file.file_id}
+                variant='outline'
+                size='sm'
+                type='button'
+                onClick={() => setPreview(file)}
+              >
+                {file.name}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        <FilePreviewDialog rowId={current.id} file={preview} onClose={() => setPreview(null)} />
+        <form className='flex min-h-0 flex-1 flex-col gap-3' onSubmit={save}>
+          <div ref={frameRef} className='min-h-0 flex-1 overflow-hidden'>
+            <div className='grid h-full grid-cols-2 items-start gap-x-8'>
+              {[0, 1].map((index) => (
+                <div key={index} className='flex min-w-0 flex-col gap-4'>
+                  {(visibleColumns[index] || []).map((cell) => (
+                    <div key={cell.key}>{cell.node}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+          {error ? <p className='shrink-0 text-red-700'>{error}</p> : null}
+          <div className='flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-solid-gray-200 pt-3'>
+            <div className='flex items-center gap-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                type='button'
+                aria-disabled={safePage <= 0 || undefined}
+                onClick={() => setPageIndex(Math.max(0, safePage - 1))}
+              >
+                前の頁
+              </Button>
+              <span className='text-dns-14N-130 text-solid-gray-600'>
+                {cardPages.length ? safePage + 1 : 1} / {Math.max(1, cardPages.length)}
+              </span>
+              <Button
+                variant='outline'
+                size='sm'
+                type='button'
+                aria-disabled={safePage >= cardPages.length - 1 || undefined}
+                onClick={() => setPageIndex(Math.min(cardPages.length - 1, safePage + 1))}
+              >
+                次の頁
+              </Button>
+            </div>
+            <div className='flex flex-wrap gap-2'>
+              <Button
+                variant='outline'
+                size='md'
+                type='button'
+                onClick={() => setHistoryOpen(true)}
+              >
+                履歴
+              </Button>
+              <Button
+                variant='outline'
+                size='md'
+                type='button'
+                onClick={async () => {
+                  try {
+                    await teamApi.post(
+                      `ledger/rows/${current.id}/${current.deleted_at ? 'restore' : 'delete'}`,
+                    );
+                    await mutate();
+                  } catch (e) {
+                    setError(ledgerError(e, '操作できませんでした'));
+                  }
+                }}
+              >
+                {current.deleted_at ? '戻す' : '削除'}
+              </Button>
+              <Button variant='solid-fill' size='md' type='submit'>
+                保存
+              </Button>
+            </div>
+          </div>
+        </form>
       </div>
       <CustomDialog isOpen={historyOpen} onClose={() => setHistoryOpen(false)}>
         <CustomDialogPanel className='max-w-2xl'>
@@ -2755,7 +3117,10 @@ export const LedgerCardPage = () => {
                 {current.revisions?.map((rev) => (
                   <li key={rev.id}>
                     {formatWhen(rev.created_at)} {rev.actor_user_id}{' '}
-                    {rev.changes.map((change) => change.label).filter(Boolean).join('、')}
+                    {rev.changes
+                      .map((change) => change.label)
+                      .filter(Boolean)
+                      .join('、')}
                   </li>
                 ))}
               </ul>
@@ -2803,7 +3168,10 @@ export const LedgerAccessPage = () => {
     if (!ledger) return;
     const grants = teams
       .map((team) => ({ team_id: team.id, role: roles[team.id] || '' }))
-      .filter((grant): grant is LedgerGrant => grant.role === 'admin' || grant.role === 'editor' || grant.role === 'viewer');
+      .filter(
+        (grant): grant is LedgerGrant =>
+          grant.role === 'admin' || grant.role === 'editor' || grant.role === 'viewer',
+      );
     if (!grants.some((grant) => grant.role === 'admin')) {
       setError('オーナーにするチームを1つ残してください');
       setSavedNote('');
@@ -2825,13 +3193,17 @@ export const LedgerAccessPage = () => {
   return (
     <Shell tab='access' ledgerId={ledgerId}>
       <section className='flex flex-col gap-3'>
-        <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}のアクセス権</h2>
+        <h2 className='text-std-18B-160 text-solid-gray-900'>
+          {ledger?.name || '台帳'}のアクセス権
+        </h2>
         <p className='text-std-16N-170 text-solid-gray-700'>
           オーナーは台帳を管理するチームです。読み書きと読み取りだけは、それ以外のチームへ個別に渡せます。
         </p>
         {!ledger ? <p className='text-std-16N-170'>読み込んでいます。</p> : null}
         {ledger && teams.length === 0 ? (
-          <p className='text-std-16N-170 text-solid-gray-600'>この棟に設定できるチームがありません。</p>
+          <p className='text-std-16N-170 text-solid-gray-600'>
+            この棟に設定できるチームがありません。
+          </p>
         ) : null}
         {ledger && teams.length > 0 ? (
           <div className='overflow-x-auto rounded-8 border border-solid-gray-300'>
@@ -2885,7 +3257,9 @@ export const LedgerAccessPage = () => {
             </Button>
           </div>
         ) : ledger ? (
-          <p className='text-dns-14N-130 text-solid-gray-600'>この台帳のアクセス権を変えるには、オーナーのチームに入っている必要があります。</p>
+          <p className='text-dns-14N-130 text-solid-gray-600'>
+            この台帳のアクセス権を変えるには、オーナーのチームに入っている必要があります。
+          </p>
         ) : null}
       </section>
     </Shell>

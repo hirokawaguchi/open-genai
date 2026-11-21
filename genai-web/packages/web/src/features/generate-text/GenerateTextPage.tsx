@@ -16,11 +16,7 @@ import { useReset } from './hooks/useReset';
 import { useSetDefaultValues } from './hooks/useSetDefaultValues';
 
 export const GenerateTextPage = () => {
-  const { documentTitle } = useRegisteredAppMeta(
-    COMMON_EXAPPS_TEAM_ID,
-    'generate',
-    '文章を生成',
-  );
+  const { documentTitle } = useRegisteredAppMeta(COMMON_EXAPPS_TEAM_ID, 'generate', '文章を生成');
   const { usecase, chatId } = useUsecasePath();
   const { loading, messages, postChat } = useChat(usecase, chatId);
 

@@ -221,10 +221,7 @@ export const sourcesFromApplication = (
   (application?.forms || [])
     .filter(
       (f) =>
-        f.status === 'submitted' &&
-        f.definition?.components &&
-        f.answers &&
-        f.id !== currentFormId,
+        f.status === 'submitted' && f.definition?.components && f.answers && f.id !== currentFormId,
     )
     .map((f) => ({
       title: f.title,

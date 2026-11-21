@@ -254,11 +254,10 @@ export const GenerateImageAssistant = (props: Props) => {
                                 if (preset === stylePreset) return;
                                 setIsPresetGenerating(true);
                                 onGenerate(
-                                    c.content.prompt ?? '',
-                                    c.content.negativePrompt ?? '',
-                                    preset,
-                                  )
-                                  .finally(() => setIsPresetGenerating(false));
+                                  c.content.prompt ?? '',
+                                  c.content.negativePrompt ?? '',
+                                  preset,
+                                ).finally(() => setIsPresetGenerating(false));
                               }}
                             >
                               {preset}

@@ -75,7 +75,9 @@ export const ImageThread = ({ messages, pending, generating }: Props) => {
           data-latest='true'
           className='flex flex-col items-start gap-3 border-t border-solid-gray-200 pt-4'
         >
-          <p className='whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'>{pending.prompt}</p>
+          <p className='whitespace-pre-wrap text-std-16N-170 text-solid-gray-900'>
+            {pending.prompt}
+          </p>
           {pending.sourceUrl && (
             <img
               src={pageFileUrl(pending.sourceUrl)}

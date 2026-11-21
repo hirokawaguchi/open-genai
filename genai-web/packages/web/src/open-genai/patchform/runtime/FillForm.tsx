@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type InputHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Checkbox } from '@/components/ui/dads/Checkbox';
 import { Label } from '@/components/ui/dads/Label';
@@ -24,7 +30,9 @@ type Props = {
   disabled?: boolean;
   onExtract?: (kind: ExtractKind, file: File) => Promise<{ extracted: string }>;
   onUpload?: (file: File, kind: UploadKind) => Promise<UploadedFile>;
-  onPostalLookup?: (zip: string) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
+  onPostalLookup?: (
+    zip: string,
+  ) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
   onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
   wizard?: boolean;
   onWizardChange?: (info: { page: number; total: number; isLast: boolean }) => void;
@@ -46,11 +54,18 @@ const isYuucho = (obj: Record<string, string>): boolean =>
 
 const asRecord = (value: unknown): Record<string, string> =>
   value && typeof value === 'object' && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, v == null ? '' : String(v)]))
+    ? Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+          k,
+          v == null ? '' : String(v),
+        ]),
+      )
     : {};
 
 const safeImageSrc = (src: string): string =>
-  src.startsWith('https://') || src.startsWith('http://') || src.startsWith('data:image/') ? src : '';
+  src.startsWith('https://') || src.startsWith('http://') || src.startsWith('data:image/')
+    ? src
+    : '';
 
 const ImiPicks = ({
   options,
@@ -169,7 +184,9 @@ const Field = ({
   disabled?: boolean;
   onExtract?: (kind: ExtractKind, file: File) => Promise<{ extracted: string }>;
   onUpload?: (file: File, kind: UploadKind) => Promise<UploadedFile>;
-  onPostalLookup?: (zip: string) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
+  onPostalLookup?: (
+    zip: string,
+  ) => Promise<{ prefecture?: string; city?: string; street?: string } | null>;
   onCorporateLookup?: (number: string) => Promise<{ company_name?: string } | null>;
   components: FormComponent[];
   values: Record<string, unknown>;
@@ -222,7 +239,11 @@ const Field = ({
           onChange={(e) =>
             set(
               e.target.checked
-                ? { is_yuucho: '1', bank_name: obj.bank_name || 'ゆうちょ銀行', bank_code: obj.bank_code || '9900' }
+                ? {
+                    is_yuucho: '1',
+                    bank_name: obj.bank_name || 'ゆうちょ銀行',
+                    bank_code: obj.bank_code || '9900',
+                  }
                 : { is_yuucho: '' },
             )
           }
@@ -389,7 +410,9 @@ const Field = ({
                 disabled={disabled}
                 options={slot('account_number')}
                 onChange={(e) => set({ account_number: e.target.value })}
-                onBlur={(e) => blurNorm('digits', e.target.value, (v) => set({ account_number: v }))}
+                onBlur={(e) =>
+                  blurNorm('digits', e.target.value, (v) => set({ account_number: v }))
+                }
               />
             </div>
             <div className='md:col-span-2'>
@@ -727,18 +750,32 @@ const Field = ({
     );
   }
   if (c.type === 'text_display') {
-    return <p className='mt-1 text-std-16N-170 text-solid-gray-700'>{String(c.properties?.text || c.label)}</p>;
+    return (
+      <p className='mt-1 text-std-16N-170 text-solid-gray-700'>
+        {String(c.properties?.text || c.label)}
+      </p>
+    );
   }
   if (c.type === 'image_display') {
     const src = safeImageSrc(String(c.properties?.src || ''));
-    if (!src) return <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>画像 URL が未設定です</p>;
-    return <img src={src} alt={c.label} className='mt-1 max-h-64 max-w-full rounded-4 border border-solid-gray-300' />;
+    if (!src)
+      return <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>画像 URL が未設定です</p>;
+    return (
+      <img
+        src={src}
+        alt={c.label}
+        className='mt-1 max-h-64 max-w-full rounded-4 border border-solid-gray-300'
+      />
+    );
   }
   if (c.type === 'divider' || c.type === 'page_break') {
     return <hr className='my-2 border-solid-gray-300' />;
   }
   if (c.type === 'location') {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as { lat?: number | string; lng?: number | string }) : {};
+    const obj =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as { lat?: number | string; lng?: number | string })
+        : {};
     return (
       <div className='mt-1 grid gap-2 md:grid-cols-3'>
         <button
@@ -791,7 +828,13 @@ const Field = ({
           onFile={async (file) => {
             if (!file || !('BarcodeDetector' in window)) return;
             try {
-              const Detector = (window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => { detect: (src: ImageBitmap) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
+              const Detector = (
+                window as unknown as {
+                  BarcodeDetector: new (opts: {
+                    formats: string[];
+                  }) => { detect: (src: ImageBitmap) => Promise<Array<{ rawValue: string }>> };
+                }
+              ).BarcodeDetector;
               const detector = new Detector({ formats: ['qr_code'] });
               const bmp = await createImageBitmap(file);
               const codes = await detector.detect(bmp);
@@ -805,7 +848,10 @@ const Field = ({
     );
   }
   if (c.type === 'image_recognition' || c.type === 'document_reader') {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as { filename?: string; extracted?: string }) : {};
+    const obj =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as { filename?: string; extracted?: string })
+        : {};
     return (
       <div className='mt-1 flex flex-col gap-2'>
         <FilePickButton
@@ -821,7 +867,10 @@ const Field = ({
             onChange({ filename: file.name, extracted: obj.extracted || '' });
             if (!onExtract) return;
             try {
-              const res = await onExtract(c.type === 'image_recognition' ? 'image' : 'document', file);
+              const res = await onExtract(
+                c.type === 'image_recognition' ? 'image' : 'document',
+                file,
+              );
               onChange({ filename: file.name, extracted: res.extracted || '' });
             } catch {
               onChange({ filename: file.name, extracted: obj.extracted || '' });
@@ -840,11 +889,24 @@ const Field = ({
     );
   }
   if (c.type === 'daterange') {
-    const obj = value && typeof value === 'object' ? (value as { start?: string; end?: string }) : {};
+    const obj =
+      value && typeof value === 'object' ? (value as { start?: string; end?: string }) : {};
     return (
       <div className='mt-1 grid gap-2 md:grid-cols-2'>
-        <input type='date' className={common} value={obj.start ?? ''} disabled={disabled} onChange={(e) => onChange({ ...obj, start: e.target.value })} />
-        <input type='date' className={common} value={obj.end ?? ''} disabled={disabled} onChange={(e) => onChange({ ...obj, end: e.target.value })} />
+        <input
+          type='date'
+          className={common}
+          value={obj.start ?? ''}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...obj, start: e.target.value })}
+        />
+        <input
+          type='date'
+          className={common}
+          value={obj.end ?? ''}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...obj, end: e.target.value })}
+        />
       </div>
     );
   }
@@ -884,7 +946,10 @@ const Field = ({
   if (c.type === 'matrix_question') {
     const rows = ((c.properties?.rows as string[]) || []).map(String);
     const cols = ((c.properties?.columns as string[]) || []).map(String);
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, string>) : {};
+    const obj =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, string>)
+        : {};
     return (
       <div className='mt-2 overflow-x-auto'>
         <table className='text-dns-14N-130'>
@@ -922,7 +987,8 @@ const Field = ({
     );
   }
   if (c.type === 'signature_pad') {
-    const picked = fileMeta(value).filename || (typeof value === 'string' && value ? '選択済み' : '');
+    const picked =
+      fileMeta(value).filename || (typeof value === 'string' && value ? '選択済み' : '');
     return (
       <FilePickButton
         id={id}

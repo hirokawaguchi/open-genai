@@ -1,5 +1,5 @@
-@import 'tailwindcss';
-@plugin '@digital-go-jp/tailwind-theme-plugin';
+@import "tailwindcss";
+@plugin "@digital-go-jp/tailwind-theme-plugin";
 
 @theme {
   --breakpoint-sm: 40em;
@@ -25,7 +25,7 @@
   body {
     margin: 0;
     min-height: 100vh;
-    font-family: 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+    font-family: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
     line-height: 1.7;
     @apply text-std-16N-170 text-solid-gray-800;
     background: linear-gradient(180deg, #eef1f8 0%, #f8f8fb 40%, #fff 100%);

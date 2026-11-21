@@ -45,9 +45,7 @@ export const useChoseiConfig = () => {
   return {
     config: data,
     isLoading,
-    loadError: error
-      ? '日程調整の設定取得に失敗しました。時間をおいて再度お試しください。'
-      : null,
+    loadError: error ? '日程調整の設定取得に失敗しました。時間をおいて再度お試しください。' : null,
     // enabled === false（503 時など）のみを「未起動」。|| 右側で再度 === false すると
     // TS が左辺失敗後に enabled を true|undefined に絞り TS2367 になる。
     unavailable: data?.enabled === false,
@@ -71,11 +69,10 @@ export const useChoseiEvents = () => {
 
 export const useChoseiEvent = (eventId: string | undefined) => {
   const key = eventId ? `chosei/events/${encodeURIComponent(eventId)}` : null;
-  const { data, error, isLoading, mutate } = useSWR<ChoseiEventDetail>(
-    key,
-    teamApiFetcher,
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  );
+  const { data, error, isLoading, mutate } = useSWR<ChoseiEventDetail>(key, teamApiFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
 
   return {
     detail: data ?? null,

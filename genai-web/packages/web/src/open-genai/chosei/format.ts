@@ -9,11 +9,7 @@ export const toLocalInputValue = (iso: string, allDay: boolean): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export const formatDateTime = (
-  iso: string,
-  end?: string | null,
-  allDay?: boolean,
-): string => {
+export const formatDateTime = (iso: string, end?: string | null, allDay?: boolean): string => {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;

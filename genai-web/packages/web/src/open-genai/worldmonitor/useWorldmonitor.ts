@@ -22,19 +22,19 @@ const loadConfig = async (): Promise<WorldmonitorConfig> => {
 };
 
 export const useWorldmonitorConfig = () => {
-  const { data, error, isLoading } = useSWR<WorldmonitorConfig>(
-    'worldmonitor/config',
-    loadConfig,
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  );
+  const { data, error, isLoading } = useSWR<WorldmonitorConfig>('worldmonitor/config', loadConfig, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
 
   return {
     enabled: data?.enabled === true,
     isLoading,
-    error: data?.enabled === false
-      ? data.error || null
-      : error
-        ? 'ワールドモニターの状態を確認できませんでした。'
-        : null,
+    error:
+      data?.enabled === false
+        ? data.error || null
+        : error
+          ? 'ワールドモニターの状態を確認できませんでした。'
+          : null,
   };
 };

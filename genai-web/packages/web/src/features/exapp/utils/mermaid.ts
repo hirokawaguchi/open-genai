@@ -76,9 +76,12 @@ const OTHER_DIAGRAM_RE =
 export const mermaidFlowchartLr = (code: string): string => {
   const text = code.trim();
   if (!text || OTHER_DIAGRAM_RE.test(text)) return text;
-  return text.replace(FLOW_DIR_RE, (_, indent: string, kind: string, _dir: string, rest: string) => {
-    return `${indent}${kind} LR${rest ?? ''}`;
-  });
+  return text.replace(
+    FLOW_DIR_RE,
+    (_, indent: string, kind: string, _dir: string, rest: string) => {
+      return `${indent}${kind} LR${rest ?? ''}`;
+    },
+  );
 };
 
 /** Mermaid コードを SVG 文字列へ描画する（補正込み）。 */
@@ -122,7 +125,11 @@ const svgSize = (svgEl: SVGSVGElement): { width: number; height: number } => {
   return { width: width || 800, height: height || 600 };
 };
 
-const loadSvgImage = async (svgEl: Element, width: number, height: number): Promise<HTMLImageElement> => {
+const loadSvgImage = async (
+  svgEl: Element,
+  width: number,
+  height: number,
+): Promise<HTMLImageElement> => {
   svgEl.setAttribute('width', String(width));
   svgEl.setAttribute('height', String(height));
   const serialized = new XMLSerializer().serializeToString(svgEl);

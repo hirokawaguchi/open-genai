@@ -161,7 +161,9 @@ export const MaterialWizard = ({ open, onClose, onCreated }: Props) => {
                 <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>動画として置きます。</p>
               )}
               {file && !progress && kind === 'slides' && (
-                <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>テキストとして置きます。</p>
+                <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>
+                  テキストとして置きます。
+                </p>
               )}
               {progress && <UploadStatus progress={progress} kind={kind} />}
             </div>
@@ -231,9 +233,16 @@ const UploadStatus = ({
   ];
   const current = phaseRank(progress.phase, slides);
   return (
-    <div className='mt-4 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4' role='status' aria-live='polite'>
+    <div
+      className='mt-4 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'
+      role='status'
+      aria-live='polite'
+    >
       <div className='flex items-start gap-3'>
-        <PiSpinnerGap aria-hidden={true} className='mt-0.5 size-6 shrink-0 animate-spin text-blue-900' />
+        <PiSpinnerGap
+          aria-hidden={true}
+          className='mt-0.5 size-6 shrink-0 animate-spin text-blue-900'
+        />
         <div className='min-w-0'>
           <p className='text-std-16B-150 text-solid-gray-900'>{progress.label}</p>
           <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>{progress.detail}</p>
@@ -256,9 +265,14 @@ const UploadStatus = ({
               ) : active ? (
                 <PiSpinnerGap aria-hidden={true} className='size-4 animate-spin text-blue-900' />
               ) : (
-                <span aria-hidden={true} className='inline-block size-4 rounded-full border border-solid-gray-420' />
+                <span
+                  aria-hidden={true}
+                  className='inline-block size-4 rounded-full border border-solid-gray-420'
+                />
               )}
-              <span className={active || done ? 'text-solid-gray-900' : 'text-solid-gray-600'}>{stage.label}</span>
+              <span className={active || done ? 'text-solid-gray-900' : 'text-solid-gray-600'}>
+                {stage.label}
+              </span>
             </li>
           );
         })}

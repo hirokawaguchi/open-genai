@@ -28,11 +28,7 @@ export const numberedAssistantMessages = <T extends { role: string; content: str
 };
 
 export const answerPreviewLine = (content: string, limit = 40): string => {
-  const line = (content || '')
-    .trim()
-    .split(/\r?\n/, 1)[0]
-    ?.replace(/\s+/g, ' ')
-    .trim();
+  const line = (content || '').trim().split(/\r?\n/, 1)[0]?.replace(/\s+/g, ' ').trim();
   if (!line) return '';
   if (line.length <= limit) return line;
   return `${line.slice(0, limit)}…`;

@@ -1,7 +1,8 @@
 export type NormalizeKind = 'digits' | 'postal' | 'phone' | 'street' | 'numeric' | 'nfkc';
 
 const HYPHENS = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043\uFE58\uFE63\uFF0D]/g;
-const HYPHENS_OR_CHOON = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043\uFE58\uFE63\uFF0D\u30FC\uFF70]/g;
+const HYPHENS_OR_CHOON =
+  /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043\uFE58\uFE63\uFF0D\u30FC\uFF70]/g;
 
 const nfkc = (value: string) => value.normalize('NFKC').trim();
 

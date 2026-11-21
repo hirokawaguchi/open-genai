@@ -46,9 +46,7 @@ export const buildImageTurns = (messages: ShownMessage[]): ImageTurn[] => {
     turns.push({
       key: message.messageId || `image-${turns.length}`,
       prompt: result.prompt,
-      sourceUrl: result.sourceImage?.fileUrl
-        ? pageFileUrl(result.sourceImage.fileUrl)
-        : undefined,
+      sourceUrl: result.sourceImage?.fileUrl ? pageFileUrl(result.sourceImage.fileUrl) : undefined,
       images,
     });
   }

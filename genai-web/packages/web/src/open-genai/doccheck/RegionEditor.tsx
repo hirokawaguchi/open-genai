@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { Button } from '@/components/ui/dads/Button';
 import { Label } from '@/components/ui/dads/Label';
 import { newId } from '@/utils/uuid';
@@ -219,9 +225,7 @@ export const RegionEditor = ({
       const ny = clamp01(y - drag.oy);
       setRegions((prev) => {
         const next = prev.map((r) =>
-          r.localId === drag.localId
-            ? { ...r, x: Math.min(nx, 1 - w), y: Math.min(ny, 1 - h) }
-            : r,
+          r.localId === drag.localId ? { ...r, x: Math.min(nx, 1 - w), y: Math.min(ny, 1 - h) } : r,
         );
         onChange?.(
           next.map(({ localId: _lid, ...rest }, i) => ({
@@ -341,9 +345,7 @@ export const RegionEditor = ({
       ...selected,
       localId: newLocalId(),
       id: undefined,
-      name: multi
-        ? `${groupName}-L${lineIndex + 1}-P${i + 1}`
-        : `${groupName}-P${i + 1}`,
+      name: multi ? `${groupName}-L${lineIndex + 1}-P${i + 1}` : `${groupName}-P${i + 1}`,
       x: box.x,
       y: box.y,
       w: box.w,
@@ -453,9 +455,7 @@ export const RegionEditor = ({
                 <button
                   type='button'
                   className={`w-full rounded-8 px-2 py-1.5 text-left text-std-14N-170 ${
-                    r.localId === selectedId
-                      ? 'bg-blue-50 text-blue-900'
-                      : 'hover:bg-solid-gray-50'
+                    r.localId === selectedId ? 'bg-blue-50 text-blue-900' : 'hover:bg-solid-gray-50'
                   }`}
                   onClick={() => setSelectedId(r.localId)}
                 >
@@ -492,9 +492,7 @@ export const RegionEditor = ({
               className='w-full rounded-8 border border-solid-gray-420 px-3 py-2'
               value={selectedFieldType}
               disabled={disabled}
-              onChange={(e) =>
-                updateSelected({ field_type: normalizeFieldType(e.target.value) })
-              }
+              onChange={(e) => updateSelected({ field_type: normalizeFieldType(e.target.value) })}
             >
               <option value='text_single'>テキスト（単一行）</option>
               <option value='text_multi'>テキスト（複数行）</option>
@@ -618,9 +616,7 @@ export const RegionEditor = ({
                     />
                   </div>
                 </div>
-                {splitError && (
-                  <p className='mt-1 text-std-12N-170 text-red-700'>{splitError}</p>
-                )}
+                {splitError && <p className='mt-1 text-std-12N-170 text-red-700'>{splitError}</p>}
                 <Button
                   type='button'
                   size='sm'
@@ -645,9 +641,7 @@ export const RegionEditor = ({
                   value={(selected.choice_options ?? []).join('\n')}
                   placeholder={'例:\n該当する\n該当しない'}
                   disabled={disabled}
-                  onChange={(e) =>
-                    updateSelected({ choice_options: e.target.value.split('\n') })
-                  }
+                  onChange={(e) => updateSelected({ choice_options: e.target.value.split('\n') })}
                 />
               </div>
             )}
@@ -657,7 +651,13 @@ export const RegionEditor = ({
               {(selected.group_name || selected.group_id) &&
                 ` / 片=${(selected.part_index ?? 0) + 1}`}
             </p>
-            <Button type='button' size='sm' variant='outline' disabled={disabled} onClick={removeSelected}>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              disabled={disabled}
+              onClick={removeSelected}
+            >
               この領域を削除
             </Button>
           </div>

@@ -66,7 +66,7 @@ type RuntimeApi = {
 // SWR フェッチャを現在のモードに束ねる。既定は庁内（teamApi）。
 const useApiFetcher = () => {
   const api = usePatchformApi();
-  return useCallback(<T,>(path: string): Promise<T> => api.get<T>(path).then((r) => r.data), [api]);
+  return useCallback(<T>(path: string): Promise<T> => api.get<T>(path).then((r) => r.data), [api]);
 };
 
 export const usePatchformConfig = () => {
@@ -138,36 +138,42 @@ export const usePatchformTagActions = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const rename = useCallback(async (from: string, to: string): Promise<number | null> => {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.post<{ changed: number }>('patchform/tags/rename', {
-        from,
-        to,
-      });
-      return res.data?.changed ?? 0;
-    } catch (e) {
-      setError(errorMessage(e, 'タグの改名に失敗しました。'));
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  }, [api]);
+  const rename = useCallback(
+    async (from: string, to: string): Promise<number | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await api.post<{ changed: number }>('patchform/tags/rename', {
+          from,
+          to,
+        });
+        return res.data?.changed ?? 0;
+      } catch (e) {
+        setError(errorMessage(e, 'タグの改名に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
 
-  const remove = useCallback(async (tag: string): Promise<number | null> => {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.post<{ changed: number }>('patchform/tags/delete', { tag });
-      return res.data?.changed ?? 0;
-    } catch (e) {
-      setError(errorMessage(e, 'タグの削除に失敗しました。'));
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  }, [api]);
+  const remove = useCallback(
+    async (tag: string): Promise<number | null> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await api.post<{ changed: number }>('patchform/tags/delete', { tag });
+        return res.data?.changed ?? 0;
+      } catch (e) {
+        setError(errorMessage(e, 'タグの削除に失敗しました。'));
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
 
   return { rename, remove, busy, error, setError };
 };
@@ -252,26 +258,29 @@ export const usePatchformActions = () => {
     [],
   );
 
-  const setStatus = useCallback(async (
-    formId: string,
-    status: string,
-    extra?: { locked?: boolean },
-  ): Promise<FormDetail | null> => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await api.post<FormDetail>(
-        `patchform/forms/${encodeURIComponent(formId)}/status`,
-        { status, ...(extra?.locked === undefined ? {} : { locked: extra.locked }) },
-      );
-      return res.data ?? null;
-    } catch (e) {
-      setError(errorMessage(e, '状態の変更に失敗しました。'));
-      return null;
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
+  const setStatus = useCallback(
+    async (
+      formId: string,
+      status: string,
+      extra?: { locked?: boolean },
+    ): Promise<FormDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await api.post<FormDetail>(
+          `patchform/forms/${encodeURIComponent(formId)}/status`,
+          { status, ...(extra?.locked === undefined ? {} : { locked: extra.locked }) },
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '状態の変更に失敗しました。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
 
   const remove = useCallback(async (formId: string): Promise<boolean> => {
     setSubmitting(true);
@@ -288,9 +297,7 @@ export const usePatchformActions = () => {
   }, []);
 
   const removeMany = useCallback(
-    async (
-      formIds: string[],
-    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+    async (formIds: string[]): Promise<{ id: string; ok: boolean; error?: string }[]> => {
       setSubmitting(true);
       setError(null);
       const results: { id: string; ok: boolean; error?: string }[] = [];
@@ -355,7 +362,11 @@ export const usePatchformActions = () => {
             });
             results.push({ id: entry.id, ok: true });
           } catch (e) {
-            results.push({ id: entry.id, ok: false, error: errorMessage(e, 'タグを変更できませんでした。') });
+            results.push({
+              id: entry.id,
+              ok: false,
+              error: errorMessage(e, 'タグを変更できませんでした。'),
+            });
           }
         }
         return results;
@@ -385,13 +396,15 @@ export const usePatchformActions = () => {
           receipt_code?: string;
           is_draft?: boolean;
           application?: Application;
-        }>(
-          `patchform/forms/${encodeURIComponent(formId)}/submissions`,
-          input,
-        );
+        }>(`patchform/forms/${encodeURIComponent(formId)}/submissions`, input);
         return res.data ?? {};
       } catch (e) {
-        setError(errorMessage(e, input.is_draft ? '下書きの保存に失敗しました。' : '回答の送信に失敗しました。'));
+        setError(
+          errorMessage(
+            e,
+            input.is_draft ? '下書きの保存に失敗しました。' : '回答の送信に失敗しました。',
+          ),
+        );
         return null;
       } finally {
         setSubmitting(false);
@@ -400,18 +413,21 @@ export const usePatchformActions = () => {
     [],
   );
 
-  const loadDraft = useCallback(async (formId: string) => {
-    try {
-      const res = await api.get<{
-        answers?: Record<string, unknown>;
-        receipt_code?: string | null;
-        submitter_name?: string | null;
-      }>(`patchform/forms/${encodeURIComponent(formId)}/draft`);
-      return res.data ?? null;
-    } catch {
-      return null;
-    }
-  }, [api]);
+  const loadDraft = useCallback(
+    async (formId: string) => {
+      try {
+        const res = await api.get<{
+          answers?: Record<string, unknown>;
+          receipt_code?: string | null;
+          submitter_name?: string | null;
+        }>(`patchform/forms/${encodeURIComponent(formId)}/draft`);
+        return res.data ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [api],
+  );
 
   const setWithdrawn = useCallback(
     async (formId: string, submissionId: string, withdrawn: boolean): Promise<boolean> => {
@@ -424,7 +440,9 @@ export const usePatchformActions = () => {
         );
         return true;
       } catch (e) {
-        setError(errorMessage(e, withdrawn ? '取下げに失敗しました。' : '取下げの取消に失敗しました。'));
+        setError(
+          errorMessage(e, withdrawn ? '取下げに失敗しました。' : '取下げの取消に失敗しました。'),
+        );
         return false;
       } finally {
         setSubmitting(false);
@@ -638,10 +656,7 @@ const downloadItemFileWith = async (
 };
 
 /** 作成画面で様式フォーム自身のひな型をDLする。 */
-export const downloadFormTemplate = async (
-  formId: string,
-  file: SlotTemplate,
-): Promise<void> => {
+export const downloadFormTemplate = async (formId: string, file: SlotTemplate): Promise<void> => {
   const { blob, disposition } = await teamApi.getBlob(
     `patchform/forms/${encodeURIComponent(formId)}/templates/${encodeURIComponent(file.file_id)}/download`,
   );
@@ -717,7 +732,10 @@ export const usePatchformAssist = () => {
   );
 
   const previewProcedure = useCallback(
-    async (input: { text: string; visibility?: FormVisibility }): Promise<AssistProcedurePreview | null> => {
+    async (input: {
+      text: string;
+      visibility?: FormVisibility;
+    }): Promise<AssistProcedurePreview | null> => {
       setBusy(true);
       setError(null);
       try {
@@ -743,7 +761,10 @@ export const usePatchformAssist = () => {
       setBusy(true);
       setError(null);
       try {
-        const res = await teamApi.post<AssistProcedureResult>('patchform/assist/procedure/apply', input);
+        const res = await teamApi.post<AssistProcedureResult>(
+          'patchform/assist/procedure/apply',
+          input,
+        );
         return res.data ?? null;
       } catch (e) {
         setError(errorMessage(e, '選んだ候補を下書きできませんでした。'));
@@ -756,7 +777,11 @@ export const usePatchformAssist = () => {
   );
 
   const draftInvite = useCallback(
-    async (input: { title: string; public_url: string; tone?: string }): Promise<AssistInviteResult | null> => {
+    async (input: {
+      title: string;
+      public_url: string;
+      tone?: string;
+    }): Promise<AssistInviteResult | null> => {
       setBusy(true);
       setError(null);
       try {
@@ -1091,21 +1116,22 @@ export const usePatchformProjectActions = () => {
     [updateMeta],
   );
 
-  const remove = useCallback(async (applicationId: string): Promise<boolean> => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.delete(
-        `patchform/applications/${encodeURIComponent(applicationId)}`,
-      );
-      return true;
-    } catch (e) {
-      setError(errorMessage(e, '申請の削除に失敗しました。'));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }, [api]);
+  const remove = useCallback(
+    async (applicationId: string): Promise<boolean> => {
+      setBusy(true);
+      setError(null);
+      try {
+        await api.delete(`patchform/applications/${encodeURIComponent(applicationId)}`);
+        return true;
+      } catch (e) {
+        setError(errorMessage(e, '申請の削除に失敗しました。'));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api],
+  );
 
   const moveRoute = useCallback(
     async (
@@ -1195,10 +1221,7 @@ export const usePatchformProjectActions = () => {
   );
 
   const setReceptionStatus = useCallback(
-    async (
-      applicationId: string,
-      receptionStatus: string,
-    ): Promise<Application | null> => {
+    async (applicationId: string, receptionStatus: string): Promise<Application | null> => {
       setBusy(true);
       setError(null);
       try {
@@ -1574,9 +1597,7 @@ export const usePatchformProcedureActions = () => {
   }, []);
 
   const removeMany = useCallback(
-    async (
-      procedureIds: string[],
-    ): Promise<{ id: string; ok: boolean; error?: string }[]> => {
+    async (procedureIds: string[]): Promise<{ id: string; ok: boolean; error?: string }[]> => {
       setSubmitting(true);
       setError(null);
       const results: { id: string; ok: boolean; error?: string }[] = [];
@@ -1600,10 +1621,7 @@ export const usePatchformProcedureActions = () => {
   // 手続きの公開範囲を変更する（庁内のみ / 庁内と外部）。公開中は案内＋全様式の
   // 受付にも即時反映され、既存の共有URL・QRへ反映される。
   const setProcedureVisibility = useCallback(
-    async (
-      procedureId: string,
-      visibility: ProcedureVisibility,
-    ): Promise<Procedure | null> => {
+    async (procedureId: string, visibility: ProcedureVisibility): Promise<Procedure | null> => {
       setSubmitting(true);
       setError(null);
       try {
@@ -1640,24 +1658,21 @@ export const usePatchformProcedureActions = () => {
   );
 
   // 手続きを複製する（構成フォームも独立したコピーとして作られる）。
-  const duplicate = useCallback(
-    async (procedureId: string): Promise<Procedure | null> => {
-      setSubmitting(true);
-      setError(null);
-      try {
-        const res = await teamApi.post<Procedure>(
-          `patchform/procedures/${encodeURIComponent(procedureId)}/duplicate`,
-        );
-        return res.data ?? null;
-      } catch (e) {
-        setError(errorMessage(e, '手続きの複製に失敗しました。'));
-        return null;
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [],
-  );
+  const duplicate = useCallback(async (procedureId: string): Promise<Procedure | null> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await teamApi.post<Procedure>(
+        `patchform/procedures/${encodeURIComponent(procedureId)}/duplicate`,
+      );
+      return res.data ?? null;
+    } catch (e) {
+      setError(errorMessage(e, '手続きの複製に失敗しました。'));
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
 
   return {
     create,
@@ -1711,4 +1726,3 @@ export const usePatchformRuntime = () => {
     ),
   };
 };
-

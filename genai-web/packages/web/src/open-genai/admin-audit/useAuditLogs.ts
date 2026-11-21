@@ -48,9 +48,7 @@ export const useAuditLogs = (filters: AuditFilters, offset: number) => {
     isLoading,
     forbidden,
     loadError:
-      error && !forbidden
-        ? '監査ログの取得に失敗しました。時間をおいて再度お試しください。'
-        : null,
+      error && !forbidden ? '監査ログの取得に失敗しました。時間をおいて再度お試しください。' : null,
     mutate,
   };
 };

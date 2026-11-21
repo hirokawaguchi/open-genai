@@ -407,18 +407,18 @@ const GuestForm = () => {
             <p className='mt-2 text-solid-gray-700'>{form.description}</p>
           ) : null}
           {form.identity_mode === 'anonymous' || form.has_name_composite ? null : (
-          <div className='mt-6'>
-            <Label htmlFor='pf-guest-name' size='sm'>
-              {form.identity_mode === 'required' ? 'お名前' : 'お名前（任意）'}
-            </Label>
-            <input
-              id='pf-guest-name'
-              className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-              value={submitterName}
-              onChange={(e) => setSubmitterName(e.target.value)}
-              required={form.identity_mode === 'required'}
-            />
-          </div>
+            <div className='mt-6'>
+              <Label htmlFor='pf-guest-name' size='sm'>
+                {form.identity_mode === 'required' ? 'お名前' : 'お名前（任意）'}
+              </Label>
+              <input
+                id='pf-guest-name'
+                className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                value={submitterName}
+                onChange={(e) => setSubmitterName(e.target.value)}
+                required={form.identity_mode === 'required'}
+              />
+            </div>
           )}
           {draftNote ? <p className='mt-4 text-solid-gray-700'>{draftNote}</p> : null}
           <div className='mt-4'>
@@ -542,7 +542,13 @@ const GuestForm = () => {
             <Button type='button' variant='outline' size='md' onClick={() => setPhase('form')}>
               修正する
             </Button>
-            <Button type='button' variant='solid-fill' size='md' aria-disabled={busy} onClick={() => void onSubmit()}>
+            <Button
+              type='button'
+              variant='solid-fill'
+              size='md'
+              aria-disabled={busy}
+              onClick={() => void onSubmit()}
+            >
               {busy ? '送信中...' : '送信する'}
             </Button>
           </div>

@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import {
-  PiCheckCircleFill,
-  PiFileTextBold,
-  PiPaperclipBold,
-  PiSignpostBold,
-} from 'react-icons/pi';
+import { PiCheckCircleFill, PiFileTextBold, PiPaperclipBold, PiSignpostBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { PageTitle } from '@/components/PageTitle';
@@ -95,8 +90,11 @@ export const PatchformWizardPage = () => {
   const routes = usePatchformRoutes();
   // ?app=<applicationId> があれば「既存プロジェクトの条件を変更」モード。
   const editAppId = searchParams.get('app') || '';
-  const { procedure, isLoading: procLoading, loadError: procError } =
-    usePatchformProcedure(procedureId);
+  const {
+    procedure,
+    isLoading: procLoading,
+    loadError: procError,
+  } = usePatchformProcedure(procedureId);
   const guideFormId = procedure?.guide_reception_id || procedure?.guide_form_id;
   const { form: guideForm, isLoading: guideLoading } = usePatchformDetail(guideFormId);
   const { application: editApp } = usePatchformApplication(editAppId || undefined);
@@ -268,36 +266,36 @@ export const PatchformWizardPage = () => {
 
         {/* ステッパー（単一フォームでは出さない） */}
         {!singleForm ? (
-        <ol className='flex flex-wrap items-center gap-2'>
-          {STEPS.map((s, i) => {
-            const state = i < stepIndex ? 'done' : i === stepIndex ? 'current' : 'todo';
-            return (
-              <li key={s.id} className='flex items-center gap-2'>
-                <span
-                  className={`flex size-6 items-center justify-center rounded-full text-dns-14N-130 ${
-                    state === 'current'
-                      ? 'bg-blue-900 text-white'
-                      : state === 'done'
-                        ? 'bg-green-600 text-white'
-                        : 'bg-solid-gray-200 text-solid-gray-600'
-                  }`}
-                >
-                  {state === 'done' ? '✓' : i + 1}
-                </span>
-                <span
-                  className={`text-std-16N-170 ${
-                    state === 'current' ? 'font-bold text-blue-900' : 'text-solid-gray-600'
-                  }`}
-                >
-                  {s.label}
-                </span>
-                {i < STEPS.length - 1 ? (
-                  <span className='mx-1 text-solid-gray-400'>›</span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
+          <ol className='flex flex-wrap items-center gap-2'>
+            {STEPS.map((s, i) => {
+              const state = i < stepIndex ? 'done' : i === stepIndex ? 'current' : 'todo';
+              return (
+                <li key={s.id} className='flex items-center gap-2'>
+                  <span
+                    className={`flex size-6 items-center justify-center rounded-full text-dns-14N-130 ${
+                      state === 'current'
+                        ? 'bg-blue-900 text-white'
+                        : state === 'done'
+                          ? 'bg-green-600 text-white'
+                          : 'bg-solid-gray-200 text-solid-gray-600'
+                    }`}
+                  >
+                    {state === 'done' ? '✓' : i + 1}
+                  </span>
+                  <span
+                    className={`text-std-16N-170 ${
+                      state === 'current' ? 'font-bold text-blue-900' : 'text-solid-gray-600'
+                    }`}
+                  >
+                    {s.label}
+                  </span>
+                  {i < STEPS.length - 1 ? (
+                    <span className='mx-1 text-solid-gray-400'>›</span>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
         ) : null}
 
         {(procLoading || guideLoading) && <p className='text-solid-gray-600'>読み込み中...</p>}

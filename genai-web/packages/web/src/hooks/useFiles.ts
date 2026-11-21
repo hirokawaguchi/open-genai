@@ -105,9 +105,7 @@ const useFilesState = create<{
 
       // 許可されたファイルタイプをフィルタリング
       // 拡張子は大文字・小文字を区別せず判定する（例: 役所文書の `.PDF`）
-      const mediaFormat = (
-        '.' + uploadedFile.file.name.split('.').pop()
-      ).toLowerCase();
+      const mediaFormat = ('.' + uploadedFile.file.name.split('.').pop()).toLowerCase();
       const isFileTypeAllowed = accept.includes(mediaFormat);
       if (accept && accept.length === 0) {
         errorMessages.push(`このモデルはファイルに対応していません。`);

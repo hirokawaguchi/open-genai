@@ -601,7 +601,10 @@ export const ImageGeneratorForm = (props: Props) => {
         )}
       </div>
 
-      <SupportText id='generate-image-submit-hint' className='mt-4 mb-2 text-center text-dns-14N-130!'>
+      <SupportText
+        id='generate-image-submit-hint'
+        className='mt-4 mb-2 text-center text-dns-14N-130!'
+      >
         {hint}
       </SupportText>
 

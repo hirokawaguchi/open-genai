@@ -2,10 +2,7 @@ import { createChat, createMessages } from '@/lib/chatApi';
 import { decomposeId } from '@/utils/decomposeId';
 import { newId } from '@/utils/uuid';
 
-export const buildDirectImageAssistantContent = (
-  prompt: string,
-  negativePrompt: string,
-): string =>
+export const buildDirectImageAssistantContent = (prompt: string, negativePrompt: string): string =>
   JSON.stringify({
     prompt,
     negativePrompt,
@@ -46,8 +43,7 @@ export async function ensureImagePersistTarget(params: {
     ],
   });
 
-  const recorded =
-    messages.find((m) => m.messageId === messageId) ?? messages[messages.length - 1];
+  const recorded = messages.find((m) => m.messageId === messageId) ?? messages[messages.length - 1];
   if (!recorded?.messageId) {
     return null;
   }

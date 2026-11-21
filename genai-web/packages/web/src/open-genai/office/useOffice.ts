@@ -32,10 +32,11 @@ export const useOfficeConfig = () => {
     enabled: data?.enabled === true,
     delivery: data?.delivery === 'carrier' ? 'carrier' : 'open',
     isLoading,
-    error: data?.enabled === false
-      ? data.error || null
-      : error
-        ? 'オフィスの状態を確認できませんでした。'
-        : null,
+    error:
+      data?.enabled === false
+        ? data.error || null
+        : error
+          ? 'オフィスの状態を確認できませんでした。'
+          : null,
   };
 };

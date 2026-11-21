@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 export const profileSchema = z.object({
   // 姓は必須。名は任意（組織名を姓の欄に書ききるケースに対応）。
-  lastName: z.string().trim().min(1, '姓を入力してください').max(100, '姓は100文字以内で入力してください'),
+  lastName: z
+    .string()
+    .trim()
+    .min(1, '姓を入力してください')
+    .max(100, '姓は100文字以内で入力してください'),
   firstName: z.string().trim().max(100, '名は100文字以内で入力してください'),
 });
 

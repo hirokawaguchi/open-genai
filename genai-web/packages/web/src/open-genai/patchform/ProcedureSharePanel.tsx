@@ -118,11 +118,10 @@ export const ProcedureSharePanel = ({
               />
             ) : (
               <div className='flex flex-col gap-2 rounded-8 border border-amber-600 bg-amber-50 px-3 py-3'>
-                <p className='text-std-16B-150 text-amber-900'>
-                  庁外向けのURL・QRがありません
-                </p>
+                <p className='text-std-16B-150 text-amber-900'>庁外向けのURL・QRがありません</p>
                 <p className='text-dns-14N-130 text-solid-gray-800'>
-                  この<strong>手続きの公開範囲が「庁内のみ」</strong>のため、庁外には公開できません。庁外にも公開するには、公開範囲を「庁内と外部」に変更してください（案内と申請用紙すべてに反映されます）。
+                  この<strong>手続きの公開範囲が「庁内のみ」</strong>
+                  のため、庁外には公開できません。庁外にも公開するには、公開範囲を「庁内と外部」に変更してください（案内と申請用紙すべてに反映されます）。
                 </p>
                 {fixError && (
                   <p className='text-error-1' role='alert'>

@@ -200,9 +200,7 @@ export const ChoseiEditPage = () => {
                     checked={d.allDay}
                     onChange={(e) =>
                       setDates((prev) =>
-                        prev.map((x) =>
-                          x.id === d.id ? { ...x, allDay: e.target.checked } : x,
-                        ),
+                        prev.map((x) => (x.id === d.id ? { ...x, allDay: e.target.checked } : x)),
                       )
                     }
                   />
@@ -215,10 +213,7 @@ export const ChoseiEditPage = () => {
               variant='outline'
               size='sm'
               onClick={() =>
-                setDates((p) => [
-                  ...p,
-                  { id: newId(), start: '', end: '', allDay: false },
-                ])
+                setDates((p) => [...p, { id: newId(), start: '', end: '', allDay: false }])
               }
             >
               日程を追加

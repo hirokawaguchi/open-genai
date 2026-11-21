@@ -19,8 +19,7 @@ export const ExAppResult = (props: Props) => {
   const { shouldShowConversationHistory, handoff = false } = props;
   const { exAppResponse, requestLoading, error } = useExAppInvokeStore();
   const copyTextRef = useRef<HTMLDivElement>(null);
-  const waiting =
-    exAppResponse?.status === 'IN_PROGRESS' || exAppResponse?.status === 'ACCEPTED';
+  const waiting = exAppResponse?.status === 'IN_PROGRESS' || exAppResponse?.status === 'ACCEPTED';
   const isInitial = !requestLoading && !error && !exAppResponse;
   const showResult = !requestLoading && !waiting && !error && exAppResponse !== null;
 

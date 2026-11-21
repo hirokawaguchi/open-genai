@@ -5,7 +5,15 @@ import { Label } from '@/components/ui/dads/Label';
 import { teamApi } from '@/lib/fetcher';
 import { newId } from '@/utils/uuid';
 import { fieldClass, statusLabel } from './labels';
-import type { Chapter, CourseDetail, CourseSummary, Lesson, LmsTeam, LmsUser, Material } from './types';
+import type {
+  Chapter,
+  CourseDetail,
+  CourseSummary,
+  Lesson,
+  LmsTeam,
+  LmsUser,
+  Material,
+} from './types';
 import { errorMessage, useLmsActions, useLmsCourse } from './useLms';
 
 type Props = {
@@ -42,9 +50,7 @@ const emptyLesson = (kind: Lesson['kind']): Lesson => ({
   materialId: '',
   masteryScore: 80,
   questions:
-    kind === 'quiz'
-      ? [{ id: newId(), prompt: '', choices: ['', ''], correctIndex: 0 }]
-      : undefined,
+    kind === 'quiz' ? [{ id: newId(), prompt: '', choices: ['', ''], correctIndex: 0 }] : undefined,
   practicalText: kind === 'practical' ? '' : undefined,
 });
 
@@ -131,12 +137,18 @@ export const CoursePanel = ({
   };
 
   const runBulk = async () => {
-    if ((bulkAction !== 'publish' && bulkAction !== 'delete') || selectedCount === 0 || actions.busy) {
+    if (
+      (bulkAction !== 'publish' && bulkAction !== 'delete') ||
+      selectedCount === 0 ||
+      actions.busy
+    ) {
       return;
     }
     if (
       bulkAction === 'delete' &&
-      !window.confirm(`${selectedCount} 件のコースを削除しますか。受講記録も消えます。教材ファイルは残ります。`)
+      !window.confirm(
+        `${selectedCount} 件のコースを削除しますか。受講記録も消えます。教材ファイルは残ります。`,
+      )
     ) {
       return;
     }
@@ -144,7 +156,8 @@ export const CoursePanel = ({
     let failed = 0;
     let removedOpen = false;
     for (const id of selected) {
-      const saved = bulkAction === 'delete' ? await actions.deleteCourse(id) : await actions.publish(id);
+      const saved =
+        bulkAction === 'delete' ? await actions.deleteCourse(id) : await actions.publish(id);
       if (saved) {
         ok += 1;
         if (bulkAction === 'delete' && id === courseId) {
@@ -155,7 +168,11 @@ export const CoursePanel = ({
       }
     }
     const verb = bulkAction === 'delete' ? '削除' : '公開';
-    setBulkResult(failed > 0 ? `${ok} 件を${verb}しました。${failed} 件は${verb}できませんでした。` : `${ok} 件を${verb}しました。`);
+    setBulkResult(
+      failed > 0
+        ? `${ok} 件を${verb}しました。${failed} 件は${verb}できませんでした。`
+        : `${ok} 件を${verb}しました。`,
+    );
     setSelected(new Set());
     setBulkAction('');
     if (removedOpen) {
@@ -193,7 +210,9 @@ export const CoursePanel = ({
           break;
         }
         setSavedNote('下書きを保存しています');
-        const saved = await teamApi.put<CourseDetail>(`lms/courses/${id}/draft`, body).then((r) => r.data);
+        const saved = await teamApi
+          .put<CourseDetail>(`lms/courses/${id}/draft`, body)
+          .then((r) => r.data);
         savedSnapshot.current = key;
         await mutate(saved, { revalidate: false });
         onChanged();
@@ -257,7 +276,9 @@ export const CoursePanel = ({
     if (actions.busy) {
       return false;
     }
-    if (!window.confirm(`「${name}」を削除しますか。受講記録も消えます。教材ファイルは残ります。`)) {
+    if (
+      !window.confirm(`「${name}」を削除しますか。受講記録も消えます。教材ファイルは残ります。`)
+    ) {
       return false;
     }
     const saved = await actions.deleteCourse(id);
@@ -381,7 +402,12 @@ export const CoursePanel = ({
                       <td className='px-3 py-2 text-solid-gray-600'>{statusLabel(item.status)}</td>
                       <td className='px-3 py-2 text-right'>
                         <span className='inline-flex gap-2'>
-                          <Button type='button' variant='solid-fill' size='sm' onClick={() => onSelect(item.id)}>
+                          <Button
+                            type='button'
+                            variant='solid-fill'
+                            size='sm'
+                            onClick={() => onSelect(item.id)}
+                          >
                             開く
                           </Button>
                           <Button
@@ -402,7 +428,12 @@ export const CoursePanel = ({
                           >
                             プレビュー
                           </Button>
-                          <Button type='button' variant='outline' size='sm' onClick={() => void removeCourse(item.id, item.title)}>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() => void removeCourse(item.id, item.title)}
+                          >
                             削除
                           </Button>
                         </span>
@@ -472,7 +503,12 @@ export const CoursePanel = ({
             >
               プレビュー
             </Button>
-            <Button type='button' variant='outline' size='sm' onClick={() => void removeCourse(course.id, title || course.title)}>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={() => void removeCourse(course.id, title || course.title)}
+            >
               削除
             </Button>
           </div>
@@ -493,10 +529,13 @@ export const CoursePanel = ({
                 <h3 className='text-std-16B-150'>コース編集者と実技認定者</h3>
                 <ul className='text-dns-14N-130'>
                   {course.roles.map((item) => (
-                    <li key={`${item.role}-${item.userId}`} className='flex items-center justify-between gap-2 py-1'>
+                    <li
+                      key={`${item.role}-${item.userId}`}
+                      className='flex items-center justify-between gap-2 py-1'
+                    >
                       <span>
-                        {users.find((user) => user.userId === item.userId)?.userName || item.userId}（
-                        {item.role === 'editor' ? 'コース編集' : '実技認定'}）
+                        {users.find((user) => user.userId === item.userId)?.userName || item.userId}
+                        （{item.role === 'editor' ? 'コース編集' : '実技認定'}）
                       </span>
                       <Button
                         type='button'
@@ -515,7 +554,12 @@ export const CoursePanel = ({
                   ))}
                 </ul>
                 <div className='flex flex-wrap items-end gap-2'>
-                  <select className={fieldClass} aria-label='利用者' value={roleUser} onChange={(e) => setRoleUser(e.target.value)}>
+                  <select
+                    className={fieldClass}
+                    aria-label='利用者'
+                    value={roleUser}
+                    onChange={(e) => setRoleUser(e.target.value)}
+                  >
                     <option value=''>利用者</option>
                     {users.map((user) => (
                       <option key={user.userId} value={user.userId}>
@@ -587,7 +631,12 @@ export const CoursePanel = ({
                     <option value='user'>個人</option>
                     <option value='team'>チーム</option>
                   </select>
-                  <select className={fieldClass} aria-label='受講対象者' value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                  <select
+                    className={fieldClass}
+                    aria-label='受講対象者'
+                    value={assigneeId}
+                    onChange={(e) => setAssigneeId(e.target.value)}
+                  >
                     <option value=''>選ぶ</option>
                     {assigneeType === 'user'
                       ? users.map((user) => (
@@ -601,9 +650,19 @@ export const CoursePanel = ({
                           </option>
                         ))}
                   </select>
-                  <input className={fieldClass} type='date' aria-label='受講期限' value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+                  <input
+                    className={fieldClass}
+                    type='date'
+                    aria-label='受講期限'
+                    value={dueAt}
+                    onChange={(e) => setDueAt(e.target.value)}
+                  />
                   <label className='flex items-center gap-2 text-dns-14N-130'>
-                    <input type='checkbox' checked={required} onChange={(e) => setRequired(e.target.checked)} />
+                    <input
+                      type='checkbox'
+                      checked={required}
+                      onChange={(e) => setRequired(e.target.checked)}
+                    />
                     必須
                   </label>
                 </div>
@@ -644,7 +703,11 @@ export const CoursePanel = ({
                     value={chapter.title === '章' ? '' : chapter.title}
                     placeholder='例：情報セキュリティの基礎'
                     onChange={(e) =>
-                      setChapters((prev) => prev.map((item, i) => (i === chapterIndex ? { ...item, title: e.target.value } : item)))
+                      setChapters((prev) =>
+                        prev.map((item, i) =>
+                          i === chapterIndex ? { ...item, title: e.target.value } : item,
+                        ),
+                      )
                     }
                   />
                 </div>
@@ -679,7 +742,9 @@ export const CoursePanel = ({
                 {chapter.lessons.map((lesson, lessonIndex) => (
                   <div key={lesson.id} className='rounded-8 bg-solid-gray-50 p-3'>
                     <div className='mb-2 flex flex-wrap items-center justify-between gap-2'>
-                      <p className='text-std-16B-150 text-solid-gray-900'>レッスン {lessonIndex + 1}</p>
+                      <p className='text-std-16B-150 text-solid-gray-900'>
+                        レッスン {lessonIndex + 1}
+                      </p>
                       <div className='flex flex-wrap gap-2'>
                         <Button
                           type='button'
@@ -689,7 +754,9 @@ export const CoursePanel = ({
                           onClick={() =>
                             setChapters((prev) =>
                               prev.map((item, i) =>
-                                i === chapterIndex ? { ...item, lessons: moveList(item.lessons, lessonIndex, -1) } : item,
+                                i === chapterIndex
+                                  ? { ...item, lessons: moveList(item.lessons, lessonIndex, -1) }
+                                  : item,
                               ),
                             )
                           }
@@ -704,7 +771,9 @@ export const CoursePanel = ({
                           onClick={() =>
                             setChapters((prev) =>
                               prev.map((item, i) =>
-                                i === chapterIndex ? { ...item, lessons: moveList(item.lessons, lessonIndex, 1) } : item,
+                                i === chapterIndex
+                                  ? { ...item, lessons: moveList(item.lessons, lessonIndex, 1) }
+                                  : item,
                               ),
                             )
                           }
@@ -719,7 +788,10 @@ export const CoursePanel = ({
                             setChapters((prev) =>
                               prev.map((item, i) =>
                                 i === chapterIndex
-                                  ? { ...item, lessons: item.lessons.filter((_, j) => j !== lessonIndex) }
+                                  ? {
+                                      ...item,
+                                      lessons: item.lessons.filter((_, j) => j !== lessonIndex),
+                                    }
                                   : item,
                               ),
                             )
@@ -739,7 +811,11 @@ export const CoursePanel = ({
                           className={fieldClass}
                           value={lesson.title === 'レッスン' ? '' : lesson.title}
                           placeholder='例：パスワードの作り方'
-                          onChange={(e) => updateLesson(setChapters, chapterIndex, lessonIndex, { title: e.target.value })}
+                          onChange={(e) =>
+                            updateLesson(setChapters, chapterIndex, lessonIndex, {
+                              title: e.target.value,
+                            })
+                          }
                         />
                       </div>
                       <div>
@@ -760,18 +836,22 @@ export const CoursePanel = ({
                             });
                           }}
                         >
-                        <option value='video'>動画</option>
-                        <option value='slides'>テキスト</option>
-                        <option value='quiz'>確認テスト</option>
-                        <option value='practical'>実技</option>
-                      </select>
+                          <option value='video'>動画</option>
+                          <option value='slides'>テキスト</option>
+                          <option value='quiz'>確認テスト</option>
+                          <option value='practical'>実技</option>
+                        </select>
                       </div>
                     </div>
                     <label className='mt-2 flex items-center gap-2 text-dns-14N-130'>
                       <input
                         type='checkbox'
                         checked={lesson.required}
-                        onChange={(e) => updateLesson(setChapters, chapterIndex, lessonIndex, { required: e.target.checked })}
+                        onChange={(e) =>
+                          updateLesson(setChapters, chapterIndex, lessonIndex, {
+                            required: e.target.checked,
+                          })
+                        }
                       />
                       必須
                     </label>
@@ -780,11 +860,18 @@ export const CoursePanel = ({
                         className={fieldClass}
                         aria-label='教材'
                         value={lesson.materialId || ''}
-                        onChange={(e) => updateLesson(setChapters, chapterIndex, lessonIndex, { materialId: e.target.value })}
+                        onChange={(e) =>
+                          updateLesson(setChapters, chapterIndex, lessonIndex, {
+                            materialId: e.target.value,
+                          })
+                        }
                       >
                         <option value=''>教材を選ぶ</option>
                         {materials
-                          .filter((material) => material.kind === (lesson.kind === 'video' ? 'video' : 'slides'))
+                          .filter(
+                            (material) =>
+                              material.kind === (lesson.kind === 'video' ? 'video' : 'slides'),
+                          )
                           .map((material) => (
                             <option key={material.id} value={material.id}>
                               {material.title}
@@ -810,7 +897,11 @@ export const CoursePanel = ({
                         aria-label='実技の文面'
                         placeholder='例：申請システムでパスワードを再設定できる'
                         value={lesson.practicalText || ''}
-                        onChange={(e) => updateLesson(setChapters, chapterIndex, lessonIndex, { practicalText: e.target.value })}
+                        onChange={(e) =>
+                          updateLesson(setChapters, chapterIndex, lessonIndex, {
+                            practicalText: e.target.value,
+                          })
+                        }
                       />
                     )}
                     {lesson.kind === 'quiz' && (
@@ -827,12 +918,17 @@ export const CoursePanel = ({
                             max={100}
                             value={lesson.masteryScore ?? 80}
                             onChange={(e) =>
-                              updateLesson(setChapters, chapterIndex, lessonIndex, { masteryScore: Number(e.target.value) })
+                              updateLesson(setChapters, chapterIndex, lessonIndex, {
+                                masteryScore: Number(e.target.value),
+                              })
                             }
                           />
                         </div>
                         {(lesson.questions || []).map((question, questionIndex) => (
-                          <div key={question.id} className='flex flex-col gap-2 rounded-4 bg-white p-3'>
+                          <div
+                            key={question.id}
+                            className='flex flex-col gap-2 rounded-4 bg-white p-3'
+                          >
                             <div>
                               <Label htmlFor={`lms-question-${question.id}`} size='sm'>
                                 設問 {questionIndex + 1}
@@ -843,7 +939,13 @@ export const CoursePanel = ({
                                 placeholder='例：届ける先はどこですか'
                                 value={question.prompt}
                                 onChange={(e) =>
-                                  updateQuestion(setChapters, chapterIndex, lessonIndex, questionIndex, { prompt: e.target.value })
+                                  updateQuestion(
+                                    setChapters,
+                                    chapterIndex,
+                                    lessonIndex,
+                                    questionIndex,
+                                    { prompt: e.target.value },
+                                  )
                                 }
                               />
                             </div>
@@ -860,26 +962,43 @@ export const CoursePanel = ({
                                       checked={question.correctIndex === choiceIndex}
                                       aria-label={`選択肢 ${choiceIndex + 1} を正答にする`}
                                       onChange={() =>
-                                        updateQuestion(setChapters, chapterIndex, lessonIndex, questionIndex, {
-                                          correctIndex: choiceIndex,
-                                        })
+                                        updateQuestion(
+                                          setChapters,
+                                          chapterIndex,
+                                          lessonIndex,
+                                          questionIndex,
+                                          {
+                                            correctIndex: choiceIndex,
+                                          },
+                                        )
                                       }
                                     />
                                     正答
                                   </label>
                                   <div className='min-w-0 flex-1'>
-                                    <Label htmlFor={`lms-choice-${question.id}-${choiceIndex}`} size='sm'>
+                                    <Label
+                                      htmlFor={`lms-choice-${question.id}-${choiceIndex}`}
+                                      size='sm'
+                                    >
                                       選択肢 {choiceIndex + 1}
                                     </Label>
                                     <input
                                       id={`lms-choice-${question.id}-${choiceIndex}`}
                                       className={fieldClass}
-                                      placeholder={choiceIndex === 0 ? '例：ブラウザ' : '例：教材サーバ'}
+                                      placeholder={
+                                        choiceIndex === 0 ? '例：ブラウザ' : '例：教材サーバ'
+                                      }
                                       value={choice}
                                       onChange={(e) => {
                                         const choices = [...question.choices];
                                         choices[choiceIndex] = e.target.value;
-                                        updateQuestion(setChapters, chapterIndex, lessonIndex, questionIndex, { choices });
+                                        updateQuestion(
+                                          setChapters,
+                                          chapterIndex,
+                                          lessonIndex,
+                                          questionIndex,
+                                          { choices },
+                                        );
                                       }}
                                     />
                                   </div>
@@ -894,7 +1013,12 @@ export const CoursePanel = ({
                 ))}
               </div>
               <div className='mt-3 flex flex-col items-start gap-1'>
-                <Button type='button' variant='outline' size='sm' onClick={() => addLesson(setChapters, chapterIndex, 'video')}>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => addLesson(setChapters, chapterIndex, 'video')}
+                >
                   レッスンを追加
                 </Button>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
@@ -908,7 +1032,9 @@ export const CoursePanel = ({
               type='button'
               variant='outline'
               size='sm'
-              onClick={() => setChapters((prev) => [...prev, { id: newId(), title: '', lessons: [] }])}
+              onClick={() =>
+                setChapters((prev) => [...prev, { id: newId(), title: '', lessons: [] }])
+              }
             >
               章を追加
             </Button>
@@ -941,7 +1067,9 @@ const updateLesson = (
       i === chapterIndex
         ? {
             ...chapter,
-            lessons: chapter.lessons.map((lesson, j) => (j === lessonIndex ? { ...lesson, ...patch } : lesson)),
+            lessons: chapter.lessons.map((lesson, j) =>
+              j === lessonIndex ? { ...lesson, ...patch } : lesson,
+            ),
           }
         : chapter,
     ),
@@ -983,7 +1111,9 @@ const addLesson = (
 ) => {
   setChapters((prev) =>
     prev.map((chapter, i) =>
-      i === chapterIndex ? { ...chapter, lessons: [...chapter.lessons, emptyLesson(kind)] } : chapter,
+      i === chapterIndex
+        ? { ...chapter, lessons: [...chapter.lessons, emptyLesson(kind)] }
+        : chapter,
     ),
   );
 };

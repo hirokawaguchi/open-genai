@@ -20,7 +20,11 @@ export type PatchformApi = {
   mode: PatchformMode;
   get: <T>(path: string, options?: Options) => Promise<{ data: T; status: number }>;
   getBlob: (path: string, options?: Options) => Promise<BlobResponse>;
-  post: <T>(path: string, body?: unknown, options?: Options) => Promise<{ data: T; status: number }>;
+  post: <T>(
+    path: string,
+    body?: unknown,
+    options?: Options,
+  ) => Promise<{ data: T; status: number }>;
   put: <T>(path: string, body?: unknown, options?: Options) => Promise<{ data: T; status: number }>;
   patch: <T>(
     path: string,

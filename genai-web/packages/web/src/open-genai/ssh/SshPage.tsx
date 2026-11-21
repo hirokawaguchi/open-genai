@@ -203,7 +203,10 @@ export const SshPage = () => {
           fallbackDescription='管理者が登録した接続先へ、ブラウザから SSH でログインします。メンテナンスや SSH 上のサービス操作に使います。'
           fallbackHowTo={
             <>
-              <p>・一覧から接続先を選び、ユーザー名とパスワードを入力して接続します。画面は 80×25 文字です。</p>
+              <p>
+                ・一覧から接続先を選び、ユーザー名とパスワードを入力して接続します。画面は 80×25
+                文字です。
+              </p>
               <p>・接続先の追加・変更はシステム管理者だけが行えます。</p>
               <p>・パスワードはサーバに保存しません。接続が切れたら再入力してください。</p>
               {config?.idle_seconds != null && (
@@ -251,90 +254,90 @@ export const SshPage = () => {
                 </span>
               </DisclosureSummary>
               <div className='mt-3'>
-              {loadError && (
-                <p className='mb-3 text-dns-16N-130 text-error-1' role='alert'>
-                  {loadError}
-                </p>
-              )}
-              <form onSubmit={connect} className='grid gap-4 md:grid-cols-2'>
-                <div className='md:col-span-2'>
-                  <Label htmlFor='ssh-host' size='sm'>
-                    接続先
-                  </Label>
-                  <select
-                    id='ssh-host'
-                    className={inputClass}
-                    value={hostId}
-                    onChange={(e) => setHostId(e.target.value)}
-                    disabled={connected || connecting || isLoading}
-                  >
-                    {hosts.length === 0 && <option value=''>登録された接続先がありません</option>}
-                    {hosts.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {h.name}（{h.host}:{h.port}）
-                      </option>
-                    ))}
-                  </select>
-                  {selected?.description && (
-                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                      {selected.description}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor='ssh-user' size='sm'>
-                    ユーザー名
-                  </Label>
-                  <input
-                    id='ssh-user'
-                    className={inputClass}
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    autoComplete='username'
-                    disabled={connected || connecting}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor='ssh-password' size='sm'>
-                    パスワード
-                  </Label>
-                  <input
-                    id='ssh-password'
-                    type='password'
-                    className={inputClass}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete='current-password'
-                    disabled={connected || connecting}
-                    required={!connected}
-                  />
-                </div>
-                <div className='flex flex-wrap items-center gap-3 md:col-span-2'>
-                  <Button
-                    type='submit'
-                    variant='solid-fill'
-                    size='md'
-                    disabled={connected || connecting || hosts.length === 0}
-                  >
-                    {connecting ? '接続中...' : '接続'}
-                  </Button>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='md'
-                    onClick={disconnect}
-                    disabled={!connected && !connecting}
-                  >
-                    切断
-                  </Button>
-                  {sessionError && (
-                    <p className='text-dns-16N-130 text-error-1' role='alert'>
-                      {sessionError}
-                    </p>
-                  )}
-                </div>
-              </form>
+                {loadError && (
+                  <p className='mb-3 text-dns-16N-130 text-error-1' role='alert'>
+                    {loadError}
+                  </p>
+                )}
+                <form onSubmit={connect} className='grid gap-4 md:grid-cols-2'>
+                  <div className='md:col-span-2'>
+                    <Label htmlFor='ssh-host' size='sm'>
+                      接続先
+                    </Label>
+                    <select
+                      id='ssh-host'
+                      className={inputClass}
+                      value={hostId}
+                      onChange={(e) => setHostId(e.target.value)}
+                      disabled={connected || connecting || isLoading}
+                    >
+                      {hosts.length === 0 && <option value=''>登録された接続先がありません</option>}
+                      {hosts.map((h) => (
+                        <option key={h.id} value={h.id}>
+                          {h.name}（{h.host}:{h.port}）
+                        </option>
+                      ))}
+                    </select>
+                    {selected?.description && (
+                      <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                        {selected.description}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor='ssh-user' size='sm'>
+                      ユーザー名
+                    </Label>
+                    <input
+                      id='ssh-user'
+                      className={inputClass}
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete='username'
+                      disabled={connected || connecting}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor='ssh-password' size='sm'>
+                      パスワード
+                    </Label>
+                    <input
+                      id='ssh-password'
+                      type='password'
+                      className={inputClass}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete='current-password'
+                      disabled={connected || connecting}
+                      required={!connected}
+                    />
+                  </div>
+                  <div className='flex flex-wrap items-center gap-3 md:col-span-2'>
+                    <Button
+                      type='submit'
+                      variant='solid-fill'
+                      size='md'
+                      disabled={connected || connecting || hosts.length === 0}
+                    >
+                      {connecting ? '接続中...' : '接続'}
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      onClick={disconnect}
+                      disabled={!connected && !connecting}
+                    >
+                      切断
+                    </Button>
+                    {sessionError && (
+                      <p className='text-dns-16N-130 text-error-1' role='alert'>
+                        {sessionError}
+                      </p>
+                    )}
+                  </div>
+                </form>
               </div>
             </Disclosure>
 
@@ -432,147 +435,152 @@ const HostAdmin = ({
         <span className='text-std-16B-150'>接続先の管理（システム管理者）</span>
       </DisclosureSummary>
       <div className='mt-3'>
-      <p className='mt-0 text-dns-14N-130 text-solid-gray-700'>
-        利用者が選べる SSH
-        先です。ここ以外のホストへは接続できません。ホスト鍵を空にすると、次回接続時に取得して保存します。同じマシンの別コンテナへは、公開ポートなら
-        host.docker.internal、同じ Docker
-        ネットワークなら相手のサービス名を指定してください。localhost はコンテナ自身を指します。
-      </p>
-      <ul className='mt-4 flex flex-col gap-2'>
-        {hosts.map((host) => (
-          <li
-            key={host.id}
-            className='flex flex-wrap items-center justify-between gap-2 rounded-4 border border-solid-gray-300 px-3 py-2'
-          >
-            <div>
-              <p className='text-std-16B-150'>
-                {host.name}
-                {!host.enabled && (
-                  <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>無効</span>
-                )}
-              </p>
-              <p className='text-dns-14N-130 text-solid-gray-700'>
-                {host.host}:{host.port}
-                {host.default_username ? ` / ${host.default_username}` : ''}
-                {host.has_host_key ? ' / ホスト鍵あり' : ' / ホスト鍵未登録'}
-              </p>
-            </div>
-            <div className='flex gap-2'>
-              <Button type='button' variant='outline' size='sm' onClick={() => startEdit(host)}>
-                編集
-              </Button>
-              <Button type='button' variant='text' size='sm' onClick={() => void onDelete(host.id)}>
-                削除
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
+        <p className='mt-0 text-dns-14N-130 text-solid-gray-700'>
+          利用者が選べる SSH
+          先です。ここ以外のホストへは接続できません。ホスト鍵を空にすると、次回接続時に取得して保存します。同じマシンの別コンテナへは、公開ポートなら
+          host.docker.internal、同じ Docker
+          ネットワークなら相手のサービス名を指定してください。localhost はコンテナ自身を指します。
+        </p>
+        <ul className='mt-4 flex flex-col gap-2'>
+          {hosts.map((host) => (
+            <li
+              key={host.id}
+              className='flex flex-wrap items-center justify-between gap-2 rounded-4 border border-solid-gray-300 px-3 py-2'
+            >
+              <div>
+                <p className='text-std-16B-150'>
+                  {host.name}
+                  {!host.enabled && (
+                    <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>無効</span>
+                  )}
+                </p>
+                <p className='text-dns-14N-130 text-solid-gray-700'>
+                  {host.host}:{host.port}
+                  {host.default_username ? ` / ${host.default_username}` : ''}
+                  {host.has_host_key ? ' / ホスト鍵あり' : ' / ホスト鍵未登録'}
+                </p>
+              </div>
+              <div className='flex gap-2'>
+                <Button type='button' variant='outline' size='sm' onClick={() => startEdit(host)}>
+                  編集
+                </Button>
+                <Button
+                  type='button'
+                  variant='text'
+                  size='sm'
+                  onClick={() => void onDelete(host.id)}
+                >
+                  削除
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
 
-      <form onSubmit={onSubmit} className='mt-6 grid gap-3 md:grid-cols-2'>
-        <div>
-          <Label htmlFor='ssh-admin-name' size='sm'>
-            表示名
-          </Label>
-          <input
-            id='ssh-admin-name'
-            className={inputClass}
-            value={draft.name}
-            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor='ssh-admin-host' size='sm'>
-            ホスト
-          </Label>
-          <input
-            id='ssh-admin-host'
-            className={inputClass}
-            value={draft.host}
-            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-            placeholder='host.docker.internal'
-            required
-          />
-          <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-            ssh-app から見たホスト名です。この PC 上の別コンテナで公開しているポートなら
-            host.docker.internal を使います。
-          </p>
-        </div>
-        <div>
-          <Label htmlFor='ssh-admin-port' size='sm'>
-            ポート
-          </Label>
-          <input
-            id='ssh-admin-port'
-            type='number'
-            min={1}
-            max={65535}
-            className={inputClass}
-            value={draft.port}
-            onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })}
-            required
-          />
-        </div>
-        <div>
-          <Label htmlFor='ssh-admin-user' size='sm'>
-            既定ユーザー名（任意）
-          </Label>
-          <input
-            id='ssh-admin-user'
-            className={inputClass}
-            value={draft.default_username}
-            onChange={(e) => setDraft({ ...draft, default_username: e.target.value })}
-          />
-        </div>
-        <div className='md:col-span-2'>
-          <Label htmlFor='ssh-admin-desc' size='sm'>
-            説明（任意）
-          </Label>
-          <input
-            id='ssh-admin-desc'
-            className={inputClass}
-            value={draft.description}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          />
-        </div>
-        <div className='md:col-span-2'>
-          <Label htmlFor='ssh-admin-key' size='sm'>
-            ホスト鍵（任意・OpenSSH 公開鍵形式）
-          </Label>
-          <textarea
-            id='ssh-admin-key'
-            className={inputClass}
-            rows={3}
-            value={draft.host_key}
-            onChange={(e) => setDraft({ ...draft, host_key: e.target.value })}
-            placeholder='ssh-ed25519 AAAA...'
-          />
-        </div>
-        <label className='flex items-center gap-2 text-std-16N-170'>
-          <input
-            type='checkbox'
-            checked={draft.enabled}
-            onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-          />
-          有効
-        </label>
-        <div className='flex flex-wrap items-center gap-3 md:col-span-2'>
-          <Button type='submit' variant='solid-fill' size='md' disabled={submitting}>
-            {editingId ? '更新' : '追加'}
-          </Button>
-          {editingId && (
-            <Button type='button' variant='outline' size='md' onClick={resetDraft}>
-              新規に戻す
-            </Button>
-          )}
-          {error && (
-            <p className='text-dns-16N-130 text-error-1' role='alert'>
-              {error}
+        <form onSubmit={onSubmit} className='mt-6 grid gap-3 md:grid-cols-2'>
+          <div>
+            <Label htmlFor='ssh-admin-name' size='sm'>
+              表示名
+            </Label>
+            <input
+              id='ssh-admin-name'
+              className={inputClass}
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <Label htmlFor='ssh-admin-host' size='sm'>
+              ホスト
+            </Label>
+            <input
+              id='ssh-admin-host'
+              className={inputClass}
+              value={draft.host}
+              onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+              placeholder='host.docker.internal'
+              required
+            />
+            <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+              ssh-app から見たホスト名です。この PC 上の別コンテナで公開しているポートなら
+              host.docker.internal を使います。
             </p>
-          )}
-        </div>
-      </form>
+          </div>
+          <div>
+            <Label htmlFor='ssh-admin-port' size='sm'>
+              ポート
+            </Label>
+            <input
+              id='ssh-admin-port'
+              type='number'
+              min={1}
+              max={65535}
+              className={inputClass}
+              value={draft.port}
+              onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })}
+              required
+            />
+          </div>
+          <div>
+            <Label htmlFor='ssh-admin-user' size='sm'>
+              既定ユーザー名（任意）
+            </Label>
+            <input
+              id='ssh-admin-user'
+              className={inputClass}
+              value={draft.default_username}
+              onChange={(e) => setDraft({ ...draft, default_username: e.target.value })}
+            />
+          </div>
+          <div className='md:col-span-2'>
+            <Label htmlFor='ssh-admin-desc' size='sm'>
+              説明（任意）
+            </Label>
+            <input
+              id='ssh-admin-desc'
+              className={inputClass}
+              value={draft.description}
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            />
+          </div>
+          <div className='md:col-span-2'>
+            <Label htmlFor='ssh-admin-key' size='sm'>
+              ホスト鍵（任意・OpenSSH 公開鍵形式）
+            </Label>
+            <textarea
+              id='ssh-admin-key'
+              className={inputClass}
+              rows={3}
+              value={draft.host_key}
+              onChange={(e) => setDraft({ ...draft, host_key: e.target.value })}
+              placeholder='ssh-ed25519 AAAA...'
+            />
+          </div>
+          <label className='flex items-center gap-2 text-std-16N-170'>
+            <input
+              type='checkbox'
+              checked={draft.enabled}
+              onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+            />
+            有効
+          </label>
+          <div className='flex flex-wrap items-center gap-3 md:col-span-2'>
+            <Button type='submit' variant='solid-fill' size='md' disabled={submitting}>
+              {editingId ? '更新' : '追加'}
+            </Button>
+            {editingId && (
+              <Button type='button' variant='outline' size='md' onClick={resetDraft}>
+                新規に戻す
+              </Button>
+            )}
+            {error && (
+              <p className='text-dns-16N-130 text-error-1' role='alert'>
+                {error}
+              </p>
+            )}
+          </div>
+        </form>
       </div>
     </Disclosure>
   );

@@ -81,7 +81,8 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
       {message || 'コンテナを profiles: ["procuretech-navigator"] で起動してください。'}
     </p>
     <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-      docker compose --profile procuretech-navigator up -d{'\n'}# または .env に COMPOSE_PROFILES=procuretech-navigator
+      docker compose --profile procuretech-navigator up -d{'\n'}# または .env に
+      COMPOSE_PROFILES=procuretech-navigator
     </pre>
   </div>
 );
@@ -151,7 +152,8 @@ const SectionChat = ({
       setInput(text);
       const msg =
         e instanceof ApiError
-          ? ((e.data as { error?: string } | undefined)?.error ?? 'メッセージの送信に失敗しました。')
+          ? ((e.data as { error?: string } | undefined)?.error ??
+            'メッセージの送信に失敗しました。')
           : 'メッセージの送信に失敗しました。';
       setError(msg);
     } finally {
@@ -490,7 +492,8 @@ export const ProcuretechPage = () => {
     } catch (e) {
       setDownloadError(
         e instanceof ApiError
-          ? ((e.data as { error?: string } | undefined)?.error ?? '様式のダウンロードに失敗しました。')
+          ? ((e.data as { error?: string } | undefined)?.error ??
+              '様式のダウンロードに失敗しました。')
           : '様式のダウンロードに失敗しました。',
       );
     }
@@ -507,7 +510,9 @@ export const ProcuretechPage = () => {
   };
 
   const onDeleteSession = async (id: string, filename: string) => {
-    if (!window.confirm(`「${filename}」のセッション（会話履歴と読み込んだ企画書）を削除しますか？`))
+    if (
+      !window.confirm(`「${filename}」のセッション（会話履歴と読み込んだ企画書）を削除しますか？`)
+    )
       return;
     const ok = await deleteSession(id);
     if (ok) {

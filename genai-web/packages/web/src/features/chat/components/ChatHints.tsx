@@ -13,9 +13,7 @@ export const ChatHints = () => {
       </div>
       <div>
         <dt className='mb-1 text-std-16B-150'>AIモデルを切り替える</dt>
-        <dd>
-          入力欄の上にあるAIモデルから、目的に合わせて切り替えられます。
-        </dd>
+        <dd>入力欄の上にあるAIモデルから、目的に合わせて切り替えられます。</dd>
       </div>
       <div>
         <dt className='mb-1 text-std-16B-150'>システムプロンプトを使う</dt>
@@ -26,7 +24,8 @@ export const ChatHints = () => {
       <div>
         <dt className='mb-1 text-std-16B-150'>ファイルを添付して質問する</dt>
         <dd>
-          資料を添付して質問できます（4.5MBまで）。対応形式は JPEG / PNG / WebP / GIF、PDF / テキスト / CSV / HTML / Markdown / Word / Excel です。
+          資料を添付して質問できます（4.5MBまで）。対応形式は JPEG / PNG / WebP / GIF、PDF /
+          テキスト / CSV / HTML / Markdown / Word / Excel です。
         </dd>
       </div>
     </dl>

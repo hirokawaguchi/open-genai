@@ -66,7 +66,12 @@ export const ProgressPanel = ({ courses, courseId, canGrade, onSelect }: Props) 
                     </td>
                     <td className='px-3 py-2 text-solid-gray-600'>{statusLabel(item.status)}</td>
                     <td className='px-3 py-2 text-right'>
-                      <Button type='button' variant='solid-fill' size='sm' onClick={() => onSelect(item.id)}>
+                      <Button
+                        type='button'
+                        variant='solid-fill'
+                        size='sm'
+                        onClick={() => onSelect(item.id)}
+                      >
                         開く
                       </Button>
                     </td>
@@ -111,61 +116,77 @@ export const ProgressPanel = ({ courses, courseId, canGrade, onSelect }: Props) 
                 </tr>
               ) : (
                 progress.rows.map((row) => (
-                <tr key={row.userId} className='border-b border-solid-gray-200 align-top last:border-b-0'>
-                  <td className='px-3 py-2'>{row.userName}</td>
-                  <td className='px-3 py-2'>
-                    {stateLabel(row.state)}
-                    {row.overdue ? '・期限超過' : ''}
-                    {row.required ? '・必須' : ''}
-                  </td>
-                  <td className='px-3 py-2'>{row.dueAt || ''}</td>
-                  <td className='px-3 py-2'>{row.materialDone ? '完了' : ''}</td>
-                  <td className='px-3 py-2'>
-                    {row.practicalPending ? '未認定' : ''}
-                    {canGrade &&
-                      row.enrollmentId &&
-                      row.practicals.map((item) => (
-                        <div key={item.lessonId} className='mt-2 flex flex-wrap items-center gap-2'>
-                          <span>
-                            {item.title}（{statusLabel(item.lesson_status)}）
-                          </span>
-                          <input
-                            className={fieldClass}
-                            aria-label={`${item.title} の点数`}
-                            value={score}
-                            onChange={(e) => setScore(e.target.value)}
-                            placeholder='点数'
-                          />
-                          <Button
-                            type='button'
-                            variant='solid-fill'
-                            size='sm'
-                            onClick={async () => {
-                              const saved = await actions.grade(row.enrollmentId || '', item.lessonId, 'passed', score);
-                              if (saved) {
-                                await mutate();
-                              }
-                            }}
+                  <tr
+                    key={row.userId}
+                    className='border-b border-solid-gray-200 align-top last:border-b-0'
+                  >
+                    <td className='px-3 py-2'>{row.userName}</td>
+                    <td className='px-3 py-2'>
+                      {stateLabel(row.state)}
+                      {row.overdue ? '・期限超過' : ''}
+                      {row.required ? '・必須' : ''}
+                    </td>
+                    <td className='px-3 py-2'>{row.dueAt || ''}</td>
+                    <td className='px-3 py-2'>{row.materialDone ? '完了' : ''}</td>
+                    <td className='px-3 py-2'>
+                      {row.practicalPending ? '未認定' : ''}
+                      {canGrade &&
+                        row.enrollmentId &&
+                        row.practicals.map((item) => (
+                          <div
+                            key={item.lessonId}
+                            className='mt-2 flex flex-wrap items-center gap-2'
                           >
-                            合格
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={async () => {
-                              const saved = await actions.grade(row.enrollmentId || '', item.lessonId, 'failed', score);
-                              if (saved) {
-                                await mutate();
-                              }
-                            }}
-                          >
-                            不合格
-                          </Button>
-                        </div>
-                      ))}
-                  </td>
-                </tr>
+                            <span>
+                              {item.title}（{statusLabel(item.lesson_status)}）
+                            </span>
+                            <input
+                              className={fieldClass}
+                              aria-label={`${item.title} の点数`}
+                              value={score}
+                              onChange={(e) => setScore(e.target.value)}
+                              placeholder='点数'
+                            />
+                            <Button
+                              type='button'
+                              variant='solid-fill'
+                              size='sm'
+                              onClick={async () => {
+                                const saved = await actions.grade(
+                                  row.enrollmentId || '',
+                                  item.lessonId,
+                                  'passed',
+                                  score,
+                                );
+                                if (saved) {
+                                  await mutate();
+                                }
+                              }}
+                            >
+                              合格
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={async () => {
+                                const saved = await actions.grade(
+                                  row.enrollmentId || '',
+                                  item.lessonId,
+                                  'failed',
+                                  score,
+                                );
+                                if (saved) {
+                                  await mutate();
+                                }
+                              }}
+                            >
+                              不合格
+                            </Button>
+                          </div>
+                        ))}
+                    </td>
+                  </tr>
                 ))
               )}
             </tbody>

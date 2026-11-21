@@ -44,7 +44,10 @@ export const LmsPage = () => {
   const { home, mutate } = useLmsHome(enabled);
   const libraryEnabled = enabled && Boolean(home?.canUseLibrary);
   const { materials, mutate: mutateMaterials } = useLmsMaterials(libraryEnabled);
-  const { materials: trashedMaterials, mutate: mutateTrashed } = useLmsMaterials(libraryEnabled, 'trash');
+  const { materials: trashedMaterials, mutate: mutateTrashed } = useLmsMaterials(
+    libraryEnabled,
+    'trash',
+  );
   const actions = useLmsActions();
   const [helpOpen, setHelpOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -53,7 +56,8 @@ export const LmsPage = () => {
   const [enrollmentId, setEnrollmentId] = useState<string | null>(null);
   const [transcriptId, setTranscriptId] = useState<string | null>(null);
   const transcriptSplits =
-    materials.some((item) => item.id === transcriptId) || trashedMaterials.some((item) => item.id === transcriptId);
+    materials.some((item) => item.id === transcriptId) ||
+    trashedMaterials.some((item) => item.id === transcriptId);
 
   const progressCourses = useMemo(() => {
     const map = new Map<string, { id: string; title: string; status: 'draft' | 'published' }>();
@@ -128,12 +132,16 @@ export const LmsPage = () => {
           </Button>
         </div>
         {(unavailable || (!isLoading && error)) && (
-          <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4' role='status'>
+          <div
+            className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4'
+            role='status'
+          >
             <p className='text-std-16B-150'>研修は現在有効化されていません</p>
-            <p className='mt-2 text-std-16N-170 text-solid-gray-700'>{error || 'コンテナを profiles: ["lms"] で起動してください。'}</p>
+            <p className='mt-2 text-std-16N-170 text-solid-gray-700'>
+              {error || 'コンテナを profiles: ["lms"] で起動してください。'}
+            </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130'>
-              docker compose --profile lms up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=lms
+              docker compose --profile lms up -d{'\n'}# または .env に COMPOSE_PROFILES=lms
             </pre>
           </div>
         )}
@@ -174,7 +182,9 @@ export const LmsPage = () => {
             }}
           />
         )}
-        {actions.error && tab === 'learn' && <p className='text-dns-14N-130 text-red-700'>{actions.error}</p>}
+        {actions.error && tab === 'learn' && (
+          <p className='text-dns-14N-130 text-red-700'>{actions.error}</p>
+        )}
         {enabled && home && tab === 'library' && !transcriptId && (
           <LibraryPanel
             materials={materials}
@@ -221,10 +231,18 @@ export const LmsPage = () => {
           />
         )}
         {enabled && tab === 'play' && (
-          <PlayerPanel enrollmentId={enrollmentId} previewCourseId={null} onBack={() => openTab('learn')} />
+          <PlayerPanel
+            enrollmentId={enrollmentId}
+            previewCourseId={null}
+            onBack={() => openTab('learn')}
+          />
         )}
         {enabled && tab === 'preview' && (
-          <PlayerPanel enrollmentId={null} previewCourseId={courseId} onBack={() => openTab('courses', courseId ? { course: courseId } : {})} />
+          <PlayerPanel
+            enrollmentId={null}
+            previewCourseId={courseId}
+            onBack={() => openTab('courses', courseId ? { course: courseId } : {})}
+          />
         )}
       </div>
       <CustomDialog isOpen={helpOpen} onClose={() => setHelpOpen(false)}>
@@ -239,7 +257,10 @@ export const LmsPage = () => {
               <div className='flex flex-col gap-1.5 text-dns-14N-130 text-solid-gray-700'>
                 <p>・コースを作ると、自分がそのコースのコース編集者になります。</p>
                 <p>・教材庫は、棟の所属者が使います。コースが無くても、動画と PDF を置けます。</p>
-                <p>・教材の本文は「本文」から作ります。PDF はページごと、動画は発話ごとに直して確定します。</p>
+                <p>
+                  ・教材の本文は「本文」から作ります。PDF
+                  はページごと、動画は発話ごとに直して確定します。
+                </p>
                 <p>・修了は、必須の教材と必須の実技がどちらも合格または完了のときです。</p>
               </div>
             )}

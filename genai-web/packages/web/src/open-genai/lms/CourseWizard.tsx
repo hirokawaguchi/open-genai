@@ -69,17 +69,32 @@ const moveList = <T,>(list: T[], index: number, direction: -1 | 1): T[] => {
   return copy;
 };
 
-const patchLesson = (chapters: Chapter[], chapterIndex: number, lessonIndex: number, patch: Partial<Lesson>) =>
+const patchLesson = (
+  chapters: Chapter[],
+  chapterIndex: number,
+  lessonIndex: number,
+  patch: Partial<Lesson>,
+) =>
   chapters.map((chapter, i) =>
     i === chapterIndex
       ? {
           ...chapter,
-          lessons: chapter.lessons.map((lesson, j) => (j === lessonIndex ? { ...lesson, ...patch } : lesson)),
+          lessons: chapter.lessons.map((lesson, j) =>
+            j === lessonIndex ? { ...lesson, ...patch } : lesson,
+          ),
         }
       : chapter,
   );
 
-export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClose, onCreated }: Props) => {
+export const CourseWizard = ({
+  open,
+  users,
+  teams,
+  materials,
+  selfUserId,
+  onClose,
+  onCreated,
+}: Props) => {
   const actions = useLmsActions();
   const [step, setStep] = useState<StepId>('basics');
   const [title, setTitle] = useState('');
@@ -116,7 +131,8 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
   const stepIndex = steps.indexOf(step);
   const lessonCount = chapters.reduce((sum, chapter) => sum + chapter.lessons.length, 0);
   const shownError = localError || actions.error;
-  const nameOf = (userId: string) => users.find((user) => user.userId === userId)?.userName || userId;
+  const nameOf = (userId: string) =>
+    users.find((user) => user.userId === userId)?.userName || userId;
 
   const toggle = (list: string[], id: string, on: boolean) =>
     on ? [...new Set([...list, id])] : list.filter((item) => item !== id);
@@ -293,7 +309,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                         placeholder='例：情報セキュリティの基礎'
                         onChange={(e) =>
                           setChapters((prev) =>
-                            prev.map((item, i) => (i === chapterIndex ? { ...item, title: e.target.value } : item)),
+                            prev.map((item, i) =>
+                              i === chapterIndex ? { ...item, title: e.target.value } : item,
+                            ),
                           )
                         }
                       />
@@ -320,17 +338,24 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                       type='button'
                       variant='outline'
                       size='md'
-                      onClick={() => setChapters((prev) => prev.filter((_, i) => i !== chapterIndex))}
+                      onClick={() =>
+                        setChapters((prev) => prev.filter((_, i) => i !== chapterIndex))
+                      }
                     >
                       章を削除
                     </Button>
                   </div>
                   {chapter.lessons.length === 0 ? (
-                    <p className='text-dns-16N-130 text-solid-gray-600'>まだレッスンがありません。</p>
+                    <p className='text-dns-16N-130 text-solid-gray-600'>
+                      まだレッスンがありません。
+                    </p>
                   ) : (
                     <ul className='flex flex-col gap-2'>
                       {chapter.lessons.map((lesson, lessonIndex) => (
-                        <li key={lesson.id} className='rounded-4 border border-solid-gray-300 px-3 py-2'>
+                        <li
+                          key={lesson.id}
+                          className='rounded-4 border border-solid-gray-300 px-3 py-2'
+                        >
                           <div className='flex flex-wrap items-end gap-2'>
                             <div className='min-w-[12rem] flex-1'>
                               <Label htmlFor={`lms-wizard-lesson-${lesson.id}`} size='sm'>
@@ -342,7 +367,11 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                                 value={lesson.title}
                                 placeholder='例：パスワードの作り方'
                                 onChange={(e) =>
-                                  setChapters((prev) => patchLesson(prev, chapterIndex, lessonIndex, { title: e.target.value }))
+                                  setChapters((prev) =>
+                                    patchLesson(prev, chapterIndex, lessonIndex, {
+                                      title: e.target.value,
+                                    }),
+                                  )
                                 }
                               />
                             </div>
@@ -362,7 +391,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                                       i === chapterIndex
                                         ? {
                                             ...item,
-                                            lessons: item.lessons.map((row, j) => (j === lessonIndex ? next : row)),
+                                            lessons: item.lessons.map((row, j) =>
+                                              j === lessonIndex ? next : row,
+                                            ),
                                           }
                                         : item,
                                     ),
@@ -384,7 +415,12 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                               onClick={() =>
                                 setChapters((prev) =>
                                   prev.map((item, i) =>
-                                    i === chapterIndex ? { ...item, lessons: moveList(item.lessons, lessonIndex, -1) } : item,
+                                    i === chapterIndex
+                                      ? {
+                                          ...item,
+                                          lessons: moveList(item.lessons, lessonIndex, -1),
+                                        }
+                                      : item,
                                   ),
                                 )
                               }
@@ -399,7 +435,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                               onClick={() =>
                                 setChapters((prev) =>
                                   prev.map((item, i) =>
-                                    i === chapterIndex ? { ...item, lessons: moveList(item.lessons, lessonIndex, 1) } : item,
+                                    i === chapterIndex
+                                      ? { ...item, lessons: moveList(item.lessons, lessonIndex, 1) }
+                                      : item,
                                   ),
                                 )
                               }
@@ -414,7 +452,10 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                                 setChapters((prev) =>
                                   prev.map((item, i) =>
                                     i === chapterIndex
-                                      ? { ...item, lessons: item.lessons.filter((_, j) => j !== lessonIndex) }
+                                      ? {
+                                          ...item,
+                                          lessons: item.lessons.filter((_, j) => j !== lessonIndex),
+                                        }
                                       : item,
                                   ),
                                 )
@@ -429,7 +470,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                               checked={lesson.required}
                               onChange={(e) =>
                                 setChapters((prev) =>
-                                  patchLesson(prev, chapterIndex, lessonIndex, { required: e.target.checked }),
+                                  patchLesson(prev, chapterIndex, lessonIndex, {
+                                    required: e.target.checked,
+                                  }),
                                 )
                               }
                             />
@@ -446,13 +489,19 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                                 value={lesson.materialId || ''}
                                 onChange={(e) =>
                                   setChapters((prev) =>
-                                    patchLesson(prev, chapterIndex, lessonIndex, { materialId: e.target.value }),
+                                    patchLesson(prev, chapterIndex, lessonIndex, {
+                                      materialId: e.target.value,
+                                    }),
                                   )
                                 }
                               >
                                 <option value=''>あとで選ぶ</option>
                                 {materials
-                                  .filter((material) => material.kind === (lesson.kind === 'video' ? 'video' : 'slides'))
+                                  .filter(
+                                    (material) =>
+                                      material.kind ===
+                                      (lesson.kind === 'video' ? 'video' : 'slides'),
+                                  )
                                   .map((material) => (
                                     <option key={material.id} value={material.id}>
                                       {material.title}
@@ -473,7 +522,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                     onClick={() =>
                       setChapters((prev) =>
                         prev.map((item, i) =>
-                          i === chapterIndex ? { ...item, lessons: [...item.lessons, emptyLesson('video')] } : item,
+                          i === chapterIndex
+                            ? { ...item, lessons: [...item.lessons, emptyLesson('video')] }
+                            : item,
                         ),
                       )
                     }
@@ -487,11 +538,15 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                 variant='outline'
                 size='md'
                 className='self-start'
-                onClick={() => setChapters((prev) => [...prev, { id: newId(), title: '', lessons: [] }])}
+                onClick={() =>
+                  setChapters((prev) => [...prev, { id: newId(), title: '', lessons: [] }])
+                }
               >
                 章を追加
               </Button>
-              <p className='text-dns-14N-130 text-solid-gray-600'>空のままでも作成できます。目次は編集画面で足せます。</p>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                空のままでも作成できます。目次は編集画面で足せます。
+              </p>
             </div>
           )}
 
@@ -506,7 +561,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                         type='checkbox'
                         checked={editors.includes(user.userId)}
                         disabled={user.userId === selfUserId}
-                        onChange={(e) => setEditors((prev) => toggle(prev, user.userId, e.target.checked))}
+                        onChange={(e) =>
+                          setEditors((prev) => toggle(prev, user.userId, e.target.checked))
+                        }
                       />
                       {user.userName}
                       {user.userId === selfUserId ? '（自分）' : ''}
@@ -521,7 +578,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                       <input
                         type='checkbox'
                         checked={certifiers.includes(user.userId)}
-                        onChange={(e) => setCertifiers((prev) => toggle(prev, user.userId, e.target.checked))}
+                        onChange={(e) =>
+                          setCertifiers((prev) => toggle(prev, user.userId, e.target.checked))
+                        }
                       />
                       {user.userName}
                     </label>
@@ -531,7 +590,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
               <div>
                 <h3 className='text-std-16B-150'>コース受講対象者</h3>
                 {assignments.length === 0 ? (
-                  <p className='mt-1 text-dns-16N-130 text-solid-gray-600'>まだ受講対象者はいません。</p>
+                  <p className='mt-1 text-dns-16N-130 text-solid-gray-600'>
+                    まだ受講対象者はいません。
+                  </p>
                 ) : (
                   <ul className='mt-2 flex flex-col gap-2'>
                     {assignments.map((item) => (
@@ -541,7 +602,8 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                       >
                         <span className='text-std-16N-170'>
                           {item.assigneeType === 'team'
-                            ? teams.find((team) => team.teamId === item.assigneeId)?.teamName || item.assigneeId
+                            ? teams.find((team) => team.teamId === item.assigneeId)?.teamName ||
+                              item.assigneeId
                             : nameOf(item.assigneeId)}
                           <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>
                             {item.required ? '必須' : '任意'}
@@ -552,7 +614,9 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                           type='button'
                           variant='outline'
                           size='sm'
-                          onClick={() => setAssignments((prev) => prev.filter((row) => row.key !== item.key))}
+                          onClick={() =>
+                            setAssignments((prev) => prev.filter((row) => row.key !== item.key))
+                          }
                         >
                           外す
                         </Button>
@@ -615,7 +679,11 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                     />
                   </div>
                   <label className='flex items-center gap-2 pb-2 text-std-16N-170'>
-                    <input type='checkbox' checked={required} onChange={(e) => setRequired(e.target.checked)} />
+                    <input
+                      type='checkbox'
+                      checked={required}
+                      onChange={(e) => setRequired(e.target.checked)}
+                    />
                     必須
                   </label>
                   <Button
@@ -627,7 +695,10 @@ export const CourseWizard = ({ open, users, teams, materials, selfUserId, onClos
                       if (!assigneeId) {
                         return;
                       }
-                      setAssignments((prev) => [...prev, { key: newId(), assigneeType, assigneeId, required, dueAt }]);
+                      setAssignments((prev) => [
+                        ...prev,
+                        { key: newId(), assigneeType, assigneeId, required, dueAt },
+                      ]);
                       setAssigneeId('');
                     }}
                   >

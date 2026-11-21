@@ -75,7 +75,9 @@ export const PlayerPanel = ({ enrollmentId, previewCourseId, onBack }: Props) =>
         </Button>
       </div>
       {previewCourseId && (
-        <p className='shrink-0 text-dns-14N-130 text-solid-gray-600'>いまの下書きを表示しています。</p>
+        <p className='shrink-0 text-dns-14N-130 text-solid-gray-600'>
+          いまの下書きを表示しています。
+        </p>
       )}
       {enrollment && (
         <p className='shrink-0 text-dns-14N-130 text-solid-gray-700'>
@@ -83,7 +85,10 @@ export const PlayerPanel = ({ enrollmentId, previewCourseId, onBack }: Props) =>
         </p>
       )}
       <div className='grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-1'>
-        <nav className='flex max-h-40 min-h-0 flex-col gap-3 overflow-y-auto lg:max-h-none' aria-label='目次'>
+        <nav
+          className='flex max-h-40 min-h-0 flex-col gap-3 overflow-y-auto lg:max-h-none'
+          aria-label='目次'
+        >
           {snapshot.chapters.map((chapter, chapterIndex) => (
             <section key={chapter.id} className='flex flex-col gap-1'>
               <h3 className='px-3 text-dns-14B-130 text-solid-gray-800'>
@@ -112,7 +117,7 @@ export const PlayerPanel = ({ enrollmentId, previewCourseId, onBack }: Props) =>
           <LessonView
             key={lesson.id}
             lesson={lesson}
-            enrollmentId={previewCourseId ? null : enrollment?.enrollmentId ?? null}
+            enrollmentId={previewCourseId ? null : (enrollment?.enrollmentId ?? null)}
             recordLocation={records[lesson.id]?.lesson_location}
             recordStatus={records[lesson.id]?.lesson_status}
             onSaved={async (next) => {
@@ -176,7 +181,9 @@ const LessonView = ({
     <div className='flex h-full min-h-0 flex-col gap-2 overflow-y-auto'>
       <p className='text-std-16N-170'>{lesson.practicalText || '実技の文面がまだありません。'}</p>
       <p className='text-dns-14N-130 text-solid-gray-700'>
-        {recordStatus ? `実技認定: ${statusLabel(recordStatus)}` : '実技認定者の合否を待っています。'}
+        {recordStatus
+          ? `実技認定: ${statusLabel(recordStatus)}`
+          : '実技認定者の合否を待っています。'}
       </p>
       {actions.error && <p className='text-dns-14N-130 text-red-700'>{actions.error}</p>}
     </div>
@@ -354,7 +361,9 @@ const QuizLesson = ({
                 name={question.id}
                 checked={answers[questionIndex] === choiceIndex}
                 onChange={() =>
-                  setAnswers((prev) => prev.map((value, index) => (index === questionIndex ? choiceIndex : value)))
+                  setAnswers((prev) =>
+                    prev.map((value, index) => (index === questionIndex ? choiceIndex : value)),
+                  )
                 }
               />
               {choice}

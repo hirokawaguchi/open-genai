@@ -25,7 +25,10 @@ export type FormComponent = {
   required?: boolean;
   hide_label?: boolean;
   placeholder?: string;
-  properties?: { options?: Array<string | { label?: string; value?: string }>; [key: string]: unknown };
+  properties?: {
+    options?: Array<string | { label?: string; value?: string }>;
+    [key: string]: unknown;
+  };
   visibleWhen?: VisibleWhenRule | VisibleWhenRule[];
   imi_type?: string;
   imi_subfields?: Record<string, string>;
@@ -487,12 +490,7 @@ export type ReceptionStatus = '未確認' | '確認中' | '受理' | '差戻し'
 /** 受付の一覧で直接選べる状態。受理は経路の「進む」だけが付ける。 */
 export const RECEPTION_OPEN_VALUES: ReceptionStatus[] = ['未確認', '確認中', '差戻し'];
 
-export const RECEPTION_STATUS_VALUES: ReceptionStatus[] = [
-  '未確認',
-  '確認中',
-  '受理',
-  '差戻し',
-];
+export const RECEPTION_STATUS_VALUES: ReceptionStatus[] = ['未確認', '確認中', '受理', '差戻し'];
 
 export type InboxItem = {
   kind: 'bundle' | 'form';

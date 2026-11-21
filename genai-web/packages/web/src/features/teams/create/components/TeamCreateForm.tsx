@@ -28,9 +28,7 @@ export const TeamCreateForm = () => {
     revalidateOnFocus: false,
   });
   const { tenants, activeTenantId, isSystemAdmin } = useMyTenants();
-  const orgTenants = tenants.filter(
-    (t) => t.kind !== 'shared' && (isSystemAdmin || t.isAdmin),
-  );
+  const orgTenants = tenants.filter((t) => t.kind !== 'shared' && (isSystemAdmin || t.isAdmin));
   const parentCandidates = (teamsData?.teams ?? []).filter(
     (t) => t.teamId !== COMMON_EXAPPS_TEAM_ID,
   );

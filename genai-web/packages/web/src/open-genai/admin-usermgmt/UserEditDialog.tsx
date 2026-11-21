@@ -83,7 +83,9 @@ export const UserEditDialog = ({ user, isSystemAdmin, onClose, onSaved }: Props)
     );
     const revoked = res.data?.revoked ?? 0;
     const base =
-      revoked > 0 ? `ログインを切りました（${revoked}件）。` : '切る対象のログインはありませんでした。';
+      revoked > 0
+        ? `ログインを切りました（${revoked}件）。`
+        : '切る対象のログインはありませんでした。';
     const idp =
       res.data?.identityProvider === 'error'
         ? '庁内アカウントのセッションは切れませんでした。もう一度お試しください。'
@@ -93,8 +95,7 @@ export const UserEditDialog = ({ user, isSystemAdmin, onClose, onSaved }: Props)
   };
 
   const buildCsv = (): string => {
-    const header =
-      'action,username,email,lastName,firstName,password,groups,enabled,groupsMode';
+    const header = 'action,username,email,lastName,firstName,password,groups,enabled,groupsMode';
     const row = [
       'update',
       user.username,
@@ -134,9 +135,7 @@ export const UserEditDialog = ({ user, isSystemAdmin, onClose, onSaved }: Props)
             return;
           }
         } catch (e) {
-          const detail = isApiError(e)
-            ? ((e.data as { error?: string })?.error ?? '')
-            : '';
+          const detail = isApiError(e) ? ((e.data as { error?: string })?.error ?? '') : '';
           setLocalError(
             detail ||
               '利用者は無効にしましたが、ログインの切断に失敗しました。下のボタンでもう一度切ってください。',
@@ -270,7 +269,9 @@ export const UserEditDialog = ({ user, isSystemAdmin, onClose, onSaved }: Props)
             <SupportText>
               この利用者の、いま有効なログインをすべて切ります。アカウントは残ります。
             </SupportText>
-            {revokeMessage && <p className='text-dns-16N-130 text-solid-gray-800'>{revokeMessage}</p>}
+            {revokeMessage && (
+              <p className='text-dns-16N-130 text-solid-gray-800'>{revokeMessage}</p>
+            )}
             <div>
               <Button
                 type='button'

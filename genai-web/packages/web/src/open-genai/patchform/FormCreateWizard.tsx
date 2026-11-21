@@ -59,7 +59,12 @@ type Props = {
 export const FormCreateWizard = ({ open, kind, onClose, onCreated }: Props) => {
   const { config } = usePatchformConfig();
   const { create, submitting, error, setError } = usePatchformActions();
-  const { generate, busy: assistBusy, error: assistError, setError: setAssistError } = usePatchformAssist();
+  const {
+    generate,
+    busy: assistBusy,
+    error: assistError,
+    setError: setAssistError,
+  } = usePatchformAssist();
   const [step, setStep] = useState<StepId>('basics');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -162,7 +167,8 @@ export const FormCreateWizard = ({ open, kind, onClose, onCreated }: Props) => {
         </CustomDialogHeader>
         <CustomDialogBody>
           <p className='text-dns-16N-130 text-solid-gray-600'>
-            手順 {stepIndex + 1} / {steps.length}　{step === 'basics' ? '名前を決める' : navigation ? '最初の質問' : '始め方'}
+            手順 {stepIndex + 1} / {steps.length}　
+            {step === 'basics' ? '名前を決める' : navigation ? '最初の質問' : '始め方'}
           </p>
           <p className='mt-1 text-std-16N-170 text-solid-gray-700'>
             {step === 'basics'
@@ -199,7 +205,9 @@ export const FormCreateWizard = ({ open, kind, onClose, onCreated }: Props) => {
                   rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder={navigation ? '例: 転入か転居かを確認します' : '例: 転入の届出に使う用紙です'}
+                  placeholder={
+                    navigation ? '例: 転入か転居かを確認します' : '例: 転入の届出に使う用紙です'
+                  }
                 />
                 <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
                   入力画面の案内文です。空欄でも構いません。
@@ -260,7 +268,9 @@ export const FormCreateWizard = ({ open, kind, onClose, onCreated }: Props) => {
                       onChange={(e) => setOptionsText(e.target.value)}
                       placeholder={'転入\n転居'}
                     />
-                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>1行に1つ。2つ以上必要です。</p>
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      1行に1つ。2つ以上必要です。
+                    </p>
                   </div>
                 </>
               ) : null}

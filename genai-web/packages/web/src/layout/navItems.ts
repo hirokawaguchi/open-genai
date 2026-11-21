@@ -459,8 +459,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       for (const id of exAppIds) {
         if (officialRecommended.has(id)) continue;
         const app = (registryApps || []).find(
-          (candidate) =>
-            candidate?.exAppId === id && candidate.teamId === COMMON_EXAPPS_TEAM_ID,
+          (candidate) => candidate?.exAppId === id && candidate.teamId === COMMON_EXAPPS_TEAM_ID,
         );
         if (!app || app.status === 'draft') continue;
         items.push({

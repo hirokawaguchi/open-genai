@@ -27,15 +27,13 @@ const APPLICANT_STATUS_VALUES = ['未着手', '作業中', '準備完了', '提�
 type SortKey = 'created' | 'updated' | 'status';
 type SortDir = 'asc' | 'desc';
 
-const selectClass =
-  'rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130';
+const selectClass = 'rounded-4 border border-solid-gray-420 px-2 py-1 text-dns-16N-130';
 
 export const PatchformInboxPage = () => {
   const { procedureId: pathId } = useParams();
   const [params] = useSearchParams();
   const procedureId = pathId || params.get('procedure') || undefined;
-  const { items, procedures, inbox, isLoading, loadError, mutate } =
-    usePatchformInbox(procedureId);
+  const { items, procedures, inbox, isLoading, loadError, mutate } = usePatchformInbox(procedureId);
   const selected = procedures.find((p) => p.id === procedureId);
   const [exporting, setExporting] = useState<'csv' | 'jsonl' | 'aligned' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -47,11 +45,7 @@ export const PatchformInboxPage = () => {
     busy,
     error: actionError,
   } = usePatchformProjectActions();
-  const {
-    setStatusMany,
-    submitting: procBusy,
-    error: procError,
-  } = usePatchformProcedureActions();
+  const { setStatusMany, submitting: procBusy, error: procError } = usePatchformProcedureActions();
   const [procKeyword, setProcKeyword] = useState('');
   const [procStatus, setProcStatus] = useState('');
   const [procChecked, setProcChecked] = useState<Set<string>>(new Set());
@@ -322,7 +316,8 @@ export const PatchformInboxPage = () => {
               </Button>
             </div>
             <p className='text-dns-16N-130 text-solid-gray-600'>
-              CSV はざっと見る表です。連携契約には使いません。他システムへ渡すときは「記入必須だけ揃えて書き出す」を使ってください。
+              CSV
+              はざっと見る表です。連携契約には使いません。他システムへ渡すときは「記入必須だけ揃えて書き出す」を使ってください。
             </p>
             {exportError && (
               <p className='text-error-1' role='alert'>
@@ -432,57 +427,57 @@ export const PatchformInboxPage = () => {
                   ? `${selectedIds.length} 件を選択中`
                   : '行を選ぶと、まとめて処理できます'}
               </span>
-                <div className='flex items-center gap-2'>
-                  <select
-                    className={selectClass}
-                    value={bulkRecv}
-                    onChange={(e) => setBulkRecv(e.target.value as ReceptionStatus)}
-                    aria-label='受付処理ステータスを選ぶ'
-                  >
-                    {RECEPTION_OPEN_VALUES.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    aria-disabled={busy || selectedIds.length === 0}
-                    onClick={() => void onBulkReception()}
-                  >
-                    受付処理を一括変更
-                  </Button>
-                </div>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  aria-disabled={exporting != null || selectedIds.length === 0}
-                  onClick={() => void download('csv', selectedIds)}
+              <div className='flex items-center gap-2'>
+                <select
+                  className={selectClass}
+                  value={bulkRecv}
+                  onChange={(e) => setBulkRecv(e.target.value as ReceptionStatus)}
+                  aria-label='受付処理ステータスを選ぶ'
                 >
-                  選択をCSVでDL
-                </Button>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  aria-disabled={exporting != null || selectedIds.length === 0}
-                  onClick={() => void download('jsonl', selectedIds)}
-                >
-                  選択をJSONLでDL
-                </Button>
+                  {RECEPTION_OPEN_VALUES.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
                 <Button
                   type='button'
                   variant='outline'
                   size='sm'
                   aria-disabled={busy || selectedIds.length === 0}
-                  onClick={() => void onBulkDelete()}
+                  onClick={() => void onBulkReception()}
                 >
-                  選択を削除
+                  受付処理を一括変更
                 </Button>
               </div>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                aria-disabled={exporting != null || selectedIds.length === 0}
+                onClick={() => void download('csv', selectedIds)}
+              >
+                選択をCSVでDL
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                aria-disabled={exporting != null || selectedIds.length === 0}
+                onClick={() => void download('jsonl', selectedIds)}
+              >
+                選択をJSONLでDL
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                aria-disabled={busy || selectedIds.length === 0}
+                onClick={() => void onBulkDelete()}
+              >
+                選択を削除
+              </Button>
+            </div>
 
             {visible.length === 0 ? (
               <p className='text-solid-gray-600'>
@@ -501,9 +496,7 @@ export const PatchformInboxPage = () => {
                           className='size-6'
                           checked={allSelected}
                           ref={(el) => {
-                            if (el)
-                              el.indeterminate =
-                                selectedIds.length > 0 && !allSelected;
+                            if (el) el.indeterminate = selectedIds.length > 0 && !allSelected;
                           }}
                           onChange={toggleAll}
                           aria-label='すべて選択'
@@ -545,10 +538,7 @@ export const PatchformInboxPage = () => {
                   </thead>
                   <tbody>
                     {visible.map((item) => (
-                      <tr
-                        key={item.id}
-                        className='border-b border-solid-gray-200 align-middle'
-                      >
+                      <tr key={item.id} className='border-b border-solid-gray-200 align-middle'>
                         <td className='px-2 py-2'>
                           <input
                             type='checkbox'
@@ -644,7 +634,10 @@ export const PatchformInboxPage = () => {
             )}
 
             <p className='mt-2 text-std-16N-170'>
-              <Link to='/patchform/inbox' className='text-blue-900 underline-offset-2 hover:underline'>
+              <Link
+                to='/patchform/inbox'
+                className='text-blue-900 underline-offset-2 hover:underline'
+              >
                 手続き一覧へ戻る
               </Link>
             </p>

@@ -42,29 +42,27 @@ export const LandingPage = () => {
         <div className='mt-8 lg:mt-10'>
           <h2 className='mb-6 flex justify-start text-std-24B-150'>おすすめアプリ</h2>
           <ul className='grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-4'>
-            {recommendedGovAI && recommendedGovAI.length > 0 ? (
-              recommendedGovAI.map((govAI) => (
-                <li key={govAI.exAppId}>
-                  <Card
-                    title={govAI.title}
-                    className='h-full'
-                    to={`/apps/${govAI.teamId}/${govAI.exAppId}`}
-                    description={govAI.description}
-                  />
-                </li>
-              ))
-            ) : (
-              recommendedNavItems.map((item) => (
-                <li key={item.to}>
-                  <Card
-                    title={item.label}
-                    className='h-full'
-                    to={item.to}
-                    description={item.description ?? ''}
-                  />
-                </li>
-              ))
-            )}
+            {recommendedGovAI && recommendedGovAI.length > 0
+              ? recommendedGovAI.map((govAI) => (
+                  <li key={govAI.exAppId}>
+                    <Card
+                      title={govAI.title}
+                      className='h-full'
+                      to={`/apps/${govAI.teamId}/${govAI.exAppId}`}
+                      description={govAI.description}
+                    />
+                  </li>
+                ))
+              : recommendedNavItems.map((item) => (
+                  <li key={item.to}>
+                    <Card
+                      title={item.label}
+                      className='h-full'
+                      to={item.to}
+                      description={item.description ?? ''}
+                    />
+                  </li>
+                ))}
           </ul>
         </div>
         <div className='mt-8 flex justify-center'>

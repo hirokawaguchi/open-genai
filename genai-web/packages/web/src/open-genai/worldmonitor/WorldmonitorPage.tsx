@@ -45,8 +45,8 @@ export const WorldmonitorPage = () => {
             </p>
             <p className='mt-2'>{error || 'profile worldmonitor で起動してください。'}</p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130'>
-              docker compose --profile worldmonitor up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=worldmonitor
+              docker compose --profile worldmonitor up -d{'\n'}# または .env に
+              COMPOSE_PROFILES=worldmonitor
             </pre>
           </div>
         )}

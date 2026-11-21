@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { ApiError, teamApi, teamApiFetcher } from '@/lib/fetcher';
-import type { CourseDetail, Enrollment, LmsHome, Material, MaterialTranscript, ProgressRow } from './types';
+import type {
+  CourseDetail,
+  Enrollment,
+  LmsHome,
+  Material,
+  MaterialTranscript,
+  ProgressRow,
+} from './types';
 
 export type MaterialUploadProgress = {
   phase: 'prepare' | 'upload' | 'convert' | 'store';
@@ -128,7 +135,10 @@ export const useLmsActions = () => {
     error,
     setError,
     createCourse: (title: string) =>
-      run(() => teamApi.post<CourseDetail>('lms/courses', { title }).then((r) => r.data), 'コースを作成できませんでした'),
+      run(
+        () => teamApi.post<CourseDetail>('lms/courses', { title }).then((r) => r.data),
+        'コースを作成できませんでした',
+      ),
     saveDraft: (courseId: string, body: unknown) =>
       run(
         () => teamApi.put<CourseDetail>(`lms/courses/${courseId}/draft`, body).then((r) => r.data),
@@ -146,7 +156,10 @@ export const useLmsActions = () => {
       ),
     setRole: (courseId: string, userId: string, role: string) =>
       run(
-        () => teamApi.post<CourseDetail>(`lms/courses/${courseId}/roles`, { userId, role }).then((r) => r.data),
+        () =>
+          teamApi
+            .post<CourseDetail>(`lms/courses/${courseId}/roles`, { userId, role })
+            .then((r) => r.data),
         '役割を追加できませんでした',
       ),
     removeRole: (courseId: string, userId: string, role: string) =>
@@ -159,17 +172,25 @@ export const useLmsActions = () => {
       ),
     setAssignment: (courseId: string, body: unknown) =>
       run(
-        () => teamApi.post<CourseDetail>(`lms/courses/${courseId}/assignments`, body).then((r) => r.data),
+        () =>
+          teamApi
+            .post<CourseDetail>(`lms/courses/${courseId}/assignments`, body)
+            .then((r) => r.data),
         '受講対象者を保存できませんでした',
       ),
     removeAssignment: (courseId: string, assignmentId: string) =>
       run(
         () =>
-          teamApi.delete<CourseDetail>(`lms/courses/${courseId}/assignments/${assignmentId}`).then((r) => r.data),
+          teamApi
+            .delete<CourseDetail>(`lms/courses/${courseId}/assignments/${assignmentId}`)
+            .then((r) => r.data),
         '受講対象者を外せませんでした',
       ),
     start: (courseId: string) =>
-      run(() => teamApi.post<Enrollment>(`lms/learn/${courseId}/start`).then((r) => r.data), '受講を開始できませんでした'),
+      run(
+        () => teamApi.post<Enrollment>(`lms/learn/${courseId}/start`).then((r) => r.data),
+        '受講を開始できませんでした',
+      ),
     progress: (enrollmentId: string, lessonId: string, body: unknown) =>
       run(
         () =>
@@ -198,9 +219,15 @@ export const useLmsActions = () => {
         '実技の合否を保存できませんでした',
       ),
     renameMaterial: (materialId: string, title: string) =>
-      run(() => teamApi.patch(`lms/materials/${materialId}`, { title }).then((r) => r.data), '名前を変更できませんでした'),
+      run(
+        () => teamApi.patch(`lms/materials/${materialId}`, { title }).then((r) => r.data),
+        '名前を変更できませんでした',
+      ),
     hideMaterial: (materialId: string) =>
-      run(() => teamApi.post(`lms/materials/${materialId}/hide`).then((r) => r.data), 'ゴミ箱へ移せませんでした'),
+      run(
+        () => teamApi.post(`lms/materials/${materialId}/hide`).then((r) => r.data),
+        'ゴミ箱へ移せませんでした',
+      ),
     restoreMaterial: (materialId: string) =>
       run(
         () => teamApi.post<Material>(`lms/materials/${materialId}/restore`).then((r) => r.data),
@@ -211,7 +238,11 @@ export const useLmsActions = () => {
         () => teamApi.delete<{ ok: boolean }>(`lms/materials/${materialId}`).then((r) => r.data),
         '教材を削除できませんでした',
       ),
-    uploadMaterial: async (file: File, title: string, onProgress: (progress: MaterialUploadProgress) => void) => {
+    uploadMaterial: async (
+      file: File,
+      title: string,
+      onProgress: (progress: MaterialUploadProgress) => void,
+    ) => {
       const ext = file.name.toLowerCase();
       const kind = ext.endsWith('.pdf') ? 'slides' : 'video';
       setBusy(true);
@@ -251,8 +282,10 @@ export const useLmsActions = () => {
         }
         onProgress({
           phase: kind === 'slides' ? 'convert' : 'store',
-          label: kind === 'slides' ? 'PDF をページごとの画像にしています' : '教材庫に登録しています',
-          detail: kind === 'slides' ? 'PDF に書かれた配置のまま、各ページを画像にします。' : file.name,
+          label:
+            kind === 'slides' ? 'PDF をページごとの画像にしています' : '教材庫に登録しています',
+          detail:
+            kind === 'slides' ? 'PDF に書かれた配置のまま、各ページを画像にします。' : file.name,
           percent: null,
         });
         if (kind === 'slides') {
@@ -265,9 +298,12 @@ export const useLmsActions = () => {
                   return;
                 }
                 onProgress({
-                  phase: text.startsWith('教材庫') || text.startsWith('ページ画像を保存') || text.startsWith('ファイルを保存')
-                    ? 'store'
-                    : 'convert',
+                  phase:
+                    text.startsWith('教材庫') ||
+                    text.startsWith('ページ画像を保存') ||
+                    text.startsWith('ファイルを保存')
+                      ? 'store'
+                      : 'convert',
                   label: text,
                   detail: 'この処理が終わるまで、画面を閉じないでください。',
                   percent: null,

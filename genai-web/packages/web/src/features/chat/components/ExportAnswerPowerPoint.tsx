@@ -82,7 +82,9 @@ export const ExportAnswerPowerPoint = ({ text, modelId }: Props) => {
       navigate('/office/powerpoint?local=1');
     } catch (error) {
       if (cancelRef.current) return;
-      setErrorText(error instanceof Error && error.message ? error.message : 'スライドを作れませんでした。');
+      setErrorText(
+        error instanceof Error && error.message ? error.message : 'スライドを作れませんでした。',
+      );
       setRunning(false);
     }
   };

@@ -170,7 +170,13 @@ export const beginWhisperFileTransfer = (input: WhisperFileTransfer) => {
   });
   void runWhisperFileTransfer(input)
     .catch((error: unknown) => {
-      markDraft(input.teamId, input.draftId, { phase: 'error', notice: failMessage(error) }, 'error', failMessage(error));
+      markDraft(
+        input.teamId,
+        input.draftId,
+        { phase: 'error', notice: failMessage(error) },
+        'error',
+        failMessage(error),
+      );
     })
     .finally(() => {
       running.delete(key);

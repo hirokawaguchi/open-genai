@@ -8,7 +8,9 @@ const matchesPrepare = (option: { value: string; label: string }, prepare: strin
   return prepare.some((item) => {
     const needle = norm(item);
     if (!needle) return false;
-    return tokens.some((token) => token === needle || token.includes(needle) || needle.includes(token));
+    return tokens.some(
+      (token) => token === needle || token.includes(needle) || needle.includes(token),
+    );
   });
 };
 

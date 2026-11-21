@@ -55,7 +55,14 @@ const NATURE_COLOR: Record<string, string> = {
 };
 
 type FlowItem = { name: string; value: number; aggregate?: boolean; gap?: boolean };
-type Placed = FlowItem & { x: number; y: number; width: number; height: number; color: string; key: string };
+type Placed = FlowItem & {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  key: string;
+};
 
 const formatAmount = (thousandYen: number, pop: number, unit: BudgetUnit): string => {
   if (unit === 'per') {
@@ -204,7 +211,11 @@ export const BudgetPage = () => {
   const row = useMemo(() => {
     if (!data) return undefined;
     const code = params.get('code') || DEFAULT_CODE;
-    return data.rows.find((item) => item.code === code) || data.rows.find((item) => item.code === DEFAULT_CODE) || data.rows[0];
+    return (
+      data.rows.find((item) => item.code === code) ||
+      data.rows.find((item) => item.code === DEFAULT_CODE) ||
+      data.rows[0]
+    );
   }, [data, params]);
 
   const prefs = useMemo(() => {
@@ -225,7 +236,12 @@ export const BudgetPage = () => {
     const text = query.trim().toLowerCase();
     return data.rows
       .filter((item) => !prefFilter || item.pref === prefFilter)
-      .filter((item) => item.name.toLowerCase().includes(text) || item.code.startsWith(text) || item.pref.includes(text))
+      .filter(
+        (item) =>
+          item.name.toLowerCase().includes(text) ||
+          item.code.startsWith(text) ||
+          item.pref.includes(text),
+      )
       .slice(0, 12);
   }, [data, query, prefFilter]);
 
@@ -253,7 +269,10 @@ export const BudgetPage = () => {
         <div className='flex min-w-0 shrink-0 items-center gap-3'>
           <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{title}</h1>
           {description && (
-            <p className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600' title={description}>
+            <p
+              className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600'
+              title={description}
+            >
               {description}
             </p>
           )}
@@ -270,17 +289,23 @@ export const BudgetPage = () => {
         </div>
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
-          <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170' role='status'>
+          <div
+            className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170'
+            role='status'
+          >
             <p className='text-std-16B-150 text-solid-gray-900'>自治体予算は現在利用できません</p>
-            <p className='mt-2 text-solid-gray-700'>{config?.error || 'profile budget で起動してください。'}</p>
+            <p className='mt-2 text-solid-gray-700'>
+              {config?.error || 'profile budget で起動してください。'}
+            </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose --profile budget up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=budget
+              docker compose --profile budget up -d{'\n'}# または .env に COMPOSE_PROFILES=budget
             </pre>
           </div>
         )}
 
-        {enabled && dataLoading && <p className='shrink-0 text-std-16N-170 text-solid-gray-700'>決算を読み込んでいます…</p>}
+        {enabled && dataLoading && (
+          <p className='shrink-0 text-std-16N-170 text-solid-gray-700'>決算を読み込んでいます…</p>
+        )}
 
         {enabled && data && row && (
           <>
@@ -294,7 +319,9 @@ export const BudgetPage = () => {
                 >
                   <option value=''>全国</option>
                   {prefs.map((pref) => (
-                    <option key={pref} value={pref}>{pref}</option>
+                    <option key={pref} value={pref}>
+                      {pref}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -320,7 +347,9 @@ export const BudgetPage = () => {
                           onClick={() => selectRow(item.code)}
                         >
                           <span>{item.name}</span>
-                          <span className='text-xs text-solid-gray-600'>{item.pref} {item.code}</span>
+                          <span className='text-xs text-solid-gray-600'>
+                            {item.pref} {item.code}
+                          </span>
                         </button>
                       </li>
                     ))}
@@ -330,22 +359,58 @@ export const BudgetPage = () => {
               <div className='flex flex-col gap-1 text-xs text-solid-gray-600'>
                 歳出の切り口
                 <div className='flex rounded-full border border-solid-gray-420 bg-white p-1'>
-                  <SegButton pressed={view === 'purpose'} onClick={() => { setSelectedKey(''); setParam('view', 'purpose'); }}>目的</SegButton>
-                  <SegButton pressed={view === 'nature'} onClick={() => { setSelectedKey(''); setParam('view', 'nature'); }}>性質</SegButton>
+                  <SegButton
+                    pressed={view === 'purpose'}
+                    onClick={() => {
+                      setSelectedKey('');
+                      setParam('view', 'purpose');
+                    }}
+                  >
+                    目的
+                  </SegButton>
+                  <SegButton
+                    pressed={view === 'nature'}
+                    onClick={() => {
+                      setSelectedKey('');
+                      setParam('view', 'nature');
+                    }}
+                  >
+                    性質
+                  </SegButton>
                 </div>
               </div>
               <div className='flex flex-col gap-1 text-xs text-solid-gray-600'>
                 金額
                 <div className='flex rounded-full border border-solid-gray-420 bg-white p-1'>
-                  <SegButton pressed={unit === 'total'} onClick={() => setParam('unit', 'total')}>総額</SegButton>
-                  <SegButton pressed={unit === 'per'} onClick={() => setParam('unit', 'per')}>1人あたり</SegButton>
+                  <SegButton pressed={unit === 'total'} onClick={() => setParam('unit', 'total')}>
+                    総額
+                  </SegButton>
+                  <SegButton pressed={unit === 'per'} onClick={() => setParam('unit', 'per')}>
+                    1人あたり
+                  </SegButton>
                 </div>
               </div>
               <div className='flex flex-col gap-1 text-xs text-solid-gray-600'>
                 科目
                 <div className='flex rounded-full border border-solid-gray-420 bg-white p-1'>
-                  <SegButton pressed={!showAll} onClick={() => { setSelectedKey(''); setParam('fold', ''); }}>主要</SegButton>
-                  <SegButton pressed={showAll} onClick={() => { setSelectedKey(''); setParam('fold', 'all'); }}>すべて</SegButton>
+                  <SegButton
+                    pressed={!showAll}
+                    onClick={() => {
+                      setSelectedKey('');
+                      setParam('fold', '');
+                    }}
+                  >
+                    主要
+                  </SegButton>
+                  <SegButton
+                    pressed={showAll}
+                    onClick={() => {
+                      setSelectedKey('');
+                      setParam('fold', 'all');
+                    }}
+                  >
+                    すべて
+                  </SegButton>
                 </div>
               </div>
             </div>
@@ -359,13 +424,7 @@ export const BudgetPage = () => {
                 selectedKey={selectedKey}
                 onSelect={setSelectedKey}
               />
-              <Side
-                data={data}
-                row={row}
-                view={view}
-                unit={unit}
-                selectedKey={selectedKey}
-              />
+              <Side data={data} row={row} view={view} unit={unit} selectedKey={selectedKey} />
             </div>
           </>
         )}
@@ -433,10 +492,19 @@ const Sankey = (props: {
     }));
     const midHeight = midTotal * scale;
     const contentHeight = Math.max(columnHeight(left), columnHeight(right), midHeight);
-    return { left, right, scale, midHeight, midY: (contentHeight - midHeight) / 2, contentHeight, midTotal };
+    return {
+      left,
+      right,
+      scale,
+      midHeight,
+      midY: (contentHeight - midHeight) / 2,
+      contentHeight,
+      midTotal,
+    };
   }, [data, row, view, showAll]);
 
-  const dim = (key: string) => (selectedKey && selectedKey !== 'mid' && key !== selectedKey ? 0.18 : 1);
+  const dim = (key: string) =>
+    selectedKey && selectedKey !== 'mid' && key !== selectedKey ? 0.18 : 1;
   const outTitle = view === 'nature' ? '性質別歳出' : '目的別歳出';
   const height = graph.contentHeight + 78;
 
@@ -468,7 +536,13 @@ const Sankey = (props: {
     const y = node.y + 46 + node.height / 2;
     const text = `${node.name} ${formatAmount(node.value, row.pop, unit)}`;
     return (
-      <text x={anchor === 'end' ? 206 : 716} y={y} textAnchor={anchor} fontSize={12} dominantBaseline='middle'>
+      <text
+        x={anchor === 'end' ? 206 : 716}
+        y={y}
+        textAnchor={anchor}
+        fontSize={12}
+        dominantBaseline='middle'
+      >
         {text}
       </text>
     );
@@ -476,29 +550,88 @@ const Sankey = (props: {
 
   return (
     <div className='h-full min-h-0 overflow-hidden rounded-2xl border border-solid-gray-420 bg-white'>
-      <svg viewBox={`0 0 980 ${height}`} preserveAspectRatio='xMidYMid meet' className='block h-full w-full' role='img' aria-label={`${row.name}の${data.label}普通会計決算`}>
-        <text x={20} y={22} fontSize={13} fontWeight={700}>歳入 {formatAmount(row.revTotal, row.pop, unit)}</text>
-        <text x={479} y={22} fontSize={13} fontWeight={700} textAnchor='middle'>普通会計</text>
-        <text x={716} y={22} fontSize={13} fontWeight={700}>{outTitle} {formatAmount(row.expTotal, row.pop, unit)}</text>
-        <text x={20} y={40} fontSize={11} fill='#5e584f'>{data.label} 決算・千円を換算</text>
+      <svg
+        viewBox={`0 0 980 ${height}`}
+        preserveAspectRatio='xMidYMid meet'
+        className='block h-full w-full'
+        role='img'
+        aria-label={`${row.name}の${data.label}普通会計決算`}
+      >
+        <text x={20} y={22} fontSize={13} fontWeight={700}>
+          歳入 {formatAmount(row.revTotal, row.pop, unit)}
+        </text>
+        <text x={479} y={22} fontSize={13} fontWeight={700} textAnchor='middle'>
+          普通会計
+        </text>
+        <text x={716} y={22} fontSize={13} fontWeight={700}>
+          {outTitle} {formatAmount(row.expTotal, row.pop, unit)}
+        </text>
+        <text x={20} y={40} fontSize={11} fill='#5e584f'>
+          {data.label} 決算・千円を換算
+        </text>
         {leftLinks.map((link) => (
-          <path key={link.key} d={link.d} fill={link.color} opacity={0.45 * dim(link.key)} className='cursor-pointer' onClick={() => onSelect(selectedKey === link.key ? '' : link.key)} />
+          <path
+            key={link.key}
+            d={link.d}
+            fill={link.color}
+            opacity={0.45 * dim(link.key)}
+            className='cursor-pointer'
+            onClick={() => onSelect(selectedKey === link.key ? '' : link.key)}
+          />
         ))}
         {rightLinks.map((link) => (
-          <path key={link.key} d={link.d} fill={link.color} opacity={0.5 * dim(link.key)} className='cursor-pointer' onClick={() => onSelect(selectedKey === link.key ? '' : link.key)} />
+          <path
+            key={link.key}
+            d={link.d}
+            fill={link.color}
+            opacity={0.5 * dim(link.key)}
+            className='cursor-pointer'
+            onClick={() => onSelect(selectedKey === link.key ? '' : link.key)}
+          />
         ))}
         {graph.left.map((node) => (
-          <g key={node.key} opacity={dim(node.key)} className='cursor-pointer' onClick={() => onSelect(selectedKey === node.key ? '' : node.key)}>
-            <rect x={node.x} y={node.y + 46} width={node.width} height={Math.max(node.height, 1)} rx={3} fill={node.color} />
+          <g
+            key={node.key}
+            opacity={dim(node.key)}
+            className='cursor-pointer'
+            onClick={() => onSelect(selectedKey === node.key ? '' : node.key)}
+          >
+            <rect
+              x={node.x}
+              y={node.y + 46}
+              width={node.width}
+              height={Math.max(node.height, 1)}
+              rx={3}
+              fill={node.color}
+            />
             {label(node, 'end')}
           </g>
         ))}
         <g className='cursor-pointer' onClick={() => onSelect(selectedKey === 'mid' ? '' : 'mid')}>
-          <rect x={468} y={graph.midY + 46} width={22} height={graph.midHeight} rx={3} fill='#234e3a' />
+          <rect
+            x={468}
+            y={graph.midY + 46}
+            width={22}
+            height={graph.midHeight}
+            rx={3}
+            fill='#234e3a'
+          />
         </g>
         {graph.right.map((node) => (
-          <g key={node.key} opacity={dim(node.key)} className='cursor-pointer' onClick={() => onSelect(selectedKey === node.key ? '' : node.key)}>
-            <rect x={node.x} y={node.y + 46} width={node.width} height={Math.max(node.height, 1)} rx={3} fill={node.color} />
+          <g
+            key={node.key}
+            opacity={dim(node.key)}
+            className='cursor-pointer'
+            onClick={() => onSelect(selectedKey === node.key ? '' : node.key)}
+          >
+            <rect
+              x={node.x}
+              y={node.y + 46}
+              width={node.width}
+              height={Math.max(node.height, 1)}
+              rx={3}
+              fill={node.color}
+            />
             {label(node, 'start')}
           </g>
         ))}
@@ -517,13 +650,17 @@ const Side = (props: {
   const { data, row, view, unit, selectedKey } = props;
   const names = view === 'nature' ? data.nature : data.purpose;
   const values = view === 'nature' ? row.nature : row.purpose;
-  const ranked = pairs(names, values).sort((a, b) => b.value - a.value).slice(0, 6);
+  const ranked = pairs(names, values)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 6);
   let picked = '帯をクリックすると内訳を固定できます。';
   if (selectedKey === 'mid') {
     picked = `普通会計 ${formatAmount(row.revTotal, row.pop, unit)}`;
   } else if (selectedKey.startsWith('in:') || selectedKey.startsWith('out:')) {
     const name = selectedKey.slice(selectedKey.indexOf(':') + 1);
-    const pool = selectedKey.startsWith('in:') ? pairs(data.revenue, row.rev) : pairs(names, values);
+    const pool = selectedKey.startsWith('in:')
+      ? pairs(data.revenue, row.rev)
+      : pairs(names, values);
     const found = pool.find((item) => item.name === name);
     const base = selectedKey.startsWith('in:') ? row.revTotal : row.expTotal;
     const share = found && base ? `全体の ${((found.value / base) * 100).toFixed(1)}%` : '';
@@ -532,24 +669,41 @@ const Side = (props: {
   return (
     <aside className='h-full overflow-auto rounded-2xl border border-solid-gray-420 bg-white p-4'>
       <h2 className='text-xl font-semibold'>{row.name}</h2>
-      <p className='mb-3 text-sm text-solid-gray-600'>{row.pref}　団体コード {row.code}　人口 {row.pop.toLocaleString('ja-JP')}人</p>
+      <p className='mb-3 text-sm text-solid-gray-600'>
+        {row.pref}　団体コード {row.code}　人口 {row.pop.toLocaleString('ja-JP')}人
+      </p>
       <p className='mb-3 rounded-xl bg-solid-gray-50 px-3 py-2 text-sm'>{picked}</p>
       <dl className='mb-3 grid grid-cols-[7.5em_1fr] gap-y-1 text-sm'>
-        <dt className='text-solid-gray-600'>歳入</dt><dd className='text-right'>{formatAmount(row.revTotal, row.pop, unit)}</dd>
-        <dt className='text-solid-gray-600'>歳出</dt><dd className='text-right'>{formatAmount(row.expTotal, row.pop, unit)}</dd>
-        <dt className='text-solid-gray-600'>差引</dt><dd className='text-right'>{formatAmount(row.balance, row.pop, unit)}</dd>
-        <dt className='text-solid-gray-600'>財政力指数</dt><dd className='text-right'>{row.strength == null ? '―' : row.strength.toFixed(2)}</dd>
-        <dt className='text-solid-gray-600'>経常収支比率</dt><dd className='text-right'>{row.currentRatio == null ? '―' : `${row.currentRatio.toFixed(1)}%`}</dd>
+        <dt className='text-solid-gray-600'>歳入</dt>
+        <dd className='text-right'>{formatAmount(row.revTotal, row.pop, unit)}</dd>
+        <dt className='text-solid-gray-600'>歳出</dt>
+        <dd className='text-right'>{formatAmount(row.expTotal, row.pop, unit)}</dd>
+        <dt className='text-solid-gray-600'>差引</dt>
+        <dd className='text-right'>{formatAmount(row.balance, row.pop, unit)}</dd>
+        <dt className='text-solid-gray-600'>財政力指数</dt>
+        <dd className='text-right'>{row.strength == null ? '―' : row.strength.toFixed(2)}</dd>
+        <dt className='text-solid-gray-600'>経常収支比率</dt>
+        <dd className='text-right'>
+          {row.currentRatio == null ? '―' : `${row.currentRatio.toFixed(1)}%`}
+        </dd>
       </dl>
-      <h3 className='mb-1 text-sm font-semibold'>{view === 'nature' ? '性質別の大きい順' : '目的別の大きい順'}</h3>
+      <h3 className='mb-1 text-sm font-semibold'>
+        {view === 'nature' ? '性質別の大きい順' : '目的別の大きい順'}
+      </h3>
       <ol className='list-decimal pl-5 text-sm'>
         {ranked.map((item) => (
-          <li key={item.name} className='my-1'>{item.name}　{formatAmount(item.value, row.pop, unit)}</li>
+          <li key={item.name} className='my-1'>
+            {item.name}　{formatAmount(item.value, row.pop, unit)}
+          </li>
         ))}
       </ol>
       <p className='mt-3 text-xs text-solid-gray-600'>
-        出典: <a className='underline' href={data.sourceUrl}>{data.source}</a>
-        。金額の原単位は千円で、画面では円換算しています。{data.rows.length.toLocaleString('ja-JP')}団体。
+        出典:{' '}
+        <a className='underline' href={data.sourceUrl}>
+          {data.source}
+        </a>
+        。金額の原単位は千円で、画面では円換算しています。{data.rows.length.toLocaleString('ja-JP')}
+        団体。
       </p>
     </aside>
   );

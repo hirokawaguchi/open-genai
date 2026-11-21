@@ -24,10 +24,7 @@ export const useFilteredTeams = (exAppOptions: ExAppOptions, searchWords: string
             ...exApp,
             isDefault: true,
           }));
-          const combinedExApps = sortByDisplayOrder([
-            ...filteredExApps,
-            ...filteredDefaultApps,
-          ]);
+          const combinedExApps = sortByDisplayOrder([...filteredExApps, ...filteredDefaultApps]);
           return combinedExApps.length > 0
             ? { teamIdKey, teamData, filteredExApps: combinedExApps }
             : null;

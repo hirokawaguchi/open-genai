@@ -17,7 +17,11 @@ export const PatchformPaneTabs = ({
   tabs: readonly PatchformPaneTab[];
   label: string;
 }) => (
-  <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label={label}>
+  <div
+    className='flex flex-wrap gap-2 border-b border-solid-gray-300'
+    role='tablist'
+    aria-label={label}
+  >
     {tabs.map((t) => {
       const Icon = t.icon;
       return (

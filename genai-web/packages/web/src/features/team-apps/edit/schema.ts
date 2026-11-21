@@ -33,28 +33,26 @@ export const teamAppEditSchema = z.object({
     ),
   // 入力フォーム定義は任意。フォーム入力が必要なアプリ(ワークフロー等)で定義する。
   // 対話型(Dify チャット)や入力不要のアプリでは空で構わない。
-  uiFormat: z
-    .string()
-    .refine(
-      (value) => {
-        if (!value || value.trim() === '') {
-          return true;
-        }
-        const v = value
-          .replace(/("default_value":\s*")((?:[^"\\]|\\.)*)"/g, (_, p1, p2) => {
-            const converted = p2.replace(/\r?\n/g, '\\n');
-            return `${p1}${converted}"`;
-          })
-          .replace(/("desc":\s*")((?:[^"\\]|\\.)*)"/g, (_, p1, p2) => {
-            const converted = p2.replace(/\r?\n/g, '\\n');
-            return `${p1}${converted}"`;
-          });
-        return isJSON(v);
-      },
-      {
-        message: 'APIリクエストのデータ形式はJSON形式にしてください',
-      },
-    ),
+  uiFormat: z.string().refine(
+    (value) => {
+      if (!value || value.trim() === '') {
+        return true;
+      }
+      const v = value
+        .replace(/("default_value":\s*")((?:[^"\\]|\\.)*)"/g, (_, p1, p2) => {
+          const converted = p2.replace(/\r?\n/g, '\\n');
+          return `${p1}${converted}"`;
+        })
+        .replace(/("desc":\s*")((?:[^"\\]|\\.)*)"/g, (_, p1, p2) => {
+          const converted = p2.replace(/\r?\n/g, '\\n');
+          return `${p1}${converted}"`;
+        });
+      return isJSON(v);
+    },
+    {
+      message: 'APIリクエストのデータ形式はJSON形式にしてください',
+    },
+  ),
   description: z.string().min(1, { message: 'アプリの概要を入力してください' }),
   howToUse: z.string().min(1, { message: 'アプリの利用方法を入力してください' }),
   apiKey: z.string().optional(),

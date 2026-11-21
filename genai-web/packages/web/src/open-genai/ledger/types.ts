@@ -52,7 +52,12 @@ export type LedgerRow = {
   deleted_at: string;
   created_at: string;
   updated_at: string;
-  revisions?: { id: string; actor_user_id: string; created_at: string; changes: { label?: string; before?: string; after?: string }[] }[];
+  revisions?: {
+    id: string;
+    actor_user_id: string;
+    created_at: string;
+    changes: { label?: string; before?: string; after?: string }[];
+  }[];
 };
 
 export type LedgerConfig = {

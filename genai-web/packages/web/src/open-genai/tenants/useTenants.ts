@@ -102,7 +102,10 @@ export const useTenantActions = () => {
       userId: string,
       body: { role?: string; isAdmin?: boolean },
     ) => {
-      const res = await teamApi.put(`tenants/${tenantId}/members/${encodeURIComponent(userId)}`, body);
+      const res = await teamApi.put(
+        `tenants/${tenantId}/members/${encodeURIComponent(userId)}`,
+        body,
+      );
       return res.data;
     },
     removeMember: async (tenantId: string, userId: string) => {

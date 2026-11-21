@@ -19,7 +19,15 @@ type Props = {
 };
 
 export const ExAppListCard = (props: Props) => {
-  const { href, onClick, label, description, highlightWords = [], categoryName, pinControl } = props;
+  const {
+    href,
+    onClick,
+    label,
+    description,
+    highlightWords = [],
+    categoryName,
+    pinControl,
+  } = props;
   const { highlightText } = useHighlight();
 
   return (

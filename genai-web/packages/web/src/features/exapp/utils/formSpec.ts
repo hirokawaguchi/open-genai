@@ -50,10 +50,7 @@ export const substituteTemplate = (template: string, values: FieldValues): strin
  * 表示中(visibleWhen 通過)の select/radio について、選択値の item.confirm を探す。
  * 不可逆操作（削除など）で実行前に確認ダイアログを出すために使う。
  */
-export const getConfirmMessage = (
-  uiJson: GovAIFormUIJson,
-  values: FieldValues,
-): string | null => {
+export const getConfirmMessage = (uiJson: GovAIFormUIJson, values: FieldValues): string | null => {
   for (const key of Object.keys(uiJson)) {
     if (isReservedFormKey(key)) {
       continue;

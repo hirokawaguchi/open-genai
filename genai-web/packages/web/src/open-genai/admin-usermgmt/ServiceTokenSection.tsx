@@ -53,7 +53,9 @@ export const ServiceTokenSection = () => {
   const [issued, setIssued] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const candidates = users.filter((user) => user.enabled && !user.groups.includes('SystemAdminGroup'));
+  const candidates = users.filter(
+    (user) => user.enabled && !user.groups.includes('SystemAdminGroup'),
+  );
 
   const issue = async () => {
     setBusy(true);
@@ -99,8 +101,13 @@ export const ServiceTokenSection = () => {
       <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-800'>
         <p>外部のシステムが、ブラウザを開かずに台帳を読む・書くためのトークンです。</p>
         <p>1. 利用者登録で、一般利用者としてアカウントを作ります。システム管理者にはしません。</p>
-        <p>2. その利用者を対象のチームに入れ、台帳のアクセス権設定で読み書きか読み取りを付けます。</p>
-        <p>3. ここで名前を付けて発行します。文字列は今だけ表示します。外部システムは Authorization の Bearer に載せて /ledger を呼びます。</p>
+        <p>
+          2. その利用者を対象のチームに入れ、台帳のアクセス権設定で読み書きか読み取りを付けます。
+        </p>
+        <p>
+          3. ここで名前を付けて発行します。文字列は今だけ表示します。外部システムは Authorization の
+          Bearer に載せて /ledger を呼びます。
+        </p>
         <p>台帳以外には使えません。漏れたらその1枚を失効し、新しい1枚を渡します。</p>
       </div>
 
@@ -155,7 +162,9 @@ export const ServiceTokenSection = () => {
       {issued ? (
         <div className='flex flex-col gap-2 rounded-8 border border-solid-gray-420 bg-solid-gray-50 p-4'>
           <p className='text-std-16B-160 text-solid-gray-900'>発行したトークン</p>
-          <p className='text-dns-14N-130 text-solid-gray-700'>この画面を離れると、もう表示できません。</p>
+          <p className='text-dns-14N-130 text-solid-gray-700'>
+            この画面を離れると、もう表示できません。
+          </p>
           <p className='break-all font-mono text-dns-14N-130 text-solid-gray-900'>{issued}</p>
           <div>
             <Button type='button' size='sm' variant='outline' onClick={() => void copy()}>
@@ -189,7 +198,12 @@ export const ServiceTokenSection = () => {
                   <td className='px-3 py-2'>{row.revokedAt ? '失効' : '有効'}</td>
                   <td className='px-3 py-2 text-right'>
                     {row.revokedAt ? null : (
-                      <Button type='button' size='sm' variant='outline' onClick={() => void revoke(row.id)}>
+                      <Button
+                        type='button'
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void revoke(row.id)}
+                      >
                         失効する
                       </Button>
                     )}

@@ -56,9 +56,7 @@ export const useExAppInvokeState = () => {
           exAppId: req.exAppId,
           createdDate,
         }).toString();
-        const res = await teamApi.get<GetInvokeExAppHistoryResponse>(
-          `/exapps/history?${q}`,
-        );
+        const res = await teamApi.get<GetInvokeExAppHistoryResponse>(`/exapps/history?${q}`);
         const history = res.data.history;
         if (!history || generationRef.current !== generation) {
           return;
@@ -88,8 +86,7 @@ export const useExAppInvokeState = () => {
           store.setExAppResponse(null);
           store.setError(
             new Error(
-              history.outputs?.trim() ||
-                '実行中にエラーが発生しました。再度お試しください。',
+              history.outputs?.trim() || '実行中にエラーが発生しました。再度お試しください。',
             ),
           );
           refreshHistories(req.teamId, req.exAppId);
@@ -149,10 +146,7 @@ export const useExAppInvokeState = () => {
       if (generationRef.current !== generation) {
         return undefined;
       }
-      if (
-        (res.status === 'IN_PROGRESS' || res.status === 'ACCEPTED') &&
-        res.createdDate
-      ) {
+      if ((res.status === 'IN_PROGRESS' || res.status === 'ACCEPTED') && res.createdDate) {
         store.setError(null);
         store.setExAppResponse(res);
         pollHistory(req, res.createdDate, generation);
@@ -218,7 +212,8 @@ export const useExAppInvokeState = () => {
       if (latest.status === 'IN_PROGRESS' || latest.status === 'ACCEPTED') {
         store.setError(null);
         store.setExAppResponse({
-          outputs: latest.progress || '文字起こしを実行しています。完了まで数分かかることがあります。',
+          outputs:
+            latest.progress || '文字起こしを実行しています。完了まで数分かかることがあります。',
           status: latest.status,
           createdDate: latest.createdDate,
           timestamps: { processingStartedAt: '', processingEndedAt: '' },

@@ -147,9 +147,7 @@ export const PatchformFillModal = (props: Props) => {
                   />
                 </div>
               ) : null}
-              {draftNote && (
-                <p className='text-std-16N-170 text-solid-gray-700'>{draftNote}</p>
-              )}
+              {draftNote && <p className='text-std-16N-170 text-solid-gray-700'>{draftNote}</p>}
               <FillForm
                 definition={fillDef}
                 values={answers}

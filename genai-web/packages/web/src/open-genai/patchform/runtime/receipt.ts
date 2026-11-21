@@ -23,8 +23,7 @@ const fmtDate = (d?: Date | string | null): string => {
   return Number.isNaN(dd.getTime()) ? String(d) : dd.toLocaleString('ja-JP');
 };
 
-const safeName = (s: string): string =>
-  (s || '控え').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40);
+const safeName = (s: string): string => (s || '控え').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40);
 
 /** テキストを .txt としてその場でダウンロードさせる。 */
 export const downloadTextFile = (filename: string, text: string): void => {
@@ -92,10 +91,7 @@ export type ApplicationReceiptInput = {
 };
 
 /** 申請束（マイ手続き）の控えテキストを組み立てる。 */
-export const buildApplicationReceipt = ({
-  application,
-  note,
-}: ApplicationReceiptInput): string => {
+export const buildApplicationReceipt = ({ application, note }: ApplicationReceiptInput): string => {
   const lines: string[] = [];
   lines.push('【申請の控え】');
   lines.push('');

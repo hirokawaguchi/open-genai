@@ -3,7 +3,11 @@ import { useSelectedModel } from '@/hooks/useSelectedModel';
 import { findModelDisplayNameByModelId } from '@/models';
 
 export const ModelSelector = () => {
-  const { selectedModelId, setSelectedModelId, availableModelIds: availableModels } = useSelectedModel();
+  const {
+    selectedModelId,
+    setSelectedModelId,
+    availableModelIds: availableModels,
+  } = useSelectedModel();
 
   return (
     <CustomSelect

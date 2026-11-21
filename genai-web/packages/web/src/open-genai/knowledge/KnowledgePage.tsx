@@ -132,9 +132,7 @@ export const KnowledgePage = () => {
                   mutateDocs={mutateDocs}
                 />
               ) : (
-                <p className='text-solid-gray-600'>
-                  このスコープへの登録権限がありません。
-                </p>
+                <p className='text-solid-gray-600'>このスコープへの登録権限がありません。</p>
               ))}
             {tab === 'tags' && (
               <TagsSection

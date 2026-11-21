@@ -40,7 +40,9 @@ export const ModelPolicyPage = () => {
       fallbackHowTo={
         <>
           <p>・設定は棟ごとに保存されます。未設定の棟は制限なし（全モデル利用可）です。</p>
-          <p>・「制御」を有効にすると、許可したモデルのみ利用できます（無効の間は全モデル利用可）。</p>
+          <p>
+            ・「制御」を有効にすると、許可したモデルのみ利用できます（無効の間は全モデル利用可）。
+          </p>
           <p>・「全ユーザー共通で許可」はその棟の全員が使えるモデルです。</p>
           <p>・「チーム別の追加許可」はその棟の各チームに追加で許可するモデルです。</p>
           <p>・システム管理者は常に全モデルを利用できます。</p>
@@ -184,9 +186,7 @@ const PolicyEditor = ({ config, submitting, error, setError, onSave }: EditorPro
           />
           モデル利用制御を有効にする（許可モデルのみ利用可）
         </label>
-        {!enabled && (
-          <SupportText>無効の間は全ユーザーが全モデルを利用できます。</SupportText>
-        )}
+        {!enabled && <SupportText>無効の間は全ユーザーが全モデルを利用できます。</SupportText>}
       </fieldset>
 
       <div className='flex flex-col gap-2'>
@@ -206,10 +206,7 @@ const PolicyEditor = ({ config, submitting, error, setError, onSave }: EditorPro
           </SupportText>
         ) : (
           teams.map((team) => (
-            <Disclosure
-              key={team.id}
-              className='rounded-8 border border-solid-gray-300 px-4 py-3'
-            >
+            <Disclosure key={team.id} className='rounded-8 border border-solid-gray-300 px-4 py-3'>
               <DisclosureSummary>
                 <span className='text-std-16B-150'>
                   {team.name}
@@ -291,7 +288,12 @@ const PolicyEditor = ({ config, submitting, error, setError, onSave }: EditorPro
               モデル利用ポリシーを上書き保存します。よろしいですか？
             </p>
             <div className='mt-6 flex justify-end gap-3'>
-              <Button type='button' variant='outline' size='md' onClick={() => setConfirmOpen(false)}>
+              <Button
+                type='button'
+                variant='outline'
+                size='md'
+                onClick={() => setConfirmOpen(false)}
+              >
                 キャンセル
               </Button>
               <Button
@@ -319,15 +321,16 @@ type GroupProps = {
 
 const ModelCheckboxGroup = ({ options, selected, onToggle }: GroupProps) => {
   if (options.length === 0) {
-    return <SupportText>選択できるモデルがありません。下の欄からモデルIDを追加してください。</SupportText>;
+    return (
+      <SupportText>
+        選択できるモデルがありません。下の欄からモデルIDを追加してください。
+      </SupportText>
+    );
   }
   return (
     <div className='grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3'>
       {options.map((model) => (
-        <label
-          key={model}
-          className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'
-        >
+        <label key={model} className='flex items-center gap-2 text-std-16N-170 text-solid-gray-900'>
           <input
             type='checkbox'
             className='size-5 flex-none'

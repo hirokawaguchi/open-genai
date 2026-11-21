@@ -175,7 +175,10 @@ export const NotebookManageDialog = ({
                   const draft = promptDrafts[m.id] ?? m.prompt;
                   const promptOpen = openPromptId === m.id;
                   return (
-                    <li key={m.id} className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 px-3 py-3'>
+                    <li
+                      key={m.id}
+                      className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 px-3 py-3'
+                    >
                       <div className='flex items-start justify-between gap-2'>
                         <div>
                           <p className='text-std-16B-150 text-solid-gray-900'>{m.name}</p>
@@ -276,7 +279,8 @@ export const NotebookManageDialog = ({
               <div className='flex flex-col gap-2 rounded-8 border border-solid-gray-300 p-3'>
                 <p className='text-std-16B-150'>MCP を追加</p>
                 <p className='text-solid-gray-600'>
-                  Streamable HTTP の公開 MCP など、URL で追加できます。庁内ポリシーに従ってください。
+                  Streamable HTTP の公開 MCP など、URL
+                  で追加できます。庁内ポリシーに従ってください。
                 </p>
                 <Label htmlFor='notebook-mcp-new-name'>名前</Label>
                 <Input

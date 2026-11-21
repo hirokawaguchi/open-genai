@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import {
-  PiDownloadSimpleBold,
-  PiEyeBold,
-  PiNotePencilBold,
-  PiPaperclipBold,
-} from 'react-icons/pi';
+import { PiDownloadSimpleBold, PiEyeBold, PiNotePencilBold, PiPaperclipBold } from 'react-icons/pi';
 import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
@@ -59,9 +54,7 @@ const blankComponent = (type: string, catalog: CatalogItem[]): FormComponent => 
                   ? { options: ['選択肢1', '選択肢2'] }
                   : {},
     imi_type: DEFAULT_IMI[type] || '',
-    imi_subfields: DEFAULT_IMI_SUBFIELDS[type]
-      ? { ...DEFAULT_IMI_SUBFIELDS[type] }
-      : undefined,
+    imi_subfields: DEFAULT_IMI_SUBFIELDS[type] ? { ...DEFAULT_IMI_SUBFIELDS[type] } : undefined,
   };
 };
 
@@ -147,14 +140,9 @@ export const PatchformEditPage = () => {
 
   const definitionLocked = Boolean(form && form.kind !== 'reception' && form.locked);
 
-  const displayTypes = new Set(
-    catalog.filter((c) => c.category === 'display').map((c) => c.type),
-  );
-  const hasFillable = components.some(
-    (c) => c.type !== 'file' && !displayTypes.has(c.type),
-  );
-  const docRole =
-    form?.definition.metadata.doc_role ?? (hasFillable ? 'yoshiki' : 'attachment');
+  const displayTypes = new Set(catalog.filter((c) => c.category === 'display').map((c) => c.type));
+  const hasFillable = components.some((c) => c.type !== 'file' && !displayTypes.has(c.type));
+  const docRole = form?.definition.metadata.doc_role ?? (hasFillable ? 'yoshiki' : 'attachment');
   const template = form?.template ?? null;
 
   const onPickTemplate = async (file: File | undefined) => {
@@ -185,8 +173,14 @@ export const PatchformEditPage = () => {
       tags,
       ...(form?.role === 'owner' || form?.role === 'admin'
         ? {
-            editor_user_ids: editorIds.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
-            viewer_user_ids: viewerIds.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
+            editor_user_ids: editorIds
+              .split(/[\n,]/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+            viewer_user_ids: viewerIds
+              .split(/[\n,]/)
+              .map((s) => s.trim())
+              .filter(Boolean),
           }
         : {}),
     });
@@ -246,7 +240,11 @@ export const PatchformEditPage = () => {
         )}
         {form && (
           <>
-            <div className='flex flex-wrap gap-2 border-b border-solid-gray-300' role='tablist' aria-label='編集とプレビュー'>
+            <div
+              className='flex flex-wrap gap-2 border-b border-solid-gray-300'
+              role='tablist'
+              aria-label='編集とプレビュー'
+            >
               {(
                 [
                   { id: 'edit', label: '編集', icon: PiNotePencilBold },
@@ -442,7 +440,9 @@ export const PatchformEditPage = () => {
                   <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 px-4 py-3'>
                     <div className='flex flex-wrap items-center gap-2'>
                       <PiPaperclipBold aria-hidden={true} className='size-5 text-blue-900' />
-                      <span className='text-std-16B-150'>ひな型ファイル（申請者がダウンロード）</span>
+                      <span className='text-std-16B-150'>
+                        ひな型ファイル（申請者がダウンロード）
+                      </span>
                       <span
                         className={`rounded-full px-2 py-0.5 text-dns-14N-130 ${
                           docRole === 'attachment'
@@ -574,7 +574,8 @@ export const PatchformEditPage = () => {
                           setComponents(res.definition.components);
                           setSelectedId(res.definition.components[0]?.id ?? null);
                           setAiNotes(
-                            res.notes || `${res.source === 'llm' ? 'AI' : 'テンプレート'}で反映しました。`,
+                            res.notes ||
+                              `${res.source === 'llm' ? 'AI' : 'テンプレート'}で反映しました。`,
                           );
                         }}
                       >
@@ -587,7 +588,9 @@ export const PatchformEditPage = () => {
                 <section className='grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(16rem,20rem)]'>
                   <div className='flex flex-col gap-3'>
                     <div>
-                      <h2 className='text-std-18B-160'>このフォームの部品（{components.length}）</h2>
+                      <h2 className='text-std-18B-160'>
+                        このフォームの部品（{components.length}）
+                      </h2>
                       <p className='mt-1 text-dns-14N-130 text-solid-gray-700'>
                         並びは上から回答順です。行を選ぶと設定できます。
                       </p>
@@ -605,11 +608,15 @@ export const PatchformEditPage = () => {
                             <li
                               key={c.id}
                               className={`overflow-hidden rounded-8 border ${
-                                open ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-300 bg-white'
+                                open
+                                  ? 'border-blue-900 bg-blue-50'
+                                  : 'border-solid-gray-300 bg-white'
                               }`}
                             >
                               <div className='flex flex-wrap items-center gap-2 px-3 py-2'>
-                                <span className='w-6 text-dns-14N-130 text-solid-gray-600'>{idx + 1}</span>
+                                <span className='w-6 text-dns-14N-130 text-solid-gray-600'>
+                                  {idx + 1}
+                                </span>
                                 <Tooltip placement='top' strategy='fixed'>
                                   <TooltipTrigger asChild>
                                     <button
@@ -625,7 +632,9 @@ export const PatchformEditPage = () => {
                                         <span className='block text-std-16B-150 text-solid-gray-900'>
                                           {c.label || '（ラベル未設定）'}
                                           {c.required ? (
-                                            <span className='ml-2 text-dns-14N-130 text-error-1'>必須</span>
+                                            <span className='ml-2 text-dns-14N-130 text-error-1'>
+                                              必須
+                                            </span>
                                           ) : null}
                                         </span>
                                         <span className='block text-dns-14N-130 text-solid-gray-700'>

@@ -81,9 +81,7 @@ export const SengokuPage = () => {
   const player = game?.player_house ?? '';
   const ownProvinces = useMemo(
     () =>
-      game
-        ? Object.keys(game.provinces).filter((pid) => game.provinces[pid].owner === player)
-        : [],
+      game ? Object.keys(game.provinces).filter((pid) => game.provinces[pid].owner === player) : [],
     [game, player],
   );
 
@@ -312,8 +310,7 @@ export const SengokuPage = () => {
               {config?.error || 'コンテナを profiles: ["sengoku"] で起動してください。'}
             </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose --profile sengoku up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=sengoku
+              docker compose --profile sengoku up -d{'\n'}# または .env に COMPOSE_PROFILES=sengoku
             </pre>
           </div>
         )}
@@ -325,7 +322,8 @@ export const SengokuPage = () => {
               大名家を選んで始める
             </h2>
             <p className='text-std-16N-170 text-solid-gray-700'>
-              いずれかの家を選ぶと新しい対局が始まります。セーブは 1 局のみで、新規開始で上書きされます。
+              いずれかの家を選ぶと新しい対局が始まります。セーブは 1
+              局のみで、新規開始で上書きされます。
             </p>
             <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
               {Object.entries(config?.meta?.houses ?? {}).map(([hid, h]) => (
@@ -525,10 +523,8 @@ const SengokuBoard = (props: BoardProps) => {
           }`}
           role='status'
         >
-          {game.status === 'won' &&
-            '天下統一を果たしました。勝利です。「新規」で再び乱世へ。'}
-          {game.status === 'lost' &&
-            '所領を失い、家は滅亡しました。敗北です。「新規」で再起を。'}
+          {game.status === 'won' && '天下統一を果たしました。勝利です。「新規」で再び乱世へ。'}
+          {game.status === 'lost' && '所領を失い、家は滅亡しました。敗北です。「新規」で再起を。'}
           {game.status === 'ended' &&
             `${game.winner ? `${game.houses[game.winner]?.name}家が天下を統一しました。` : '争覇は終わりました。'}「新規」でもう一局。`}
         </div>
@@ -798,11 +794,13 @@ const SengokuBoard = (props: BoardProps) => {
                   </div>
                   {props.dipAction !== 'declare' && (
                     <div className='md:col-span-2'>
-                      <Label size='sm'>貢金（任意・承諾されやすくなる。成立時のみ相手へ支払う）</Label>
+                      <Label size='sm'>
+                        貢金（任意・承諾されやすくなる。成立時のみ相手へ支払う）
+                      </Label>
                       <input
                         type='number'
                         min={0}
-                        max={player ? game.houses[player]?.gold ?? 0 : 0}
+                        max={player ? (game.houses[player]?.gold ?? 0) : 0}
                         className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
                         value={props.dipGift}
                         onChange={(e) => props.setDipGift(Number(e.target.value))}
@@ -864,9 +862,7 @@ const SengokuBoard = (props: BoardProps) => {
               </thead>
               <tbody>
                 {Object.entries(game.houses).map(([hid, h]) => {
-                  const count = Object.values(game.provinces).filter(
-                    (p) => p.owner === hid,
-                  ).length;
+                  const count = Object.values(game.provinces).filter((p) => p.owner === hid).length;
                   const t = troopsOf(hid);
                   const troopsText = t.hasHidden
                     ? t.known > 0

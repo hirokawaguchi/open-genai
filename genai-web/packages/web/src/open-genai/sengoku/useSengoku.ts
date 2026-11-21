@@ -106,22 +106,19 @@ export const useSengokuActions = () => {
     }
   }, []);
 
-  const playTurn = useCallback(
-    async (command: Command | null): Promise<TurnResult | null> => {
-      setBusy(true);
-      setError(null);
-      try {
-        const res = await teamApi.post<TurnResult>('sengoku/game/turn', { command });
-        return res.data ?? null;
-      } catch (e) {
-        setError(errorMessage(e, 'ターンの処理に失敗しました。'));
-        return null;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [],
-  );
+  const playTurn = useCallback(async (command: Command | null): Promise<TurnResult | null> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await teamApi.post<TurnResult>('sengoku/game/turn', { command });
+      return res.data ?? null;
+    } catch (e) {
+      setError(errorMessage(e, 'ターンの処理に失敗しました。'));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   return { startGame, startObserver, abandonGame, playTurn, busy, error, setError };
 };

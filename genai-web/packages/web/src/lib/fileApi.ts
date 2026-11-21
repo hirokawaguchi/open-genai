@@ -77,10 +77,7 @@ export const pollUploadPii = async (
   return null;
 };
 
-const mintLocalFileUrl = async (
-  key: string,
-  operation: 'download' | 'delete',
-): Promise<string> => {
+const mintLocalFileUrl = async (key: string, operation: 'download' | 'delete'): Promise<string> => {
   const { data: url } = await genUApi.post<string>('file/url', {
     key,
     filename: key.split('/').pop() || key,

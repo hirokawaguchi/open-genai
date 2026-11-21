@@ -77,17 +77,17 @@ export const TeamList = (props: Props) => {
                   className={`absolute top-full right-0 z-10 w-auto min-w-fit rounded-8 border border-solid-gray-420 bg-white py-2 shadow-1 focus:outline-hidden`}
                 >
                   {team.teamId !== COMMON_EXAPPS_TEAM_ID && (
-                  <MenuItem>
-                    {({ focus }) => (
-                      <Link
-                        to={`/teams/${team.teamId}/edit`}
-                        className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-3 text-oln-16N-100 text-nowrap text-solid-gray-800 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
-                      >
-                        <PiPencilLine aria-hidden={true} className='text-lg' />
-                        チーム名を変更
-                      </Link>
-                    )}
-                  </MenuItem>
+                    <MenuItem>
+                      {({ focus }) => (
+                        <Link
+                          to={`/teams/${team.teamId}/edit`}
+                          className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-3 text-oln-16N-100 text-nowrap text-solid-gray-800 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
+                        >
+                          <PiPencilLine aria-hidden={true} className='text-lg' />
+                          チーム名を変更
+                        </Link>
+                      )}
+                    </MenuItem>
                   )}
                   <MenuItem>
                     {({ focus }) => (
@@ -110,21 +110,21 @@ export const TeamList = (props: Props) => {
                     )}
                   </MenuItem>
                   {team.teamId !== COMMON_EXAPPS_TEAM_ID && (
-                  <MenuItem>
-                    {({ focus }) => (
-                      <button
-                        type='button'
-                        onClick={() => {
-                          handleOpenDeleteModal(team);
-                        }}
-                        aria-haspopup='dialog'
-                        className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-3 text-oln-16N-100 text-nowrap text-error-1 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:text-solid-gray-800 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
-                      >
-                        <PiTrash aria-hidden={true} className='text-lg' />
-                        削除
-                      </button>
-                    )}
-                  </MenuItem>
+                    <MenuItem>
+                      {({ focus }) => (
+                        <button
+                          type='button'
+                          onClick={() => {
+                            handleOpenDeleteModal(team);
+                          }}
+                          aria-haspopup='dialog'
+                          className={`relative flex w-full items-center gap-x-2 bg-white py-3 pr-6 pl-3 text-oln-16N-100 text-nowrap text-error-1 hover:bg-solid-gray-50 hover:underline hover:underline-offset-[calc(3/16*1rem)] ${focus ? '[:root[data-headlessui-focus-visible]_&]:bg-yellow-300 [:root[data-headlessui-focus-visible]_&]:text-solid-gray-800 [:root[data-headlessui-focus-visible]_&]:ring-[calc(6/16*1rem)] [:root[data-headlessui-focus-visible]_&]:ring-yellow-300 [:root[data-headlessui-focus-visible]_&]:outline-4 [:root[data-headlessui-focus-visible]_&]:-outline-offset-4 [:root[data-headlessui-focus-visible]_&]:outline-black [:root[data-headlessui-focus-visible]_&]:outline-solid [:root[data-headlessui-focus-visible]_&]:ring-inset' : ''}`}
+                        >
+                          <PiTrash aria-hidden={true} className='text-lg' />
+                          削除
+                        </button>
+                      )}
+                    </MenuItem>
                   )}
                 </MenuItems>
               </Menu>

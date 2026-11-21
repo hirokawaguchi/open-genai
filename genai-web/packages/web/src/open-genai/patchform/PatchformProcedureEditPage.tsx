@@ -150,10 +150,7 @@ export const PatchformProcedureEditPage = () => {
     setBundleReview(procedure.mapping?.review || { slots: [], cross: [] });
   }, [procedure]);
 
-  const styleForms = useMemo(
-    () => forms.filter((f) => f.id !== guideFormId),
-    [forms, guideFormId],
-  );
+  const styleForms = useMemo(() => forms.filter((f) => f.id !== guideFormId), [forms, guideFormId]);
 
   const updateRule = (componentId: string, option: string, patch: Partial<ProcedureRule>) => {
     setRuleMap((prev) => {
@@ -365,334 +362,355 @@ export const PatchformProcedureEditPage = () => {
             </div>
 
             {pane === 'edit' && (
-            <>
-            {(procedure.warnings || []).length > 0 && (
-              <div className='rounded-8 border border-orange-400 bg-orange-50 px-4 py-3' role='status'>
-                <p className='text-std-16B-150'>案内の選択肢が対応表と一致しません</p>
-                <ul className='mt-2 list-disc pl-5 text-std-16N-170'>
-                  {procedure.warnings?.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              <>
+                {(procedure.warnings || []).length > 0 && (
+                  <div
+                    className='rounded-8 border border-orange-400 bg-orange-50 px-4 py-3'
+                    role='status'
+                  >
+                    <p className='text-std-16B-150'>案内の選択肢が対応表と一致しません</p>
+                    <ul className='mt-2 list-disc pl-5 text-std-16N-170'>
+                      {procedure.warnings?.map((w) => (
+                        <li key={w}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-            {description.includes('【確認】') && (
-              <div className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3' role='status'>
-                <p className='text-std-16B-150'>第1版の確認事項があります</p>
-                <p className='mt-1 text-std-16N-170 text-solid-gray-700'>
-                  手引きから自動で拾ったメモです。説明欄の【確認】を読んで直すか消し、下の用紙のチェックを確認してから公開してください。
-                </p>
-                <div className='mt-3 flex flex-wrap gap-2'>
-                  <Button type='button' variant='outline' size='sm' onClick={() => scrollTo('pf-pe-desc')}>
-                    説明を見る
-                  </Button>
-                  <Button type='button' variant='outline' size='sm' onClick={() => scrollTo('pf-mapping')}>
-                    用紙の対応を見る
-                  </Button>
-                </div>
-              </div>
-            )}
+                {description.includes('【確認】') && (
+                  <div
+                    className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'
+                    role='status'
+                  >
+                    <p className='text-std-16B-150'>第1版の確認事項があります</p>
+                    <p className='mt-1 text-std-16N-170 text-solid-gray-700'>
+                      手引きから自動で拾ったメモです。説明欄の【確認】を読んで直すか消し、下の用紙のチェックを確認してから公開してください。
+                    </p>
+                    <div className='mt-3 flex flex-wrap gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={() => scrollTo('pf-pe-desc')}
+                      >
+                        説明を見る
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={() => scrollTo('pf-mapping')}
+                      >
+                        用紙の対応を見る
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
-            <div className='flex flex-col gap-4'>
-              <div>
-                <Label htmlFor='pf-pe-name' size='sm'>
-                  名前
-                </Label>
-                <input
-                  id='pf-pe-name'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={!procedure.can_edit}
-                />
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  庁内の一覧で使う名前です。
-                </p>
-              </div>
-              <div>
-                <Label htmlFor='pf-pe-desc' size='sm'>
-                  説明
-                </Label>
-                <textarea
-                  id='pf-pe-desc'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  rows={description.includes('【確認】') ? 5 : 2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  disabled={!procedure.can_edit}
-                />
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  職員向けのメモです。空欄でも構いません。
-                </p>
-              </div>
-              <div>
-                <Label htmlFor='pf-pe-notify' size='sm'>
-                  職員への通知先
-                </Label>
-                <textarea
-                  id='pf-pe-notify'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  rows={2}
-                  value={notifyEmails}
-                  onChange={(e) => setNotifyEmails(e.target.value)}
-                  disabled={!procedure.can_edit}
-                  placeholder='staff@example.lg.jp'
-                />
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  案内が提出されたとき、職員へ知らせます。1行に1件、またはカンマ区切り。本文に回答は入れません。
-                  {config?.mail?.smtp
-                    ? ' 庁内のメールサーバに送ります。'
-                    : config?.mail?.dump
-                      ? ' いまはメールサーバの代わりに、サーバ上のテキストに書き出します。'
-                      : ' いまはメールサーバ未設定のため、宛先を書いても送られません。'}
-                </p>
-              </div>
-              <div>
-                <Label htmlFor='pf-pe-vis' size='sm'>
-                  公開範囲
-                </Label>
-                <select
-                  id='pf-pe-vis'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  value={procedure.visibility === 'both' ? 'both' : 'internal'}
-                  disabled={!procedure.can_edit}
-                  onChange={async (e) => {
-                    const next = await setProcedureVisibility(
-                      procedure.id,
-                      e.target.value === 'both' ? 'both' : 'internal',
-                    );
-                    if (next) await mutate();
-                  }}
-                >
-                  <option value='internal'>庁内のみ</option>
-                  <option value='both'>庁内と外部</option>
-                </select>
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  庁内/庁外の公開はこの手続きで決めます。「庁内と外部」にすると、案内と申請用紙すべてが外部からも記入できます。マイナンバーなど庁内専用の部品を含む場合は庁外公開できません。
-                </p>
-              </div>
-              <div>
-                <Label htmlFor='pf-pe-guide' size='sm'>
-                  {singleForm ? '申請用紙' : 'ナビゲーションフォーム'}
-                </Label>
-                <select
-                  id='pf-pe-guide'
-                  className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
-                  value={guideFormId}
-                  onChange={(e) => setGuideFormId(e.target.value)}
-                  disabled={!procedure.can_edit}
-                >
-                  {[...forms]
-                    .sort((a, b) => {
-                      const aNav = (a.tags || []).includes(NAVIGATION_TAG) ? 0 : 1;
-                      const bNav = (b.tags || []).includes(NAVIGATION_TAG) ? 0 : 1;
-                      return aNav - bNav;
-                    })
-                    .map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.title}（{f.locked || f.work_status === 'ready' ? '作成完了' : '作成中'}
-                      {f.has_opening ? ' · 受付中' : ''}
-                      {(f.tags || []).length ? ` · ${(f.tags || []).join('、')}` : ''}）
-                    </option>
-                  ))}
-                </select>
-                <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                  {singleForm
-                    ? 'この1枚を公開します。ラジオやプルダウンを足すと、ナビゲーションとして使えるようになります。'
-                    : '申請者や回答者が最初に答えるナビゲーションフォームです。下の対応は、このフォームの答えごとに決まります。'}
-                </p>
-                {procedure.guide_public_url ? (
-                  <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
-                    {procedure.status === 'published' ? '公開 URL' : '前回の公開 URL'}:{' '}
-                    {procedure.guide_public_url}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
-              <h2 className='text-std-18B-160'>所見の呼び出し</h2>
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                この手続きの確認文への所見を、どこで書くかです。合否は職員が押します。
-              </p>
-              <fieldset className='flex flex-col gap-2'>
-                <legend className='text-dns-14N-130'>呼び出し先</legend>
-                <label className='flex items-center gap-2 text-std-16N-170'>
-                  <input
-                    type='radio'
-                    name='pf-review-engine'
-                    checked={reviewEngine === 'openai'}
-                    disabled={!procedure.can_edit}
-                    onChange={() => setReviewEngine('openai')}
-                  />
-                  OpenAI 互換
-                </label>
-                <label className='flex items-center gap-2 text-std-16N-170'>
-                  <input
-                    type='radio'
-                    name='pf-review-engine'
-                    checked={reviewEngine === 'dify'}
-                    disabled={!procedure.can_edit}
-                    onChange={() => setReviewEngine('dify')}
-                  />
-                  Dify
-                </label>
-              </fieldset>
-              {reviewEngine === 'dify' && (
-                <div className='flex flex-col gap-3'>
-                  <label className='flex flex-col gap-1 text-dns-14N-130'>
-                    Dify の API ベース
+                <div className='flex flex-col gap-4'>
+                  <div>
+                    <Label htmlFor='pf-pe-name' size='sm'>
+                      名前
+                    </Label>
                     <input
-                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
-                      value={difyBaseUrl}
+                      id='pf-pe-name'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
                       disabled={!procedure.can_edit}
-                      placeholder='https://api.dify.ai/v1'
-                      onChange={(e) => setDifyBaseUrl(e.target.value)}
                     />
-                  </label>
-                  <label className='flex flex-col gap-1 text-dns-14N-130'>
-                    API キー
-                    <input
-                      type='password'
-                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
-                      value={difyKey}
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      庁内の一覧で使う名前です。
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor='pf-pe-desc' size='sm'>
+                      説明
+                    </Label>
+                    <textarea
+                      id='pf-pe-desc'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      rows={description.includes('【確認】') ? 5 : 2}
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
                       disabled={!procedure.can_edit}
-                      placeholder={difyKeySet ? '設定済み。変えるときだけ入力' : ''}
-                      autoComplete='new-password'
-                      onChange={(e) => setDifyKey(e.target.value)}
                     />
-                  </label>
-                  <label className='flex items-center gap-2 text-std-16N-170'>
-                    <input
-                      type='checkbox'
-                      checked={difyStub}
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      職員向けのメモです。空欄でも構いません。
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor='pf-pe-notify' size='sm'>
+                      職員への通知先
+                    </Label>
+                    <textarea
+                      id='pf-pe-notify'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      rows={2}
+                      value={notifyEmails}
+                      onChange={(e) => setNotifyEmails(e.target.value)}
                       disabled={!procedure.can_edit}
-                      onChange={(e) => setDifyStub(e.target.checked)}
+                      placeholder='staff@example.lg.jp'
                     />
-                    接続せず、スタブで所見を返す
-                  </label>
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    ワークフローは、確認文の id ごとに pass、fail、unknown と短い detail を findings として返します。ファイルを渡して文章で返すワークフローとは、入出力が違います。鍵は保存後に画面へ戻しません。
-                  </p>
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      案内が提出されたとき、職員へ知らせます。1行に1件、またはカンマ区切り。本文に回答は入れません。
+                      {config?.mail?.smtp
+                        ? ' 庁内のメールサーバに送ります。'
+                        : config?.mail?.dump
+                          ? ' いまはメールサーバの代わりに、サーバ上のテキストに書き出します。'
+                          : ' いまはメールサーバ未設定のため、宛先を書いても送られません。'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor='pf-pe-vis' size='sm'>
+                      公開範囲
+                    </Label>
+                    <select
+                      id='pf-pe-vis'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={procedure.visibility === 'both' ? 'both' : 'internal'}
+                      disabled={!procedure.can_edit}
+                      onChange={async (e) => {
+                        const next = await setProcedureVisibility(
+                          procedure.id,
+                          e.target.value === 'both' ? 'both' : 'internal',
+                        );
+                        if (next) await mutate();
+                      }}
+                    >
+                      <option value='internal'>庁内のみ</option>
+                      <option value='both'>庁内と外部</option>
+                    </select>
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      庁内/庁外の公開はこの手続きで決めます。「庁内と外部」にすると、案内と申請用紙すべてが外部からも記入できます。マイナンバーなど庁内専用の部品を含む場合は庁外公開できません。
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor='pf-pe-guide' size='sm'>
+                      {singleForm ? '申請用紙' : 'ナビゲーションフォーム'}
+                    </Label>
+                    <select
+                      id='pf-pe-guide'
+                      className='mt-1 w-full rounded-4 border border-solid-gray-420 px-3 py-2'
+                      value={guideFormId}
+                      onChange={(e) => setGuideFormId(e.target.value)}
+                      disabled={!procedure.can_edit}
+                    >
+                      {[...forms]
+                        .sort((a, b) => {
+                          const aNav = (a.tags || []).includes(NAVIGATION_TAG) ? 0 : 1;
+                          const bNav = (b.tags || []).includes(NAVIGATION_TAG) ? 0 : 1;
+                          return aNav - bNav;
+                        })
+                        .map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.title}（
+                            {f.locked || f.work_status === 'ready' ? '作成完了' : '作成中'}
+                            {f.has_opening ? ' · 受付中' : ''}
+                            {(f.tags || []).length ? ` · ${(f.tags || []).join('、')}` : ''}）
+                          </option>
+                        ))}
+                    </select>
+                    <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                      {singleForm
+                        ? 'この1枚を公開します。ラジオやプルダウンを足すと、ナビゲーションとして使えるようになります。'
+                        : '申請者や回答者が最初に答えるナビゲーションフォームです。下の対応は、このフォームの答えごとに決まります。'}
+                    </p>
+                    {procedure.guide_public_url ? (
+                      <p className='mt-1 text-dns-14N-130 text-solid-gray-600'>
+                        {procedure.status === 'published' ? '公開 URL' : '前回の公開 URL'}:{' '}
+                        {procedure.guide_public_url}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-              )}
-            </section>
-            <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
-              <h2 className='text-std-18B-160'>確定前の経路</h2>
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                提出後は、受付確認、担当課、確定の順です。進む、戻す、差戻しができます。確定すると、台帳の行になるか、受け口へ送られます。
-              </p>
-              <div className='grid gap-3 md:grid-cols-3'>
-                {(
-                  [
-                    ['受付確認', deskRole, setDeskRole],
-                    ['担当課', sectionRole, setSectionRole],
-                    ['確定', confirmRole, setConfirmRole],
-                  ] as const
-                ).map(([label, value, setValue]) => (
-                  <label key={label} className='flex flex-col gap-1 text-dns-14N-130'>
-                    {label}の役割
-                    <input
-                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
-                      value={value}
-                      disabled={!procedure.can_edit}
-                      onChange={(e) => setValue(e.target.value)}
-                    />
-                  </label>
-                ))}
-              </div>
-              <fieldset className='flex flex-col gap-2'>
-                <legend className='text-dns-14N-130'>確定した後</legend>
-                <label className='flex items-center gap-2 text-std-16N-170'>
-                  <input
-                    type='radio'
-                    name='pf-exit'
-                    checked={exitTo === 'ledger'}
-                    disabled={!procedure.can_edit}
-                    onChange={() => setExitTo('ledger')}
-                  />
-                  台帳で担当と状態を進める
-                </label>
-                <label className='flex items-center gap-2 text-std-16N-170'>
-                  <input
-                    type='radio'
-                    name='pf-exit'
-                    checked={exitTo === 'external'}
-                    disabled={!procedure.can_edit}
-                    onChange={() => setExitTo('external')}
-                  />
-                  既存システムへ渡す
-                </label>
-              </fieldset>
-              {exitTo === 'external' && (
-                <div className='flex flex-col gap-3'>
-                  <label className='flex flex-col gap-1 text-dns-14N-130'>
-                    受け口の URL
-                    <input
-                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
-                      value={endpointUrl}
-                      disabled={!procedure.can_edit}
-                      placeholder='https://example.lg.jp/intake'
-                      onChange={(e) => setEndpointUrl(e.target.value)}
-                    />
-                  </label>
-                  <label className='flex flex-col gap-1 text-dns-14N-130'>
-                    受け口の鍵
-                    <input
-                      type='password'
-                      className='rounded-4 border border-solid-gray-420 px-3 py-2'
-                      value={endpointKey}
-                      disabled={!procedure.can_edit}
-                      placeholder={keySet ? '設定済み。変えるときだけ入力' : ''}
-                      autoComplete='new-password'
-                      onChange={(e) => setEndpointKey(e.target.value)}
-                    />
-                  </label>
-                  <label className='flex items-center gap-2 text-std-16N-170'>
-                    <input
-                      type='checkbox'
-                      checked={sendMynumber}
-                      disabled={!procedure.can_edit}
-                      onChange={(e) => setSendMynumber(e.target.checked)}
-                    />
-                    マイナンバーを含めて送る
-                  </label>
+                <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                  <h2 className='text-std-18B-160'>所見の呼び出し</h2>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    確定すると、記入済みの項目をこの URL へ送ります。送れなかったときは、申請の画面から同じ版で送り直せます。鍵は保存後に画面へ戻しません。
+                    この手続きの確認文への所見を、どこで書くかです。合否は職員が押します。
                   </p>
-                </div>
-              )}
-              {exitTo === 'ledger' && (
-                <label className='flex flex-col gap-1 text-dns-14N-130'>
-                  台帳の状態（1行に1つ。最初の行が確定時の状態）
-                  <textarea
-                    className='min-h-24 rounded-4 border border-solid-gray-420 px-3 py-2'
-                    value={ledgerStatuses}
-                    disabled={!procedure.can_edit}
-                    onChange={(e) => setLedgerStatuses(e.target.value)}
-                  />
-                </label>
-              )}
-            </section>
-            <ProcedureSlotEditor
-              fields={fields}
-              styleForms={styleForms}
-              guideFormId={guideFormId}
-              guideTitle={procedure.guide_title || name}
-              singleForm={singleForm}
-              ruleMap={ruleMap}
-              review={bundleReview}
-              formalChecks={procedure.formal_checks}
-              canEdit={Boolean(procedure.can_edit)}
-              onRule={updateRule}
-              onReview={setBundleReview}
-            />
-            {orphanRules.length > 0 && (
-              <p className='text-solid-gray-700'>
-                案内に無い対応が {orphanRules.length} 件残っています。保存すると残ります。選択肢を戻すか、空にして消してください。
-              </p>
-            )}
-            </>
+                  <fieldset className='flex flex-col gap-2'>
+                    <legend className='text-dns-14N-130'>呼び出し先</legend>
+                    <label className='flex items-center gap-2 text-std-16N-170'>
+                      <input
+                        type='radio'
+                        name='pf-review-engine'
+                        checked={reviewEngine === 'openai'}
+                        disabled={!procedure.can_edit}
+                        onChange={() => setReviewEngine('openai')}
+                      />
+                      OpenAI 互換
+                    </label>
+                    <label className='flex items-center gap-2 text-std-16N-170'>
+                      <input
+                        type='radio'
+                        name='pf-review-engine'
+                        checked={reviewEngine === 'dify'}
+                        disabled={!procedure.can_edit}
+                        onChange={() => setReviewEngine('dify')}
+                      />
+                      Dify
+                    </label>
+                  </fieldset>
+                  {reviewEngine === 'dify' && (
+                    <div className='flex flex-col gap-3'>
+                      <label className='flex flex-col gap-1 text-dns-14N-130'>
+                        Dify の API ベース
+                        <input
+                          className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={difyBaseUrl}
+                          disabled={!procedure.can_edit}
+                          placeholder='https://api.dify.ai/v1'
+                          onChange={(e) => setDifyBaseUrl(e.target.value)}
+                        />
+                      </label>
+                      <label className='flex flex-col gap-1 text-dns-14N-130'>
+                        API キー
+                        <input
+                          type='password'
+                          className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={difyKey}
+                          disabled={!procedure.can_edit}
+                          placeholder={difyKeySet ? '設定済み。変えるときだけ入力' : ''}
+                          autoComplete='new-password'
+                          onChange={(e) => setDifyKey(e.target.value)}
+                        />
+                      </label>
+                      <label className='flex items-center gap-2 text-std-16N-170'>
+                        <input
+                          type='checkbox'
+                          checked={difyStub}
+                          disabled={!procedure.can_edit}
+                          onChange={(e) => setDifyStub(e.target.checked)}
+                        />
+                        接続せず、スタブで所見を返す
+                      </label>
+                      <p className='text-dns-14N-130 text-solid-gray-600'>
+                        ワークフローは、確認文の id ごとに pass、fail、unknown と短い detail を
+                        findings
+                        として返します。ファイルを渡して文章で返すワークフローとは、入出力が違います。鍵は保存後に画面へ戻しません。
+                      </p>
+                    </div>
+                  )}
+                </section>
+                <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                  <h2 className='text-std-18B-160'>確定前の経路</h2>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    提出後は、受付確認、担当課、確定の順です。進む、戻す、差戻しができます。確定すると、台帳の行になるか、受け口へ送られます。
+                  </p>
+                  <div className='grid gap-3 md:grid-cols-3'>
+                    {(
+                      [
+                        ['受付確認', deskRole, setDeskRole],
+                        ['担当課', sectionRole, setSectionRole],
+                        ['確定', confirmRole, setConfirmRole],
+                      ] as const
+                    ).map(([label, value, setValue]) => (
+                      <label key={label} className='flex flex-col gap-1 text-dns-14N-130'>
+                        {label}の役割
+                        <input
+                          className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={value}
+                          disabled={!procedure.can_edit}
+                          onChange={(e) => setValue(e.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <fieldset className='flex flex-col gap-2'>
+                    <legend className='text-dns-14N-130'>確定した後</legend>
+                    <label className='flex items-center gap-2 text-std-16N-170'>
+                      <input
+                        type='radio'
+                        name='pf-exit'
+                        checked={exitTo === 'ledger'}
+                        disabled={!procedure.can_edit}
+                        onChange={() => setExitTo('ledger')}
+                      />
+                      台帳で担当と状態を進める
+                    </label>
+                    <label className='flex items-center gap-2 text-std-16N-170'>
+                      <input
+                        type='radio'
+                        name='pf-exit'
+                        checked={exitTo === 'external'}
+                        disabled={!procedure.can_edit}
+                        onChange={() => setExitTo('external')}
+                      />
+                      既存システムへ渡す
+                    </label>
+                  </fieldset>
+                  {exitTo === 'external' && (
+                    <div className='flex flex-col gap-3'>
+                      <label className='flex flex-col gap-1 text-dns-14N-130'>
+                        受け口の URL
+                        <input
+                          className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={endpointUrl}
+                          disabled={!procedure.can_edit}
+                          placeholder='https://example.lg.jp/intake'
+                          onChange={(e) => setEndpointUrl(e.target.value)}
+                        />
+                      </label>
+                      <label className='flex flex-col gap-1 text-dns-14N-130'>
+                        受け口の鍵
+                        <input
+                          type='password'
+                          className='rounded-4 border border-solid-gray-420 px-3 py-2'
+                          value={endpointKey}
+                          disabled={!procedure.can_edit}
+                          placeholder={keySet ? '設定済み。変えるときだけ入力' : ''}
+                          autoComplete='new-password'
+                          onChange={(e) => setEndpointKey(e.target.value)}
+                        />
+                      </label>
+                      <label className='flex items-center gap-2 text-std-16N-170'>
+                        <input
+                          type='checkbox'
+                          checked={sendMynumber}
+                          disabled={!procedure.can_edit}
+                          onChange={(e) => setSendMynumber(e.target.checked)}
+                        />
+                        マイナンバーを含めて送る
+                      </label>
+                      <p className='text-dns-14N-130 text-solid-gray-600'>
+                        確定すると、記入済みの項目をこの URL
+                        へ送ります。送れなかったときは、申請の画面から同じ版で送り直せます。鍵は保存後に画面へ戻しません。
+                      </p>
+                    </div>
+                  )}
+                  {exitTo === 'ledger' && (
+                    <label className='flex flex-col gap-1 text-dns-14N-130'>
+                      台帳の状態（1行に1つ。最初の行が確定時の状態）
+                      <textarea
+                        className='min-h-24 rounded-4 border border-solid-gray-420 px-3 py-2'
+                        value={ledgerStatuses}
+                        disabled={!procedure.can_edit}
+                        onChange={(e) => setLedgerStatuses(e.target.value)}
+                      />
+                    </label>
+                  )}
+                </section>
+                <ProcedureSlotEditor
+                  fields={fields}
+                  styleForms={styleForms}
+                  guideFormId={guideFormId}
+                  guideTitle={procedure.guide_title || name}
+                  singleForm={singleForm}
+                  ruleMap={ruleMap}
+                  review={bundleReview}
+                  formalChecks={procedure.formal_checks}
+                  canEdit={Boolean(procedure.can_edit)}
+                  onRule={updateRule}
+                  onReview={setBundleReview}
+                />
+                {orphanRules.length > 0 && (
+                  <p className='text-solid-gray-700'>
+                    案内に無い対応が {orphanRules.length}{' '}
+                    件残っています。保存すると残ります。選択肢を戻すか、空にして消してください。
+                  </p>
+                )}
+              </>
             )}
 
             {pane === 'preview' && (
@@ -821,7 +839,10 @@ export const PatchformProcedureEditPage = () => {
                               key={`unpub-${f.id}`}
                               className='flex flex-wrap items-center gap-3 px-3 py-2'
                             >
-                              <PiFileTextBold aria-hidden={true} className='size-4 text-solid-gray-600' />
+                              <PiFileTextBold
+                                aria-hidden={true}
+                                className='size-4 text-solid-gray-600'
+                              />
                               <div className='min-w-0 flex-1'>
                                 <p className='truncate text-std-16N-170 text-solid-gray-900'>
                                   {f.title}
@@ -864,7 +885,13 @@ export const PatchformProcedureEditPage = () => {
                 id='pf-proc-actions'
                 className='sticky bottom-0 z-10 flex flex-wrap gap-2 border-t border-solid-gray-420 bg-white py-3'
               >
-                <Button type='button' variant='outline' size='md' aria-disabled={submitting} onClick={() => void onSave()}>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='md'
+                  aria-disabled={submitting}
+                  onClick={() => void onSave()}
+                >
                   {submitting ? '保存中...' : '保存する'}
                 </Button>
                 {procedure.status === 'published' ? (
@@ -924,7 +951,10 @@ export const PatchformProcedureEditPage = () => {
                   }
                   onClick={async () => {
                     if (procedure.status === 'published') return;
-                    if (!window.confirm('この手続きを削除しますか。申請がある場合は削除できません。')) return;
+                    if (
+                      !window.confirm('この手続きを削除しますか。申請がある場合は削除できません。')
+                    )
+                      return;
                     const ok = await remove(procedure.id);
                     if (ok) navigate('/patchform/procedures');
                   }}

@@ -37,9 +37,7 @@ export const DocsSection = ({
   const [retagSelected, setRetagSelected] = useState<string[]>([]);
   const [retagNewText, setRetagNewText] = useState('');
 
-  const visibleDocs = filterTag
-    ? docs.filter((d) => (d.tags ?? []).includes(filterTag))
-    : docs;
+  const visibleDocs = filterTag ? docs.filter((d) => (d.tags ?? []).includes(filterTag)) : docs;
 
   const openRetag = (doc: KnowledgeDoc) => {
     clear();
@@ -65,7 +63,11 @@ export const DocsSection = ({
 
   const handleDelete = (source: string) => {
     if (!window.confirm(`「${source}」をナレッジから削除します。よろしいですか？`)) return;
-    void run(() => deleteDoc(scope, source), `「${source}」を削除しました。`, '削除に失敗しました。');
+    void run(
+      () => deleteDoc(scope, source),
+      `「${source}」を削除しました。`,
+      '削除に失敗しました。',
+    );
   };
 
   const handleRetagSave = (source: string) => {
@@ -167,7 +169,10 @@ export const DocsSection = ({
                       </ChipLabel>
                     )}
                     {d.ingest_status === 'failed' && (
-                      <ChipLabel className='bg-red-50 text-red-900' title={d.ingest_error || undefined}>
+                      <ChipLabel
+                        className='bg-red-50 text-red-900'
+                        title={d.ingest_error || undefined}
+                      >
                         登録失敗
                       </ChipLabel>
                     )}
@@ -183,7 +188,9 @@ export const DocsSection = ({
                           (d.pii_hits ?? [])
                             .slice(0, 5)
                             .map((h) => `${h.category}: ${h.context || h.match}`)
-                            .join('\n') || (d.pii_labels ?? []).join('・') || undefined
+                            .join('\n') ||
+                          (d.pii_labels ?? []).join('・') ||
+                          undefined
                         }
                       >
                         個人情報: {(d.pii_labels ?? []).join('・') || '検知'}
@@ -193,10 +200,9 @@ export const DocsSection = ({
                   </span>
                   <span className='text-dns-14N-130 text-solid-gray-600'>
                     {d.page_count > 0 ? `${d.page_count} ページ・` : ''}
-                    タグ: {(d.tags ?? []).length > 0 ? (d.tags ?? []).join(', ') : 'なし（検索対象外）'}
-                    {d.ingest_status === 'failed' && d.ingest_error
-                      ? `・${d.ingest_error}`
-                      : ''}
+                    タグ:{' '}
+                    {(d.tags ?? []).length > 0 ? (d.tags ?? []).join(', ') : 'なし（検索対象外）'}
+                    {d.ingest_status === 'failed' && d.ingest_error ? `・${d.ingest_error}` : ''}
                   </span>
                   {d.pii_status === 'suspected' && (d.pii_hits ?? []).length > 0 && (
                     <ul className='text-dns-14N-130 text-orange-900 list-disc pl-5'>
@@ -266,7 +272,8 @@ export const DocsSection = ({
       )}
 
       <SupportText>
-        ※ ファイルの個別再インデックスには非対応です。内容を更新する場合は同名で再登録してください（自動的に上書きされます）。
+        ※
+        ファイルの個別再インデックスには非対応です。内容を更新する場合は同名で再登録してください（自動的に上書きされます）。
       </SupportText>
     </div>
   );

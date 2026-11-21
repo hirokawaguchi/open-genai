@@ -81,9 +81,7 @@ export const PromptUseSection = ({ templates }: Props) => {
                     onClick={() => onSelect(t)}
                     aria-pressed={isActive}
                     className={`flex w-full flex-col gap-1 rounded-8 border px-4 py-3 text-left transition-colors hover:border-blue-900 hover:bg-blue-50 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-black ${
-                      isActive
-                        ? 'border-blue-900 bg-blue-50'
-                        : 'border-solid-gray-300 bg-white'
+                      isActive ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-300 bg-white'
                     }`}
                   >
                     <span className='flex items-center gap-2'>
@@ -140,9 +138,7 @@ export const PromptUseSection = ({ templates }: Props) => {
                 {preview || '（プレビューする内容がありません）'}
               </pre>
               {missing.length > 0 && (
-                <SupportText>
-                  未入力の変数: {missing.map((m) => `{{${m}}}`).join(', ')}
-                </SupportText>
+                <SupportText>未入力の変数: {missing.map((m) => `{{${m}}}`).join(', ')}</SupportText>
               )}
             </div>
 

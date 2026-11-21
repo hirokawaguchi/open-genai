@@ -50,7 +50,7 @@ function ReviewLineRow({
   const source =
     line.finding?.source === 'staff'
       ? '職員が確定'
-      :     line.finding?.source === 'model'
+      : line.finding?.source === 'model'
         ? '所見'
         : line.finding?.source === 'dify'
           ? 'Dify'
@@ -338,8 +338,7 @@ export const PatchformApplicationPage = () => {
   const referenceTags = new Set<string>();
   for (const f of allForms) {
     const isInBundle =
-      inBundleFormIds.has(f.id) ||
-      (f.receptions || []).some((r) => inBundleFormIds.has(r.id));
+      inBundleFormIds.has(f.id) || (f.receptions || []).some((r) => inBundleFormIds.has(r.id));
     if (isInBundle) for (const t of f.tags || []) referenceTags.add(t);
   }
   const relatedForms = allForms.filter((f) => {
@@ -364,34 +363,32 @@ export const PatchformApplicationPage = () => {
             anon
               ? [
                   {
-                    label:
-                      application?.title || application?.procedure_name || '申請',
+                    label: application?.title || application?.procedure_name || '申請',
                   },
                 ]
               : fromMy
-              ? [
-                  ...routes.homeCrumbs,
-                  { label: routes.myListLabel, to: routes.myList },
-                  {
-                    label:
-                      application?.title || application?.procedure_name || '手続き',
-                  },
-                ]
-              : [
-                  { label: 'ホーム', to: '/' },
-                  { label: 'AIアプリ', to: '/apps' },
-                  { label: PATCHFORM_LABEL, to: '/patchform' },
-                  { label: '申請受付', to: '/patchform/inbox' },
-                  ...(application?.procedure_id
-                    ? [
-                        {
-                          label: application.procedure_name,
-                          to: `/patchform/inbox/${application.procedure_id}`,
-                        },
-                      ]
-                    : []),
-                  { label: application?.token || '申請' },
-                ]
+                ? [
+                    ...routes.homeCrumbs,
+                    { label: routes.myListLabel, to: routes.myList },
+                    {
+                      label: application?.title || application?.procedure_name || '手続き',
+                    },
+                  ]
+                : [
+                    { label: 'ホーム', to: '/' },
+                    { label: 'AIアプリ', to: '/apps' },
+                    { label: PATCHFORM_LABEL, to: '/patchform' },
+                    { label: '申請受付', to: '/patchform/inbox' },
+                    ...(application?.procedure_id
+                      ? [
+                          {
+                            label: application.procedure_name,
+                            to: `/patchform/inbox/${application.procedure_id}`,
+                          },
+                        ]
+                      : []),
+                    { label: application?.token || '申請' },
+                  ]
           }
         />
         {isLoading && <p className='text-solid-gray-600'>読み込み中...</p>}
@@ -426,21 +423,23 @@ export const PatchformApplicationPage = () => {
                   </span>
                 )}
               </div>
-              <p className='text-std-16N-170 text-solid-gray-700'>
-                案内番号: {application.token}
-              </p>
+              <p className='text-std-16N-170 text-solid-gray-700'>案内番号: {application.token}</p>
               {application.procedure_description && (
                 <p className='text-std-16N-170 text-solid-gray-700'>
                   {application.procedure_description}
                 </p>
               )}
-              <p className='text-dns-14N-130 text-solid-gray-600'>公開 URL: {application.public_url}</p>
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                公開 URL: {application.public_url}
+              </p>
             </div>
             {anon ? (
               <section className='flex flex-wrap items-center justify-between gap-3 rounded-8 border border-blue-900/30 bg-blue-50/60 p-4'>
                 <div className='min-w-0'>
                   <p className='text-std-16N-170 text-solid-gray-800'>
-                    この共有リンクでは、記入・書類の追加・ダウンロードができます。<strong>提出</strong>や進み具合の管理は、ログインして<strong>マイ手続き</strong>に引き取ってから行います。
+                    この共有リンクでは、記入・書類の追加・ダウンロードができます。
+                    <strong>提出</strong>や進み具合の管理は、ログインして<strong>マイ手続き</strong>
+                    に引き取ってから行います。
                   </p>
                   {claimError && (
                     <p className='mt-1 text-error-1' role='alert'>
@@ -466,62 +465,65 @@ export const PatchformApplicationPage = () => {
               </p>
             ) : readOnly ? (
               <p className='rounded-8 border border-blue-900/30 bg-blue-50/60 p-3 text-std-16N-170 text-solid-gray-800'>
-                これは申請受付（受領側）の画面です。ファイルの追加・差し替えや内容の修正ができ、変更はすべて<strong>変更履歴</strong>に記録されます。ただし<strong>条件の変更</strong>と<strong>提出</strong>は申請者本人が行います。
+                これは申請受付（受領側）の画面です。ファイルの追加・差し替えや内容の修正ができ、変更はすべて
+                <strong>変更履歴</strong>に記録されます。ただし<strong>条件の変更</strong>と
+                <strong>提出</strong>は申請者本人が行います。
               </p>
             ) : (
-            <section className='flex flex-wrap items-center justify-between gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
-              <div className='min-w-0'>
-                {submitted ? (
-                  <p className='text-std-16N-170 text-solid-gray-800'>
-                    この手続きは<strong>提出済み</strong>です。内容を直したいときは提出を取り消してください。
-                  </p>
-                ) : readyToSubmit ? (
-                  <p className='text-std-16N-170 text-solid-gray-800'>
-                    必要な書類がそろいました。内容を確認し、提出できるときに「提出する」を押してください。
-                  </p>
-                ) : (
-                  <p className='text-std-16N-170 text-solid-gray-700'>
-                    書類がそろうと「提出する」ボタンが押せます。提出は自動では行いません。
-                  </p>
-                )}
-              </div>
-              <div className='flex shrink-0 flex-wrap gap-2'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='md'
-                  onClick={() =>
-                    downloadApplicationReceipt({
-                      application,
-                      note: '内容は「マイ手続き」からいつでも確認・ダウンロードできます。メールでの通知は行われません。',
-                    })
-                  }
-                >
-                  控えをダウンロード（.txt）
-                </Button>
-                {submitted ? (
+              <section className='flex flex-wrap items-center justify-between gap-3 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-4'>
+                <div className='min-w-0'>
+                  {submitted ? (
+                    <p className='text-std-16N-170 text-solid-gray-800'>
+                      この手続きは<strong>提出済み</strong>
+                      です。内容を直したいときは提出を取り消してください。
+                    </p>
+                  ) : readyToSubmit ? (
+                    <p className='text-std-16N-170 text-solid-gray-800'>
+                      必要な書類がそろいました。内容を確認し、提出できるときに「提出する」を押してください。
+                    </p>
+                  ) : (
+                    <p className='text-std-16N-170 text-solid-gray-700'>
+                      書類がそろうと「提出する」ボタンが押せます。提出は自動では行いません。
+                    </p>
+                  )}
+                </div>
+                <div className='flex shrink-0 flex-wrap gap-2'>
                   <Button
                     type='button'
                     variant='outline'
                     size='md'
-                    aria-disabled={statusBusy}
-                    onClick={() => void onUnsubmitApp()}
+                    onClick={() =>
+                      downloadApplicationReceipt({
+                        application,
+                        note: '内容は「マイ手続き」からいつでも確認・ダウンロードできます。メールでの通知は行われません。',
+                      })
+                    }
                   >
-                    提出を取り消す
+                    控えをダウンロード（.txt）
                   </Button>
-                ) : (
-                  <Button
-                    type='button'
-                    variant='solid-fill'
-                    size='md'
-                    aria-disabled={statusBusy || !readyToSubmit}
-                    onClick={() => void onSubmitApp()}
-                  >
-                    提出する
-                  </Button>
-                )}
-              </div>
-            </section>
+                  {submitted ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='md'
+                      aria-disabled={statusBusy}
+                      onClick={() => void onUnsubmitApp()}
+                    >
+                      提出を取り消す
+                    </Button>
+                  ) : (
+                    <Button
+                      type='button'
+                      variant='solid-fill'
+                      size='md'
+                      aria-disabled={statusBusy || !readyToSubmit}
+                      onClick={() => void onSubmitApp()}
+                    >
+                      提出する
+                    </Button>
+                  )}
+                </div>
+              </section>
             )}
             {navItem && (
               <section className='flex flex-col gap-3 rounded-8 border border-blue-900/40 bg-blue-50/50 p-4'>
@@ -589,79 +591,81 @@ export const PatchformApplicationPage = () => {
                 )}
               </section>
             )}
-            {readOnly && application?.review && (application.review.slots.length > 0 || application.review.cross.length > 0) && (
-              <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
-                <h2 className='text-std-18B-160'>審査項目</h2>
-                <p className='text-dns-14N-130 text-solid-gray-600'>
-                  提出した時点の基準です。手続きをあとから直しても、この申請の項目は変わりません。確認が残る申請は、受付が確認中になります。
-                </p>
-                <div>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    disabled={statusBusy}
-                    onClick={() => void onGenerateFindings()}
-                  >
-                    所見を出す
-                  </Button>
-                  {procedure?.review_call?.label ? (
-                    <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>
-                      呼び出しは{procedure.review_call.label}です。
-                    </p>
-                  ) : null}
-                </div>
-                {reviewError && (
-                  <p className='text-error-1' role='alert'>
-                    {reviewError}
+            {readOnly &&
+              application?.review &&
+              (application.review.slots.length > 0 || application.review.cross.length > 0) && (
+                <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
+                  <h2 className='text-std-18B-160'>審査項目</h2>
+                  <p className='text-dns-14N-130 text-solid-gray-600'>
+                    提出した時点の基準です。手続きをあとから直しても、この申請の項目は変わりません。確認が残る申請は、受付が確認中になります。
                   </p>
-                )}
-                {application.review.slots.map((slot) => (
-                  <div key={slot.slot_id} className='rounded-8 border border-solid-gray-200 p-3'>
-                    <h3 className='text-std-16B-150'>{slot.title || slot.slot_id}</h3>
-                    {slot.formal.length > 0 && (
-                      <ul className='mt-2 flex flex-col gap-1'>
-                        {slot.formal.map((line) => (
-                          <li key={line.id} className='text-std-16N-170'>
-                            <span className='text-solid-gray-600'>
-                              {line.result === 'pass'
-                                ? '満たしている'
-                                : line.result === 'fail'
-                                  ? '満たしていない'
-                                  : '人が確認'}
-                            </span>
-                            {' · '}
-                            {line.label}
-                            {line.detail ? `（${line.detail}）` : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {slot.content.map((line) => (
-                      <ReviewLineRow
-                        key={line.id}
-                        line={line}
-                        busy={statusBusy}
-                        onPick={(id, result) => void onFinding(id, result)}
-                      />
-                    ))}
-                  </div>
-                ))}
-                {application.review.cross.length > 0 && (
                   <div>
-                    <h3 className='text-std-16B-150'>枠をまたぐ確認</h3>
-                    {application.review.cross.map((line) => (
-                      <ReviewLineRow
-                        key={line.id}
-                        line={line}
-                        busy={statusBusy}
-                        onPick={(id, result) => void onFinding(id, result)}
-                      />
-                    ))}
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      disabled={statusBusy}
+                      onClick={() => void onGenerateFindings()}
+                    >
+                      所見を出す
+                    </Button>
+                    {procedure?.review_call?.label ? (
+                      <p className='mt-2 text-dns-14N-130 text-solid-gray-600'>
+                        呼び出しは{procedure.review_call.label}です。
+                      </p>
+                    ) : null}
                   </div>
-                )}
-              </section>
-            )}
+                  {reviewError && (
+                    <p className='text-error-1' role='alert'>
+                      {reviewError}
+                    </p>
+                  )}
+                  {application.review.slots.map((slot) => (
+                    <div key={slot.slot_id} className='rounded-8 border border-solid-gray-200 p-3'>
+                      <h3 className='text-std-16B-150'>{slot.title || slot.slot_id}</h3>
+                      {slot.formal.length > 0 && (
+                        <ul className='mt-2 flex flex-col gap-1'>
+                          {slot.formal.map((line) => (
+                            <li key={line.id} className='text-std-16N-170'>
+                              <span className='text-solid-gray-600'>
+                                {line.result === 'pass'
+                                  ? '満たしている'
+                                  : line.result === 'fail'
+                                    ? '満たしていない'
+                                    : '人が確認'}
+                              </span>
+                              {' · '}
+                              {line.label}
+                              {line.detail ? `（${line.detail}）` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {slot.content.map((line) => (
+                        <ReviewLineRow
+                          key={line.id}
+                          line={line}
+                          busy={statusBusy}
+                          onPick={(id, result) => void onFinding(id, result)}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                  {application.review.cross.length > 0 && (
+                    <div>
+                      <h3 className='text-std-16B-150'>枠をまたぐ確認</h3>
+                      {application.review.cross.map((line) => (
+                        <ReviewLineRow
+                          key={line.id}
+                          line={line}
+                          busy={statusBusy}
+                          onPick={(id, result) => void onFinding(id, result)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
             {readOnly && submitted && application?.route && (
               <section className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-4'>
                 <h2 className='text-std-18B-160'>受付の経路</h2>
@@ -776,8 +780,8 @@ export const PatchformApplicationPage = () => {
               </div>
               {!receptionSingle && (
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  初期の並び順は「案内で必要になった様式 → 準備するもの（添付） → あとから足した枠」の順です。左の
-                  ↑↓ で申請しやすい順に並び替えできます。
+                  初期の並び順は「案内で必要になった様式 → 準備するもの（添付） →
+                  あとから足した枠」の順です。左の ↑↓ で申請しやすい順に並び替えできます。
                 </p>
               )}
               {itemError && (
@@ -786,14 +790,19 @@ export const PatchformApplicationPage = () => {
                 </p>
               )}
               {items.length === 0 ? (
-                <p className='text-solid-gray-600'>この回答では推奨する枠がありません。操作方法から足せます。</p>
+                <p className='text-solid-gray-600'>
+                  この回答では推奨する枠がありません。操作方法から足せます。
+                </p>
               ) : (
                 <div className='overflow-x-auto rounded-8 border border-solid-gray-300'>
                   <table className='w-full min-w-[calc(780/16*1rem)] border-collapse text-std-16N-170'>
                     <thead>
                       <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-dns-14N-130 text-solid-gray-600'>
                         {!receptionSingle && (
-                          <th scope='col' className='w-[calc(56/16*1rem)] px-2 py-2 text-center font-normal'>
+                          <th
+                            scope='col'
+                            className='w-[calc(56/16*1rem)] px-2 py-2 text-center font-normal'
+                          >
                             並び
                           </th>
                         )}
@@ -817,7 +826,7 @@ export const PatchformApplicationPage = () => {
                     <tbody>
                       {items.map((f, index) => {
                         const rows =
-                          (f.definition && f.answers)
+                          f.definition && f.answers
                             ? answerRows(f.definition.components, f.answers)
                             : [];
                         // 記入と添付は併存できる。ファイルがあるか / 記入済みか を別々に見る。
@@ -855,28 +864,28 @@ export const PatchformApplicationPage = () => {
                             }`}
                           >
                             {!receptionSingle && (
-                            <td className='px-2 py-2.5'>
-                              <div className='flex flex-col items-center gap-1'>
-                                <button
-                                  type='button'
-                                  aria-label='上へ移動'
-                                  className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-600 hover:bg-solid-gray-100 disabled:opacity-30'
-                                  disabled={busy || index === 0}
-                                  onClick={() => void onMove(index, 'up')}
-                                >
-                                  <PiArrowUpBold className='size-4' />
-                                </button>
-                                <button
-                                  type='button'
-                                  aria-label='下へ移動'
-                                  className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-600 hover:bg-solid-gray-100 disabled:opacity-30'
-                                  disabled={busy || index === items.length - 1}
-                                  onClick={() => void onMove(index, 'down')}
-                                >
-                                  <PiArrowDownBold className='size-4' />
-                                </button>
-                              </div>
-                            </td>
+                              <td className='px-2 py-2.5'>
+                                <div className='flex flex-col items-center gap-1'>
+                                  <button
+                                    type='button'
+                                    aria-label='上へ移動'
+                                    className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-600 hover:bg-solid-gray-100 disabled:opacity-30'
+                                    disabled={busy || index === 0}
+                                    onClick={() => void onMove(index, 'up')}
+                                  >
+                                    <PiArrowUpBold className='size-4' />
+                                  </button>
+                                  <button
+                                    type='button'
+                                    aria-label='下へ移動'
+                                    className='rounded-4 border border-solid-gray-300 p-1 text-solid-gray-600 hover:bg-solid-gray-100 disabled:opacity-30'
+                                    disabled={busy || index === items.length - 1}
+                                    onClick={() => void onMove(index, 'down')}
+                                  >
+                                    <PiArrowDownBold className='size-4' />
+                                  </button>
+                                </div>
+                              </td>
                             )}
                             <td className='px-3 py-2.5'>
                               <div className='flex items-start gap-2'>
@@ -927,11 +936,7 @@ export const PatchformApplicationPage = () => {
                                         type='button'
                                         className='text-left text-dns-14N-130 text-blue-900 underline-offset-2 hover:underline'
                                         onClick={() =>
-                                          void downloadItemTemplate(
-                                            aid,
-                                            f.id,
-                                            f.template?.filename,
-                                          )
+                                          void downloadItemTemplate(aid, f.id, f.template?.filename)
                                         }
                                       >
                                         様式ひな型をDL（{f.template.filename}）
@@ -1103,11 +1108,12 @@ export const PatchformApplicationPage = () => {
             </section>
 
             {!receptionSingle && (
-            <div className='flex flex-col gap-3'>
+              <div className='flex flex-col gap-3'>
                 <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 bg-white p-4'>
                   <h3 className='text-std-16B-150'>関連するフォームを足す</h3>
                   <p className='text-dns-14N-130 text-solid-gray-600'>
-                    いまの書類と<strong>同じタグ</strong>が付いた、公開中のフォームを候補に出します。関連する様式はここから足せます。
+                    いまの書類と<strong>同じタグ</strong>
+                    が付いた、公開中のフォームを候補に出します。関連する様式はここから足せます。
                   </p>
                   {relatedForms.length > 0 ? (
                     <div className='flex flex-wrap gap-2'>
@@ -1131,7 +1137,10 @@ export const PatchformApplicationPage = () => {
                   )}
                   {catalogSlots.filter((s) => s.form_id).length > 0 && (
                     <div className='flex flex-wrap items-center gap-2 border-t border-solid-gray-200 pt-3'>
-                      <label className='text-std-16N-170 text-solid-gray-700' htmlFor='catalog-pick'>
+                      <label
+                        className='text-std-16N-170 text-solid-gray-700'
+                        htmlFor='catalog-pick'
+                      >
                         この手続きの様式から足す
                       </label>
                       <select
@@ -1182,7 +1191,7 @@ export const PatchformApplicationPage = () => {
                     </Button>
                   </div>
                 </div>
-            </div>
+              </div>
             )}
             {!anon && application.events && application.events.length > 0 && (
               <Disclosure className='rounded-8 border border-solid-gray-300 bg-white px-4 py-3'>
@@ -1228,9 +1237,7 @@ export const PatchformApplicationPage = () => {
                                 {c.before || '（空）'}
                               </span>
                               <span className='mx-1'>→</span>
-                              <span className='text-solid-gray-900'>
-                                {c.after || '（空）'}
-                              </span>
+                              <span className='text-solid-gray-900'>{c.after || '（空）'}</span>
                             </li>
                           ))}
                         </ul>
@@ -1264,11 +1271,7 @@ export const PatchformApplicationPage = () => {
                   }}
                 />
               );
-              return fillApi ? (
-                <PatchformApiScope api={fillApi}>{modal}</PatchformApiScope>
-              ) : (
-                modal
-              );
+              return fillApi ? <PatchformApiScope api={fillApi}>{modal}</PatchformApiScope> : modal;
             })()
           : null}
       </div>

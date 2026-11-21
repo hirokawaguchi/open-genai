@@ -72,8 +72,8 @@ export const ExAppArtifactDownloads = ({ artifacts }: Props) => {
           {hasCarrier && (
             <p className='mb-3 rounded-8 bg-blue-50 p-3 text-dns-14N-130 leading-175 text-solid-gray-700'>
               LGWAN 端末からは成果物を直接ダウンロードできません。「リンクファイル」を保存し、
-              データ持ち出し経路でインターネット接続端末へ移してから、ファイル内の URL で取得してください。
-              URL の有効期限はリンクファイル内に記載しています。
+              データ持ち出し経路でインターネット接続端末へ移してから、ファイル内の URL
+              で取得してください。 URL の有効期限はリンクファイル内に記載しています。
             </p>
           )}
           <dd>
@@ -116,8 +116,7 @@ export const ExAppArtifactDownloads = ({ artifacts }: Props) => {
                 }
                 // 再ホスト前の content(base64) 非画像（xlsx 書き戻し等）向けフォールバック
                 if (artifact.content) {
-                  const mime =
-                    artifact.mime_type || 'application/octet-stream';
+                  const mime = artifact.mime_type || 'application/octet-stream';
                   const href = `data:${mime};base64,${artifact.content}`;
                   return (
                     <li key={`content-${artifact.display_name}-${index}`}>

@@ -114,7 +114,9 @@ export const Markdown = React.memo(({ className, prefix, children }: Props) => {
       >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-          rehypePlugins={[[rehypeKatex, { throwOnError: false, output: 'htmlAndMathml', strict: 'ignore' }]]}
+          rehypePlugins={[
+            [rehypeKatex, { throwOnError: false, output: 'htmlAndMathml', strict: 'ignore' }],
+          ]}
           remarkRehypeOptions={{ clobberPrefix: prefix }}
           components={components}
         >

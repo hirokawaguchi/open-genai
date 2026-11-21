@@ -39,9 +39,12 @@ export const GuestLogin = () => {
       <div>
         <h1 className='text-std-20B-160'>メールを確認してください</h1>
         <p className='mt-3 text-solid-gray-700'>
-          {email} 宛にログイン用のリンクを送信しました。メール内のリンクを開くとログインが完了します。
+          {email}{' '}
+          宛にログイン用のリンクを送信しました。メール内のリンクを開くとログインが完了します。
         </p>
-        <p className='mt-2 text-solid-gray-700'>リンクの有効期限は短めです。届かない場合は迷惑メールもご確認ください。</p>
+        <p className='mt-2 text-solid-gray-700'>
+          リンクの有効期限は短めです。届かない場合は迷惑メールもご確認ください。
+        </p>
         {devLink && (
           <div className='mt-4 rounded-8 border border-dashed border-amber-700 bg-amber-50 p-3'>
             <p className='text-dns-14N-130 text-solid-gray-700'>

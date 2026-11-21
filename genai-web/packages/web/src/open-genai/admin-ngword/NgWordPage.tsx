@@ -54,9 +54,15 @@ export const NgWordPage = () => {
           <p>・設定は棟ごとに保存されます。未設定の棟は制限なしです。</p>
           <p>・「入力制限」を有効にすると、禁止ワード・機密情報を含む入力をブロックします。</p>
           <p>・禁止ワードは1行に1語、機密情報パターンは1行に1つの正規表現で入力します。</p>
-          <p>・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。</p>
-          <p>・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。</p>
-          <p>・プロンプト本文は、オフのとき電話番号とマイナンバーだけ置き換え、氏名と住所は入力中に警告します。オンにすると氏名と住所も置き換えます。</p>
+          <p>
+            ・マイナンバー検査は検査用数字が一致する12桁のみブロックします（単なる12桁数字では止めません）。
+          </p>
+          <p>
+            ・添付アップロード時の警告とナレッジ登録時の検知は、氏名・住所・電話・マイナンバーを種別付きで表示します（ブロックしません）。
+          </p>
+          <p>
+            ・プロンプト本文は、オフのとき電話番号とマイナンバーだけ置き換え、氏名と住所は入力中に警告します。オンにすると氏名と住所も置き換えます。
+          </p>
           <p>・システム管理者による管理系アプリの実行は本制限の対象外です。</p>
         </>
       }
@@ -254,7 +260,8 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
             checked={maskPrompts}
             onChange={(e) => setMaskPrompts(e.target.checked)}
           />
-          プロンプト本文の氏名・住所も [種別N] に置き換える（オフのときは電話番号とマイナンバーだけ置き換え、氏名・住所は警告する。元の値は保存しない。添付の中身は対象外）
+          プロンプト本文の氏名・住所も [種別N]
+          に置き換える（オフのときは電話番号とマイナンバーだけ置き換え、氏名・住所は警告する。元の値は保存しない。添付の中身は対象外）
         </label>
       </fieldset>
 
@@ -263,12 +270,7 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
           禁止ワード（1行に1語）
         </Label>
         <SupportText>入力に含まれるとブロックする語を改行区切りで指定します。</SupportText>
-        <Textarea
-          id='ng-words'
-          rows={6}
-          value={words}
-          onChange={(e) => setWords(e.target.value)}
-        />
+        <Textarea id='ng-words' rows={6} value={words} onChange={(e) => setWords(e.target.value)} />
       </div>
 
       <div className='flex flex-col gap-1.5'>
@@ -276,7 +278,8 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
           機密情報パターン（1行に1正規表現）
         </Label>
         <SupportText>
-          任意の正規表現。マイナンバーは上の専用検査を使ってください（{'\\d{12}'} 単体は専用検査へ委譲されます）。
+          任意の正規表現。マイナンバーは上の専用検査を使ってください（{'\\d{12}'}{' '}
+          単体は専用検査へ委譲されます）。
         </SupportText>
         <Textarea
           id='ng-patterns'
@@ -316,7 +319,12 @@ const RulesEditor = ({ rules, submitting, error, setError, onSave }: EditorProps
               入力制限ルールを上書き保存します。よろしいですか？
             </p>
             <div className='mt-6 flex justify-end gap-3'>
-              <Button type='button' variant='outline' size='md' onClick={() => setConfirmOpen(false)}>
+              <Button
+                type='button'
+                variant='outline'
+                size='md'
+                onClick={() => setConfirmOpen(false)}
+              >
                 キャンセル
               </Button>
               <Button

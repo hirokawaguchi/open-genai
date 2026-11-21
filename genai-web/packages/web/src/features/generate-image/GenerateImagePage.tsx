@@ -148,8 +148,7 @@ export const GenerateImagePage = () => {
     if (!prompt || busy) {
       return;
     }
-    const size =
-      readPixels(resolution.value) ??
+    const size = readPixels(resolution.value) ??
       readPixels(resolution.label) ?? { width: 1024, height: 1024 };
     sentCountRef.current = rawMessages.filter((message) => message.role === 'user').length;
     setBusy(true);
@@ -246,7 +245,8 @@ export const GenerateImagePage = () => {
         navigate(`${usecase}/${targetId}`, { replace: true });
       }
     } catch (error) {
-      const data = error instanceof ApiError ? (error.data as { message?: string; code?: string }) : undefined;
+      const data =
+        error instanceof ApiError ? (error.data as { message?: string; code?: string }) : undefined;
       const message =
         data?.code === 'local_sd_unavailable'
           ? formatLocalSdUnavailableMessage(imageGenModelIds)
@@ -271,7 +271,10 @@ export const GenerateImagePage = () => {
         />
         <div className='mt-1 flex min-w-0 items-center gap-3'>
           <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{appName}</h1>
-          <p className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600' title={description}>
+          <p
+            className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600'
+            title={description}
+          >
             {description}
           </p>
           <Button type='button' variant='outline' size='sm' onClick={() => setHelpOpen(true)}>
@@ -322,7 +325,10 @@ export const GenerateImagePage = () => {
       </div>
 
       {helpOpen && (
-        <div className='fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6' role='presentation'>
+        <div
+          className='fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6'
+          role='presentation'
+        >
           <div
             role='dialog'
             aria-modal='true'
@@ -336,8 +342,12 @@ export const GenerateImagePage = () => {
               <li>作りたい内容を書いて送信すると、その文の下に画像が残ります。</li>
               <li>「プロンプト」は文章を整えるモデル、「画像」は描くモデルです。</li>
               <li>「プロンプトを整える」は入力欄を書き換えるだけで、会話には残りません。</li>
-              <li>同じセッションで続けて送ると、直前の画像を引き継いで加工します。履歴から開いたあとも同じです。</li>
-              <li>別の画像を添付したときは、その画像を加工します。まったく新しい絵にするときは「新規セッション」を使います。</li>
+              <li>
+                同じセッションで続けて送ると、直前の画像を引き継いで加工します。履歴から開いたあとも同じです。
+              </li>
+              <li>
+                別の画像を添付したときは、その画像を加工します。まったく新しい絵にするときは「新規セッション」を使います。
+              </li>
               <li>サイズと雰囲気は「設定」を開くと変えられます。</li>
             </ul>
             <div className='mt-4 flex justify-end'>

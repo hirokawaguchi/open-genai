@@ -43,9 +43,7 @@ export const usePromptTemplates = () => {
 };
 
 /** テンプレートの作成・削除。実行後に一覧を再取得する。 */
-export const usePromptTemplateActions = (
-  mutate: () => Promise<unknown>,
-) => {
+export const usePromptTemplateActions = (mutate: () => Promise<unknown>) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,10 +52,7 @@ export const usePromptTemplateActions = (
       setSubmitting(true);
       setError(null);
       try {
-        const res = await teamApi.post<{ template: PromptTemplate }>(
-          PROMPT_TEMPLATES_KEY,
-          input,
-        );
+        const res = await teamApi.post<{ template: PromptTemplate }>(PROMPT_TEMPLATES_KEY, input);
         await mutate();
         return res.data?.template ?? null;
       } catch (e) {

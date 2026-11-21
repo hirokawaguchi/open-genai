@@ -176,7 +176,10 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/office', element: <Navigate to='/office/word' replace /> },
     { path: 'apps/:teamId/office-word', element: <Navigate to='/office/word' replace /> },
     { path: 'apps/:teamId/office-excel', element: <Navigate to='/office/excel' replace /> },
-    { path: 'apps/:teamId/office-powerpoint', element: <Navigate to='/office/powerpoint' replace /> },
+    {
+      path: 'apps/:teamId/office-powerpoint',
+      element: <Navigate to='/office/powerpoint' replace />,
+    },
     // 自治体予算（Compose profiles: ["budget"]）。
     { path: 'budget', element: <BudgetPage /> },
     { path: 'apps/:teamId/budget', element: <Navigate to='/budget' replace /> },

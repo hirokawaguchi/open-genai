@@ -1,11 +1,7 @@
 import { Link, useLocation } from 'react-router';
 import { useExApps } from '@/features/exapps/hooks/useExApps';
 import { useFilteredTeams } from '@/features/exapps/hooks/useFilteredTeams';
-import {
-  ALL_APPS_NAV_ITEM,
-  pinnedAppHref,
-  useRecommendedNavItems,
-} from '@/layout/navItems';
+import { ALL_APPS_NAV_ITEM, pinnedAppHref, useRecommendedNavItems } from '@/layout/navItems';
 import { partitionPinnedApps } from '@/open-genai/app-pins/partitionPinnedApps';
 import { useFetchAppPins } from '@/open-genai/app-pins/useFetchAppPins';
 

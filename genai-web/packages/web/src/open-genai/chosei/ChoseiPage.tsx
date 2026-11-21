@@ -65,13 +65,14 @@ export const ChoseiPage = () => {
             className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-4 text-std-16N-170'
             role='status'
           >
-            <p className='text-std-16B-150 text-solid-gray-900'>日程調整は現在有効化されていません</p>
+            <p className='text-std-16B-150 text-solid-gray-900'>
+              日程調整は現在有効化されていません
+            </p>
             <p className='mt-2 text-solid-gray-700'>
               {config?.error || 'コンテナを profiles: ["chosei"] で起動してください。'}
             </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose --profile chosei up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=chosei
+              docker compose --profile chosei up -d{'\n'}# または .env に COMPOSE_PROFILES=chosei
             </pre>
           </div>
         )}
@@ -132,9 +133,15 @@ export const ChoseiPage = () => {
                     ) : (
                       events.map((ev) => (
                         <tr key={ev.id} className='border-b border-solid-gray-200 last:border-b-0'>
-                          <td className='px-3 py-2 text-std-16N-170 text-solid-gray-900'>{ev.title}</td>
-                          <td className='px-3 py-2 text-solid-gray-600'>{ev.creator_name || '—'}</td>
-                          <td className='px-3 py-2 text-solid-gray-600'>{formatWhen(ev.created_at)}</td>
+                          <td className='px-3 py-2 text-std-16N-170 text-solid-gray-900'>
+                            {ev.title}
+                          </td>
+                          <td className='px-3 py-2 text-solid-gray-600'>
+                            {ev.creator_name || '—'}
+                          </td>
+                          <td className='px-3 py-2 text-solid-gray-600'>
+                            {formatWhen(ev.created_at)}
+                          </td>
                           <td className='px-3 py-2 text-right'>
                             <Button
                               type='button'
@@ -185,7 +192,9 @@ export const ChoseiPage = () => {
                 <p>
                   ・一覧の「開く」から、ログインしたまま自分の予定を答えることもできます。誰が来られるかは、イベントを開くと表で見られます。
                 </p>
-                <p>・リンクを開けない相手には、イベント画面のリンクファイルを渡してください。別の端末で開けます。</p>
+                <p>
+                  ・リンクを開けない相手には、イベント画面のリンクファイルを渡してください。別の端末で開けます。
+                </p>
                 <p>
                   ・作ってから {config?.retention_days ?? 90}{' '}
                   日たつと、そのイベントは自動で消えます。

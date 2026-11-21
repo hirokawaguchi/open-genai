@@ -12,7 +12,12 @@ type Props = {
   onOpenTranscript: (materialId: string) => void;
 };
 
-export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTranscript }: Props) => {
+export const LibraryPanel = ({
+  materials,
+  trashedMaterials,
+  onChanged,
+  onOpenTranscript,
+}: Props) => {
   const actions = useLmsActions();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [trashView, setTrashView] = useState(false);
@@ -62,7 +67,9 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
     }
     if (
       bulkAction === 'delete' &&
-      !window.confirm(`${selectedCount} 件を削除しますか。コースで使っていない教材だけ、ファイルごと消えます。`)
+      !window.confirm(
+        `${selectedCount} 件を削除しますか。コースで使っていない教材だけ、ファイルごと消えます。`,
+      )
     ) {
       return;
     }
@@ -82,10 +89,20 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
       }
     }
     const verb =
-      bulkAction === 'delete' ? '削除しました' : bulkAction === 'restore' ? '戻しました' : 'ゴミ箱へ移しました';
+      bulkAction === 'delete'
+        ? '削除しました'
+        : bulkAction === 'restore'
+          ? '戻しました'
+          : 'ゴミ箱へ移しました';
     const failedVerb =
-      bulkAction === 'delete' ? '削除できませんでした' : bulkAction === 'restore' ? '戻せませんでした' : '移せませんでした';
-    setBulkResult(failed > 0 ? `${ok} 件を${verb}。${failed} 件は${failedVerb}。` : `${ok} 件を${verb}。`);
+      bulkAction === 'delete'
+        ? '削除できませんでした'
+        : bulkAction === 'restore'
+          ? '戻せませんでした'
+          : '移せませんでした';
+    setBulkResult(
+      failed > 0 ? `${ok} 件を${verb}。${failed} 件は${failedVerb}。` : `${ok} 件を${verb}。`,
+    );
     setSelected(new Set());
     setBulkAction('');
     onChanged();
@@ -100,12 +117,17 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
             教材を置く
           </Button>
         </div>
-        <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='一覧の切り替え'>
+        <fieldset
+          className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0'
+          aria-label='一覧の切り替え'
+        >
           <button
             type='button'
             onClick={() => showTrash(false)}
             className={`rounded-4 border px-3 py-1 text-dns-16N-130 ${
-              trashView ? 'border-solid-gray-420 text-solid-gray-700' : 'border-blue-900 bg-blue-50 text-blue-900'
+              trashView
+                ? 'border-solid-gray-420 text-solid-gray-700'
+                : 'border-blue-900 bg-blue-50 text-blue-900'
             }`}
           >
             教材（{materials.length}）
@@ -114,7 +136,9 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
             type='button'
             onClick={() => showTrash(true)}
             className={`rounded-4 border px-3 py-1 text-dns-16N-130 ${
-              trashView ? 'border-blue-900 bg-blue-50 text-blue-900' : 'border-solid-gray-420 text-solid-gray-600'
+              trashView
+                ? 'border-blue-900 bg-blue-50 text-blue-900'
+                : 'border-solid-gray-420 text-solid-gray-600'
             }`}
           >
             ゴミ箱（{trashedMaterials.length}）
@@ -209,7 +233,10 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
                 </thead>
                 <tbody>
                   {shown.map((material) => (
-                    <tr key={material.id} className='border-b border-solid-gray-200 last:border-b-0'>
+                    <tr
+                      key={material.id}
+                      className='border-b border-solid-gray-200 last:border-b-0'
+                    >
                       <td className='px-3 py-2'>
                         <input
                           type='checkbox'
@@ -219,9 +246,13 @@ export const LibraryPanel = ({ materials, trashedMaterials, onChanged, onOpenTra
                           aria-label={`「${material.title}」を選択`}
                         />
                       </td>
-                      <td className='px-3 py-2 text-std-16N-170 text-solid-gray-900'>{material.title}</td>
+                      <td className='px-3 py-2 text-std-16N-170 text-solid-gray-900'>
+                        {material.title}
+                      </td>
                       <td className='px-3 py-2 text-solid-gray-600'>
-                        {material.kind === 'video' ? '動画' : `テキスト ${material.slideCount} ページ`}
+                        {material.kind === 'video'
+                          ? '動画'
+                          : `テキスト ${material.slideCount} ページ`}
                         {(material.transcriptStatus ?? 'none') !== 'none'
                           ? ` / ${transcriptStatusLabel(material.transcriptStatus ?? '')}`
                           : ''}

@@ -822,32 +822,35 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
     return overrides;
   }, [outputs, fileByKey, fileById, projectId, actions]);
 
-  const onCompose = useCallback(async (pack: 'zip' | 'files') => {
-    setCompose({ phase: 'running', progress: 0, currentStep: '図を画像化しています' });
-    setOpenError(null);
-    setComposeWaitingUrl(null);
-    void fetchProjectWaitingBlob(projectId)
-      .then((blob) => {
-        setComposeWaitingUrl(URL.createObjectURL(blob));
-      })
-      .catch(() => undefined);
-    let overrides: Record<string, string> = {};
-    try {
-      overrides = await materializeMermaid();
-    } catch {
-      // 画像化に失敗しても合成自体は続行（Mermaid はコードのまま出力される）。
-      overrides = {};
-    }
-    if (Object.keys(overrides).length > 0) {
-      await mutate(); // 追加した画像ファイルを一覧へ反映
-    }
-    const res = await actions.composeProject(projectId, currentComposition(), overrides, pack);
-    setCompose(
-      composeUiFromResult(
-        res ?? { error: '書き出しを開始できませんでした。もう一度お試しください。' },
-      ),
-    );
-  }, [actions, projectId, currentComposition, materializeMermaid, mutate, setComposeWaitingUrl]);
+  const onCompose = useCallback(
+    async (pack: 'zip' | 'files') => {
+      setCompose({ phase: 'running', progress: 0, currentStep: '図を画像化しています' });
+      setOpenError(null);
+      setComposeWaitingUrl(null);
+      void fetchProjectWaitingBlob(projectId)
+        .then((blob) => {
+          setComposeWaitingUrl(URL.createObjectURL(blob));
+        })
+        .catch(() => undefined);
+      let overrides: Record<string, string> = {};
+      try {
+        overrides = await materializeMermaid();
+      } catch {
+        // 画像化に失敗しても合成自体は続行（Mermaid はコードのまま出力される）。
+        overrides = {};
+      }
+      if (Object.keys(overrides).length > 0) {
+        await mutate(); // 追加した画像ファイルを一覧へ反映
+      }
+      const res = await actions.composeProject(projectId, currentComposition(), overrides, pack);
+      setCompose(
+        composeUiFromResult(
+          res ?? { error: '書き出しを開始できませんでした。もう一度お試しください。' },
+        ),
+      );
+    },
+    [actions, projectId, currentComposition, materializeMermaid, mutate, setComposeWaitingUrl],
+  );
 
   const openComposeFile = useCallback(
     async (file: EditorComposeFile) => {
@@ -1198,7 +1201,8 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
 
         {compose.phase === 'done' && compose.pack === 'files' && (
           <div className='mt-4 rounded-8 border border-blue-300 bg-blue-50 px-3 py-3 text-std-16N-170 text-solid-gray-800'>
-            個別のファイルができました{compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
+            個別のファイルができました
+            {compose.names?.length ? `（${compose.names.join(' / ')}）` : ''}。
             <ul className='mt-3 flex flex-col gap-2'>
               {(compose.files ?? []).map((file) => (
                 <li key={file.object_key} className='flex flex-wrap items-center gap-3'>
@@ -1210,7 +1214,9 @@ const CompositionEditor = ({ projectId }: { projectId: string }) => {
                     disabled={openingKey === file.object_key}
                     onClick={() => openComposeFile(file)}
                   >
-                    {openingKey === file.object_key ? '開いています…' : composeFileLabel(file.format)}
+                    {openingKey === file.object_key
+                      ? '開いています…'
+                      : composeFileLabel(file.format)}
                   </Button>
                 </li>
               ))}

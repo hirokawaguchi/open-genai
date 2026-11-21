@@ -199,7 +199,9 @@ export const NoticeBanner = () => {
       <ul className='mt-1'>
         {shown.map((item) => (
           <li key={item.noticeId} className='flex min-w-0 items-baseline gap-3 py-1'>
-            <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>{scopeLabel(item.scope)}</span>
+            <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>
+              {scopeLabel(item.scope)}
+            </span>
             <Link
               className='min-w-0 truncate text-dns-16N-130 text-blue-900 underline'
               to={`/notices#${item.noticeId}`}
@@ -290,7 +292,11 @@ export const NoticesPage = () => {
             const open = openId === item.noticeId;
             const editing = editingId === item.noticeId;
             return (
-              <li key={item.noticeId} id={item.noticeId} className='border-b border-solid-gray-300 last:border-b-0'>
+              <li
+                key={item.noticeId}
+                id={item.noticeId}
+                className='border-b border-solid-gray-300 last:border-b-0'
+              >
                 <button
                   type='button'
                   className='flex w-full items-baseline gap-3 px-4 py-3 text-left hover:bg-solid-gray-50'
@@ -303,19 +309,26 @@ export const NoticesPage = () => {
                     }
                   }}
                 >
-                  <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>{scopeLabel(item.scope)}</span>
+                  <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>
+                    {scopeLabel(item.scope)}
+                  </span>
                   <span className='min-w-0 flex-1 truncate text-dns-16N-170 text-solid-gray-900'>
                     {displayTitle(item)}
                   </span>
                   {when(item.createdDate) && (
-                    <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>{when(item.createdDate)}</span>
+                    <span className='shrink-0 text-dns-14N-130 text-solid-gray-600'>
+                      {when(item.createdDate)}
+                    </span>
                   )}
                 </button>
                 {open && (
                   <div className='px-4 pb-4'>
                     {editing ? (
                       <div>
-                        <label className='block text-dns-14B-130 text-solid-gray-800' htmlFor={`title-${item.noticeId}`}>
+                        <label
+                          className='block text-dns-14B-130 text-solid-gray-800'
+                          htmlFor={`title-${item.noticeId}`}
+                        >
                           タイトル
                         </label>
                         <input
@@ -325,7 +338,10 @@ export const NoticesPage = () => {
                           maxLength={MAX_TITLE}
                           onChange={(event) => setTitleDraft(event.target.value)}
                         />
-                        <label className='mt-3 block text-dns-14B-130 text-solid-gray-800' htmlFor={`body-${item.noticeId}`}>
+                        <label
+                          className='mt-3 block text-dns-14B-130 text-solid-gray-800'
+                          htmlFor={`body-${item.noticeId}`}
+                        >
                           本文
                         </label>
                         <textarea
@@ -340,18 +356,27 @@ export const NoticesPage = () => {
                             type='button'
                             variant='solid-fill'
                             size='sm'
-                            disabled={busyId === item.noticeId || !titleDraft.trim() || !bodyDraft.trim()}
+                            disabled={
+                              busyId === item.noticeId || !titleDraft.trim() || !bodyDraft.trim()
+                            }
                             onClick={() => void save(item.noticeId)}
                           >
                             保存する
                           </Button>
-                          <Button type='button' variant='outline' size='sm' onClick={() => setEditingId('')}>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() => setEditingId('')}
+                          >
                             やめる
                           </Button>
                         </div>
                       </div>
                     ) : (
-                      <p className='whitespace-pre-wrap text-dns-16N-170 text-solid-gray-900'>{item.body}</p>
+                      <p className='whitespace-pre-wrap text-dns-16N-170 text-solid-gray-900'>
+                        {item.body}
+                      </p>
                     )}
                     {manageable && !editing && confirmId !== item.noticeId && (
                       <div className='mt-4 flex flex-wrap gap-2'>
@@ -383,7 +408,9 @@ export const NoticesPage = () => {
                     )}
                     {manageable && confirmId === item.noticeId && (
                       <div className='mt-4 flex flex-wrap items-center gap-3'>
-                        <p className='text-dns-14N-130 text-solid-gray-800'>このお知らせを削除しますか。</p>
+                        <p className='text-dns-14N-130 text-solid-gray-800'>
+                          このお知らせを削除しますか。
+                        </p>
                         <Button
                           type='button'
                           variant='outline'
@@ -393,7 +420,12 @@ export const NoticesPage = () => {
                         >
                           削除する
                         </Button>
-                        <Button type='button' variant='text' size='sm' onClick={() => setConfirmId('')}>
+                        <Button
+                          type='button'
+                          variant='text'
+                          size='sm'
+                          onClick={() => setConfirmId('')}
+                        >
                           やめる
                         </Button>
                       </div>
@@ -404,7 +436,9 @@ export const NoticesPage = () => {
             );
           })}
           {data && items.length === 0 && (
-            <li className='px-4 py-5 text-dns-16N-170 text-solid-gray-600'>お知らせはありません。</li>
+            <li className='px-4 py-5 text-dns-16N-170 text-solid-gray-600'>
+              お知らせはありません。
+            </li>
           )}
         </ul>
         {(data?.canPostAll || data?.canPostTenant) && (

@@ -121,7 +121,9 @@ const SourceBriefing = ({ briefing }: { briefing?: NotebookBriefing }) => {
   return (
     <div className='space-y-1 text-dns-14N-130 text-solid-gray-700'>
       {briefing.ocr_pending && (
-        <p className='text-solid-gray-600'>スキャン画像を読み取り中です…（完了すると本文が増えます）</p>
+        <p className='text-solid-gray-600'>
+          スキャン画像を読み取り中です…（完了すると本文が増えます）
+        </p>
       )}
       {briefing.ocr && <p className='text-solid-gray-600'>スキャンを OCR で読み取りました。</p>}
       {briefing.summary && <p>{briefing.summary}</p>}

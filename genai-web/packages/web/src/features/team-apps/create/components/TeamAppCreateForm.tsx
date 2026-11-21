@@ -189,7 +189,8 @@ export const TeamAppCreateForm = () => {
           <RequirementBadge isOptional>※任意</RequirementBadge>
         </Label>
         <SupportText id={`team-app-request-data-support`}>
-          JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify チャット）や入力不要のアプリでは空で構いません。
+          JSON形式で入力してください。フォーム入力が必要なアプリで定義します。対話型（Dify
+          チャット）や入力不要のアプリでは空で構いません。
           <Link href='/docs/api-request-data-format' target='_blank'>
             APIリクエストのデータ形式解説
           </Link>

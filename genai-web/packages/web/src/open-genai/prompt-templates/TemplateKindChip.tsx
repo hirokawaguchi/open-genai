@@ -17,5 +17,9 @@ const styleOf = (kind: string): string => {
 
 /** テンプレートの区分（標準／共有／個人）を表す小さなラベル。 */
 export const TemplateKindChip = ({ kind }: Props) => {
-  return <ChipLabel className={`min-h-6 px-2 py-0.5 text-oln-14N-100 ${styleOf(kind)}`}>{kind}</ChipLabel>;
+  return (
+    <ChipLabel className={`min-h-6 px-2 py-0.5 text-oln-14N-100 ${styleOf(kind)}`}>
+      {kind}
+    </ChipLabel>
+  );
 };

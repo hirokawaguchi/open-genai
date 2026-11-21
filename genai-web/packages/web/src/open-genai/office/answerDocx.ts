@@ -30,12 +30,16 @@ const blobBytes = (data: Uint8Array): ArrayBuffer => {
 };
 
 const inflate = async (data: Uint8Array): Promise<Uint8Array> => {
-  const stream = new Blob([blobBytes(data)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const stream = new Blob([blobBytes(data)])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
 
 const deflate = async (data: Uint8Array): Promise<Uint8Array> => {
-  const stream = new Blob([blobBytes(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const stream = new Blob([blobBytes(data)])
+    .stream()
+    .pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
 
@@ -146,9 +150,7 @@ const documentXml = (templateXml: string, text: string): string => {
     .replace(/\r/g, '\n')
     .split('\n')
     .map((line) =>
-      line
-        ? `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
-        : '<w:p/>',
+      line ? `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>` : '<w:p/>',
     )
     .join('');
   const next = templateXml.replace(/<w:body>[\s\S]*?<w:sectPr/, `<w:body>${paragraphs}<w:sectPr`);

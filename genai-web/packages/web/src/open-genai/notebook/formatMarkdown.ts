@@ -37,9 +37,7 @@ export const citationNumber = (c: NotebookCitation): number => {
 };
 
 export const usedCitations = (text: string, cites: NotebookCitation[]): NotebookCitation[] => {
-  const used = new Set(
-    [...(text || '').matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])),
-  );
+  const used = new Set([...(text || '').matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])));
   return cites.filter((c) => used.has(citationNumber(c)));
 };
 

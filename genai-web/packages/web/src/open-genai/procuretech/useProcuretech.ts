@@ -222,17 +222,14 @@ export const streamProcuretechChat = async (
   handlers: StreamHandlers,
 ): Promise<ProcuretechTurnResult | null> => {
   const token = await getIdToken();
-  const res = await fetch(
-    buildTeamUrl(`${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`),
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ section, message }),
+  const res = await fetch(buildTeamUrl(`${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-  );
+    body: JSON.stringify({ section, message }),
+  });
 
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => undefined);

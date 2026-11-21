@@ -48,7 +48,9 @@ export const CatalogPalette = ({ catalog, onAdd }: Props) => {
                       >
                         <CatalogTypeIcon type={item.type} className='mt-0.5 size-5 text-blue-900' />
                         <span className='min-w-0'>
-                          <span className='block text-std-16B-150 text-solid-gray-900'>{item.label}</span>
+                          <span className='block text-std-16B-150 text-solid-gray-900'>
+                            {item.label}
+                          </span>
                           {catalogTypeHelp(item.type, item.description) ? (
                             <span className='mt-0.5 block text-dns-14N-130 text-solid-gray-700'>
                               {item.description || catalogTypeHelp(item.type)}

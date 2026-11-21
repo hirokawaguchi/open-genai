@@ -33,11 +33,7 @@ export const ExAppTextarea = (props: Props) => {
         required={uiConfig.required ?? false}
         isError={errors ? true : false}
         aria-describedby={
-          [
-            uiConfig.desc && `${id}-support-text`,
-            'exapp-submit-hint',
-            errors && `${id}-error-text`,
-          ]
+          [uiConfig.desc && `${id}-support-text`, 'exapp-submit-hint', errors && `${id}-error-text`]
             .filter(Boolean)
             .join(' ') || undefined
         }

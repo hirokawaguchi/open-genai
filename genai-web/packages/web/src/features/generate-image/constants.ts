@@ -150,10 +150,7 @@ export const STABILITY_AI_2024_MODEL_PRESETS = [
 
 export const MODEL_INFO: Record<string, ModelInfo<'base' | 'advanced'>> = {
   [LOCAL_SD_MODEL]: {
-    supportedModes: [
-      GENERATION_MODES.TEXT_IMAGE,
-      GENERATION_MODES.IMAGE_VARIATION,
-    ],
+    supportedModes: [GENERATION_MODES.TEXT_IMAGE, GENERATION_MODES.IMAGE_VARIATION],
     resolutionPresets: DEFAULT_MODEL_PRESETS,
   },
   'gpt-image-1': {

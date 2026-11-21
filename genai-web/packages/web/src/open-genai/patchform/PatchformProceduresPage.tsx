@@ -103,10 +103,7 @@ export const PatchformProceduresPage = () => {
     setBulkAction('');
   };
 
-  const summarize = (
-    results: { id: string; ok: boolean; error?: string }[],
-    okLabel: string,
-  ) => {
+  const summarize = (results: { id: string; ok: boolean; error?: string }[], okLabel: string) => {
     const ok = results.filter((r) => r.ok);
     const ng = results.filter((r) => !r.ok);
     const parts: string[] = [];
@@ -185,14 +182,16 @@ export const PatchformProceduresPage = () => {
       const extracted = (res.extracted || '').trim();
       if (!extracted) {
         setAssistError(
-          res.notes
-          || 'このファイルから本文を取れませんでした。txt / md / pdf / docx / xlsx を選んでください。',
+          res.notes ||
+            'このファイルから本文を取れませんでした。txt / md / pdf / docx / xlsx を選んでください。',
         );
         return;
       }
       setGuideText(extracted);
     } catch {
-      setAssistError('ファイルの読み取りに失敗しました。txt / md / pdf / docx / xlsx を選んでください。');
+      setAssistError(
+        'ファイルの読み取りに失敗しました。txt / md / pdf / docx / xlsx を選んでください。',
+      );
     } finally {
       setReadingFile(false);
     }
@@ -232,13 +231,17 @@ export const PatchformProceduresPage = () => {
     try {
       const bundle = await readExportBundleFile(file);
       if (bundle.kind !== 'procedure') {
-        setImportMsg('これはフォームの書き出しファイルです。フォーム一覧の「読み込み」からお試しください。');
+        setImportMsg(
+          'これはフォームの書き出しファイルです。フォーム一覧の「読み込み」からお試しください。',
+        );
         return;
       }
       const created = await importProcedure(bundle);
       if (created) {
         await Promise.all([mutate(), mutateForms()]);
-        setImportMsg(`「${created.name}」を下書きとして取り込みました（構成フォームも作成しました）。`);
+        setImportMsg(
+          `「${created.name}」を下書きとして取り込みました（構成フォームも作成しました）。`,
+        );
       }
     } catch (err) {
       setImportMsg(err instanceof Error ? err.message : '取り込みに失敗しました。');
@@ -288,7 +291,12 @@ export const PatchformProceduresPage = () => {
               <Button type='button' variant='outline' size='sm' onClick={() => setAssistOpen(true)}>
                 手引きから候補を出す
               </Button>
-              <Button type='button' variant='solid-fill' size='sm' onClick={() => setWizardOpen(true)}>
+              <Button
+                type='button'
+                variant='solid-fill'
+                size='sm'
+                onClick={() => setWizardOpen(true)}
+              >
                 新しい手続きを作る
               </Button>
             </div>
@@ -298,7 +306,10 @@ export const PatchformProceduresPage = () => {
               {importMsg}
             </p>
           ) : null}
-          <fieldset className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0' aria-label='表示の切り替え'>
+          <fieldset
+            className='m-0 flex min-w-0 flex-wrap gap-2 border-0 p-0'
+            aria-label='表示の切り替え'
+          >
             <button
               type='button'
               onClick={() => switchView(false)}
@@ -375,7 +386,9 @@ export const PatchformProceduresPage = () => {
                         aria-disabled={submitting || selectedCount === 0}
                         onClick={() => void onRestore()}
                       >
-                        {submitting ? '処理中...' : `復元する${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
+                        {submitting
+                          ? '処理中...'
+                          : `復元する${selectedCount > 0 ? `（${selectedCount}）` : ''}`}
                       </Button>
                       <Button
                         type='button'

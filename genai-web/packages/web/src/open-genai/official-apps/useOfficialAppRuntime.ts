@@ -31,9 +31,7 @@ export const useOfficialAppRuntime = () => {
       shouldRetryOnError: false,
     },
   );
-  const running = data
-    ? [...new Set([...ALWAYS_ON_OFFICIAL_APP_IDS, ...data.running])]
-    : undefined;
+  const running = data ? [...new Set([...ALWAYS_ON_OFFICIAL_APP_IDS, ...data.running])] : undefined;
   return {
     catalog: data?.catalog,
     running,

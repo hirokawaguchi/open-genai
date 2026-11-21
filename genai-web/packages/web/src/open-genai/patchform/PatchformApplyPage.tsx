@@ -31,8 +31,11 @@ const statusStyle = (status: string): string => {
 export const PatchformApplyPage = () => {
   const { procedureId } = useParams();
   const navigate = useNavigate();
-  const { procedure, isLoading: procLoading, loadError: procError } =
-    usePatchformProcedure(procedureId);
+  const {
+    procedure,
+    isLoading: procLoading,
+    loadError: procError,
+  } = usePatchformProcedure(procedureId);
   const { applications, isLoading: mineLoading } = usePatchformMyApplications();
 
   const published = procedure?.status === 'published';
@@ -59,9 +62,7 @@ export const PatchformApplyPage = () => {
           ]}
         />
         <div className='flex flex-col gap-2'>
-          <h1 className='text-std-20B-160 lg:text-std-24B-150'>
-            {procedure?.name || '庁内申請'}
-          </h1>
+          <h1 className='text-std-20B-160 lg:text-std-24B-150'>{procedure?.name || '庁内申請'}</h1>
           {procedure?.description ? (
             <p className='text-std-16N-170 text-solid-gray-700'>{procedure.description}</p>
           ) : null}
@@ -135,12 +136,7 @@ export const PatchformApplyPage = () => {
                   : '案内ウィザードに沿って条件を選ぶと、必要書類を揃えた案件を作成します。'}
               </p>
               <div>
-                <Button
-                  type='button'
-                  variant='solid-fill'
-                  size='md'
-                  onClick={onStart}
-                >
+                <Button type='button' variant='solid-fill' size='md' onClick={onStart}>
                   この手続きを始める
                 </Button>
               </div>

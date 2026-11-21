@@ -38,13 +38,12 @@ export const ManagedAppHeader = (props: Props) => {
     hideHowTo = false,
     children,
   } = props;
-  const { title, description, howToUse: howTo, exApp } = useRegisteredAppMeta(
-    teamId,
-    exAppId,
-    fallbackTitle,
-    fallbackDescription,
-    enabled,
-  );
+  const {
+    title,
+    description,
+    howToUse: howTo,
+    exApp,
+  } = useRegisteredAppMeta(teamId, exAppId, fallbackTitle, fallbackDescription, enabled);
 
   if (exApp && !breadcrumbItems && !children && !hideHowTo) {
     return <ExAppHeader exApp={exApp} />;
@@ -64,9 +63,7 @@ export const ManagedAppHeader = (props: Props) => {
       {crumbs.length > 0 && <BreadcrumbsNav items={crumbs} />}
       <h1 className='text-std-20B-160 lg:text-std-24B-150'>{title}</h1>
       {children}
-      {description && (
-        <p className='text-std-16N-170 text-solid-gray-700'>{description}</p>
-      )}
+      {description && <p className='text-std-16N-170 text-solid-gray-700'>{description}</p>}
       {!hideHowTo &&
         (howTo ? (
           <Disclosure className='rounded-8 border border-solid-gray-420 bg-solid-gray-50 px-4 py-3'>

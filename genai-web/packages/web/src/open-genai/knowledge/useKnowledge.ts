@@ -30,7 +30,10 @@ export const useTags = (scope: string | undefined) => {
   const key = scope ? (['knowledge/tags', scope] as const) : null;
   const { data, error, isLoading, mutate } = useSWR<TagsResponse>(
     key,
-    () => teamApi.get<TagsResponse>('knowledge/tags', { params: { scope: scope! } }).then((r) => r.data),
+    () =>
+      teamApi
+        .get<TagsResponse>('knowledge/tags', { params: { scope: scope! } })
+        .then((r) => r.data),
     { revalidateOnFocus: false },
   );
   return { tags: (data?.tags ?? []) as KnowledgeTag[], error, isLoading, mutate };

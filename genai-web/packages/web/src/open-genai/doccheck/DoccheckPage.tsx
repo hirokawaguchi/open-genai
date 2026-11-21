@@ -92,8 +92,12 @@ export const DoccheckPage = () => {
     DOCCHECK_EXAPP_ID,
     '書類読取とチェック',
   );
-  const { config, isLoading: configLoading, unavailable, mutate: mutateConfig } =
-    useDoccheckConfig();
+  const {
+    config,
+    isLoading: configLoading,
+    unavailable,
+    mutate: mutateConfig,
+  } = useDoccheckConfig();
   const canArbitrate = config?.can_arbitrate === true;
   const { templates, mutate: mutateTemplates } = useDoccheckTemplates();
   const { documents, mutate: mutateDocs } = useDoccheckDocuments();
@@ -225,9 +229,7 @@ export const DoccheckPage = () => {
 
   const onDeleteBatch = async (batchId: string, name: string) => {
     if (
-      !window.confirm(
-        `バッチ「${name}」と配下の全書類を削除します。\nこの操作は取り消せません。`,
-      )
+      !window.confirm(`バッチ「${name}」と配下の全書類を削除します。\nこの操作は取り消せません。`)
     ) {
       return;
     }
@@ -277,8 +279,7 @@ export const DoccheckPage = () => {
       return;
     }
     setTask(res.task);
-    const isChoice =
-      res.task.field_type === 'choice' || res.task.field_type === 'choice_multi';
+    const isChoice = res.task.field_type === 'choice' || res.task.field_type === 'choice_multi';
     setAnswer(isChoice ? '' : res.task.ocr_text || '');
     setUnreadable(false);
     setBlank(false);
@@ -389,10 +390,7 @@ export const DoccheckPage = () => {
 
   const onSaveRegions = async () => {
     if (!editingTemplate) return;
-    let tmpl = await actions.saveRegions(
-      editingTemplate.id,
-      regionsFromEditor(draftRegions),
-    );
+    let tmpl = await actions.saveRegions(editingTemplate.id, regionsFromEditor(draftRegions));
     if (tmpl && draftOcrMode !== (tmpl.ocr_mode ?? 'fallback')) {
       const updated = await actions.updateTemplateMeta(editingTemplate.id, {
         ocr_mode: draftOcrMode,
@@ -521,10 +519,11 @@ export const DoccheckPage = () => {
                 {config?.ocr_engine || 'vision'}
                 ）。手書き読取後も人間チェック前提です。
               </p>
-              <p>・投入時に画像を OCR 向けへ正規化（グレー・長辺リサイズ）。読み取りテストは割当1、バッチは割当3。</p>
-              {config?.public_endpoint && (
-                <p>・外部公開 endpoint: {config.public_endpoint}</p>
-              )}
+              <p>
+                ・投入時に画像を OCR
+                向けへ正規化（グレー・長辺リサイズ）。読み取りテストは割当1、バッチは割当3。
+              </p>
+              {config?.public_endpoint && <p>・外部公開 endpoint: {config.public_endpoint}</p>}
             </>
           }
         />
@@ -541,8 +540,8 @@ export const DoccheckPage = () => {
               {config?.error || 'コンテナを profiles: ["doccheck"] で起動してください。'}
             </p>
             <pre className='mt-3 overflow-x-auto rounded-4 bg-white p-3 text-dns-14N-130 text-solid-gray-800'>
-              docker compose --profile doccheck up -d{'\n'}
-              # または .env に COMPOSE_PROFILES=doccheck
+              docker compose --profile doccheck up -d{'\n'}# または .env に
+              COMPOSE_PROFILES=doccheck
             </pre>
           </div>
         )}
@@ -572,15 +571,10 @@ export const DoccheckPage = () => {
                       setTab(t.id);
                     }}
                     className={`flex flex-col items-center gap-1 rounded-8 border px-2 pt-3 pb-3 text-center hover:border-transparent hover:bg-solid-gray-50 hover:outline-2 hover:outline-black hover:outline-solid lg:px-3 ${
-                      selected
-                        ? 'border-blue-900 bg-blue-50'
-                        : 'border-solid-gray-420 bg-white'
+                      selected ? 'border-blue-900 bg-blue-50' : 'border-solid-gray-420 bg-white'
                     }`}
                   >
-                    <Icon
-                      aria-hidden={true}
-                      className='size-6 text-solid-gray-900'
-                    />
+                    <Icon aria-hidden={true} className='size-6 text-solid-gray-900' />
                     <span className='text-dns-16B-130 text-pretty text-solid-gray-900'>
                       {t.label}
                     </span>
@@ -602,16 +596,11 @@ export const DoccheckPage = () => {
               <section className='flex flex-col gap-4'>
                 <div className='grid gap-3 sm:grid-cols-3'>
                   <Stat label='書類数' value={documents.length} />
-                  <Stat
-                    label='未処理タスク'
-                    value={config?.pending_tasks ?? '-'}
-                  />
+                  <Stat label='未処理タスク' value={config?.pending_tasks ?? '-'} />
                   <Stat
                     label='裁定待ち'
                     value={
-                      canArbitrate
-                        ? arbitrationItems.length
-                        : (config?.arbitration_count ?? '-')
+                      canArbitrate ? arbitrationItems.length : (config?.arbitration_count ?? '-')
                     }
                   />
                 </div>
@@ -745,7 +734,9 @@ export const DoccheckPage = () => {
                       </Button>
                     </div>
                     <p className='mt-1 text-std-14N-170 text-solid-gray-700'>
-                      ボタン押下時にファイル（{exportFileName}）のダウンロードも開始しています。バッチの大量出力は「バッチ」タブの CSV / JSONL を使います。
+                      ボタン押下時にファイル（{exportFileName}
+                      ）のダウンロードも開始しています。バッチの大量出力は「バッチ」タブの CSV /
+                      JSONL を使います。
                     </p>
                     <pre className='mt-3 max-h-96 overflow-auto rounded-8 bg-white p-3 text-dns-14N-130'>
                       {exportJson}
@@ -760,8 +751,8 @@ export const DoccheckPage = () => {
                 <form onSubmit={onBatchUpload} className='flex flex-col gap-4'>
                   <h2 className='text-std-18B-160'>連続スキャン一括投入</h2>
                   <p className='text-std-14N-170 text-solid-gray-700'>
-                    同じ様式のスキャン画像をまとめて投入します（例: 500件）。処理はバックグラウンドで進み、完了分から CSV /
-                    JSONL で出力できます。
+                    同じ様式のスキャン画像をまとめて投入します（例:
+                    500件）。処理はバックグラウンドで進み、完了分から CSV / JSONL で出力できます。
                   </p>
                   <div>
                     <Label htmlFor='dc-batch-name' size='sm'>
@@ -827,8 +818,7 @@ export const DoccheckPage = () => {
                   />
                   {batchFiles && batchFiles.length > 0 && (
                     <p className='text-std-14N-170 text-solid-gray-700'>
-                      {batchFiles.length} 枚 → 約{' '}
-                      {Math.floor(batchFiles.length / pagesPerDoc)} 件
+                      {batchFiles.length} 枚 → 約 {Math.floor(batchFiles.length / pagesPerDoc)} 件
                     </p>
                   )}
                   <Button
@@ -845,16 +835,13 @@ export const DoccheckPage = () => {
                   <h3 className='text-std-16B-150'>バッチ一覧</h3>
                   <ul className='mt-2 flex flex-col gap-2'>
                     {batches.map((b) => (
-                      <li
-                        key={b.id}
-                        className='rounded-8 border border-solid-gray-420 px-4 py-3'
-                      >
+                      <li key={b.id} className='rounded-8 border border-solid-gray-420 px-4 py-3'>
                         <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
                           <div>
                             <p className='text-std-16B-150'>{b.name}</p>
                             <p className='text-std-14N-170 text-solid-gray-700'>
-                              {b.template_name} · {b.status} · 処理{' '}
-                              {b.processed_documents}/{b.total_documents}
+                              {b.template_name} · {b.status} · 処理 {b.processed_documents}/
+                              {b.total_documents}
                               {b.progress
                                 ? ` · 完了 ${b.progress.completed} / 裁定待ち ${b.progress.needs_arbitration}`
                                 : ''}
@@ -881,7 +868,9 @@ export const DoccheckPage = () => {
                               type='button'
                               size='sm'
                               variant='outline'
-                              onClick={() => actions.downloadBatchExport(b.id, 'jsonl', 'completed')}
+                              onClick={() =>
+                                actions.downloadBatchExport(b.id, 'jsonl', 'completed')
+                              }
                             >
                               JSONL
                             </Button>
@@ -942,9 +931,7 @@ export const DoccheckPage = () => {
                         type='button'
                         size='sm'
                         variant='outline'
-                        onClick={() =>
-                          actions.downloadBatchExport(selectedBatch.id, 'csv', 'all')
-                        }
+                        onClick={() => actions.downloadBatchExport(selectedBatch.id, 'csv', 'all')}
                       >
                         全件 CSV
                       </Button>
@@ -1041,12 +1028,7 @@ export const DoccheckPage = () => {
               <section className='flex flex-col gap-4'>
                 <div className='flex flex-wrap items-center justify-between gap-2'>
                   <div>
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='text'
-                      onClick={backToTemplateList}
-                    >
+                    <Button type='button' size='sm' variant='text' onClick={backToTemplateList}>
                       ← テンプレート一覧に戻る
                     </Button>
                     <h2 className='mt-2 text-std-18B-160'>{editingTemplate.name}</h2>
@@ -1059,9 +1041,7 @@ export const DoccheckPage = () => {
                         className='w-fit rounded border border-solid-gray-420 bg-white px-2 py-1 text-std-14N-170'
                         value={draftOcrMode}
                         disabled={actions.submitting}
-                        onChange={(e) =>
-                          setDraftOcrMode(e.target.value as DoccheckOcrMode)
-                        }
+                        onChange={(e) => setDraftOcrMode(e.target.value as DoccheckOcrMode)}
                       >
                         {OCR_MODE_OPTIONS.map((o) => (
                           <option key={o.value} value={o.value}>
@@ -1101,9 +1081,7 @@ export const DoccheckPage = () => {
                 <DoccheckFilePicker
                   id='dc-sample'
                   label='見本画像（下絵）'
-                  buttonLabel={
-                    actions.submitting ? 'アップロード中…' : '見本をアップロード'
-                  }
+                  buttonLabel={actions.submitting ? 'アップロード中…' : '見本をアップロード'}
                   disabled={actions.submitting}
                   files={sampleFile}
                   onChange={(f) => void onSampleFileChange(f)}
@@ -1213,14 +1191,9 @@ export const DoccheckPage = () => {
                         Vision候補（AI読取）: {task.ocr_vision_text}
                       </p>
                     ) : null}
-                    {(task.field_type === 'choice' ||
-                      task.field_type === 'choice_multi') &&
+                    {(task.field_type === 'choice' || task.field_type === 'choice_multi') &&
                     (task.choice_options?.length ?? 0) > 0 ? (
-                      <fieldset
-                        className='mt-2'
-                        disabled={unreadable || blank}
-                        aria-label='選択肢'
-                      >
+                      <fieldset className='mt-2' disabled={unreadable || blank} aria-label='選択肢'>
                         <div className='flex flex-col gap-1'>
                           {task.choice_options?.map((opt) => {
                             const multi = task.field_type === 'choice_multi';
@@ -1228,21 +1201,14 @@ export const DoccheckPage = () => {
                               ? parseMultiSelection(answer).includes(opt)
                               : answer === opt;
                             return (
-                              <label
-                                key={opt}
-                                className='flex items-center gap-2 text-std-14N-170'
-                              >
+                              <label key={opt} className='flex items-center gap-2 text-std-14N-170'>
                                 <input
                                   type={multi ? 'checkbox' : 'radio'}
                                   name='dc-choice'
                                   checked={checked}
                                   disabled={unreadable || blank}
                                   onChange={() =>
-                                    setAnswer(
-                                      multi
-                                        ? toggleMultiSelection(answer, opt)
-                                        : opt,
-                                    )
+                                    setAnswer(multi ? toggleMultiSelection(answer, opt) : opt)
                                   }
                                 />
                                 {opt}
@@ -1335,23 +1301,20 @@ export const DoccheckPage = () => {
                       >
                         送信
                       </Button>
-                      {task.field_type !== 'choice' &&
-                        task.field_type !== 'choice_multi' && (
-                          <Button
-                            type='button'
-                            size='md'
-                            variant='outline'
-                            onClick={() => {
-                              setAnswer(task.ocr_text || '');
-                              setBlank(false);
-                              setUnreadable(false);
-                            }}
-                          >
-                            {task.ocr_vision_text
-                              ? 'PP-OCR候補を採用'
-                              : 'OCR候補を採用'}
-                          </Button>
-                        )}
+                      {task.field_type !== 'choice' && task.field_type !== 'choice_multi' && (
+                        <Button
+                          type='button'
+                          size='md'
+                          variant='outline'
+                          onClick={() => {
+                            setAnswer(task.ocr_text || '');
+                            setBlank(false);
+                            setUnreadable(false);
+                          }}
+                        >
+                          {task.ocr_vision_text ? 'PP-OCR候補を採用' : 'OCR候補を採用'}
+                        </Button>
+                      )}
                       {task.field_type !== 'choice' &&
                         task.field_type !== 'choice_multi' &&
                         task.ocr_vision_text && (

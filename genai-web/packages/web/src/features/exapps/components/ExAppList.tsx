@@ -36,10 +36,7 @@ export const ExAppList = (props: Props) => {
   const { pins } = useFetchAppPins();
   const { pin, unpin, error: pinError } = useToggleAppPin();
 
-  const pinnedKeys = useMemo(
-    () => new Set(pins.map((p) => toPinKey(p.teamId, p.itemId))),
-    [pins],
-  );
+  const pinnedKeys = useMemo(() => new Set(pins.map((p) => toPinKey(p.teamId, p.itemId))), [pins]);
   const pinLimitReached = pins.length >= MAX_APP_PINS;
 
   const totalAppsCount = filteredTeams.reduce((sum, team) => sum + team.filteredExApps.length, 0);
@@ -103,7 +100,9 @@ export const ExAppList = (props: Props) => {
                 return (
                   <li key={`${teamIdKey}-${exApp.value}`}>
                     <ExAppListCard
-                      href={exApp.isDefault ? `/${exApp.value}` : `/apps/${teamIdKey}/${exApp.value}`}
+                      href={
+                        exApp.isDefault ? `/${exApp.value}` : `/apps/${teamIdKey}/${exApp.value}`
+                      }
                       label={exApp.label}
                       description={exApp.description}
                       onClick={() => {
