@@ -1,9 +1,13 @@
 This browser build of ibisOffice is based on the upstream tag v0.8.7
 (https://github.com/ibisjp/ibis-office) with one local change.
 
-The change keeps the opened package so File > Save and the download button
-can hand the current bytes to the embedding page under the current name.
-File > Save As asks for a name first. Upstream's browser entry reads the
+The change keeps the opened package so File > Save, File > Save As, and the
+download button can hand the current bytes to the embedding page. Save, Save
+As, and download are different messages (`save`, `save-as`, `download`).
+File > Save As asks for a name first. Saving a file that still has its
+initial name (document.docx, workbook.xlsx, presentation.pptx, or the
+editor's own new-file name) asks for a name the same way. The name offered
+there is taken from the first text in the file. Upstream's browser entry reads the
 file for display only, then refuses to save it as a new document.
 
 Corresponding source: the v0.8.7 tag archive, plus

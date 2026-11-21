@@ -495,3 +495,215 @@ def test_query_parser_finds_last_month() -> None:
     assert parsed["status"] == "処理中"
     assert parsed["q"] == "山田"
     assert parsed["date_from"] < parsed["date_to"]
+
+
+def _body(row: dict) -> dict:
+    return next(item for item in row["files"] if item.get("role") == "body")
+
+
+def test_office_save_replaces_the_body_and_keeps_the_previous(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEDGER_OFFICE_MAX_BYTES", "8")
+    saved, err = store.save_office_file(actor(), filename="議事.docx", data=b"one")
+    assert err is None and saved is not None
+    assert saved["status"] == "下書き"
+    assert "title" not in saved["fields"]
+    assert saved["fields"]["kind"] == "文書"
+    assert saved["business_key"]
+    body = _body(saved)
+    assert body["name"] == "議事.docx"
+    shared = store.list_ledgers(actor(teams=["other"], user_id="user-2"))
+    assert shared[0]["source_key"] == "office"
+    assert shared[0]["role"] == "editor"
+    assert shared[0]["system"][0]["visible"] is False
+
+    again, err = store.save_office_file(
+        actor(),
+        filename="議事録.docx",
+        data=b"two",
+        row_id=saved["id"],
+        file_id=body["file_id"],
+    )
+    assert err is None and again is not None
+    assert again["id"] == saved["id"]
+    assert again["business_key"] == saved["business_key"]
+    assert again["status"] == "下書き"
+    assert "title" not in again["fields"]
+    current = _body(again)
+    former = next(item for item in again["files"] if item.get("role") == "former")
+    assert current["name"] == "議事録.docx"
+    assert current["saved_at"]
+    assert former["file_id"] == body["file_id"]
+    assert former["saved_at"] == body["saved_at"]
+    assert former["replaced_at"] >= former["saved_at"]
+    assert current["saved_at"] >= former["replaced_at"]
+    path, _name, msg = store.file_path(actor(), again["id"], former["file_id"])
+    assert msg is None and path is not None
+    assert path.read_bytes() == b"one"
+
+    clash, err = store.save_office_file(
+        actor(user_id="user-2", teams=["other"]),
+        filename="第三.docx",
+        data=b"three",
+        row_id=again["id"],
+        file_id=body["file_id"],
+    )
+    assert clash is not None and clash.get("conflict") is True
+    assert err and "更新" in err
+    stayed, _ = store.get_row(actor(), again["id"])
+    assert stayed is not None
+    assert _body(stayed)["file_id"] == current["file_id"]
+
+    forced, err = store.save_office_file(
+        actor(user_id="user-2", teams=["other"]),
+        filename="第三.docx",
+        data=b"three",
+        row_id=again["id"],
+        file_id=body["file_id"],
+        force=True,
+    )
+    assert err is None and forced is not None
+    assert _body(forced)["name"] == "第三.docx"
+
+    locked, err = store.upsert_row(
+        actor(), forced["ledger_id"], {"business_key": forced["business_key"], "status": "確定"}
+    )
+    assert err is None and locked is not None
+    editor = actor(user_id="user-2", teams=["other"])
+    denied, err = store.save_office_file(
+        editor,
+        filename="第四.docx",
+        data=b"four",
+        row_id=forced["id"],
+        file_id=_body(forced)["file_id"],
+        force=True,
+    )
+    assert denied is None and err and "確定" in err
+    reverted, err = store.upsert_row(
+        editor, forced["ledger_id"], {"business_key": forced["business_key"], "status": "下書き"}
+    )
+    assert reverted is None and err and "確定" in err
+
+    copied, err = store.save_office_file(editor, filename="別名.docx", data=b"copy")
+    assert err is None and copied is not None
+    assert copied["id"] != forced["id"]
+    assert copied["status"] == "下書き"
+
+    owner, err = store.save_office_file(
+        actor(),
+        filename="確定の更新.docx",
+        data=b"owner",
+        row_id=forced["id"],
+        file_id=_body(forced)["file_id"],
+    )
+    assert err is None and owner is not None
+    assert owner["status"] == "確定"
+
+    empty, err = store.save_office_file(actor(), filename="空.docx", data=b"")
+    assert empty is None and err
+    huge, err = store.save_office_file(actor(), filename="大.docx", data=b"0123456789")
+    assert huge is None and err and "大き" in err
+    other, err = store.save_office_file(actor(), filename="メモ.pdf", data=b"pdf")
+    assert other is None and err
+
+
+def test_office_ledger_drops_a_title_field_left_from_before(db: str) -> None:
+    saved, err = store.save_office_file(actor(), filename="document.docx", data=b"v1")
+    assert err is None and saved is not None
+    db = store.connect()
+    ledger = db.execute("SELECT fields_json FROM ledgers WHERE id = ?", (saved["ledger_id"],)).fetchone()
+    fields = json.loads(ledger["fields_json"])
+    fields.insert(0, {"id": "title", "label": "題名", "type": "text", "masked": False, "options": []})
+    db.execute("UPDATE ledgers SET fields_json = ? WHERE id = ?", (json.dumps(fields), saved["ledger_id"]))
+    values = dict(saved["fields"])
+    values["title"] = "別の題名"
+    db.execute(
+        "UPDATE ledger_rows SET fields_json = ? WHERE id = ?",
+        (json.dumps(values), saved["id"]),
+    )
+    db.commit()
+    store.reset_connection()
+    store.connect()
+    ledger_after, err = store.get_ledger(actor(), saved["ledger_id"])
+    assert err is None and ledger_after is not None
+    assert [item["id"] for item in ledger_after["fields"]] == ["kind", "memo"]
+    row, err = store.get_row(actor(), saved["id"])
+    assert err is None and row is not None
+    assert "title" not in row["fields"]
+    assert _body(row)["name"] == "document.docx"
+
+
+def test_office_versions_remember_when_they_were_saved(db: str) -> None:
+    saved, err = store.save_office_file(actor(), filename="document.docx", data=b"v1")
+    assert err is None and saved is not None
+    again, err = store.save_office_file(
+        actor(),
+        filename="document.docx",
+        data=b"v2",
+        row_id=saved["id"],
+        file_id=_body(saved)["file_id"],
+    )
+    assert err is None and again is not None
+    conn = store.connect()
+    files = json.loads(conn.execute("SELECT files_json FROM ledger_rows WHERE id = ?", (saved["id"],)).fetchone()["files_json"])
+    for item in files:
+        item.pop("saved_at", None)
+    conn.execute("UPDATE ledger_rows SET files_json = ? WHERE id = ?", (json.dumps(files), saved["id"]))
+    conn.commit()
+    store.reset_connection()
+    store.connect()
+    row, err = store.get_row(actor(), saved["id"])
+    assert err is None and row is not None
+    current = _body(row)
+    former = next(item for item in row["files"] if item.get("role") == "former")
+    assert former["saved_at"]
+    assert current["saved_at"]
+    assert former["saved_at"] <= current["saved_at"]
+    assert former["name"] == current["name"] == "document.docx"
+
+
+def test_office_restore_makes_the_former_body_current(db: str) -> None:
+    saved, _ = store.save_office_file(actor(), filename="初稿.docx", data=b"v1")
+    assert saved is not None
+    first = _body(saved)["file_id"]
+    again, _ = store.save_office_file(
+        actor(), filename="二稿.docx", data=b"v2", row_id=saved["id"], file_id=first
+    )
+    assert again is not None
+    restored, err = store.restore_office_body(actor(), again["id"], first)
+    assert err is None and restored is not None
+    assert _body(restored)["file_id"] == first
+    assert _body(restored)["name"] == "初稿.docx"
+    path, _name, msg = store.file_path(actor(), restored["id"], _body(again)["file_id"])
+    assert msg is None and path is not None
+    assert path.read_bytes() == b"v2"
+
+    locked, _ = store.upsert_row(
+        actor(), restored["ledger_id"], {"business_key": restored["business_key"], "status": "確定"}
+    )
+    assert locked is not None
+    denied, err = store.restore_office_body(
+        actor(user_id="user-2", teams=["other"]), restored["id"], _body(again)["file_id"]
+    )
+    assert denied is None and err and "確定" in err
+
+
+def test_office_viewer_cannot_save(db: str) -> None:
+    saved, _ = store.save_office_file(actor(), filename="共有.docx", data=b"v1")
+    assert saved is not None
+    ledger, _ = store.get_ledger(actor(), saved["ledger_id"])
+    assert ledger is not None
+    updated, err = store.update_ledger(
+        actor(),
+        ledger["id"],
+        {
+            "grants": [
+                {"team_id": "team-a", "role": "admin"},
+                {"team_id": "team-b", "role": "viewer"},
+            ]
+        },
+    )
+    assert err is None and updated is not None
+    denied, err = store.save_office_file(
+        actor(teams=["team-b"], user_id="user-b"), filename="追記.docx", data=b"no"
+    )
+    assert denied is None and err and "権限" in err

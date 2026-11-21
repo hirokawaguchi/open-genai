@@ -21,6 +21,13 @@ DEFAULT_TENANT_ID = os.environ.get(
     "LEDGER_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-0000000000t1"
 )
 NO_TENANT_ID = "__none__"
+OFFICE_SOURCE_KEY = "office"
+_OFFICE_KIND = {"docx": "文書", "xlsx": "表計算", "pptx": "スライド"}
+_OFFICE_MIME = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 FIELD_TYPES = ("text", "number", "date", "select", "longtext", "file")
 ROLES = ("admin", "editor", "viewer")
 ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3}
@@ -65,6 +72,8 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     _db = conn
     _init(conn)
+    _drop_office_title(conn)
+    _stamp_office_saved_at(conn)
     return conn
 
 
@@ -185,6 +194,13 @@ def _role(row: sqlite3.Row, actor: Actor) -> str | None:
             found = role
     if found:
         return found
+    # 文書台帳は棟の共有置き場。明示した役割が無いチームは読み書きできる。
+    if (
+        str(row["source_key"] or "") == OFFICE_SOURCE_KEY
+        and row["tenant_id"] == actor.tenant_id
+        and actor.has_tenant()
+    ):
+        return "editor"
     return None
 
 
@@ -736,6 +752,14 @@ def upsert_row(actor: Actor, ledger_id: str, body: dict[str, Any]) -> tuple[dict
         status = str(body.get("status") or (existing["status"] if existing else statuses[0])).strip()
         if status not in statuses:
             return None, "その状態はこの台帳にありません"
+        if (
+            existing
+            and str(ledger["source_key"] or "") == OFFICE_SOURCE_KEY
+            and existing["status"] == "確定"
+            and status != existing["status"]
+            and _role(ledger, actor) != "admin"
+        ):
+            return None, "確定を戻す権限がありません"
         assignee = str(
             body["assignee"] if "assignee" in body else (existing["assignee"] if existing else "")
         ).strip()[:80]
@@ -955,6 +979,393 @@ def add_file(
             [{"key": "file", "label": "添付", "before": "", "after": filename[:200]}],
             now,
         )
+        db.commit()
+        saved = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (row_id,)).fetchone()
+        return _public_row(ledger, saved, actor), None
+
+
+def _office_max_bytes() -> int:
+    try:
+        return int(os.environ.get("LEDGER_OFFICE_MAX_BYTES", "33554432"))
+    except ValueError:
+        return 33554432
+
+
+def _office_name(raw: str) -> tuple[str, str, str] | None:
+    name = Path(str(raw or "")).name.replace("\\", "_").strip()
+    if not name or any(ord(ch) < 32 for ch in name):
+        return None
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    kind = _OFFICE_KIND.get(ext)
+    mime = _OFFICE_MIME.get(ext)
+    if not kind or not mime:
+        return None
+    return name[:200], kind, mime
+
+
+def _drop_office_title(db: sqlite3.Connection) -> None:
+    """文書台帳の題名はファイル名と別の項目だった。名前は本体のファイル名だけにする。"""
+    ledgers = db.execute(
+        "SELECT id, fields_json FROM ledgers WHERE source_key = ?",
+        (OFFICE_SOURCE_KEY,),
+    ).fetchall()
+    changed = False
+    for ledger in ledgers:
+        fields = _loads(ledger["fields_json"], [])
+        if not isinstance(fields, list) or not any(
+            isinstance(item, dict) and item.get("id") == "title" for item in fields
+        ):
+            continue
+        kept = [
+            item
+            for item in fields
+            if not (isinstance(item, dict) and item.get("id") == "title")
+        ]
+        db.execute(
+            "UPDATE ledgers SET fields_json = ? WHERE id = ?",
+            (_dump(kept), ledger["id"]),
+        )
+        rows = db.execute(
+            "SELECT id, fields_json, origins_json FROM ledger_rows WHERE ledger_id = ?",
+            (ledger["id"],),
+        ).fetchall()
+        for row in rows:
+            values = _loads(row["fields_json"], {})
+            origins = _loads(row["origins_json"], {})
+            if not isinstance(values, dict):
+                values = {}
+            if not isinstance(origins, dict):
+                origins = {}
+            if "title" not in values and "title" not in origins:
+                continue
+            values.pop("title", None)
+            origins.pop("title", None)
+            db.execute(
+                "UPDATE ledger_rows SET fields_json = ?, origins_json = ? WHERE id = ?",
+                (_dump(values), _dump(origins), row["id"]),
+            )
+        changed = True
+    if changed:
+        db.commit()
+
+
+def _stamp_office_saved_at(db: sqlite3.Connection) -> None:
+    """同じファイル名の版を、保存した時刻で見分けられるようにする。"""
+    ledgers = db.execute(
+        "SELECT id FROM ledgers WHERE source_key = ?",
+        (OFFICE_SOURCE_KEY,),
+    ).fetchall()
+    changed = False
+    for ledger in ledgers:
+        rows = db.execute(
+            "SELECT id, files_json, created_at FROM ledger_rows WHERE ledger_id = ?",
+            (ledger["id"],),
+        ).fetchall()
+        for row in rows:
+            files = _loads(row["files_json"], [])
+            if not isinstance(files, list):
+                continue
+            indexes = [
+                index
+                for index, item in enumerate(files)
+                if isinstance(item, dict) and item.get("role") in ("body", "former")
+            ]
+            if not indexes or all(str(files[index].get("saved_at") or "") for index in indexes):
+                continue
+            revisions = db.execute(
+                "SELECT created_at, changes_json FROM ledger_revisions WHERE row_id = ? ORDER BY created_at",
+                (row["id"],),
+            ).fetchall()
+            times: list[str] = []
+            for created_at, raw in revisions:
+                changes = _loads(raw, [])
+                if isinstance(changes, list) and any(
+                    isinstance(item, dict) and item.get("key") == "body" for item in changes
+                ):
+                    times.append(str(created_at))
+            if len(times) == len(indexes):
+                for index, saved_at in zip(indexes, times):
+                    files[index]["saved_at"] = saved_at
+            else:
+                cursor = str(row["created_at"] or "")
+                for index in indexes:
+                    item = files[index]
+                    if not str(item.get("saved_at") or ""):
+                        item["saved_at"] = cursor or str(item.get("replaced_at") or "")
+                    cursor = str(item.get("replaced_at") or item.get("saved_at") or cursor)
+            db.execute(
+                "UPDATE ledger_rows SET files_json = ? WHERE id = ?",
+                (_dump(files), row["id"]),
+            )
+            changed = True
+    if changed:
+        db.commit()
+
+
+def _office_body(files: list[Any]) -> dict[str, Any] | None:
+    for item in files:
+        if isinstance(item, dict) and item.get("role") == "body":
+            return item
+    return None
+
+
+def _write_row_file(row_id: str, data: bytes) -> str:
+    file_id = str(uuid.uuid4())
+    dest_dir = files_root() / row_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / file_id).write_bytes(data)
+    return file_id
+
+
+def _ensure_office_ledger(db: sqlite3.Connection, actor: Actor) -> tuple[sqlite3.Row | None, str | None]:
+    if not actor.has_tenant():
+        return None, "棟に入ってから文書を保存できます"
+    existing = db.execute(
+        "SELECT * FROM ledgers WHERE tenant_id = ? AND source_key = ? AND deleted_at = ''",
+        (actor.tenant_id, OFFICE_SOURCE_KEY),
+    ).fetchone()
+    if existing is not None:
+        return existing, None
+    now = _now()
+    ledger_id = _new_id()
+    grants = []
+    seen: set[str] = set()
+    for team in actor.team_ids:
+        team_id = str(team or "").strip()[:80]
+        if not team_id or team_id in seen:
+            continue
+        seen.add(team_id)
+        grants.append({"team_id": team_id, "role": "admin"})
+    fields = [
+        {
+            "id": "kind",
+            "label": "種類",
+            "type": "select",
+            "masked": False,
+            "options": ["文書", "表計算", "スライド"],
+        },
+        {"id": "memo", "label": "メモ", "type": "longtext", "masked": False, "options": []},
+    ]
+    system = [
+        {"key": "business_key", "label": "業務キー", "visible": False},
+        {"key": "status", "label": "状態", "visible": True},
+        {"key": "assignee", "label": "担当", "visible": True},
+        {"key": "registered_at", "label": "データ登録日時", "visible": True},
+        {"key": "comment", "label": "コメント", "visible": False},
+    ]
+    db.execute(
+        "INSERT INTO ledgers (id, tenant_id, name, statuses_json, fields_json, grants_json, "
+        "creator_user_id, source_key, created_at, updated_at, deleted_at, system_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+        (
+            ledger_id,
+            actor.tenant_id,
+            "文書",
+            _dump(["下書き", "確定"]),
+            _dump(fields),
+            _dump(grants[:40]),
+            actor.user_id,
+            OFFICE_SOURCE_KEY,
+            now,
+            now,
+            _dump(system),
+        ),
+    )
+    _audit(db, ledger_id, actor, "台帳を作った", "文書")
+    db.commit()
+    row = db.execute("SELECT * FROM ledgers WHERE id = ?", (ledger_id,)).fetchone()
+    return row, None
+
+
+def _store_office_body(
+    db: sqlite3.Connection,
+    ledger: sqlite3.Row,
+    row: sqlite3.Row,
+    actor: Actor,
+    *,
+    filename: str,
+    kind: str,
+    mime: str,
+    data: bytes,
+    creating: bool,
+) -> dict[str, Any]:
+    files = _loads(row["files_json"], [])
+    if not isinstance(files, list):
+        files = []
+    now = _now()
+    previous = _office_body(files)
+    previous_name = str(previous.get("name") or "") if previous else ""
+    if previous is not None:
+        previous["role"] = "former"
+        previous["replaced_at"] = now
+    file_id = _write_row_file(str(row["id"]), data)
+    files.append(
+        {"file_id": file_id, "name": filename, "mime": mime, "role": "body", "saved_at": now}
+    )
+    defs = _field_map(ledger)
+    fields = {str(k): str(v) for k, v in _loads(row["fields_json"], {}).items()}
+    origins = _loads(row["origins_json"], {})
+    if not isinstance(origins, dict):
+        origins = {}
+    changes: list[dict[str, str]] = []
+    if creating:
+        changes.append({"key": "created", "label": "作成", "before": "", "after": str(row["business_key"])})
+    if creating and "kind" in defs and not fields.get("kind"):
+        fields["kind"] = kind
+        origins["kind"] = {"origin": "entered"}
+        changes.append(
+            {
+                "key": "field:kind",
+                "label": str(defs["kind"].get("label") or "種類"),
+                "before": "",
+                "after": kind,
+            }
+        )
+    changes.append({"key": "body", "label": "本体", "before": previous_name, "after": filename})
+    db.execute(
+        "UPDATE ledger_rows SET fields_json = ?, origins_json = ?, files_json = ?, updated_at = ? WHERE id = ?",
+        (_dump(fields), _dump(origins), _dump(files), now, row["id"]),
+    )
+    _save_revision(db, str(row["id"]), actor, changes, now)
+    _audit(db, str(ledger["id"]), actor, "本体を更新した" if previous else "文書を保存した", filename)
+    db.commit()
+    saved = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (row["id"],)).fetchone()
+    return _public_row(ledger, saved, actor)
+
+
+def save_office_file(
+    actor: Actor,
+    *,
+    filename: str,
+    data: bytes,
+    row_id: str = "",
+    file_id: str = "",
+    force: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """文書台帳へ本体を書く。row_id が空なら下書きの行を作り、あればその本体を差し替える。"""
+    parsed = _office_name(filename)
+    if parsed is None:
+        return None, "文書、表計算、スライドのファイルを指定してください"
+    safe_name, kind, mime = parsed
+    if not data:
+        return None, "ファイルが空です"
+    if len(data) > _office_max_bytes():
+        return None, "ファイルが大きすぎます"
+    db = connect()
+    with _lock:
+        ledger, err = _ensure_office_ledger(db, actor)
+        if err or ledger is None:
+            return None, err
+        if not _can(ledger, actor, "editor"):
+            return None, "この台帳を操作する権限がありません"
+        target = row_id.strip()
+        if not target:
+            now = _now()
+            statuses = [str(item) for item in _loads(ledger["statuses_json"], [])]
+            status = statuses[0] if statuses else "下書き"
+            new_id = _new_id()
+            key = _new_id("k")
+            db.execute(
+                "INSERT INTO ledger_rows (id, ledger_id, business_key, assignee, status, comment, "
+                "fields_json, extras_json, files_json, origins_json, deleted_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, '', ?, '', '{}', '[]', '[]', '{}', '', ?, ?)",
+                (new_id, ledger["id"], key, status, now, now),
+            )
+            created = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (new_id,)).fetchone()
+            return _store_office_body(
+                db,
+                ledger,
+                created,
+                actor,
+                filename=safe_name,
+                kind=kind,
+                mime=mime,
+                data=data,
+                creating=True,
+            ), None
+        row = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (target,)).fetchone()
+        if row is None or str(row["deleted_at"] or "") or row["ledger_id"] != ledger["id"]:
+            return None, "行が見つかりません"
+        if str(row["status"] or "") == "確定" and _role(ledger, actor) != "admin":
+            return None, "確定の行を上書きする権限がありません"
+        files = _loads(row["files_json"], [])
+        if not isinstance(files, list):
+            files = []
+        current = _office_body(files)
+        current_id = str(current.get("file_id") or "") if current else ""
+        if not force and file_id.strip() != current_id:
+            payload = _public_row(ledger, row, actor)
+            payload["conflict"] = True
+            return payload, "このファイルは別の保存で更新されています"
+        return _store_office_body(
+            db,
+            ledger,
+            row,
+            actor,
+            filename=safe_name,
+            kind=kind,
+            mime=mime,
+            data=data,
+            creating=False,
+        ), None
+
+
+def restore_office_body(
+    actor: Actor, row_id: str, file_id: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """以前の本体を現在の本体に戻す。今の本体は履歴に残る。"""
+    wanted = file_id.strip()
+    if not wanted:
+        return None, "ファイルを指定してください"
+    db = connect()
+    with _lock:
+        row = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (row_id,)).fetchone()
+        if row is None or str(row["deleted_at"] or ""):
+            return None, "行が見つかりません"
+        ledger, err = _ledger_or_error(db, row["ledger_id"], actor, "editor")
+        if err or ledger is None:
+            return None, err
+        if str(ledger["source_key"] or "") != OFFICE_SOURCE_KEY:
+            return None, "この行は文書台帳にありません"
+        if str(row["status"] or "") == "確定" and _role(ledger, actor) != "admin":
+            return None, "確定の行を上書きする権限がありません"
+        files = _loads(row["files_json"], [])
+        if not isinstance(files, list):
+            files = []
+        chosen = next(
+            (item for item in files if isinstance(item, dict) and str(item.get("file_id") or "") == wanted),
+            None,
+        )
+        if chosen is None or chosen.get("role") not in ("body", "former"):
+            return None, "このファイルは以前の本体ではありません"
+        current = _office_body(files)
+        if current is not None and str(current.get("file_id") or "") == wanted:
+            return _public_row(ledger, row, actor), None
+        now = _now()
+        if current is not None:
+            current["role"] = "former"
+            current["replaced_at"] = now
+        chosen["role"] = "body"
+        chosen.pop("replaced_at", None)
+        db.execute(
+            "UPDATE ledger_rows SET files_json = ?, updated_at = ? WHERE id = ?",
+            (_dump(files), now, row_id),
+        )
+        _save_revision(
+            db,
+            row_id,
+            actor,
+            [
+                {
+                    "key": "body",
+                    "label": "本体",
+                    "before": str(current.get("name") or "") if current else "",
+                    "after": str(chosen.get("name") or ""),
+                }
+            ],
+            now,
+        )
+        _audit(db, str(ledger["id"]), actor, "本体を戻した", str(chosen.get("name") or ""))
         db.commit()
         saved = db.execute("SELECT * FROM ledger_rows WHERE id = ?", (row_id,)).fetchone()
         return _public_row(ledger, saved, actor), None

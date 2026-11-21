@@ -400,6 +400,66 @@ async def upload_file(
     return JSONResponse(saved)
 
 
+@app.put("/office/files")
+async def save_office_file(
+    request: Request,
+    name: str = "",
+    row_id: str = "",
+    file_id: str = "",
+    force: int = 0,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, actor = _actor(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    saved, msg = store.save_office_file(
+        actor,
+        filename=name,
+        data=await request.body(),
+        row_id=row_id,
+        file_id=file_id,
+        force=bool(force),
+    )
+    if saved and saved.get("conflict"):
+        return JSONResponse(status_code=409, content={"error": msg, **saved})
+    if msg or saved is None:
+        return _fail(msg)
+    return JSONResponse(saved)
+
+
+@app.post("/office/rows/{row_id}/body")
+async def restore_office_body(
+    row_id: str,
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> JSONResponse:
+    err, actor = _actor(
+        x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    body = await request.json()
+    wanted = str(body.get("file_id") or "") if isinstance(body, dict) else ""
+    saved, msg = store.restore_office_body(actor, row_id, wanted)
+    if msg or saved is None:
+        return _fail(msg)
+    return JSONResponse(saved)
+
+
 @app.get("/rows/{row_id}/files/{file_id}")
 def download_file(
     row_id: str,

@@ -33,6 +33,7 @@ import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { LEDGER_EXAPP_ID } from '@/layout/navItems';
 import { teamApi } from '@/lib/fetcher';
+import { officePathForFormat } from '../office/kinds';
 import type {
   LedgerExtra,
   LedgerField,
@@ -258,6 +259,15 @@ const formatWhen = (value?: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('ja-JP');
+};
+
+const versionWhen = (file: LedgerFile) => {
+  const saved = formatWhen(file.saved_at);
+  const until = file.role === 'former' ? formatWhen(file.replaced_at) : '';
+  if (saved && until) return `${saved} に保存、${until} まで`;
+  if (saved) return `${saved} に保存`;
+  if (until) return `${until} まで`;
+  return '';
 };
 
 const Unavailable = () => (
@@ -515,7 +525,32 @@ const findFieldFile = (files: LedgerFile[] | undefined, fieldId: string, value: 
   ) || null;
 
 const sourceFiles = (files: LedgerFile[] | undefined) =>
-  (files || []).filter((file) => !file.field_id);
+  (files || []).filter((file) => !file.field_id && file.role !== 'body' && file.role !== 'former');
+
+const isOfficeName = (name: string) => /\.(docx?|xlsx?|pptx?)$/i.test(name);
+
+const canOpenOffice = (name: string) => {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  return officePathForFormat(ext) !== null;
+};
+
+const officeTarget = (files: LedgerFile[] | undefined) => {
+  const list = files || [];
+  const body = list.find((file) => file.role === 'body' && canOpenOffice(file.name));
+  if (body) return { file: body, bound: true };
+  const other = list.find((file) => file.role !== 'former' && canOpenOffice(file.name));
+  if (other) return { file: other, bound: false };
+  return null;
+};
+
+const officeHref = (rowId: string, file: LedgerFile, bound: boolean) => {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const path = officePathForFormat(ext);
+  if (!path) return '';
+  const query = new URLSearchParams({ local: '1', row: rowId, file: file.file_id });
+  if (bound) query.set('bound', '1');
+  return `${path}?${query.toString()}`;
+};
 
 type OfficePreview = {
   kind: 'sheets' | 'text' | 'slides';
@@ -524,8 +559,6 @@ type OfficePreview = {
   sheets?: { name: string; rows: string[][] }[];
   slides?: { title: string; lines: string[] }[];
 };
-
-const isOfficeName = (name: string) => /\.(docx?|xlsx?|pptx?)$/i.test(name);
 
 const previewKind = (file: LedgerFile, blob: Blob) => {
   const mime = blob.type || file.mime || '';
@@ -1052,6 +1085,9 @@ export const LedgerRowsPage = () => {
   }
   const showSystem = (key: string) => systemShown(ledger?.system, key);
   const sheetColumns = [
+    ...(ledger?.source_key === 'office'
+      ? [{ key: 'file_name', label: 'ファイル名', wide: true, kind: 'system' as const }]
+      : []),
     ...(showSystem('business_key')
       ? [{ key: 'business_key', label: '業務キー', wide: false, kind: 'system' as const }]
       : []),
@@ -1081,7 +1117,7 @@ export const LedgerRowsPage = () => {
       ? [{ key: 'comment', label: 'コメント', wide: true, kind: 'system' as const }]
       : []),
   ];
-  const actionWidth = 132;
+  const actionWidth = 168;
   const columnCount = sheetColumns.length + 2;
   const columnWidth = (key: string, wide?: boolean) => widths[key] ?? defaultColumnWidth(key, wide);
   const tableWidth = sheetColumns.reduce(
@@ -1116,6 +1152,8 @@ export const LedgerRowsPage = () => {
   };
 
   const sourceValue = (row: LedgerRow, key: string) => {
+    if (key === 'file_name')
+      return (row.files || []).find((file) => file.role === 'body')?.name || '';
     if (key === 'business_key')
       return row.deleted_at ? `${row.business_key}（削除）` : row.business_key;
     if (key === 'status') return row.status;
@@ -1186,7 +1224,14 @@ export const LedgerRowsPage = () => {
     <Shell tab='records' ledgerId={ledgerId}>
       <div className='flex min-h-0 flex-1 flex-col gap-3'>
         <div className='flex shrink-0 flex-wrap items-end justify-between gap-2'>
-          <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}</h2>
+          <div>
+            <h2 className='text-std-18B-160 text-solid-gray-900'>{ledger?.name || '台帳'}</h2>
+            {ledger?.source_key === 'office' ? (
+              <p className='text-dns-14N-130 text-solid-gray-600'>
+                オフィスで保存した文書です。開くと続きを編集でき、保存は同じ行の本体を差し替えます。
+              </p>
+            ) : null}
+          </div>
           <div className='flex flex-wrap gap-2'>
             <Button variant='solid-fill' size='sm' type='button' onClick={() => void createRow()}>
               レコードを追加
@@ -1261,7 +1306,7 @@ export const LedgerRowsPage = () => {
                   <th
                     key={column.key}
                     className={
-                      column.key === 'business_key'
+                      column.key === 'business_key' || column.key === 'file_name'
                         ? 'sticky left-0 z-30 bg-solid-gray-50 px-3 py-2'
                         : 'relative bg-solid-gray-50 px-3 py-2'
                     }
@@ -1316,7 +1361,10 @@ export const LedgerRowsPage = () => {
                           : undefined;
                         const field = 'field' in column ? column.field : undefined;
                         const readOnly =
-                          !editable || column.key === 'business_key' || field?.type === 'file';
+                          !editable ||
+                          column.key === 'business_key' ||
+                          column.key === 'file_name' ||
+                          field?.type === 'file';
                         const cellClass = 'border-r border-solid-gray-200 px-1 py-1 align-top';
                         const inputClass =
                           'w-full rounded-4 border border-transparent bg-transparent px-2 py-1 text-std-16N-170 text-solid-gray-900 hover:border-solid-gray-300 focus:border-blue-900 focus:bg-white focus:outline-none read-only:hover:border-transparent';
@@ -1324,7 +1372,7 @@ export const LedgerRowsPage = () => {
                           <td
                             key={column.key}
                             className={
-                              column.key === 'business_key'
+                              column.key === 'business_key' || column.key === 'file_name'
                                 ? `sticky left-0 z-10 overflow-hidden ${stickyBg} ${cellClass}`
                                 : `overflow-hidden ${cellClass}`
                             }
@@ -1373,6 +1421,26 @@ export const LedgerRowsPage = () => {
                                       </option>
                                     ))}
                                   </select>
+                                ) : column.key === 'file_name' ? (
+                                  (() => {
+                                    const target = officeTarget(row.files);
+                                    const href = target
+                                      ? officeHref(row.id, target.file, target.bound)
+                                      : '';
+                                    return href ? (
+                                      <button
+                                        type='button'
+                                        className={`${inputClass} text-left text-blue-900 underline`}
+                                        onClick={() => navigate(href)}
+                                      >
+                                        {target?.file.name}
+                                      </button>
+                                    ) : (
+                                      <span className='block truncate px-2 py-1 text-solid-gray-500'>
+                                        ファイルはまだありません
+                                      </span>
+                                    );
+                                  })()
                                 ) : field?.type === 'file' ? (
                                   (() => {
                                     const linked = findFieldFile(row.files, field.id, value);
@@ -1380,7 +1448,11 @@ export const LedgerRowsPage = () => {
                                       <button
                                         type='button'
                                         className={`${inputClass} text-left text-blue-900 underline`}
-                                        onClick={() => setPreview({ rowId: row.id, file: linked })}
+                                        onClick={() => {
+                                          const href = officeHref(row.id, linked, linked.role === 'body');
+                                          if (href) navigate(href);
+                                          else setPreview({ rowId: row.id, file: linked });
+                                        }}
                                       >
                                         {linked.name}
                                       </button>
@@ -1440,6 +1512,23 @@ export const LedgerRowsPage = () => {
                       <td className='p-0' />
                       <td className={`sticky right-0 z-20 px-1 py-1 text-right ${stickyBg}`}>
                         <div className='flex items-center justify-end gap-1'>
+                          {officeTarget(row.files) ? (
+                            <button
+                              type='button'
+                              className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-blue-900 hover:bg-blue-50'
+                              aria-label='オフィスで開く'
+                              title='オフィスで開く'
+                              onClick={() => {
+                                const target = officeTarget(row.files);
+                                const href = target
+                                  ? officeHref(row.id, target.file, target.bound)
+                                  : '';
+                                if (href) navigate(href);
+                              }}
+                            >
+                              <PiBookOpenBold className='size-4' aria-hidden={true} />
+                            </button>
+                          ) : null}
                           <button
                             type='button'
                             className='inline-flex size-8 items-center justify-center rounded-4 border border-solid-gray-300 bg-white text-blue-900 hover:bg-blue-50'
@@ -2414,11 +2503,16 @@ POST /ledger/rows/{レコードID}`}</ApiBlock>
         <h3 className='text-std-16B-150 text-solid-gray-900'>添付ファイル</h3>
         <p className='text-dns-14N-130 text-solid-gray-600'>
           出典も、項目としてのファイルも、レコードの添付です。登録は multipart の file です。Office
-          のプレビューは文字と表だけを返し、元のファイルは別の取得で落とします。
+          のプレビューは文字と表だけを返し、元のファイルは別の取得で落とします。文書台帳への保存は、row_id
+          と file_id があると同じ行の本体を差し替え、無いときは下書きの行を作ります。force=1
+          は、開いた版と違っていても上書きします。確定の行を上書きできるのはオーナーです。
         </p>
         <ApiBlock>{`POST /ledger/rows/{レコードID}/files
 GET  /ledger/rows/{レコードID}/files/{ファイルID}
-GET  /ledger/rows/{レコードID}/files/{ファイルID}/preview`}</ApiBlock>
+GET  /ledger/rows/{レコードID}/files/{ファイルID}/preview
+PUT  /ledger/office/files?name=議事.docx&row_id=&file_id=&force=0
+POST /ledger/office/rows/{レコードID}/body
+{ "file_id": "以前の本体" }`}</ApiBlock>
       </section>
 
       <section className='mt-8 flex flex-col gap-2'>
@@ -2700,6 +2794,17 @@ export const LedgerCardPage = () => {
   }, [ledger?.id, current?.id]);
 
   const canWrite = ledger?.role === 'admin' || ledger?.role === 'editor';
+  const restoreBody = async (fileId: string) => {
+    if (!current) return;
+    setError('');
+    try {
+      await teamApi.post(`ledger/office/rows/${current.id}/body`, { file_id: fileId });
+      await mutate();
+      await reloadRows();
+    } catch (e) {
+      setError(ledgerError(e, 'この版を現在にできませんでした'));
+    }
+  };
   const addRecord = async () => {
     if (!ledger) return;
     setError('');
@@ -2861,7 +2966,16 @@ export const LedgerCardPage = () => {
         (() => {
           const linked = findFieldFile(current.files, field.id, current.fields[field.id] || '');
           return linked ? (
-            <Button variant='outline' size='sm' type='button' onClick={() => setPreview(linked)}>
+            <Button
+              variant='outline'
+              size='sm'
+              type='button'
+              onClick={() => {
+                const href = officeHref(current.id, linked, linked.role === 'body');
+                if (href) navigate(href);
+                else setPreview(linked);
+              }}
+            >
               {linked.name}
             </Button>
           ) : (
@@ -3017,6 +3131,91 @@ export const LedgerCardPage = () => {
             </Button>
           </div>
         </div>
+        {officeTarget(current.files) || (current.files || []).some((file) => file.role === 'former') ? (
+          <div className='flex shrink-0 flex-col gap-2'>
+            {(() => {
+              const target = officeTarget(current.files);
+              const href = target ? officeHref(current.id, target.file, target.bound) : '';
+              const canRestore =
+                canWrite &&
+                !current.deleted_at &&
+                (current.status !== '確定' || ledger?.role === 'admin');
+              const formers = (current.files || [])
+                .filter((file) => file.role === 'former')
+                .slice()
+                .sort((left, right) =>
+                  (right.saved_at || right.replaced_at || '').localeCompare(
+                    left.saved_at || left.replaced_at || '',
+                  ),
+                );
+              return (
+                <>
+                  {target ? (
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <span className='w-10 shrink-0 text-dns-14N-130 text-solid-gray-600'>現在</span>
+                      {href ? (
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          type='button'
+                          onClick={() => navigate(href)}
+                        >
+                          {target.file.name}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          type='button'
+                          onClick={() => setPreview(target.file)}
+                        >
+                          {target.file.name}
+                        </Button>
+                      )}
+                      <span className='text-dns-14N-130 text-solid-gray-600'>
+                        {versionWhen(target.file)}
+                      </span>
+                    </div>
+                  ) : null}
+                  {formers.map((file) => {
+                    const sameName = target?.file.name === file.name;
+                    const openFormer = () => {
+                      const previousHref = officeHref(current.id, file, false);
+                      if (previousHref) navigate(previousHref);
+                      else setPreview(file);
+                    };
+                    return (
+                      <div key={file.file_id} className='flex flex-wrap items-center gap-2'>
+                        <span className='w-10 shrink-0 text-dns-14N-130 text-solid-gray-600'>以前</span>
+                        {sameName ? null : (
+                          <Button variant='outline' size='sm' type='button' onClick={openFormer}>
+                            {file.name}
+                          </Button>
+                        )}
+                        <span className='text-dns-14N-130 text-solid-gray-800'>{versionWhen(file)}</span>
+                        {sameName ? (
+                          <Button variant='outline' size='sm' type='button' onClick={openFormer}>
+                            開く
+                          </Button>
+                        ) : null}
+                        {canRestore ? (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            type='button'
+                            onClick={() => void restoreBody(file.file_id)}
+                          >
+                            この版を現在にする
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
+          </div>
+        ) : null}
         {sourceFiles(current.files).length ? (
           <div className='flex shrink-0 flex-wrap items-center gap-2'>
             <span className='text-dns-14N-130 text-solid-gray-600'>出典</span>
@@ -3026,7 +3225,11 @@ export const LedgerCardPage = () => {
                 variant='outline'
                 size='sm'
                 type='button'
-                onClick={() => setPreview(file)}
+                onClick={() => {
+                  const sourceHref = officeHref(current.id, file, file.role === 'body');
+                  if (sourceHref) navigate(sourceHref);
+                  else setPreview(file);
+                }}
               >
                 {file.name}
               </Button>

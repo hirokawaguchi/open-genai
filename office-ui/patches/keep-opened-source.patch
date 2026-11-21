@@ -71,20 +71,48 @@ diff -ruN a/crates/ibis-office-shell/src/chrome.rs b/crates/ibis-office-shell/sr
              let mut buttons = Vec::new();
              if crate::embed::show_download() {
 -                let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.embed_download(window, cx));
-+                let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| { this.embed_download(window, cx); });
++                let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| { this.embed_download("download", window, cx); });
                  buttons.push(title_button("embed-download", "download", "shell.embed.download", Some(handler), editor));
              }
              if crate::embed::show_close() {
+diff -ruN a/crates/ibis-office-shell/src/editor.rs b/crates/ibis-office-shell/src/editor.rs
+--- a/crates/ibis-office-shell/src/editor.rs	2026-11-13 21:35:17
++++ b/crates/ibis-office-shell/src/editor.rs	2026-11-21 15:50:00
+@@ -400,6 +400,8 @@
+     pub(crate) picture_watch: Option<Task<()>>,
+     /// Name of the open file; `None` for a new presentation.
+     pub file_name: Option<SharedString>,
++    /// The user has saved this file under its current name. An initial name still asks.
++    pub(crate) name_confirmed: bool,
+     /// Progress or error of the last file operation, for the status bar.
+     pub status: Option<SharedString>,
+     /// What a save left out, to say once the save is done (an old .xls leaves things out).
+@@ -767,6 +769,7 @@
+             resources,
+             picture_watch: None,
+             file_name: None,
++            name_confirmed: false,
+             status: None,
+             save_note: None,
+             chart_ranges: None,
+@@ -936,6 +939,7 @@
+         // new (`docx::State`).
+         window.set_window_title(&format!("{name} - ibisOffice"));
+         self.file_name = Some(name);
++        self.name_confirmed = false;
+         self.has_document = true;
+         crate::app::track_start_window(cx.entity_id(),None,false,cx);
+         self.loading = false;
 diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src/embed.rs
 --- a/crates/ibis-office-shell/src/embed.rs	2026-11-13 21:35:17
 +++ b/crates/ibis-office-shell/src/embed.rs	2026-11-17 18:16:10
-@@ -103,23 +103,91 @@
+@@ -103,23 +103,270 @@
      }
  
      /// The download button: the document as it is now, in its own format, goes to the embedding page.
 -    pub(crate) fn embed_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
 +    /// The bytes go to the embedding page. True when they were handed over.
-+    pub(crate) fn embed_download(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
++    pub(crate) fn embed_download(&mut self, action: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
          // What is typed in a cell is entered first, as a save does (`commit_pending_edit`): the file is the workbook as it is now.
          self.commit_pending_edit(window, cx);
          let Some(source) = self.source.clone() else {
@@ -96,7 +124,7 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
          match source.save(&self.presentation_for_save(), ibis_pptx::SaveOptions::default()) {
 -            Ok(bytes) => embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes)),
 +            Ok(bytes) => {
-+                embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes));
++                embed_action_js(action, self.file_name.as_deref().unwrap_or(""), Some(bytes));
 +                self.document.mark_clean();
 +                self.status = Some(crate::i18n::text("_shell.saved").into());
 +                cx.notify();
@@ -119,7 +147,40 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
 +        };
 +        let previous = self.file_name.clone();
 +        self.file_name = Some(name.into());
-+        if self.embed_download(window, cx) {
++        if self.embed_download("save-as", window, cx) {
++            self.name_confirmed = true;
++            return true;
++        }
++        self.file_name = previous;
++        cx.notify();
++        false
++    }
++
++    /// 保存. A new file still has the office's initial name, so the name is asked first.
++    /// A name already kept, or any other name, is written as it is.
++    pub(crate) fn embed_save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
++        let current = self.file_name.clone().unwrap_or_default();
++        if self.name_confirmed || !is_initial_office_name(current.as_ref()) {
++            return self.embed_download("save", window, cx);
++        }
++        let suggested = {
++            let presentation = self.presentation_for_save();
++            suggested_office_name(current.as_ref(), presentation.as_ref())
++        };
++        let Some(name) = prompt_save_as_name(&suggested) else {
++            return false;
++        };
++        if name == current.as_ref() {
++            let saved = self.embed_download("save", window, cx);
++            if saved {
++                self.name_confirmed = true;
++            }
++            return saved;
++        }
++        let previous = self.file_name.clone();
++        self.file_name = Some(name.into());
++        if self.embed_download("save-as", window, cx) {
++            self.name_confirmed = true;
 +            return true;
 +        }
 +        self.file_name = previous;
@@ -128,6 +189,152 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
 +    }
  }
  
++/// A new file's name, before anyone has named it. Saving one asks for a name.
++pub(crate) fn is_initial_office_name(name: &str) -> bool {
++    let base = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
++    matches!(
++        base,
++        "document.docx"
++            | "workbook.xlsx"
++            | "presentation.pptx"
++            | "Book1.xlsx"
++            | "Document1.docx"
++            | "Presentation1.pptx"
++            | "文書 1.docx"
++            | "プレゼンテーション 1.pptx"
++    )
++}
++
++/// The name offered when a new file is saved: the first line of the document, or the initial name when there is none.
++pub(crate) fn suggested_name_from_lines<'a>(current: &str, lines: impl IntoIterator<Item = &'a str>) -> String {
++    match file_stem_from_content(lines) {
++        Some(stem) => save_as_file_name(current, &stem).unwrap_or_else(|| current.to_string()),
++        None => current.to_string(),
++    }
++}
++
++fn suggested_office_name(current: &str, presentation: &ibis_doc_model::Presentation) -> String {
++    let lines = office_content_lines(presentation);
++    suggested_name_from_lines(current, lines.iter().map(String::as_str))
++}
++
++fn office_content_lines(presentation: &ibis_doc_model::Presentation) -> Vec<String> {
++    let mut lines = Vec::new();
++    if let Some(flow) = &presentation.flow {
++        for block in &flow.body {
++            push_flow_block(&mut lines, block);
++        }
++        return lines;
++    }
++    for slide in &presentation.slides {
++        let before = lines.len();
++        for shape in &slide.shapes {
++            match &shape.kind {
++                ibis_doc_model::ShapeKind::TextBox(body) => push_text_body(&mut lines, body),
++                ibis_doc_model::ShapeKind::Auto(shape) => {
++                    if let Some(body) = &shape.text {
++                        push_text_body(&mut lines, body);
++                    }
++                }
++                ibis_doc_model::ShapeKind::Sheet(sheet) => {
++                    for cell in &sheet.cells {
++                        let text = cell.text.trim();
++                        if !text.is_empty() {
++                            lines.push(text.to_string());
++                        }
++                    }
++                }
++                _ => {}
++            }
++        }
++        if lines.len() > before {
++            break;
++        }
++    }
++    lines
++}
++
++fn push_text_body(lines: &mut Vec<String>, body: &ibis_doc_model::text::TextBody) {
++    for paragraph in &body.paragraphs {
++        let text = paragraph.text();
++        if !text.trim().is_empty() {
++            lines.push(text);
++        }
++    }
++}
++
++fn push_flow_block(lines: &mut Vec<String>, block: &ibis_doc_model::flow::Block) {
++    match block {
++        ibis_doc_model::flow::Block::Paragraph(paragraph) => {
++            let mut text = String::new();
++            for run in &paragraph.runs {
++                match &run.kind {
++                    ibis_doc_model::flow::FlowRunKind::Text(value)
++                    | ibis_doc_model::flow::FlowRunKind::FileName(value) => text.push_str(value),
++                    ibis_doc_model::flow::FlowRunKind::Field { shown, .. } => text.push_str(shown),
++                    ibis_doc_model::flow::FlowRunKind::Ruby { base, .. } => text.push_str(base),
++                    ibis_doc_model::flow::FlowRunKind::PageRef { shown, .. } => text.push_str(shown),
++                    _ => {}
++                }
++            }
++            if !text.trim().is_empty() {
++                lines.push(text);
++            }
++        }
++        ibis_doc_model::flow::Block::Table(table) => {
++            for row in &table.rows {
++                for cell in &row.cells {
++                    for block in &cell.blocks {
++                        push_flow_block(lines, block);
++                    }
++                }
++            }
++        }
++    }
++}
++
++pub(crate) fn file_stem_from_content<'a>(lines: impl IntoIterator<Item = &'a str>) -> Option<String> {
++    for line in lines {
++        let text = line.split_whitespace().collect::<Vec<_>>().join(" ");
++        if text.is_empty() || is_placeholder_text(&text) {
++            continue;
++        }
++        let stem = shorten_file_stem(&text);
++        if !stem.is_empty() {
++            return Some(stem);
++        }
++    }
++    None
++}
++
++fn is_placeholder_text(text: &str) -> bool {
++    text.starts_with("クリックして")
++        || text.starts_with("マスター タイトル")
++        || text.starts_with("マスター テキスト")
++        || text.to_lowercase().starts_with("click to add")
++        || matches!(text, "Sheet1" | "シート1" | "Slide 1" | "スライド 1")
++}
++
++fn shorten_file_stem(text: &str) -> String {
++    let cleaned: String = text
++        .chars()
++        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { ' ' } else { c })
++        .collect();
++    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
++    let limit = 40;
++    if cleaned.chars().count() <= limit {
++        return cleaned.trim_end_matches(['。', '、', ' ', '.', '，', '！', '？', '!', '?']).trim().to_string();
++    }
++    let head: String = cleaned.chars().take(limit).collect();
++    if let Some(index) = head.rfind(['。', '、', '！', '？', '!', '?', ' ', '　']) {
++        let cut = head[..index].trim().trim_end_matches(['。', '、', '！', '？', '!', '?']);
++        if cut.chars().count() >= 4 {
++            return cut.to_string();
++        }
++    }
++    head.trim().to_string()
++}
++
 +/// The name 名前を付けて保存 keeps: the open file's extension stays, so a workbook is not handed out as a document.
 +pub(crate) fn save_as_file_name(current: &str, entered: &str) -> Option<String> {
 +    let ext = current.rsplit_once('.').map(|(_, ext)| ext).filter(|ext| !ext.is_empty()).unwrap_or("");
@@ -173,7 +380,7 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -152,5 +220,14 @@
+@@ -152,5 +398,45 @@
  
          // Reset defaults
          set_embed_options(false, false, false, true, true);
@@ -187,11 +394,42 @@ diff -ruN a/crates/ibis-office-shell/src/embed.rs b/crates/ibis-office-shell/src
 +        assert_eq!(super::save_as_file_name("book.xlsx", "  ").as_deref(), None);
 +        assert_eq!(super::save_as_file_name("文書.docx", "").as_deref(), None);
      }
++
++    #[test]
++    fn an_initial_file_name_asks_before_it_is_saved() {
++        assert!(super::is_initial_office_name("document.docx"));
++        assert!(super::is_initial_office_name("workbook.xlsx"));
++        assert!(super::is_initial_office_name("presentation.pptx"));
++        assert!(super::is_initial_office_name("Book1.xlsx"));
++        assert!(super::is_initial_office_name("Document1.docx"));
++        assert!(super::is_initial_office_name("Presentation1.pptx"));
++        assert!(super::is_initial_office_name("文書 1.docx"));
++        assert!(super::is_initial_office_name("プレゼンテーション 1.pptx"));
++        assert!(!super::is_initial_office_name("議事.docx"));
++        assert!(!super::is_initial_office_name(""));
++    }
++
++    #[test]
++    fn a_name_is_proposed_from_the_document() {
++        assert_eq!(super::suggested_name_from_lines("document.docx", ["", "  "]).as_str(), "document.docx");
++        assert_eq!(
++            super::suggested_name_from_lines("document.docx", ["クリックしてタイトルを入力", "本日の定例会議"]).as_str(),
++            "本日の定例会議.docx"
++        );
++        assert_eq!(
++            super::suggested_name_from_lines("presentation.pptx", ["令和8年度 予算について。"]).as_str(),
++            "令和8年度 予算について.pptx"
++        );
++        let long = "あ".repeat(80);
++        let named = super::suggested_name_from_lines("workbook.xlsx", [long.as_str()]);
++        assert!(named.ends_with(".xlsx"));
++        assert!(named.chars().count() <= "あ".repeat(40).chars().count() + ".xlsx".chars().count());
++    }
  }
 diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/save.rs
 --- a/crates/ibis-office-shell/src/save.rs	2026-11-13 21:35:17
 +++ b/crates/ibis-office-shell/src/save.rs	2026-11-17 18:15:34
-@@ -86,9 +86,15 @@
+@@ -86,9 +86,16 @@
          }
          #[cfg(target_family = "wasm")]
          {
@@ -200,8 +438,9 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
 -            cx.notify();
 +            // The browser has no folder to write. When the page asked for the
 +            // download button, Save hands it the bytes and the page stores them.
++            // A new file still has its initial name, so that save asks for one.
 +            if crate::embed::show_download() {
-+                self.embed_download(window, cx);
++                self.embed_save(window, cx);
 +            } else {
 +                let _ = window;
 +                self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
@@ -210,7 +449,7 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
          }
      }
  
-@@ -144,9 +150,16 @@
+@@ -144,9 +151,16 @@
          }
          #[cfg(target_family = "wasm")]
          {
@@ -230,7 +469,7 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
          }
      }
  
-@@ -204,9 +217,15 @@
+@@ -204,9 +218,15 @@
          }
          #[cfg(target_family = "wasm")]
          {
@@ -238,7 +477,7 @@ diff -ruN a/crates/ibis-office-shell/src/save.rs b/crates/ibis-office-shell/src/
 -            self.status = Some(crate::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
 -            cx.notify();
 +            if crate::embed::show_download() {
-+                if self.embed_download(window, cx) {
++                if self.embed_save(window, cx) {
 +                    then(self, window, cx);
 +                }
 +            } else {
@@ -264,3 +503,24 @@ diff -ruN a/scripts/build-web.sh b/scripts/build-web.sh
  
  # main.ts imports the typings wasm-bindgen just wrote.
  if [[ ! -x node_modules/.bin/tsc ]]; then
+diff -ruN a/www/main.ts b/www/main.ts
+--- a/www/main.ts	2026-11-13 21:35:17
++++ b/www/main.ts	2026-11-21 15:20:00
+@@ -105,7 +105,7 @@
+  */
+ function embedAction(kind: string, name: string, bytes?: Uint8Array): void {
+   const options = embedOptions();
+-  const detail = kind === 'download' && bytes ? { name, bytes, blob: new Blob([bytes as BlobPart]) } : {};
++  const detail = bytes ? { name, bytes, blob: new Blob([bytes as BlobPart]) } : {};
+   (options.eventTarget ?? window).dispatchEvent(new CustomEvent(`ibisoffice:${kind}`, { detail }));
+   if (window.parent !== window) {
+     const origin = parentOrigin(options.targetOrigin);
+@@ -114,7 +114,7 @@
+       return;
+     }
+     // The parent gets its own copy of the bytes (transferred), so the event's listeners keep theirs.
+-    if (kind === 'download' && bytes) {
++    if (bytes) {
+       const copy = bytes.slice().buffer;
+       window.parent.postMessage({ source: 'ibisoffice', type: kind, name, bytes: copy }, origin, [copy]);
+     } else {

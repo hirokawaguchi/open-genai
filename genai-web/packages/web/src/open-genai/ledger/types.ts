@@ -36,7 +36,15 @@ export type FieldOrigin = {
   file_id?: string;
 };
 
-export type LedgerFile = { file_id: string; name: string; mime?: string; field_id?: string };
+export type LedgerFile = {
+  file_id: string;
+  name: string;
+  mime?: string;
+  field_id?: string;
+  role?: 'body' | 'former' | '';
+  saved_at?: string;
+  replaced_at?: string;
+};
 
 export type LedgerRow = {
   id: string;
