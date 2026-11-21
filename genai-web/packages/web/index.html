@@ -3,6 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="google" content="notranslate" />
+    <!--
+      未ログインの端末が約4MBの画面プログラムを取り終えてからログインへ移ると、
+      庁内回線では初回表示に時間がかかる。保存済みトークンが無いときは、
+      モジュールを読む前にログインへ移し、ログイン画面の表示を待たせない。
+      トークンがある端末・ログイン完了の戻り(#token=)・サインアウト/エラー画面は飛ばさない。
+    -->
+    <script>
+      (function () {
+        try {
+          var hash = window.location.hash || '';
+          if (hash.indexOf('#token=') === 0) return; // ログイン完了の戻り
+          var path = window.location.pathname;
+          if (path === '/signed-out' || path === '/auth-error') return;
+          if (localStorage.getItem('open-genai-token')) return; // 期限切れでも再発行で入る
+          var portal = '%VITE_PORTAL_PUBLIC_URL%'.replace(/\/$/, '');
+          var internetHost = '%VITE_INTERNET_APP_HOST%'.toLowerCase();
+          var isTemplate = function (v) { return v.charAt(0) === '%'; };
+          if (!isTemplate(portal) && portal && !isTemplate(internetHost) && internetHost &&
+              window.location.hostname.toLowerCase() === internetHost) {
+            window.location.replace(portal + '/api/auth/login');
+            return;
+          }
+          var api = '%VITE_APP_API_ENDPOINT%';
+          if (isTemplate(api)) api = '/api';
+          window.location.replace(
+            api + '/auth/login?redirect=' + encodeURIComponent(window.location.origin),
+          );
+        } catch (e) {
+          /* localStorage 不可などでは通常起動に任せる */
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon_180x180.png" sizes="180x180" />

@@ -1949,6 +1949,19 @@ def _startup() -> None:
     audit.start()
     objstore.start_retention_scheduler()
     os.makedirs(FILES_DIR, exist_ok=True)
+    # 氏名判定の GiNZA は初回ロードが重い。起動時に背後で温めて、
+    # 最初の添付でモデル読込を待たせない（未導入なら pii_scan 側で無効化される）。
+    def _warm_pii_ner() -> None:
+        try:
+            from shared.pii_scan import _get_nlp
+
+            _get_nlp()
+        except Exception as e:  # noqa: BLE001 - 温め失敗で起動は止めない
+            print(f"[startup] 氏名判定モデルの事前読込をスキップ: {e}")
+
+    import threading as _threading
+
+    _threading.Thread(target=_warm_pii_ner, name="pii-ner-warmup", daemon=True).start()
 
 
 def _account_rate_response(claims: dict[str, Any]) -> JSONResponse | None:
@@ -4148,9 +4161,102 @@ def _guess_media_type(filename: str) -> str:
     }.get(ext, "")
 
 
+# 氏名(GiNZA NER)判定は重く、同期実行すると添付のたびにイベントループが止まり、
+# ログインなど他の要求まで遅くなる。保存と正規表現検知だけで即返し、氏名判定は
+# 背後のスレッドで走らせて、フロントは下の /files-pii/{key} で後から取りにくる。
+_FILE_PII_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_FILE_PII_TTL = int(os.environ.get("FILES_PII_TTL", "3600"))
+
+
+def _file_pii_cache_put(key: str, value: dict[str, Any]) -> None:
+    now = time.time()
+    # 期限切れを間引く（添付のたびに無限に溜めない）。
+    for k, (exp, _v) in list(_FILE_PII_CACHE.items()):
+        if exp < now:
+            _FILE_PII_CACHE.pop(k, None)
+    _FILE_PII_CACHE[_normalize_file_key(key)] = (now + _FILE_PII_TTL, value)
+
+
+def _file_pii_cache_get(key: str) -> dict[str, Any] | None:
+    entry = _FILE_PII_CACHE.get(_normalize_file_key(key))
+    if not entry:
+        return None
+    exp, value = entry
+    if exp < time.time():
+        _FILE_PII_CACHE.pop(_normalize_file_key(key), None)
+        return None
+    return value
+
+
+def _extract_and_regex_scan(
+    filename: str, media_type: str, data: bytes, check_mynumber: bool
+) -> tuple[str, dict[str, Any]]:
+    """本文抽出と正規表現検知（氏名 NER なし）。重いのでスレッドで回す。"""
+    from shared.pii_scan import format_warning_message, scan
+    from shared.docextract import extract_doc_text_full
+    import base64 as _b64
+
+    b64 = _b64.b64encode(data).decode("ascii")
+    text = extract_doc_text_full(filename, media_type, b64)
+    if not text or text.startswith("(添付ファイル"):
+        return "", {"warned": False, "categories": []}
+    scanned = scan(text, enable_ner=False, check_mynumber=check_mynumber)
+    cats = list(scanned.get("categories") or [])
+    hits = list(scanned.get("hits") or [])
+    return text, {
+        "warned": bool(cats),
+        "categories": cats,
+        "hits": hits,
+        "message": format_warning_message(scanned) if cats else "",
+    }
+
+
+def _run_attachment_ner(
+    key: str,
+    text: str,
+    *,
+    ner_max_chars: int,
+    check_mynumber: bool,
+) -> None:
+    """氏名を含む全種別の検知（GiNZA NER あり）を行い、結果をキャッシュに置く。"""
+    from shared.pii_scan import format_warning_message, scan
+
+    try:
+        scanned = scan(
+            text,
+            enable_ner=True,
+            ner_max_chars=ner_max_chars,
+            check_mynumber=check_mynumber,
+        )
+        cats = list(scanned.get("categories") or [])
+        hits = list(scanned.get("hits") or [])
+        _file_pii_cache_put(
+            key,
+            {
+                "ready": True,
+                "warned": bool(cats),
+                "categories": cats,
+                "hits": hits,
+                "message": format_warning_message(scanned) if cats else "",
+            },
+        )
+    except Exception as e:  # noqa: BLE001 - 失敗しても添付自体は成立させる
+        print(f"[files] 氏名判定に失敗: {e}")
+        # ready を立てて、フロントのポーリングを終わらせる（正規表現分は即時応答済み）。
+        _file_pii_cache_put(
+            key,
+            {"ready": True, "warned": False, "categories": [], "hits": [], "message": ""},
+        )
+
+
 @app.put("/files/{key:path}")
 async def put_file(key: str, request: Request) -> dict[str, Any]:
-    """添付を保存し、抽出可能な本文があれば個人情報を警告検知する（ブロックしない）。"""
+    """添付を保存し、抽出可能な本文があれば個人情報を警告検知する（ブロックしない）。
+
+    保存と正規表現検知（電話・マイナンバー・住所）までを同期で返す。
+    氏名(GiNZA NER)は重いので背後のスレッドで走らせ、`pii_pending` を立てる。
+    フロントは `pii_poll_url` を叩いて氏名判定の結果を後から取り込む。
+    """
     denied = _require_file_sig(request, key, "PUT")
     if denied:
         return denied  # type: ignore[return-value]
@@ -4163,9 +4269,7 @@ async def put_file(key: str, request: Request) -> dict[str, Any]:
 
     result: dict[str, Any] = {"warned": False, "categories": []}
     try:
-        from shared.pii_scan import format_warning_message, load_pii_settings, scan
-        from shared.docextract import extract_doc_text_full
-        import base64 as _b64
+        from shared.pii_scan import load_pii_settings
 
         # 添付の個人情報警告は、アップロードした利用者が開いている棟のルールで判定する。
         claims = _claims_from_request(request)
@@ -4175,28 +4279,44 @@ async def put_file(key: str, request: Request) -> dict[str, Any]:
             return result
         filename = os.path.basename(key) or "file"
         media_type = _guess_media_type(filename)
-        b64 = _b64.b64encode(data).decode("ascii")
-        text = extract_doc_text_full(filename, media_type, b64)
-        if not text or text.startswith("(添付ファイル"):
-            return result
-        scanned = scan(
-            text,
-            enable_ner=bool(settings.get("check_pii_ner", True)),
-            ner_max_chars=int(os.environ.get("PII_NER_MAX_CHARS", "8000")),
-            check_mynumber=bool(settings.get("check_mynumber", True)),
+        check_mynumber = bool(settings.get("check_mynumber", True))
+        # 本文抽出と正規表現検知はスレッドで。イベントループ（ログイン等）を止めない。
+        loop = asyncio.get_running_loop()
+        text, result = await loop.run_in_executor(
+            None,
+            lambda: _extract_and_regex_scan(filename, media_type, data, check_mynumber),
         )
-        cats = list(scanned.get("categories") or [])
-        hits = list(scanned.get("hits") or [])
-        if cats:
-            result = {
-                "warned": True,
-                "categories": cats,
-                "hits": hits,
-                "message": format_warning_message(scanned),
-            }
+        if not text:
+            return result
+        # 氏名判定は設定で有効なときだけ、背後のスレッドへ。
+        if settings.get("check_pii_ner", True):
+            ner_max_chars = int(os.environ.get("PII_NER_MAX_CHARS", "8000"))
+            norm_key = _normalize_file_key(key)
+            # GET 署名（method+key のみ署名するので、/files-pii でも同じ sig で検証できる）。
+            q = filesig.sign_query("GET", norm_key)
+            result["pii_pending"] = True
+            result["pii_poll_url"] = f"/api/files-pii/{norm_key}?exp={q['exp']}&sig={q['sig']}"
+            loop.run_in_executor(
+                None,
+                lambda: _run_attachment_ner(
+                    key, text, ner_max_chars=ner_max_chars, check_mynumber=check_mynumber
+                ),
+            )
     except Exception as e:  # noqa: BLE001 - 保存自体は成功させる
         print(f"[files] 個人情報検査をスキップ: {e}")
     return result
+
+
+@app.get("/files-pii/{key:path}")
+async def get_file_pii(key: str, request: Request) -> dict[str, Any]:
+    """氏名判定（背後で実行）の結果を返す。未完了なら `ready: False`。"""
+    denied = _require_file_sig(request, key, "GET")
+    if denied:
+        return denied  # type: ignore[return-value]
+    cached = _file_pii_cache_get(key)
+    if cached is None:
+        return {"ready": False}
+    return cached
 
 
 @app.get("/files/{key:path}")

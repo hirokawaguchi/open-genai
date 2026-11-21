@@ -113,12 +113,16 @@ const SourceBriefing = ({ briefing }: { briefing?: NotebookBriefing }) => {
     !briefing?.summary &&
     !briefing?.outline?.length &&
     !briefing?.terms?.length &&
-    !briefing?.ocr
+    !briefing?.ocr &&
+    !briefing?.ocr_pending
   ) {
     return null;
   }
   return (
     <div className='space-y-1 text-dns-14N-130 text-solid-gray-700'>
+      {briefing.ocr_pending && (
+        <p className='text-solid-gray-600'>スキャン画像を読み取り中です…（完了すると本文が増えます）</p>
+      )}
       {briefing.ocr && <p className='text-solid-gray-600'>スキャンを OCR で読み取りました。</p>}
       {briefing.summary && <p>{briefing.summary}</p>}
       {!!briefing.outline?.length && (
@@ -152,7 +156,8 @@ const SourceCard = ({
     !!briefing?.summary ||
     !!briefing?.outline?.length ||
     !!briefing?.terms?.length ||
-    !!briefing?.ocr;
+    !!briefing?.ocr ||
+    !!briefing?.ocr_pending;
   return (
     <div className='rounded-8 border border-solid-gray-300 px-3 py-2 text-dns-14N-130'>
       <div className='flex items-start justify-between gap-2'>
@@ -280,6 +285,22 @@ export const NotebookPage = () => {
       Object.fromEntries(detail.items.map((i) => [i.id, { label: i.label, value: i.value }])),
     );
   }, [detail]);
+
+  // スキャン PDF の OCR は登録後に走る。完了すると本文が増えるので、
+  // 読み取り中の資料がある間だけ短い間隔で取り直す。編集中は差し替えない（下書きを消さない）。
+  const ocrPending = useMemo(
+    () => (detail?.files ?? []).some((f) => f.briefing?.ocr_pending),
+    [detail],
+  );
+  useEffect(() => {
+    if (!ocrPending || !sessionId) return;
+    const timer = window.setInterval(() => {
+      if (editingValueId !== null) return;
+      if (instruction !== (detail?.instruction ?? '')) return;
+      void mutateDetail();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [ocrPending, sessionId, editingValueId, instruction, detail, mutateDetail]);
 
   useEffect(() => {
     if (!knowledgeScope && scopes.length > 0) {

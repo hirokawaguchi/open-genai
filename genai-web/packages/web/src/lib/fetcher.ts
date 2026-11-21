@@ -215,6 +215,18 @@ export type UploadPutResponse = {
   categories?: string[];
   hits?: PiiHit[];
   message?: string;
+  // 氏名判定(GiNZA)は保存後に背後で走る。pending の間は pii_poll_url を叩いて取り込む。
+  pii_pending?: boolean;
+  pii_poll_url?: string;
+};
+
+/** 氏名判定の結果取得（/files-pii/{key}）。未完了なら ready:false。 */
+export type UploadPiiStatusResponse = {
+  ready?: boolean;
+  warned?: boolean;
+  categories?: string[];
+  hits?: PiiHit[];
+  message?: string;
 };
 
 export const uploadToSignedUrl = async (

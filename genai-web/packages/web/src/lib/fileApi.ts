@@ -7,7 +7,7 @@ import {
   UploadFileRequest,
 } from 'genai-web';
 import { genUApi, readUploadPutJson, uploadToSignedUrl } from '@/lib/fetcher';
-import type { UploadPutResponse } from '@/lib/fetcher';
+import type { UploadPutResponse, UploadPiiStatusResponse } from '@/lib/fetcher';
 import { fileObjectKeyFromUrl, pageFileUrl } from '@/lib/fileUrl';
 
 const parseS3Url = (s3Url: string) => {
@@ -50,6 +50,31 @@ export const uploadFile = async (
 ): Promise<UploadPutResponse> => {
   const res = await uploadToSignedUrl(url, req.file, 'file/*');
   return readUploadPutJson(res);
+};
+
+/**
+ * 氏名判定（保存後に背後で実行）の結果を、一定回数ポーリングして取り込む。
+ * 署名 URL は put 応答の pii_poll_url をそのまま使う。公開ホスト固定で返るため
+ * 今開いているページのパスへ付け替える。
+ */
+export const pollUploadPii = async (
+  pollUrl: string,
+  { attempts = 20, intervalMs = 1500 }: { attempts?: number; intervalMs?: number } = {},
+): Promise<UploadPiiStatusResponse | null> => {
+  const url = pageFileUrl(pollUrl);
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = (await res.json()) as UploadPiiStatusResponse;
+        if (data && data.ready) return data;
+      }
+    } catch {
+      // 一時的な失敗は次の試行に任せる
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return null;
 };
 
 const mintLocalFileUrl = async (
