@@ -75,6 +75,8 @@ export type NotebookBriefing = {
   terms?: string[];
   outline?: string[];
   ocr?: boolean;
+  // スキャン PDF の文字認識が登録後に走っている間 true。完了すると消える。
+  ocr_pending?: boolean;
   pii?: {
     warned?: boolean;
     categories?: string[];

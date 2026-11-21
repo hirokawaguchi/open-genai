@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import re
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -304,24 +306,24 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
             status_code=400,
             content={"error": f"未対応の形式です: {filename}"},
         )
+    tenant_id = request.headers.get("x-tenant-id")
     error = ""
     nodes: list[dict] = []
     briefing: dict = {}
+    base_pages: list[dict] = []
+    ocr_pending = False
     try:
-        pages = extract.extract_pages(filename, raw)
-        nodes = structure.build_nodes(pages)
-        for n in nodes:
-            n["source"] = filename
-        briefing = structure.briefing_from_nodes(filename, nodes)
-        if any(p.get("ocr") for p in pages):
-            briefing["ocr"] = True
-        sample = "\n".join(str(n.get("text") or "") for n in structure.sample_nodes(nodes, 6))
-        briefing = await ground.enrich_briefing(filename, briefing, sample)
-        briefing = pii_warn.annotate_briefing(
-            briefing, nodes, request.headers.get("x-tenant-id")
-        )
+        # 本文抽出までで登録を受け付ける。スキャン PDF の OCR は応答のあとに回す。
+        base_pages, ocr_pending = extract.extract_text_pages(filename, raw)
+        if any(str(p.get("text") or "").strip() for p in base_pages):
+            nodes, briefing = await _build_file_briefing(filename, base_pages, tenant_id)
+        if ocr_pending:
+            # 画面に「読み取り中」を出すための印。OCR 完了後に消える。
+            briefing = dict(briefing)
+            briefing["ocr_pending"] = True
     except extract.DocExtractError as e:
         error = str(e)
+    file_id = str(uuid.uuid4())
     detail = store.add_file(
         session_id,
         uid,
@@ -330,10 +332,79 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
         error=error,
         nodes=nodes,
         briefing=briefing,
+        file_id=file_id,
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    if ocr_pending and not error:
+        # OCR と再要約は応答のあとで。画面は完了後に本文更新を拾う。
+        asyncio.create_task(
+            _finish_file_ocr(session_id, uid, file_id, filename, raw, base_pages, tenant_id)
+        )
     return JSONResponse(content=detail)
+
+
+async def _build_file_briefing(
+    filename: str, pages: list[dict], tenant_id: str | None
+) -> tuple[list[dict], dict]:
+    """ページ本文から nodes と briefing（要約・個人情報注記つき）を作る。"""
+    nodes = structure.build_nodes(pages)
+    for n in nodes:
+        n["source"] = filename
+    briefing = structure.briefing_from_nodes(filename, nodes)
+    if any(p.get("ocr") for p in pages):
+        briefing["ocr"] = True
+    sample = "\n".join(str(n.get("text") or "") for n in structure.sample_nodes(nodes, 6))
+    briefing = await ground.enrich_briefing(filename, briefing, sample)
+    briefing = pii_warn.annotate_briefing(briefing, nodes, tenant_id)
+    return nodes, briefing
+
+
+async def _finish_file_ocr(
+    session_id: str,
+    uid: str,
+    file_id: str,
+    filename: str,
+    raw: bytes,
+    base_pages: list[dict],
+    tenant_id: str | None,
+) -> None:
+    """登録のあとに OCR を回し、本文（nodes/briefing）を更新する。"""
+    try:
+        loop = asyncio.get_running_loop()
+        pages = await loop.run_in_executor(
+            None, lambda: extract.run_ocr(filename, raw, base_pages)
+        )
+        if any(str(p.get("text") or "").strip() for p in pages):
+            nodes, briefing = await _build_file_briefing(filename, pages, tenant_id)
+            store.update_file(
+                session_id, uid, file_id, nodes=nodes, briefing=briefing, error=""
+            )
+        elif not any(str(p.get("text") or "").strip() for p in base_pages):
+            # 文字が 1 つも取れなかった（スキャン画質など）。読み取り中を終わらせる。
+            store.update_file(
+                session_id,
+                uid,
+                file_id,
+                briefing={},
+                error=f"{filename} からテキストを抽出できませんでした",
+            )
+        else:
+            # 元から取れていた本文で確定（ocr_pending の印だけ外す）。
+            nodes, briefing = await _build_file_briefing(filename, base_pages, tenant_id)
+            store.update_file(
+                session_id, uid, file_id, nodes=nodes, briefing=briefing, error=""
+            )
+    except Exception as e:  # noqa: BLE001 - OCR 失敗で登録自体は残す
+        print(f"[notebook] OCR 後処理に失敗: {e}")
+        if not any(str(p.get("text") or "").strip() for p in base_pages):
+            store.update_file(
+                session_id,
+                uid,
+                file_id,
+                briefing={},
+                error="OCR に失敗しました",
+            )
 
 
 @app.delete("/sessions/{session_id}/files/{file_id}")

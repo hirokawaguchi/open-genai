@@ -37,7 +37,21 @@ def _is_pdf(filename: str) -> bool:
     return filename.lower().endswith(".pdf")
 
 
-def extract_pages(filename: str, raw: bytes) -> list[dict]:
+def _empty_page_nos(pages: list[dict]) -> set[int]:
+    return {
+        int(p.get("page") or 0)
+        for p in pages
+        if len(str(p.get("text") or "").strip()) < ocr.EMPTY_PAGE_CHARS
+    }
+
+
+def extract_text_pages(filename: str, raw: bytes) -> tuple[list[dict], bool]:
+    """OCR 抜きで本文を取り出し、(pages, ocr_pending) を返す。
+
+    文字の無いスキャン PDF は OCR を後回しにするため、ここでは走らせない。
+    ocr_pending=True のとき、呼び手は応答のあとに :func:`run_ocr` を回す。
+    文字が 1 つも取れず OCR も効かない形式は、これまでどおり DocExtractError。
+    """
     pages: list[dict] = []
     extract_error: DocExtractError | None = None
     try:
@@ -49,20 +63,36 @@ def extract_pages(filename: str, raw: bytes) -> list[dict]:
         extract_error = e
         pages = []
 
+    ocr_pending = False
     if _is_pdf(filename) and ocr.enabled():
-        empty_nos = {
-            int(p.get("page") or 0)
-            for p in pages
-            if len(str(p.get("text") or "").strip()) < ocr.EMPTY_PAGE_CHARS
-        }
-        want = empty_nos if pages else None
+        empty_nos = _empty_page_nos(pages)
         if extract_error or ocr.needs_ocr(pages) or empty_nos:
-            ocr_pages = ocr.ocr_pdf(raw, only_pages=want)
-            pages = ocr.merge_ocr(pages, ocr_pages)
+            ocr_pending = True
 
-    if not any(str(p.get("text") or "").strip() for p in pages):
+    has_text = any(str(p.get("text") or "").strip() for p in pages)
+    if not has_text and not ocr_pending:
         if extract_error:
             raise extract_error
+        raise DocExtractError(f"{filename} からテキストを抽出できませんでした")
+    return pages, ocr_pending
+
+
+def run_ocr(filename: str, raw: bytes, pages: list[dict]) -> list[dict]:
+    """文字の無いページだけ OCR して本文に足す（ページ上限 40 は ocr 側で担保）。"""
+    if not (_is_pdf(filename) and ocr.enabled()):
+        return pages
+    empty_nos = _empty_page_nos(pages)
+    want = empty_nos if pages else None
+    ocr_pages = ocr.ocr_pdf(raw, only_pages=want)
+    return ocr.merge_ocr(pages, ocr_pages)
+
+
+def extract_pages(filename: str, raw: bytes) -> list[dict]:
+    """本文抽出（必要なら OCR も同期で実行）。従来どおりの一括版。"""
+    pages, ocr_pending = extract_text_pages(filename, raw)
+    if ocr_pending:
+        pages = run_ocr(filename, raw, pages)
+    if not any(str(p.get("text") or "").strip() for p in pages):
         raise DocExtractError(f"{filename} からテキストを抽出できませんでした")
     return pages
 
@@ -79,4 +109,6 @@ __all__ = [
     "allowed_name",
     "extract_file",
     "extract_pages",
+    "extract_text_pages",
+    "run_ocr",
 ]

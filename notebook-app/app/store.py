@@ -462,9 +462,10 @@ def add_file(
     error: str = "",
     nodes: list[dict[str, Any]] | None = None,
     briefing: dict[str, Any] | None = None,
+    file_id: str | None = None,
 ) -> dict[str, Any] | None:
     db = connect()
-    file_id = str(uuid.uuid4())
+    file_id = file_id or str(uuid.uuid4())
     with _lock:
         if not _owned(session_id, user_id):
             return None
@@ -485,6 +486,49 @@ def add_file(
         _touch(db, session_id)
         db.commit()
     return get_session(session_id, user_id)
+
+
+def update_file(
+    session_id: str,
+    user_id: str,
+    file_id: str,
+    *,
+    nodes: list[dict[str, Any]] | None = None,
+    briefing: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> bool:
+    """登録済みファイルの本文（nodes/briefing）を差し替える。OCR 完了後の更新に使う。"""
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return False
+        row = db.execute(
+            "SELECT id FROM files WHERE id = ? AND session_id = ?",
+            (file_id, session_id),
+        ).fetchone()
+        if not row:
+            return False
+        sets: list[str] = []
+        params: list[Any] = []
+        if nodes is not None:
+            sets.append("nodes = ?")
+            params.append(json.dumps(nodes, ensure_ascii=False))
+        if briefing is not None:
+            sets.append("briefing = ?")
+            params.append(json.dumps(briefing, ensure_ascii=False))
+        if error is not None:
+            sets.append("error = ?")
+            params.append(error)
+        if not sets:
+            return True
+        params.extend([file_id, session_id])
+        db.execute(
+            f"UPDATE files SET {', '.join(sets)} WHERE id = ? AND session_id = ?",
+            params,
+        )
+        _touch(db, session_id)
+        db.commit()
+    return True
 
 
 def delete_file(session_id: str, user_id: str, file_id: str) -> dict[str, Any] | None:

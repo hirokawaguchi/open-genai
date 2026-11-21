@@ -244,7 +244,8 @@ const useFilesState = create<{
         .then(async (signedUrlRes) => {
           const signedUrl = signedUrlRes.data;
           const fileUrl = extractBaseURL(signedUrl); // 署名付き url からクエリパラメータを除外
-          // ファイルのアップロード（応答に個人情報警告が付く場合がある）
+          // ファイルのアップロード（応答に個人情報警告が付く場合がある）。
+          // 保存と正規表現検知までで返る。氏名判定(GiNZA)は pii_pending のとき後から届く。
           const scan = await fileApi.uploadFile(signedUrl, { file: uploadedFile.file });
           set(
             produce((state) => {
@@ -262,6 +263,23 @@ const useFilesState = create<{
               };
             }),
           );
+
+          // 氏名判定は背後で走る。結果が出たら警告表示へ足す（添付操作は待たせない）。
+          if (scan?.pii_pending && scan?.pii_poll_url) {
+            const ner = await fileApi.pollUploadPii(scan.pii_poll_url);
+            if (ner && ner.ready) {
+              set(
+                produce((state) => {
+                  const file = state.uploadedFilesDict[id]?.[idx];
+                  if (!sameFile(file)) return;
+                  file.piiWarned = Boolean(ner.warned);
+                  file.piiCategories = ner.categories ?? [];
+                  file.piiHits = ner.hits ?? [];
+                  file.piiMessage = ner.message;
+                }),
+              );
+            }
+          }
         })
         .catch(() => {
           set(
