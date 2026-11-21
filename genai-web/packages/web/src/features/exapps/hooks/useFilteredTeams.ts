@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { COMMON_EXAPPS_TEAM_ID } from '../constants';
 import { ExAppOptions } from '../types';
+import { sortByDisplayOrder } from '../utils/displayOrder';
 import { useExAppFilter } from './useExAppFilter';
 import { useFetchCommonTeam } from './useFetchCommonTeam';
 import { useGenUApps } from './useGenUApps';
@@ -23,13 +24,18 @@ export const useFilteredTeams = (exAppOptions: ExAppOptions, searchWords: string
             ...exApp,
             isDefault: true,
           }));
-          const combinedExApps = [...filteredExApps, ...filteredDefaultApps];
+          const combinedExApps = sortByDisplayOrder([
+            ...filteredExApps,
+            ...filteredDefaultApps,
+          ]);
           return combinedExApps.length > 0
             ? { teamIdKey, teamData, filteredExApps: combinedExApps }
             : null;
         }
 
-        return filteredExApps.length > 0 ? { teamIdKey, teamData, filteredExApps } : null;
+        return filteredExApps.length > 0
+          ? { teamIdKey, teamData, filteredExApps: sortByDisplayOrder(filteredExApps) }
+          : null;
       })
       .filter((team) => team !== null);
 
@@ -50,7 +56,7 @@ export const useFilteredTeams = (exAppOptions: ExAppOptions, searchWords: string
       return {
         teamIdKey: COMMON_EXAPPS_TEAM_ID,
         teamData: { teamName: '共通アプリ', exApps: [] as typeof filteredDefaultApps },
-        filteredExApps: filteredDefaultApps,
+        filteredExApps: sortByDisplayOrder(filteredDefaultApps),
       };
     })();
     const commonExAppsTeam = existingCommonTeam ?? fallbackCommonTeam;

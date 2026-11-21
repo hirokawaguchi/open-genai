@@ -4382,11 +4382,12 @@ async def list_exapps(request: Request) -> list[Any]:
     )
     if not await image_gen.is_image_available():
         visible = [a for a in visible if a.get("exAppId") != "image"]
-    return [
+    visible = [
         a
         for a in visible
         if teams_store.builtin_feature_enabled(active, _feature_id_of(a))
     ]
+    return teams_store.sort_exapps_for_display(visible)
 
 
 @app.get("/my/app-pins")
@@ -11511,6 +11512,24 @@ async def update_exapp(team_id: str, ex_app_id: str, request: Request) -> JSONRe
         return _forbidden()
     body = await request.json()
     app_def = teams_store.update_exapp(team_id, ex_app_id, body)
+    if not app_def:
+        return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
+    return JSONResponse(content=app_def)
+
+
+@app.post("/teams/{team_id}/exapps/{ex_app_id}/order")
+async def move_exapp_order(team_id: str, ex_app_id: str, request: Request) -> JSONResponse:
+    """チーム内の表示順を一つ上または下へ動かす。"""
+    claims = _claims_from_request(request)
+    if not _can_manage_team(claims, team_id):
+        return _forbidden()
+    body = await request.json()
+    direction = body.get("direction")
+    if direction not in ("up", "down"):
+        return JSONResponse(
+            status_code=400, content={"error": "direction は up または down です"}
+        )
+    app_def = teams_store.move_exapp_display_order(team_id, ex_app_id, direction)
     if not app_def:
         return JSONResponse(status_code=404, content={"error": "AI アプリが見つかりません"})
     return JSONResponse(content=app_def)

@@ -1,5 +1,6 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { ExApp } from 'genai-web';
+import { useState } from 'react';
 import { PiClipboard, PiDownloadSimple, PiPencilLine, PiTrash } from 'react-icons/pi';
 import { Link } from 'react-router';
 import {
@@ -17,7 +18,9 @@ import { download } from '@/utils/createDownloadLink';
 import { formatDateTime } from '@/utils/formatDateTime';
 import { useFetchLoginUser } from '../hooks/useFetchLoginUser';
 import { useFetchTeamAppForJsonDownload } from '../hooks/useFetchTeamAppForJsonDownload';
+import { useMoveTeamAppOrder } from '../hooks/useMoveTeamAppOrder';
 import { useTeamApps } from '../hooks/useTeamApps';
+import { placeTeamApps, swapTeamApp } from '../utils/reorderTeamApps';
 import { ExAppStatusChipLabel } from './ExAppStatusChipLabel';
 
 type Props = {
@@ -30,7 +33,43 @@ export const TeamAppList = (props: Props) => {
   const { isSystemAdminGroup, loginUser } = useFetchLoginUser();
   const { fetchTeamAppForJsonDownload } = useFetchTeamAppForJsonDownload();
 
-  const { apps, hasMore, isValidating, loadMore } = useTeamApps();
+  const { apps, hasMore, isValidating, loadMore, mutate } = useTeamApps();
+  const { moveTeamApp, errorMessage } = useMoveTeamAppOrder();
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [movedId, setMovedId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState('');
+  const [moveMessage, setMoveMessage] = useState('');
+
+  const onMove = async (exAppId: string, direction: 'up' | 'down') => {
+    const next = swapTeamApp(apps, exAppId, direction);
+    if (!next) {
+      return;
+    }
+    const name = apps.find((app) => app.exAppId === exAppId)?.exAppName ?? '';
+    setMovingId(exAppId);
+    setMovedId(exAppId);
+    setMoveError('');
+    setMoveMessage('');
+    try {
+      await mutate(
+        async (pages) => {
+          await moveTeamApp(exAppId, direction);
+          return placeTeamApps(pages, next);
+        },
+        {
+          optimisticData: (pages) => placeTeamApps(pages, next),
+          rollbackOnError: true,
+          revalidate: true,
+        },
+      );
+      setMoveMessage(`「${name}」を一つ${direction === 'up' ? '上' : '下'}へ動かしました`);
+    } catch (e) {
+      setMovedId(null);
+      setMoveError(errorMessage(e));
+    } finally {
+      setMovingId(null);
+    }
+  };
 
   const { listRef, loadMoreWithFocus } = useFocusNewItemOnLoadMore<HTMLUListElement>({
     itemsLength: apps.length,
@@ -50,14 +89,28 @@ export const TeamAppList = (props: Props) => {
       >
         AIアプリ
       </h2>
+      <p className='mb-2 text-std-16N-170'>
+        上へ・下へを押すと、この一覧の位置がすぐ入れ替わります。AIアプリページも同じ順になります。
+      </p>
+      {moveMessage && (
+        <p className='mb-2 text-std-16N-170' role='status'>
+          {moveMessage}
+        </p>
+      )}
+      {moveError && (
+        <p className='mb-2 text-dns-14N-130 text-error-1' role='alert'>
+          {moveError}
+        </p>
+      )}
       <ul ref={listRef} className='flex w-full flex-col'>
-        {apps.map((app) => {
+        {apps.map((app, index) => {
           const lastUpdated = app.updatedDate || app.createdDate;
           const builtin = isBuiltinExApp(app);
           const href = builtinRouteOf(app.config) || `/apps/${app.teamId}/${app.exAppId}`;
           return (
             <li
-              className='relative grid w-full grid-cols-[1fr_auto] items-center border-b border-solid border-solid-gray-420'
+              id={`team-app-row-${app.exAppId}`}
+              className={`relative grid w-full grid-cols-[1fr_auto] items-center border-b border-solid border-solid-gray-420 ${app.exAppId === movedId ? 'bg-yellow-100' : ''}`}
               key={app.exAppId}
             >
               <div className='flex flex-col items-start gap-4 px-4 py-4 text-dns-16N-130 leading-tight!'>
@@ -85,7 +138,29 @@ export const TeamAppList = (props: Props) => {
                 </ul>
               </div>
 
-              <div className='relative flex flex-none px-2'>
+              <div className='relative flex flex-none items-center px-2'>
+                <button
+                  type='button'
+                  aria-label={`${app.exAppName}を一つ上へ`}
+                  disabled={index === 0 || movingId !== null}
+                  onClick={() => {
+                    void onMove(app.exAppId, 'up');
+                  }}
+                  className='rounded-4 px-2 py-2 text-oln-16N-100 text-solid-gray-800 hover:bg-solid-gray-50 focus-visible:bg-yellow-300 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-black disabled:text-solid-gray-420'
+                >
+                  上へ
+                </button>
+                <button
+                  type='button'
+                  aria-label={`${app.exAppName}を一つ下へ`}
+                  disabled={index === apps.length - 1 || movingId !== null}
+                  onClick={() => {
+                    void onMove(app.exAppId, 'down');
+                  }}
+                  className='rounded-4 px-2 py-2 text-oln-16N-100 text-solid-gray-800 hover:bg-solid-gray-50 focus-visible:bg-yellow-300 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-black disabled:text-solid-gray-420'
+                >
+                  下へ
+                </button>
                 <Menu>
                   <Tooltip placement='left'>
                     <TooltipTrigger asChild>

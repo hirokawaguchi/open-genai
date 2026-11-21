@@ -69,6 +69,7 @@ export const useExApps = () => {
             value: m.exAppId,
             label: m.exAppName,
             description: m.description,
+            displayOrder: typeof m.displayOrder === 'number' ? m.displayOrder : null,
           });
         }
       });
