@@ -14,6 +14,8 @@ export type ExApp = {
   apiKey: string;
   copyable?: boolean;
   status?: ExAppStatus;
+  /** チーム内の表示順。小さいほど前。未設定の古い応答では欠ける。 */
+  displayOrder?: number | null;
   createdDate: string;
   updatedDate: string;
 };

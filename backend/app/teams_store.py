@@ -125,6 +125,7 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
                 howToUse TEXT NOT NULL DEFAULT '',
                 copyable INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'draft',
+                displayOrder INTEGER,
                 createdDate TEXT NOT NULL,
                 updatedDate TEXT NOT NULL
             );
@@ -177,14 +178,26 @@ def init_db(seed_exapps: list[dict[str, Any]] | None = None) -> None:
         _migrate_tenants(conn)
         _migrate_app_settings(conn)
         _migrate_tenant_scoped_user_data(conn)
+        _migrate_exapp_display_order(conn)
+        # 既存行は、いま利用者に見えている並びに揃えて番号を振る。
+        _fill_missing_display_orders(conn)
 
     # 共通チームに既定アプリ(RAG 等)をシード
     for app in seed_exapps or []:
         upsert_seed_exapp(app)
+    # 今回足したシードは末尾へ。既に番号があるアプリは動かさない。
+    with _lock, _connect() as conn:
+        _fill_missing_display_orders(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _migrate_exapp_display_order(conn: sqlite3.Connection) -> None:
+    """既存 DB に表示順を足す。未設定の行は後で番号を振る。"""
+    if "displayOrder" not in _table_columns(conn, "exapps"):
+        conn.execute("ALTER TABLE exapps ADD COLUMN displayOrder INTEGER")
 
 
 def _migrate_org_columns(conn: sqlite3.Connection) -> None:
@@ -1700,6 +1713,7 @@ def _row_to_exapp(r: sqlite3.Row) -> dict[str, Any]:
         "howToUse": r["howToUse"],
         "copyable": bool(r["copyable"]),
         "status": r["status"],
+        "displayOrder": r["displayOrder"],
         "createdDate": r["createdDate"],
         "updatedDate": r["updatedDate"],
     }
@@ -1708,7 +1722,8 @@ def _row_to_exapp(r: sqlite3.Row) -> dict[str, Any]:
 def list_team_exapps(team_id: str) -> list[dict[str, Any]]:
     with _lock, _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM exapps WHERE teamId = ? ORDER BY createdDate ASC",
+            "SELECT * FROM exapps WHERE teamId = ?"
+            " ORDER BY displayOrder IS NULL, displayOrder ASC, createdDate ASC, exAppId ASC",
             (team_id,),
         ).fetchall()
     return [_row_to_exapp(r) for r in rows]
@@ -1731,13 +1746,24 @@ def get_exapp_by_id(ex_app_id: str) -> dict[str, Any] | None:
     return _row_to_exapp(r) if r else None
 
 
+def _next_display_order(conn: sqlite3.Connection, team_id: str) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(displayOrder), -1) AS m FROM exapps WHERE teamId = ?",
+        (team_id,),
+    ).fetchone()
+    return int(row["m"]) + 1
+
+
 def _write_exapp(conn: sqlite3.Connection, ex_app_id: str, team_id: str, data: dict[str, Any]) -> None:
     now = _now()
+    order = data.get("displayOrder")
+    if isinstance(order, bool) or not isinstance(order, int):
+        order = _next_display_order(conn, team_id)
     conn.execute(
         "INSERT OR REPLACE INTO exapps (exAppId, teamId, exAppName, endpoint, apiKey,"
         " config, placeholder, systemPrompt, systemPromptKeyName, description, howToUse,"
-        " copyable, status, createdDate, updatedDate)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " copyable, status, displayOrder, createdDate, updatedDate)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             ex_app_id,
             team_id,
@@ -1752,6 +1778,7 @@ def _write_exapp(conn: sqlite3.Connection, ex_app_id: str, team_id: str, data: d
             data.get("howToUse", ""),
             1 if data.get("copyable") else 0,
             data.get("status", "draft"),
+            order,
             data.get("createdDate", now),
             now,
         ),
@@ -1760,8 +1787,10 @@ def _write_exapp(conn: sqlite3.Connection, ex_app_id: str, team_id: str, data: d
 
 def create_exapp(team_id: str, data: dict[str, Any]) -> dict[str, Any]:
     ex_app_id = str(uuid.uuid4())
+    # 複製元の番号を引き継がず、チームの末尾に置く。
+    payload = {k: v for k, v in data.items() if k != "displayOrder"}
     with _lock, _connect() as conn:
-        _write_exapp(conn, ex_app_id, team_id, data)
+        _write_exapp(conn, ex_app_id, team_id, payload)
         r = conn.execute(
             "SELECT * FROM exapps WHERE exAppId = ?", (ex_app_id,)
         ).fetchone()
@@ -1777,6 +1806,118 @@ def is_builtin_exapp(app: dict[str, Any] | None) -> bool:
     except (json.JSONDecodeError, TypeError):
         return False
     return bool(cfg.get("builtin"))
+
+
+# 組み込みページは AI アプリ一覧の末尾に、この順で並んでいた。
+_BUILTIN_TAIL_ORDER = (
+    "chat",
+    "generate",
+    "translate",
+    "image",
+    "diagram",
+    "shimen",
+    "knowledge",
+)
+
+
+def _is_knowledge_search_config(ex_app_id: str, config: str | None) -> bool:
+    if ex_app_id == "rag":
+        return True
+    try:
+        cfg = json.loads(config or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(cfg, dict) and cfg.get("rag_role") == "search"
+
+
+def _initial_display_order_key(row: sqlite3.Row) -> tuple:
+    """番号が無い行を、これまでの一覧と同じ並びにするためのキー。"""
+    ex_app_id = row["exAppId"]
+    config = row["config"]
+    if is_builtin_exapp({"exAppId": ex_app_id, "config": config}):
+        group = 2
+        try:
+            builtin_rank = _BUILTIN_TAIL_ORDER.index(ex_app_id)
+        except ValueError:
+            builtin_rank = len(_BUILTIN_TAIL_ORDER)
+    elif _is_knowledge_search_config(ex_app_id, config):
+        group = 1
+        builtin_rank = 0
+    else:
+        group = 0
+        builtin_rank = 0
+    # 作成日時はシードの初回登録のまま残ることがある。一覧が使っていたのは行の並び。
+    return (group, builtin_rank, row["rowid"])
+
+
+def _fill_missing_display_orders(conn: sqlite3.Connection) -> None:
+    """displayOrder が空のアプリに番号を振る。既にある番号は変えない。"""
+    rows = conn.execute(
+        "SELECT rowid, exAppId, teamId, config, createdDate, displayOrder FROM exapps"
+    ).fetchall()
+    by_team: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        by_team.setdefault(row["teamId"], []).append(row)
+    for items in by_team.values():
+        missing = [row for row in items if row["displayOrder"] is None]
+        if not missing:
+            continue
+        if len(missing) == len(items):
+            ordered = sorted(items, key=_initial_display_order_key)
+            for index, row in enumerate(ordered):
+                conn.execute(
+                    "UPDATE exapps SET displayOrder = ? WHERE exAppId = ?",
+                    (index, row["exAppId"]),
+                )
+            continue
+        known = [int(row["displayOrder"]) for row in items if row["displayOrder"] is not None]
+        start = max(known) + 1
+        missing.sort(key=lambda row: (row["createdDate"] or "", row["rowid"]))
+        for offset, row in enumerate(missing):
+            conn.execute(
+                "UPDATE exapps SET displayOrder = ? WHERE exAppId = ?",
+                (start + offset, row["exAppId"]),
+            )
+
+
+def display_order_sort_key(app: dict[str, Any]) -> tuple:
+    order = app.get("displayOrder")
+    if isinstance(order, bool) or not isinstance(order, int):
+        order = 2**31 - 1
+    return (order, str(app.get("createdDate") or ""), str(app.get("exAppId") or ""))
+
+
+def sort_exapps_for_display(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(apps, key=display_order_sort_key)
+
+
+def move_exapp_display_order(
+    team_id: str, ex_app_id: str, direction: str
+) -> dict[str, Any] | None:
+    """チーム内で一つ上または下へ動かし、番号を振り直す。"""
+    if direction not in ("up", "down"):
+        return None
+    if not get_exapp(team_id, ex_app_id):
+        return None
+    apps = list_team_exapps(team_id)
+    index = next((i for i, app in enumerate(apps) if app["exAppId"] == ex_app_id), None)
+    if index is None:
+        return None
+    target = index - 1 if direction == "up" else index + 1
+    ordered = [app["exAppId"] for app in apps]
+    if 0 <= target < len(ordered):
+        ordered[index], ordered[target] = ordered[target], ordered[index]
+    with _lock, _connect() as conn:
+        for pos, app_id in enumerate(ordered):
+            conn.execute(
+                "UPDATE exapps SET displayOrder = ? WHERE teamId = ? AND exAppId = ?",
+                (pos, team_id, app_id),
+            )
+        row = conn.execute(
+            "SELECT * FROM exapps WHERE teamId = ? AND exAppId = ?",
+            (team_id, ex_app_id),
+        ).fetchone()
+    return _row_to_exapp(row) if row else None
 
 
 def list_builtin_exapps() -> list[dict[str, Any]]:
@@ -1994,7 +2135,7 @@ def list_visible_exapps(
                 if not team_visible_in_tenant(app["teamId"], tenant_id):
                     continue
             result.append({**app, "teamName": teams.get(app["teamId"], "")})
-    return result
+    return sort_exapps_for_display(result)
 
 
 # ---------------------------------------------------------------------------

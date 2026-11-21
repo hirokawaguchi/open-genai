@@ -14,11 +14,13 @@ export const useGenUApps = () => {
       {
         name: (a.exAppName || '').trim(),
         description: (a.description || '').trim(),
+        displayOrder: typeof a.displayOrder === 'number' ? a.displayOrder : null,
       },
     ]),
   );
   const nameOf = (id: string, fallback: string) => metaById.get(id)?.name || fallback;
   const descOf = (id: string, fallback: string) => metaById.get(id)?.description || fallback;
+  const orderOf = (id: string) => metaById.get(id)?.displayOrder ?? null;
   const listed = (id: string) => isCatalogListed(id, apps, loaded);
 
   const genUApps: ExAppOptions[string]['exApps'] = [];
@@ -28,6 +30,7 @@ export const useGenUApps = () => {
       label: nameOf('chat', 'チャット'),
       value: 'chat',
       description: descOf('chat', '着想や整理のための壁打ち'),
+      displayOrder: orderOf('chat'),
     });
   }
   if (isUseCaseEnabled('generate') && listed('generate')) {
@@ -35,6 +38,7 @@ export const useGenUApps = () => {
       label: nameOf('generate', '文章を生成'),
       value: 'generate',
       description: descOf('generate', '手元の情報をもとに文章を作成'),
+      displayOrder: orderOf('generate'),
     });
   }
   if (isUseCaseEnabled('translate') && listed('translate')) {
@@ -42,6 +46,7 @@ export const useGenUApps = () => {
       label: nameOf('translate', '翻訳'),
       value: 'translate',
       description: descOf('translate', '手元の文章を他の言語に翻訳'),
+      displayOrder: orderOf('translate'),
     });
   }
   if (isUseCaseEnabled('image') && imageAvailable && listed('image')) {
@@ -49,6 +54,7 @@ export const useGenUApps = () => {
       label: nameOf('image', '画像を生成'),
       value: 'image',
       description: descOf('image', '文章や単語から画像を生成'),
+      displayOrder: orderOf('image'),
     });
   }
   if (isUseCaseEnabled('diagram') && listed('diagram')) {
@@ -56,6 +62,7 @@ export const useGenUApps = () => {
       label: nameOf('diagram', 'ダイアグラムを生成'),
       value: 'diagram',
       description: descOf('diagram', 'テキストからフローチャートやマインドマップを作成'),
+      displayOrder: orderOf('diagram'),
     });
   }
   if (isUseCaseEnabled('shimen') && listed('shimen')) {
@@ -63,6 +70,7 @@ export const useGenUApps = () => {
       label: nameOf('shimen', '紙面'),
       value: 'shimen',
       description: descOf('shimen', '文字・図形・画像を紙の上に組む'),
+      displayOrder: orderOf('shimen'),
     });
   }
   if (listed('knowledge')) {
@@ -74,6 +82,7 @@ export const useGenUApps = () => {
         'knowledge',
         '共有・所属チームの資料を登録／管理（検索は「ナレッジ検索」）',
       ),
+      displayOrder: orderOf('knowledge'),
     });
   }
   // 文字起こし(transcribe)はクラウド(Amazon Transcribe)依存のため除外。

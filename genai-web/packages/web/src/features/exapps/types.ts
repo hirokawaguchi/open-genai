@@ -3,7 +3,13 @@ import { ExAppStatus } from 'genai-web';
 export type ExAppOptions = {
   [key: string]: {
     teamName: string;
-    exApps: { label: string; value: string; description: string; status?: ExAppStatus }[];
+    exApps: {
+      label: string;
+      value: string;
+      description: string;
+      status?: ExAppStatus;
+      displayOrder?: number | null;
+    }[];
   };
 };
 
