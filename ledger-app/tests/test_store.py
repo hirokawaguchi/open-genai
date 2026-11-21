@@ -506,6 +506,7 @@ def test_office_save_replaces_the_body_and_keeps_the_previous(db: str, monkeypat
     saved, err = store.save_office_file(actor(), filename="議事.docx", data=b"one")
     assert err is None and saved is not None
     assert saved["status"] == "下書き"
+    assert saved["assignee"] == "user-1"
     assert "title" not in saved["fields"]
     assert saved["fields"]["kind"] == "文書"
     assert saved["business_key"]
@@ -659,6 +660,26 @@ def test_office_versions_remember_when_they_were_saved(db: str) -> None:
     assert current["saved_at"]
     assert former["saved_at"] <= current["saved_at"]
     assert former["name"] == current["name"] == "document.docx"
+
+
+def test_office_keeps_an_assignee_edited_on_the_ledger(db: str) -> None:
+    saved, err = store.save_office_file(actor(), filename="回答.docx", data=b"v1")
+    assert err is None and saved is not None
+    edited, err = store.upsert_row(
+        actor(),
+        saved["ledger_id"],
+        {"business_key": saved["business_key"], "assignee": "別の人", "fields": saved["fields"]},
+    )
+    assert err is None and edited is not None
+    again, err = store.save_office_file(
+        actor(),
+        filename="回答.docx",
+        data=b"v2",
+        row_id=saved["id"],
+        file_id=_body(saved)["file_id"],
+    )
+    assert err is None and again is not None
+    assert again["assignee"] == "別の人"
 
 
 def test_office_restore_makes_the_former_body_current(db: str) -> None:

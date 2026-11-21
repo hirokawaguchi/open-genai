@@ -74,6 +74,7 @@ def connect() -> sqlite3.Connection:
     _init(conn)
     _drop_office_title(conn)
     _stamp_office_saved_at(conn)
+    _fill_office_assignee(conn)
     return conn
 
 
@@ -1102,6 +1103,35 @@ def _stamp_office_saved_at(db: sqlite3.Connection) -> None:
         db.commit()
 
 
+def _fill_office_assignee(db: sqlite3.Connection) -> None:
+    """文書台帳の空の担当は、その行を最初に保存した人のユーザ名にする。"""
+    ledgers = db.execute(
+        "SELECT id FROM ledgers WHERE source_key = ?",
+        (OFFICE_SOURCE_KEY,),
+    ).fetchall()
+    changed = False
+    for ledger in ledgers:
+        rows = db.execute(
+            "SELECT id, assignee FROM ledger_rows WHERE ledger_id = ? AND assignee = ''",
+            (ledger["id"],),
+        ).fetchall()
+        for row in rows:
+            revision = db.execute(
+                "SELECT actor_user_id FROM ledger_revisions WHERE row_id = ? ORDER BY created_at LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            owner = str(revision["actor_user_id"] or "").strip()[:80] if revision else ""
+            if not owner:
+                continue
+            db.execute(
+                "UPDATE ledger_rows SET assignee = ? WHERE id = ?",
+                (owner, row["id"]),
+            )
+            changed = True
+    if changed:
+        db.commit()
+
+
 def _office_body(files: list[Any]) -> dict[str, Any] | None:
     for item in files:
         if isinstance(item, dict) and item.get("role") == "body":
@@ -1221,10 +1251,15 @@ def _store_office_body(
                 "after": kind,
             }
         )
+    assignee = str(row["assignee"] or "")
+    owner = actor.user_id.strip()[:80]
+    if not assignee and owner:
+        assignee = owner
+        changes.append({"key": "assignee", "label": "担当", "before": "", "after": assignee})
     changes.append({"key": "body", "label": "本体", "before": previous_name, "after": filename})
     db.execute(
-        "UPDATE ledger_rows SET fields_json = ?, origins_json = ?, files_json = ?, updated_at = ? WHERE id = ?",
-        (_dump(fields), _dump(origins), _dump(files), now, row["id"]),
+        "UPDATE ledger_rows SET assignee = ?, fields_json = ?, origins_json = ?, files_json = ?, updated_at = ? WHERE id = ?",
+        (assignee, _dump(fields), _dump(origins), _dump(files), now, row["id"]),
     )
     _save_revision(db, str(row["id"]), actor, changes, now)
     _audit(db, str(ledger["id"]), actor, "本体を更新した" if previous else "文書を保存した", filename)
