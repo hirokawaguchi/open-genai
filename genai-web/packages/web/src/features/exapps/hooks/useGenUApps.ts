@@ -65,14 +65,6 @@ export const useGenUApps = () => {
       displayOrder: orderOf('diagram'),
     });
   }
-  if (isUseCaseEnabled('shimen') && listed('shimen')) {
-    genUApps.push({
-      label: nameOf('shimen', '紙面'),
-      value: 'shimen',
-      description: descOf('shimen', '文字・図形・画像を紙の上に組む'),
-      displayOrder: orderOf('shimen'),
-    });
-  }
   if (listed('knowledge')) {
     // 旧 rag-tags / rag-register / rag-maintain を集約した専用ページ。
     genUApps.push({

@@ -97,7 +97,6 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `sengoku-app/` | 戦国国取り（お遊びのシミュレーションゲーム。オプション・`profiles: ["sengoku"]`。詳細は [`docs/sengoku.md`](docs/sengoku.md)） |
 | （profile `worldmonitor`） | ワールドモニター（上流タグからビルド。ソースは同梱しない。詳細は [`docs/worldmonitor.md`](docs/worldmonitor.md)） |
 | （profile `office`） | 文書・表計算・スライド（ibisOffice のブラウザー版。配布物は同梱しない。詳細は [`docs/office.md`](docs/office.md)） |
-| （web 同梱） | 紙面（文字・図形・画像を組む。詳細は [`docs/shimen.md`](docs/shimen.md)） |
 | `procuretech-spec-app/` | 調達仕様書の生成/合成（オプション・`profiles: ["procuretech-spec"]`） |
 | `seaweedfs/` | 成果物配信用 S3 互換ストレージ設定 |
 | `scripts/` | 運用スクリプト（契約終了時の完全削除・報告書生成 等） |

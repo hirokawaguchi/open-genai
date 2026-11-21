@@ -47,7 +47,7 @@ NO_TENANT_ID = "__none__"
 
 # GenU 組み込み機能の itemId。共通チームのカタログ（名前・紹介・公開）として登録し、
 # ピン留め対象にもする。knowledge は専用ページだが同じカタログで出し分ける。
-GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram", "shimen", "knowledge"})
+GENU_APP_IDS = frozenset({"chat", "generate", "translate", "image", "diagram", "knowledge"})
 
 # 利用者ごとのピン留め上限
 MAX_APP_PINS = 8
@@ -226,7 +226,6 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "translate",
     "image",
     "diagram",
-    "shimen",
     "whisper",
     "prompt",
     "chosei",
@@ -254,7 +253,6 @@ ALWAYS_ON_OFFICIAL_EXAPP_IDS = (
     "generate",
     "translate",
     "diagram",
-    "shimen",
     "knowledge",
     "rag",
 )
@@ -264,7 +262,6 @@ RECOMMENDED_BACKFILL_IDS = (
     "rag",
     "lms",
     "worldmonitor",
-    "shimen",
     "budget",
     "ledger",
     "office-word",
@@ -1815,7 +1812,6 @@ _BUILTIN_TAIL_ORDER = (
     "translate",
     "image",
     "diagram",
-    "shimen",
     "knowledge",
 )
 
@@ -1954,10 +1950,10 @@ def update_exapp(team_id: str, ex_app_id: str, data: dict[str, Any]) -> dict[str
     return _row_to_exapp(r)
 
 
-def delete_exapp(team_id: str, ex_app_id: str) -> bool:
-    """削除する。組み込みカタログは削除不可（False）。"""
+def delete_exapp(team_id: str, ex_app_id: str, *, allow_builtin: bool = False) -> bool:
+    """削除する。組み込みカタログは削除不可（False）。廃止シードだけ allow_builtin で消す。"""
     current = get_exapp(team_id, ex_app_id)
-    if current and is_builtin_exapp(current):
+    if current and is_builtin_exapp(current) and not allow_builtin:
         return False
     with _lock, _connect() as conn:
         conn.execute(

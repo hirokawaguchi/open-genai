@@ -55,7 +55,6 @@ from . import (
     intauth,
     llm,
     ngwords,
-    shimen,
     objstore,
     access_split,
     artifact_delivery,
@@ -352,22 +351,6 @@ DIAGRAM_SEED = _builtin_seed(
         "利用者が確認してください。\n"
     ),
     "/diagram",
-)
-SHIMEN_SEED = _builtin_seed(
-    "shimen",
-    "紙面",
-    "文字・図形・画像を紙の上に組む",
-    (
-        "## このアプリでできること\n\n"
-        "見出しや図形、手元の画像を白い紙の上に置いて、資料用の紙面を組みます。"
-        "保存はこのブラウザの中だけです。\n\n"
-        "## 操作方法\n\n"
-        "左の列から素材、テキスト、アップロードを選び、クリックするか紙へドラッグして置きます。"
-        "選んだ物の上のバーで大きさや色を変え、ダブルクリックで文字を直します。"
-        "生成では、選んだ文字を指示で書き換えます。画像生成が動いているときは、"
-        "文章から画像を紙に置けます。右上から PNG をダウンロードします。\n"
-    ),
-    "/shimen",
 )
 KNOWLEDGE_SEED = _builtin_seed(
     "knowledge",
@@ -1166,7 +1149,6 @@ EXAPP_SEEDS = [
     TRANSLATE_SEED,
     IMAGE_SEED,
     DIAGRAM_SEED,
-    SHIMEN_SEED,
     KNOWLEDGE_SEED,
     RAG_SEED,
     WHISPER_SEED,
@@ -1196,6 +1178,7 @@ EXAPP_SEEDS = [
 
 # 源内 Web の汎用ページ／専用ページに統合したため exApp 登録を廃止した ID。
 # ナレッジのタグ管理・登録・管理は専用ページ /knowledge に統合済み（検索 rag は維持）。
+# shimen（紙面）は実験のまま終了したので、登録ごとやめる。
 RETIRED_SEED_EXAPP_IDS = [
     "sd",
     "rag-manage",
@@ -1205,6 +1188,7 @@ RETIRED_SEED_EXAPP_IDS = [
     "procuretech",
     "procuretech-hearing",
     "office",
+    "shimen",
 ]
 
 
@@ -1940,7 +1924,7 @@ def _startup() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[startup] ノートブック ID の移行に失敗: {e}")
     for ex_app_id in RETIRED_SEED_EXAPP_IDS:
-        teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id)
+        teams_store.delete_exapp(COMMON_TEAM_ID, ex_app_id, allow_builtin=True)
     # 各チームに「ナレッジ検索」を1つだけ用意し、旧管理系 RAG アプリは削除（冪等）。
     # 管理は専用ページ /knowledge に統合済み。
     try:
@@ -2941,44 +2925,6 @@ async def image_health() -> JSONResponse:
     """画像生成が使えるか。ローカル SD の到達、またはクラウド画像プロバイダの登録。"""
     ok = await image_gen.is_image_available()
     return JSONResponse(content={"ok": ok})
-
-
-@app.post("/shimen/rewrite")
-async def shimen_rewrite(request: Request) -> JSONResponse:
-    """選択中の文字を、指示に従って書き換える。本文だけを返す。"""
-    body = await request.json()
-    text = str(body.get("text") or "").strip()
-    instruction = str(body.get("instruction") or "").strip()
-    if not text or not instruction:
-        return JSONResponse(status_code=400, content={"error": "文字と指示が必要です。"})
-    if len(text) > 4000 or len(instruction) > 400:
-        return JSONResponse(status_code=400, content={"error": "長すぎます。"})
-    claims = _claims_from_request(request)
-    denied = _model_denied(claims, None)
-    if denied:
-        return JSONResponse(status_code=403, content={"error": denied})
-    ng = _ngword_denied(request, f"{instruction}\n{text}", usecase="/shimen")
-    if ng:
-        return JSONResponse(status_code=403, content={"error": ng})
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "紙面に載っている文字を、指示に従って書き換える。"
-                "書き換え後の本文だけを返す。説明、前置き、引用符は付けない。"
-            ),
-        },
-        {"role": "user", "content": f"指示: {instruction}\n\n本文:\n{text}"},
-    ]
-    try:
-        raw = await llm.chat_once(messages, None)
-    except Exception as exc:  # noqa: BLE001 - モデル不通は利用者向けの失敗にする
-        print(f"[shimen] rewrite failed: {exc}")
-        return JSONResponse(status_code=502, content={"error": "書き換えに失敗しました。"})
-    cleaned = shimen.clean_rewrite(raw)
-    if not cleaned:
-        return JSONResponse(status_code=502, content={"error": "書き換え結果が空でした。"})
-    return JSONResponse(content={"text": cleaned[:4000]})
 
 
 @app.post("/image/generate")

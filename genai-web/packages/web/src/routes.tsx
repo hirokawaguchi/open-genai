@@ -63,7 +63,6 @@ import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAp
 import { BudgetPage } from '@/open-genai/budget/BudgetPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
-import { ShimenPage } from '@/open-genai/shimen/ShimenPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
 import { OfficePage } from '@/open-genai/office/OfficePage';
@@ -226,12 +225,8 @@ export const createRoutes = (): RouteObject[] => {
     { path: 'apps/:teamId/modelpolicy', element: <Navigate to='/admin/model-policy' replace /> },
     { path: 'admin/ngword', element: <NgWordPage /> },
     { path: 'apps/:teamId/ngword', element: <Navigate to='/admin/ngword' replace /> },
-    ...(isUseCaseEnabled('shimen')
-      ? [
-          { path: 'shimen', element: <ShimenPage /> },
-          { path: 'apps/:teamId/shimen', element: <Navigate to='/shimen' replace /> },
-        ]
-      : []),
+    { path: 'shimen', element: <Navigate to='/' replace /> },
+    { path: 'apps/:teamId/shimen', element: <Navigate to='/' replace /> },
     { path: 'apps/:teamId/:exAppId', element: <ExAppPage /> },
     { path: 'chat', element: <ChatPage /> },
     { path: 'chat/:chatId', element: <ChatPage /> },

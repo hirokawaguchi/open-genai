@@ -7,7 +7,6 @@ export const BUILTIN_EXAPP_IDS = new Set([
   'translate',
   'image',
   'diagram',
-  'shimen',
   'knowledge',
 ]);
 

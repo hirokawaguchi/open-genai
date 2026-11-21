@@ -3,7 +3,6 @@ export const ALWAYS_ON_OFFICIAL_APP_IDS = new Set([
   'generate',
   'translate',
   'diagram',
-  'shimen',
   'knowledge',
   'rag',
 ]);

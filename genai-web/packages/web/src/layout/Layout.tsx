@@ -24,7 +24,6 @@ const FOOTER_HIDDEN_PATHS = [
   '/worldmonitor',
   '/office',
   '/diagram',
-  '/shimen',
   '/ledger',
 ];
 
