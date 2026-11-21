@@ -23,6 +23,8 @@ import { SendIcon } from '@/components/ui/icons/SendIcon';
 import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { LoadingButton } from '@/components/ui/LoadingButton';
+import { Switch } from '@/components/ui/Switch';
+import { useWebSearchConfig } from '@/features/chat/hooks/useWebSearchConfig';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
@@ -44,9 +46,20 @@ export const ChatInput = (props: Props) => {
   const { hint } = useSubmitKey();
 
   const { usecase, chatId } = useUsecasePath();
-  const { content, setContent, hasSent, setHasSent, knowledgePicks, setKnowledgePicks, knowledgeSearching } =
-    useChatStore();
+  const {
+    content,
+    setContent,
+    hasSent,
+    setHasSent,
+    knowledgePicks,
+    setKnowledgePicks,
+    knowledgeSearching,
+    webSearchOn,
+    setWebSearchOn,
+    webSearching,
+  } = useChatStore();
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const { enabled: webSearchEnabled } = useWebSearchConfig();
 
   const { loading, stopGeneration } = useChat(usecase, chatId);
   const {
@@ -134,7 +147,7 @@ export const ChatInput = (props: Props) => {
   const [promptWarn, setPromptWarn] = useState<PromptPiiWarn | null>(null);
   const promptWarnReq = useRef(0);
   const pendingSendRef = useRef<string | null>(null);
-  const disabledSend = loading || knowledgeSearching;
+  const disabledSend = loading || knowledgeSearching || webSearching;
   const fileErrorText = '選択したファイルにエラーがあります。該当ファイルをチェックしてください。';
 
   useEffect(() => {
@@ -287,72 +300,90 @@ export const ChatInput = (props: Props) => {
 
             <div className='flex w-full flex-col gap-2'>
               <div className='flex w-full items-start gap-6'>
-              <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
-              {fileUpload && (
-                <FileUpload className='min-w-0' hasError={errorMessages.length > 0}>
-                  <FileUploadInput
-                    ref={fileInputRef}
-                    onChange={onChangeFiles}
-                    accept={accept?.join(',')}
-                    multiple
-                  />
+                <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
+                  {fileUpload && (
+                    <FileUpload className='min-w-0' hasError={errorMessages.length > 0}>
+                      <FileUploadInput
+                        ref={fileInputRef}
+                        onChange={onChangeFiles}
+                        accept={accept?.join(',')}
+                        multiple
+                      />
+                      <Button
+                        ref={attachButtonRef}
+                        variant='outline'
+                        type='button'
+                        size='md'
+                        aria-describedby='chat-input-file-error'
+                        aria-disabled={uploading || undefined}
+                        aria-busy={uploading || undefined}
+                        className='inline-flex justify-center items-center gap-1 group-data-[has-error=true]/file-upload:border-error-1'
+                        title={uploading ? 'ファイルをアップロードしています' : '4.5MBまで'}
+                        onClick={handleClickFileUpload}
+                      >
+                        {uploading ? (
+                          <PiSpinnerGap
+                            aria-hidden={true}
+                            className='size-4 shrink-0 animate-spin'
+                          />
+                        ) : (
+                          <AttachmentIcon aria-hidden={true} className='shrink-0' />
+                        )}
+                        ファイルを添付
+                      </Button>
+                    </FileUpload>
+                  )}
                   <Button
-                    ref={attachButtonRef}
-                    variant='outline'
                     type='button'
+                    variant={knowledgePicks.length > 0 ? 'solid-fill' : 'outline'}
                     size='md'
-                    aria-describedby='chat-input-file-error'
-                    aria-disabled={uploading || undefined}
-                    aria-busy={uploading || undefined}
-                    className='inline-flex justify-center items-center gap-1 group-data-[has-error=true]/file-upload:border-error-1'
-                    title={uploading ? 'ファイルをアップロードしています' : '4.5MBまで'}
-                    onClick={handleClickFileUpload}
+                    aria-pressed={knowledgePicks.length > 0}
+                    className='inline-flex shrink-0 items-center justify-center gap-1'
+                    onClick={() => setKnowledgeOpen(true)}
                   >
-                    {uploading ? (
-                      <PiSpinnerGap aria-hidden={true} className='size-4 shrink-0 animate-spin' />
-                    ) : (
-                      <AttachmentIcon aria-hidden={true} className='shrink-0' />
-                    )}
-                    ファイルを添付
+                    <SearchIcon aria-hidden={true} className='size-6 shrink-0' />
+                    {knowledgePicks.length > 0
+                      ? `ナレッジ選択中（${knowledgePicks.length}）`
+                      : 'ナレッジ選択'}
                   </Button>
-                </FileUpload>
-              )}
-              <Button
-                type='button'
-                variant={knowledgePicks.length > 0 ? 'solid-fill' : 'outline'}
-                size='md'
-                aria-pressed={knowledgePicks.length > 0}
-                className='inline-flex shrink-0 items-center justify-center gap-1'
-                onClick={() => setKnowledgeOpen(true)}
-              >
-                <SearchIcon aria-hidden={true} className='size-6 shrink-0' />
-                {knowledgePicks.length > 0 ? `ナレッジ選択中（${knowledgePicks.length}）` : 'ナレッジ選択'}
-              </Button>
-              </div>
+                  {webSearchEnabled && (
+                    <Switch
+                      className='shrink-0'
+                      checked={webSearchOn}
+                      onSwitch={setWebSearchOn}
+                      label={webSearchOn ? 'Web検索 On' : 'Web検索 Off'}
+                    />
+                  )}
+                </div>
 
-              <LoadingButton
-                type={loading ? 'button' : 'submit'}
-                variant='solid-fill'
-                size='md'
-                disabled={loading ? false : disabledSend}
-                onClick={
-                  loading
-                    ? (event) => {
-                        event.preventDefault();
-                        stopGeneration();
-                      }
-                    : undefined
-                }
-                className='relative z-10 shrink-0 ml-auto inline-flex justify-center items-center gap-1 min-w-36'
-              >
-                <SendIcon aria-hidden={true} className='shrink-0' />
-                {loading ? '中止' : '送信'}
-              </LoadingButton>
+                <LoadingButton
+                  type={loading ? 'button' : 'submit'}
+                  variant='solid-fill'
+                  size='md'
+                  disabled={loading ? false : disabledSend}
+                  onClick={
+                    loading
+                      ? (event) => {
+                          event.preventDefault();
+                          stopGeneration();
+                        }
+                      : undefined
+                  }
+                  className='relative z-10 shrink-0 ml-auto inline-flex justify-center items-center gap-1 min-w-36'
+                >
+                  <SendIcon aria-hidden={true} className='shrink-0' />
+                  {loading ? '中止' : '送信'}
+                </LoadingButton>
               </div>
 
               {knowledgeSearching && (
                 <p className='text-solid-gray-700' role='status'>
                   ナレッジを検索しています。
+                </p>
+              )}
+              {webSearching && (
+                <p className='text-solid-gray-700' role='status'>
+                  Webを検索しています。
                 </p>
               )}
               {knowledgePicks.length > 0 && (
@@ -390,89 +421,87 @@ export const ChatInput = (props: Props) => {
               {fileUpload && uploadedFiles.length > 0 && (
                 <FileUpload className='w-full' hasError={errorMessages.length > 0}>
                   <FileUploadFileList className='py-1 overflow-y-auto max-h-48 overscroll-contain [scrollbar-gutter:stable]'>
-                      {uploadedFiles.map((uploadedFile, idx) => (
-                        <FileUploadFileItem
-                          key={idx}
-                          hasError={uploadedFile.errorMessages.length > 0}
-                          aria-busy={uploadedFile.uploading || undefined}
-                        >
-                          <FileUploadFileMarker />
-                          <FileUploadFileInfo>
-                            <p>
-                              <FileUploadFileName id={`attached-file-${idx}-name`}>
-                                {uploadedFile.name}
-                              </FileUploadFileName>
-                              <FileUploadFileMeta>
-                                <span>{formatSize(uploadedFile.file.size)}</span>（
-                                <span>
-                                  {Math.ceil((uploadedFile.file.size * 4) / 3).toLocaleString()}
-                                </span>
-                                バイト）
-                              </FileUploadFileMeta>
-                              {uploadedFile.uploading && (
-                                <span className='ml-2 inline-flex items-center gap-1 text-solid-gray-600'>
-                                  <PiSpinnerGap
-                                    aria-hidden={true}
-                                    className='size-4 shrink-0 animate-spin'
-                                  />
-                                  アップロード中
-                                </span>
-                              )}
-                            </p>
-                            {uploadedFile.errorMessages.length > 0 &&
-                              uploadedFile.errorMessages.map((error) => (
-                                <p key={error}>＊{error}</p>
-                              ))}
-                            {uploadedFile.piiWarned && (
-                              <div className='text-orange-800 whitespace-pre-wrap'>
-                                <p>
-                                  ＊
-                                  {(uploadedFile.piiMessage || '').split('\n')[0] ||
-                                    `個人情報の可能性: ${(uploadedFile.piiCategories ?? []).join('・')}`}
-                                </p>
-                                {(uploadedFile.piiHits ?? []).length > 0 ? (
-                                  <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
-                                    {(uploadedFile.piiHits ?? []).slice(0, 6).map((h, i) => (
-                                      <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
-                                        {h.category}: 「{h.context || h.match}」
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  (uploadedFile.piiMessage || '')
-                                    .split('\n')
-                                    .slice(1)
-                                    .filter(Boolean)
-                                    .map((line) => (
-                                      <p key={line} className='text-dns-14N-130'>
-                                        {line}
-                                      </p>
-                                    ))
-                                )}
-                              </div>
+                    {uploadedFiles.map((uploadedFile, idx) => (
+                      <FileUploadFileItem
+                        key={idx}
+                        hasError={uploadedFile.errorMessages.length > 0}
+                        aria-busy={uploadedFile.uploading || undefined}
+                      >
+                        <FileUploadFileMarker />
+                        <FileUploadFileInfo>
+                          <p>
+                            <FileUploadFileName id={`attached-file-${idx}-name`}>
+                              {uploadedFile.name}
+                            </FileUploadFileName>
+                            <FileUploadFileMeta>
+                              <span>{formatSize(uploadedFile.file.size)}</span>（
+                              <span>
+                                {Math.ceil((uploadedFile.file.size * 4) / 3).toLocaleString()}
+                              </span>
+                              バイト）
+                            </FileUploadFileMeta>
+                            {uploadedFile.uploading && (
+                              <span className='ml-2 inline-flex items-center gap-1 text-solid-gray-600'>
+                                <PiSpinnerGap
+                                  aria-hidden={true}
+                                  className='size-4 shrink-0 animate-spin'
+                                />
+                                アップロード中
+                              </span>
                             )}
-                          </FileUploadFileInfo>
-                          <Button
-                            id={`attached-file-${idx}-remove`}
-                            type='button'
-                            variant='text'
-                            size='xs'
-                            className='-order-1 shrink-0 min-w-14 min-h-[calc(30/16*1rem)] text-oln-16B-100'
-                            onClick={() => {
-                              if (uploadedFile.deleting) return;
-                              deleteFile(uploadedFile.s3Url ?? '', idx);
-                            }}
-                            aria-labelledby={
-                              uploadedFile.deleting
-                                ? undefined
-                                : `attached-file-${idx}-remove attached-file-${idx}-name`
-                            }
-                          >
-                            {uploadedFile.deleting ? '解除中' : '解除'}
-                          </Button>
-                        </FileUploadFileItem>
-                      ))}
-                    </FileUploadFileList>
+                          </p>
+                          {uploadedFile.errorMessages.length > 0 &&
+                            uploadedFile.errorMessages.map((error) => <p key={error}>＊{error}</p>)}
+                          {uploadedFile.piiWarned && (
+                            <div className='text-orange-800 whitespace-pre-wrap'>
+                              <p>
+                                ＊
+                                {(uploadedFile.piiMessage || '').split('\n')[0] ||
+                                  `個人情報の可能性: ${(uploadedFile.piiCategories ?? []).join('・')}`}
+                              </p>
+                              {(uploadedFile.piiHits ?? []).length > 0 ? (
+                                <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
+                                  {(uploadedFile.piiHits ?? []).slice(0, 6).map((h, i) => (
+                                    <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
+                                      {h.category}: 「{h.context || h.match}」
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                (uploadedFile.piiMessage || '')
+                                  .split('\n')
+                                  .slice(1)
+                                  .filter(Boolean)
+                                  .map((line) => (
+                                    <p key={line} className='text-dns-14N-130'>
+                                      {line}
+                                    </p>
+                                  ))
+                              )}
+                            </div>
+                          )}
+                        </FileUploadFileInfo>
+                        <Button
+                          id={`attached-file-${idx}-remove`}
+                          type='button'
+                          variant='text'
+                          size='xs'
+                          className='-order-1 shrink-0 min-w-14 min-h-[calc(30/16*1rem)] text-oln-16B-100'
+                          onClick={() => {
+                            if (uploadedFile.deleting) return;
+                            deleteFile(uploadedFile.s3Url ?? '', idx);
+                          }}
+                          aria-labelledby={
+                            uploadedFile.deleting
+                              ? undefined
+                              : `attached-file-${idx}-remove attached-file-${idx}-name`
+                          }
+                        >
+                          {uploadedFile.deleting ? '解除中' : '解除'}
+                        </Button>
+                      </FileUploadFileItem>
+                    ))}
+                  </FileUploadFileList>
                 </FileUpload>
               )}
               {uploadNotice && (

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from . import mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
+from . import firecrawl, mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
 
 # スキルのツール一覧に無くても、対話では常に使える。正本にはしない。
 FLOW_TOOLS = ("propose_drafts", "open_editor")
@@ -22,6 +22,8 @@ BUILTIN_MCP_TOOLS = (
     "get_weather",
     "wikipedia_search",
     "web_search",
+    "firecrawl_search",
+    "firecrawl_scrape",
 )
 ALL_TOOL_NAMES = (*CORE_TOOL_NAMES, *BUILTIN_MCP_TOOLS)
 
@@ -418,6 +420,32 @@ async def _wikipedia_search(_ctx: ToolContext, args: dict[str, Any]) -> str:
         )
 
 
+async def _firecrawl_search(_ctx: ToolContext, args: dict[str, Any]) -> str:
+    query = str(args.get("query") or args.get("q") or "")
+    try:
+        limit = int(args.get("limit") or firecrawl.DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        limit = firecrawl.DEFAULT_LIMIT
+    try:
+        return await firecrawl.search(query, limit)
+    except Exception as e:  # noqa: BLE001
+        return json.dumps(
+            {"error": f"Web 検索に失敗しました: {e}"},
+            ensure_ascii=False,
+        )
+
+
+async def _firecrawl_scrape(_ctx: ToolContext, args: dict[str, Any]) -> str:
+    url = str(args.get("url") or args.get("link") or "")
+    try:
+        return await firecrawl.scrape(url)
+    except Exception as e:  # noqa: BLE001
+        return json.dumps(
+            {"error": f"ページの取得に失敗しました: {e}"},
+            ensure_ascii=False,
+        )
+
+
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = {
     "search_sources": _search_sources,
     "list_items": _list_items,
@@ -430,6 +458,8 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = 
     "get_weather": _get_weather,
     "wikipedia_search": _wikipedia_search,
     "web_search": _wikipedia_search,
+    "firecrawl_search": _firecrawl_search,
+    "firecrawl_scrape": _firecrawl_scrape,
 }
 
 _SPECS: list[dict[str, Any]] = [
@@ -584,6 +614,44 @@ _SPECS: list[dict[str, Any]] = [
                     "query": {"type": "string", "description": "検索クエリ"},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "firecrawl_search",
+            "description": (
+                "Firecrawl でウェブ全体を検索する。最新の動向や公式サイトなど、"
+                "ナレッジや Wikipedia で足りないとき向き。検索クエリは外部へ出る。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "検索クエリ"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "取得する件数（既定5、最大8）",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "firecrawl_scrape",
+            "description": (
+                "指定した URL の本文を Markdown で取得する。"
+                "検索結果だけでは足りないとき、その URL を渡して読む。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "取得するページの URL"},
+                },
+                "required": ["url"],
             },
         },
     },

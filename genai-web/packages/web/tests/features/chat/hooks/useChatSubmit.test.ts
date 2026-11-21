@@ -11,7 +11,14 @@ let mockStoreState = {
   content: '',
   inputSystemContext: 'system-context',
   shouldAutoSubmit: false,
+  webSearchOn: false,
 };
+
+const mockSearchWeb = vi.fn();
+vi.mock('@/features/chat/webSearch', () => ({
+  searchWeb: (query: string) => mockSearchWeb(query),
+  formatWebSearchContext: (passages: unknown[]) => `web:${(passages ?? []).length}`,
+}));
 
 vi.mock('react-router', () => ({
   useLocation: vi.fn().mockReturnValue({
@@ -35,6 +42,8 @@ vi.mock('@/features/chat/stores/useChatStore', () => {
     content: mockStoreState.content,
     knowledgePicks: [],
     setKnowledgeSearching: vi.fn(),
+    webSearchOn: mockStoreState.webSearchOn,
+    setWebSearching: vi.fn(),
   });
   return { useChatStore };
 });
@@ -83,7 +92,9 @@ describe('useChatSubmit', () => {
       content: '',
       inputSystemContext: 'system-context',
       shouldAutoSubmit: false,
+      webSearchOn: false,
     };
+    mockSearchWeb.mockResolvedValue({ passages: [{ title: 't', url: 'u', text: 'x' }] });
   });
 
   describe('auto-submit', () => {
@@ -257,6 +268,42 @@ describe('useChatSubmit', () => {
       });
 
       expect(props.setFollowing).toHaveBeenCalledWith(true);
+    });
+
+    it('should not search the web when the switch is off', async () => {
+      mockStoreState.content = 'hello';
+      mockStoreState.webSearchOn = false;
+
+      const props = createDefaultProps();
+      const { result } = renderHook(() => useChatSubmit(props));
+
+      await act(async () => {
+        result.current.onSend();
+      });
+
+      expect(mockSearchWeb).not.toHaveBeenCalled();
+      expect(props.postChat).toHaveBeenCalledWith(
+        'prompted-content',
+        expect.objectContaining({ webSearchContext: undefined }),
+      );
+    });
+
+    it('should search the web and pass context when the switch is on', async () => {
+      mockStoreState.content = 'hello';
+      mockStoreState.webSearchOn = true;
+
+      const props = createDefaultProps();
+      const { result } = renderHook(() => useChatSubmit(props));
+
+      await act(async () => {
+        result.current.onSend();
+      });
+
+      expect(mockSearchWeb).toHaveBeenCalledWith('hello');
+      expect(props.postChat).toHaveBeenCalledWith(
+        'prompted-content',
+        expect.objectContaining({ webSearchContext: 'web:1' }),
+      );
     });
   });
 

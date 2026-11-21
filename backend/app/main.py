@@ -70,6 +70,7 @@ from . import (
     teams_store,
     think_text,
     titlegen,
+    websearch,
     whisper_file,
     whisper_live,
 )
@@ -3929,6 +3930,62 @@ async def knowledge_search(request: Request) -> JSONResponse:
                 break
         if len(passages) >= 12:
             break
+    return JSONResponse(content={"passages": passages})
+
+
+# ---------------------------------------------------------------------------
+# Web 検索（Firecrawl Local）。FIRECRAWL_URL が空なら無効。
+# チャットのスイッチがオンのときだけ、送信前に呼ぶ。検索クエリは Firecrawl Cloud に出る。
+# 閉域（LGWAN 等）では FIRECRAWL_URL を空にし、config が無効を返してスイッチも出さない。
+# ---------------------------------------------------------------------------
+@app.get("/web-search/config")
+async def web_search_config(request: Request) -> JSONResponse:
+    """チャットが Web 検索スイッチを出すかどうか。"""
+    return JSONResponse(content={"enabled": websearch.enabled()})
+
+
+@app.post("/web-search")
+async def web_search(request: Request) -> JSONResponse:
+    """チャット用。利用者の発話をクエリに Web を検索し、抜粋を返す。"""
+    if not websearch.enabled():
+        return JSONResponse(status_code=404, content={"error": "Web 検索は無効です"})
+    _user_id, tenant_id, _claims = _request_scope(request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    query = str(body.get("query") or "").strip()
+    if not query:
+        return JSONResponse(status_code=400, content={"error": "検索する内容を入力してください"})
+    query = query[:2000]
+    # 外に出す前に、入力制限（禁止ワード/機密情報）に該当すれば止める（監査も記録される）。
+    denied = _ngword_denied(request, query, usecase="/web-search")
+    if denied:
+        return JSONResponse(status_code=403, content={"error": denied})
+    # クエリの個人情報を置き換えてから外部へ送る。
+    query = _masked_prompt(query, tenant_id)
+    # 監査: クエリが外部（Firecrawl Cloud）へ出ることを残す。
+    try:
+        audit.record(
+            request,
+            action="web_search",
+            usecase="/web-search",
+            input_text=query,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        passages = await websearch.search(query)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=502, content={"error": f"Web 検索に失敗しました: {e}"}
+        )
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502, content={"error": f"Web 検索に失敗しました: {e}"}
+        )
     return JSONResponse(content={"passages": passages})
 
 

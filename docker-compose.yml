@@ -97,6 +97,9 @@ services:
       - PROCURETECH_EDITOR_APP_URL=${PROCURETECH_EDITOR_APP_URL:-http://procuretech-editor-app:8015/invoke}
       # ノートブック（標準起動）
       - NOTEBOOK_APP_URL=${NOTEBOOK_APP_URL:-http://notebook-app:8017/invoke}
+      # Web 検索（Firecrawl Local）。空ならチャットのスイッチも MCP も出さない。
+      # インターネット接続環境のみ profile websearch と合わせて設定する（検索クエリは Firecrawl Cloud に出る）。
+      - FIRECRAWL_URL=${FIRECRAWL_URL:-}
       # 自治体予算（profiles: ["budget"]。未起動時は専用ページが案内を表示）
       - BUDGET_APP_URL=${BUDGET_APP_URL:-http://budget-app:8022/invoke}
       # 台帳（profiles: ["ledger"]。未起動時は専用ページが案内を表示）
@@ -801,6 +804,8 @@ services:
       - PROCURETECH_EXTRA_BODY=${PROCURETECH_EXTRA_BODY:-}
       - APP_TITLE=${APP_TITLE:-${VITE_APP_TITLE:-Open GENAI}}
       - KNOWLEDGE_MCP_URL=${KNOWLEDGE_MCP_URL:-http://knowledge-mcp:8002/mcp}
+      # Web 検索（Firecrawl Local）。空なら MCP は非接続。backend と同じ値を使う。
+      - FIRECRAWL_URL=${FIRECRAWL_URL:-}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
       - NGWORD_DB_PATH=/ngword-data/ngwords.db
@@ -812,6 +817,26 @@ services:
       - "${NOTEBOOK_PORT:-${PROCURETECH_HEARING_PORT:-8017}}:8017"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 任意: Web 検索（Firecrawl Local）。インターネット接続環境のみ起動する。
+  #   docker compose --profile websearch up -d   または   COMPOSE_PROFILES=websearch
+  # 合わせて .env で FIRECRAWL_URL=http://firecrawl-local:3002 を設定する。
+  # 閉域（LGWAN 等）では起動せず FIRECRAWL_URL も空にする（チャットのスイッチも MCP も出ない）。
+  # scrape は手元で動くが、search は Firecrawl Cloud にクエリが出る点に注意。
+  # ホストへはポートを公開しない（compose 内から http://firecrawl-local:3002 で到達）。
+  firecrawl-local:
+    profiles: ["websearch"]
+    build:
+      context: ./firecrawl-local
+      dockerfile: Dockerfile
+    container_name: open-genai-firecrawl-local
+    environment:
+      # 任意の Firecrawl アカウント鍵。未設定ならキーレスの無料枠を使う。
+      # 本番で使う場合は overlay 側（.env.prod / *-ops）に置き、公開リポジトリには入れない。
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY:-}
+    expose:
+      - "3002"
     restart: unless-stopped
 
   # 任意: 台帳 (`docker compose --profile ledger up -d` または COMPOSE_PROFILES=ledger)

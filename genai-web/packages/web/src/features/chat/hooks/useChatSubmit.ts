@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router';
 import { formatKnowledgeContext, searchKnowledge } from '@/features/chat/knowledgeSearch';
+import { formatWebSearchContext, searchWeb } from '@/features/chat/webSearch';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { useChat } from '@/hooks/useChat';
 import { useFiles } from '@/hooks/useFiles';
@@ -27,6 +28,7 @@ export const useChatSubmit = ({
   getCurrentSystemContext,
   loading,
   setFollowing,
+  messages,
 }: {
   usecase: string;
   postChat: UseChatReturn['postChat'];
@@ -35,6 +37,7 @@ export const useChatSubmit = ({
   getCurrentSystemContext: UseChatReturn['getCurrentSystemContext'];
   loading: boolean;
   setFollowing: (following: boolean) => void;
+  messages?: { role: string; content: string }[];
 }) => {
   const { content, setContent, inputSystemContext, shouldAutoSubmit, setShouldAutoSubmit } =
     useChatStore();
@@ -46,54 +49,72 @@ export const useChatSubmit = ({
 
   const currentSystemContext = getCurrentSystemContext();
 
-  const onSend = useCallback((overrideContent?: string) => {
-    if (inputSystemContext !== currentSystemContext) {
-      updateSystemContext(inputSystemContext);
-    }
-    setFollowing(true);
-    const text = (overrideContent ?? useChatStore.getState().content) || content;
-    const picks = useChatStore.getState().knowledgePicks;
-    const send = async () => {
-      let knowledgeContext: string | undefined;
-      if (picks.length > 0) {
-        useChatStore.getState().setKnowledgeSearching(true);
-        try {
-          const found = await searchKnowledge(text, picks);
-          knowledgeContext = formatKnowledgeContext(found.passages ?? []);
-        } catch (e: unknown) {
-          window.alert(`ナレッジの検索に失敗しました: ${errorText(e)}`);
-          return;
-        } finally {
-          useChatStore.getState().setKnowledgeSearching(false);
-        }
+  const onSend = useCallback(
+    (overrideContent?: string) => {
+      if (inputSystemContext !== currentSystemContext) {
+        updateSystemContext(inputSystemContext);
       }
-      void Promise.resolve(
-        postChat(prompter.chatPrompt({ content: text }), {
-          uploadedFiles: fileUploadable ? uploadedFiles : undefined,
-          base64Cache,
-          knowledgeContext,
-        }),
-      ).catch((e: unknown) => {
-        window.alert(`送信に失敗しました: ${errorText(e)}`);
-      });
-      setContent('');
-      clearFiles();
-    };
-    void send();
-  }, [
-    content,
-    base64Cache,
-    fileUploadable,
-    setFollowing,
-    inputSystemContext,
-    updateSystemContext,
-    currentSystemContext,
-    prompter,
-    postChat,
-    uploadedFiles,
-    setContent,
-    clearFiles,
-  ]);
+      setFollowing(true);
+      const text = (overrideContent ?? useChatStore.getState().content) || content;
+      const picks = useChatStore.getState().knowledgePicks;
+      const webSearchOn = useChatStore.getState().webSearchOn;
+      const send = async () => {
+        let knowledgeContext: string | undefined;
+        if (picks.length > 0) {
+          useChatStore.getState().setKnowledgeSearching(true);
+          try {
+            const found = await searchKnowledge(text, picks);
+            knowledgeContext = formatKnowledgeContext(found.passages ?? []);
+          } catch (e: unknown) {
+            window.alert(`ナレッジの検索に失敗しました: ${errorText(e)}`);
+            return;
+          } finally {
+            useChatStore.getState().setKnowledgeSearching(false);
+          }
+        }
+        let webSearchContext: string | undefined;
+        if (webSearchOn) {
+          useChatStore.getState().setWebSearching(true);
+          try {
+            const found = await searchWeb(text);
+            webSearchContext = formatWebSearchContext(found.passages ?? []);
+          } catch (e: unknown) {
+            window.alert(`Web 検索に失敗しました: ${errorText(e)}`);
+            return;
+          } finally {
+            useChatStore.getState().setWebSearching(false);
+          }
+        }
+        void Promise.resolve(
+          postChat(prompter.chatPrompt({ content: text }), {
+            uploadedFiles: fileUploadable ? uploadedFiles : undefined,
+            base64Cache,
+            knowledgeContext,
+            webSearchContext,
+          }),
+        ).catch((e: unknown) => {
+          window.alert(`送信に失敗しました: ${errorText(e)}`);
+        });
+        setContent('');
+        clearFiles();
+      };
+      void send();
+    },
+    [
+      content,
+      base64Cache,
+      fileUploadable,
+      setFollowing,
+      inputSystemContext,
+      updateSystemContext,
+      currentSystemContext,
+      prompter,
+      postChat,
+      uploadedFiles,
+      setContent,
+      clearFiles,
+    ],
+  );
 
   useEffect(() => {
     if (shouldAutoSubmit && content && inputSystemContext && !loading) {
@@ -112,8 +133,33 @@ export const useChatSubmit = ({
   }, [shouldAutoSubmit, content, inputSystemContext, loading, onSend, setShouldAutoSubmit, state]);
 
   const onRetry = useCallback(() => {
-    retryGeneration({ base64Cache });
-  }, [retryGeneration, base64Cache]);
+    const webSearchOn = useChatStore.getState().webSearchOn;
+    if (!webSearchOn) {
+      retryGeneration({ base64Cache });
+      return;
+    }
+    // スイッチがオンなら、直前のユーザー発話で検索し直してから再生成する。
+    const lastUser = [...(messages ?? [])].reverse().find((m) => m.role === 'user');
+    const text = (lastUser?.content ?? '').trim();
+    if (!text) {
+      retryGeneration({ base64Cache });
+      return;
+    }
+    void (async () => {
+      let webSearchContext: string | undefined;
+      useChatStore.getState().setWebSearching(true);
+      try {
+        const found = await searchWeb(text);
+        webSearchContext = formatWebSearchContext(found.passages ?? []);
+      } catch (e: unknown) {
+        window.alert(`Web 検索に失敗しました: ${errorText(e)}`);
+        return;
+      } finally {
+        useChatStore.getState().setWebSearching(false);
+      }
+      retryGeneration({ base64Cache, webSearchContext });
+    })();
+  }, [retryGeneration, base64Cache, messages]);
 
   return { onSend, onRetry };
 };

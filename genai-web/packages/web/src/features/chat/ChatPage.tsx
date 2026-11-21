@@ -93,12 +93,7 @@ export const ChatPage = () => {
   // メッセージが空の時はテキストをクリア（自動送信時・クエリパラメータ指定時・
   // プロンプトテンプレートからの本文引き継ぎ時は除く）
   useEffect(() => {
-    if (
-      messages.length === 0 &&
-      !shouldAutoSubmit &&
-      search === '' &&
-      !state?.content
-    ) {
+    if (messages.length === 0 && !shouldAutoSubmit && search === '' && !state?.content) {
       setContent('');
     }
   }, [messages, setContent, shouldAutoSubmit, search, state]);
@@ -119,6 +114,7 @@ export const ChatPage = () => {
     getCurrentSystemContext,
     loading,
     setFollowing,
+    messages,
   });
 
   const onReset = useCallback(() => {
@@ -189,11 +185,7 @@ export const ChatPage = () => {
           <BreadcrumbsNav
             items={
               chatId
-                ? [
-                    { label: 'ホーム', to: '/' },
-                    { label: appName, to: '/chat' },
-                    { label: title },
-                  ]
+                ? [{ label: 'ホーム', to: '/' }, { label: appName, to: '/chat' }, { label: title }]
                 : [{ label: 'ホーム', to: '/' }, { label: appName }]
             }
           />
@@ -328,11 +320,7 @@ export const ChatPage = () => {
             使い方
           </CustomDialogHeader>
           <CustomDialogBody>
-            {howToUse ? (
-              <ExAppUsageMarkdownRenderer content={howToUse} size='sm' />
-            ) : (
-              <ChatHints />
-            )}
+            {howToUse ? <ExAppUsageMarkdownRenderer content={howToUse} size='sm' /> : <ChatHints />}
           </CustomDialogBody>
         </CustomDialogPanel>
       </CustomDialog>

@@ -20,12 +20,7 @@ import { isApiError } from '@/lib/fetcher';
 import { decomposeId } from '@/utils/decomposeId';
 import { newId } from '@/utils/uuid';
 import { getS3Uri } from '@/lib/fileApi';
-import {
-  findModelByModelId,
-  MODELS,
-  resolveSelectedModel,
-  resolveSelectedModelId,
-} from '@/models';
+import { findModelByModelId, MODELS, resolveSelectedModel, resolveSelectedModelId } from '@/models';
 import { getPrompter } from '../prompts';
 import { useChatApi } from './useChatApi';
 import { useChatList } from './useChatList';
@@ -54,6 +49,8 @@ export type GenerateOptions = {
   base64Cache?: Record<string, string>;
   /** 画面の発言には残さず、今回のモデル入力にだけ足すナレッジ抜粋。 */
   knowledgeContext?: string;
+  /** 画面の発言には残さず、今回のモデル入力にだけ足す Web 検索抜粋。 */
+  webSearchContext?: string;
 };
 
 const useChatStore = create<{
@@ -385,6 +382,7 @@ const useChatStore = create<{
       setSessionId = () => {},
       base64Cache,
       knowledgeContext,
+      webSearchContext,
     } = options;
 
     if (!get().chats[id]) {
@@ -392,7 +390,8 @@ const useChatStore = create<{
     }
 
     const resolvedId = resolveSelectedModelId() ?? MODELS.modelIds[0];
-    const model = resolveSelectedModel() ??
+    const model =
+      resolveSelectedModel() ??
       findModelByModelId(resolvedId) ??
       (resolvedId ? { modelId: resolvedId, type: 'bedrock' as const } : undefined);
 
@@ -478,12 +477,13 @@ const useChatStore = create<{
       extraData,
       base64Cache,
     );
-    if (knowledgeContext) {
+    const injected = [knowledgeContext, webSearchContext].filter(Boolean).join('\n\n');
+    if (injected) {
       const last = formattedMessages[formattedMessages.length - 1];
       if (last?.role === 'user') {
         formattedMessages[formattedMessages.length - 1] = {
           ...last,
-          content: `${last.content}\n\n${knowledgeContext}`,
+          content: `${last.content}\n\n${injected}`,
         };
       }
     }
@@ -711,52 +711,52 @@ const useChatStore = create<{
       const { uploadedFiles, extraData } = options;
 
       try {
-      if (!get().chats[id]) {
-        initChatWithSystemContext(id);
-      }
+        if (!get().chats[id]) {
+          initChatWithSystemContext(id);
+        }
 
-      const userMessage: ShownMessage = {
-        role: 'user',
-        content,
-        messageId: newId(),
-        // DDB に保存する形式で、extraData を設定する
-        extraData: [
-          ...(uploadedFiles?.map(
-            (uploadedFile) =>
-              ({
-                type: uploadedFile.type,
-                name: uploadedFile.name,
-                source: {
-                  type: 's3',
-                  mediaType: uploadedFile.file.type,
-                  data: uploadedFile.s3Url ?? '',
-                },
-              }) as ExtraData,
-          ) ?? []),
-          ...(extraData ?? []),
-        ],
-      };
-
-      const assistantMessage: ShownMessage = {
-        role: 'assistant',
-        content: '',
-        messageId: newId(),
-      };
-
-      // User/Assistant の発言を反映
-      set((state) => {
-        const newChats = produce(state.chats, (draft) => {
-          if (!draft[id]) {
-            draft[id] = { messages: [], stopReason: '' };
-          }
-          draft[id].messages.push(userMessage);
-          draft[id].messages.push(assistantMessage);
-        });
-
-        return {
-          chats: newChats,
+        const userMessage: ShownMessage = {
+          role: 'user',
+          content,
+          messageId: newId(),
+          // DDB に保存する形式で、extraData を設定する
+          extraData: [
+            ...(uploadedFiles?.map(
+              (uploadedFile) =>
+                ({
+                  type: uploadedFile.type,
+                  name: uploadedFile.name,
+                  source: {
+                    type: 's3',
+                    mediaType: uploadedFile.file.type,
+                    data: uploadedFile.s3Url ?? '',
+                  },
+                }) as ExtraData,
+            ) ?? []),
+            ...(extraData ?? []),
+          ],
         };
-      });
+
+        const assistantMessage: ShownMessage = {
+          role: 'assistant',
+          content: '',
+          messageId: newId(),
+        };
+
+        // User/Assistant の発言を反映
+        set((state) => {
+          const newChats = produce(state.chats, (draft) => {
+            if (!draft[id]) {
+              draft[id] = { messages: [], stopReason: '' };
+            }
+            draft[id].messages.push(userMessage);
+            draft[id].messages.push(assistantMessage);
+          });
+
+          return {
+            chats: newChats,
+          };
+        });
 
         await generateMessage('normal', id, mutateListChat, options);
       } catch (e) {

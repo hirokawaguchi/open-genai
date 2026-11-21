@@ -16,6 +16,8 @@ type ChatState = {
   hasSent: boolean;
   knowledgePicks: KnowledgePick[];
   knowledgeSearching: boolean;
+  webSearchOn: boolean;
+  webSearching: boolean;
 };
 
 type ChatActions = {
@@ -28,6 +30,8 @@ type ChatActions = {
   setHasSent: (hasSent: boolean) => void;
   setKnowledgePicks: (knowledgePicks: KnowledgePick[]) => void;
   setKnowledgeSearching: (knowledgeSearching: boolean) => void;
+  setWebSearchOn: (webSearchOn: boolean) => void;
+  setWebSearching: (webSearching: boolean) => void;
 };
 
 type ChatStore = ChatState & ChatActions;
@@ -42,6 +46,8 @@ const initialState: ChatState = {
   hasSent: false,
   knowledgePicks: [],
   knowledgeSearching: false,
+  webSearchOn: false,
+  webSearching: false,
 };
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -55,4 +61,6 @@ export const useChatStore = create<ChatStore>((set) => ({
   setHasSent: (hasSent) => set({ hasSent }),
   setKnowledgePicks: (knowledgePicks) => set({ knowledgePicks }),
   setKnowledgeSearching: (knowledgeSearching) => set({ knowledgeSearching }),
+  setWebSearchOn: (webSearchOn) => set({ webSearchOn }),
+  setWebSearching: (webSearching) => set({ webSearching }),
 }));

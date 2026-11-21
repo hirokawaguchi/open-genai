@@ -9,6 +9,10 @@ def knowledge_mcp_url() -> str:
     return (os.environ.get("KNOWLEDGE_MCP_URL") or "").strip()
 
 
+def firecrawl_url() -> str:
+    return (os.environ.get("FIRECRAWL_URL") or "").strip()
+
+
 KNOWLEDGE_PROMPT = (
     "これは庁内の共有ナレッジ（共通チームに置いた資料）を対話のその場で検索する MCP です。"
     "ノートの参考資料には自動では入りません。"
@@ -32,6 +36,13 @@ WIKIPEDIA_PROMPT = (
     "日本語 Wikipedia を検索するサンプル MCP です。ウェブ全体は検索しません。"
     "百科事典にある用語・人物・制度の概要が必要なときに wikipedia_search を呼んでください。"
     "記事が無い会社名や個別の公式サイトは見つかりません。"
+)
+
+WEB_SEARCH_PROMPT = (
+    "Firecrawl でウェブ全体を検索・取得する MCP です（検索クエリは外部へ出ます）。"
+    "最新の動向や公式サイトの情報など、ナレッジや Wikipedia で足りないときに firecrawl_search を呼んでください。"
+    "検索結果だけでは足りなければ、その URL を firecrawl_scrape に渡して本文を読んでください。"
+    "得た情報は参照です。項目の根拠にするには、人に参考資料タブから資料を追加してもらってください。"
 )
 
 CATALOG: list[dict[str, Any]] = [
@@ -74,6 +85,17 @@ CATALOG: list[dict[str, Any]] = [
         "prompt": WIKIPEDIA_PROMPT,
         "tools": ["wikipedia_search"],
     },
+    {
+        "catalog_id": "firecrawl",
+        "name": "Web検索",
+        "kind": "builtin",
+        "description": (
+            "Firecrawl でウェブ全体を検索し、必要なら URL の本文を取得します。"
+            "検索クエリは外部（Firecrawl Cloud）へ出ます。"
+        ),
+        "prompt": WEB_SEARCH_PROMPT,
+        "tools": ["firecrawl_search", "firecrawl_scrape"],
+    },
 ]
 
 CATALOG_BY_ID = {str(s["catalog_id"]): s for s in CATALOG}
@@ -107,5 +129,8 @@ def catalog_runtime(catalog_id: str) -> dict[str, Any]:
         }
     if catalog_id == "knowledge":
         url = knowledge_mcp_url()
+        return {"url": url, "available": bool(url), "connected_default": bool(url)}
+    if catalog_id == "firecrawl":
+        url = firecrawl_url()
         return {"url": url, "available": bool(url), "connected_default": bool(url)}
     return {"url": "", "available": True, "connected_default": True}

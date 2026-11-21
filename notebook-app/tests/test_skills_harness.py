@@ -258,17 +258,22 @@ def test_mcp_citations_from_payload():
 def test_mcp_seed_connect_and_session_toggle(tmp_path, monkeypatch):
     monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
     monkeypatch.delenv("KNOWLEDGE_MCP_URL", raising=False)
+    monkeypatch.delenv("FIRECRAWL_URL", raising=False)
     store._db = None
     store.init_db()
 
     catalog = store.list_mcps("u1")
     names = {m["catalog_id"] for m in catalog}
-    assert names == {"knowledge", "clock", "weather", "web_search"}
+    assert names == {"knowledge", "clock", "weather", "web_search", "firecrawl"}
     clock = next(m for m in catalog if m["catalog_id"] == "clock")
     assert clock["connected"] is True
     knowledge = next(m for m in catalog if m["catalog_id"] == "knowledge")
     assert knowledge["connected"] is False
     assert "共有ナレッジ" in knowledge["description"]
+    # FIRECRAWL_URL 未設定なら Web 検索 MCP は非接続（閉域では使えない）。
+    firecrawl_mcp = next(m for m in catalog if m["catalog_id"] == "firecrawl")
+    assert firecrawl_mcp["connected"] is False
+    assert firecrawl_mcp["available"] is False
 
     updated = store.update_mcp(clock["id"], "u1", connected=False)
     assert updated and updated["connected"] is False
@@ -358,6 +363,82 @@ def test_weather_and_wikipedia_helpers(monkeypatch):
     search = asyncio.run(sample_mcp.wikipedia_search("テスト"))
     assert "要約です" in search
     assert "Wikipedia" in search
+
+
+def test_firecrawl_disabled_without_url(monkeypatch):
+    from app import firecrawl
+
+    monkeypatch.delenv("FIRECRAWL_URL", raising=False)
+    assert firecrawl.enabled() is False
+    out = asyncio.run(firecrawl.search("花火"))
+    assert "無効" in out
+
+
+def test_firecrawl_search_and_scrape(monkeypatch):
+    import json as _json
+
+    from app import firecrawl
+
+    monkeypatch.setenv("FIRECRAWL_URL", "http://firecrawl-local:3002")
+
+    class FakeResp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            if url.endswith("/v2/search"):
+                return FakeResp(
+                    {
+                        "success": True,
+                        "data": {
+                            "web": [
+                                {
+                                    "url": "https://example.jp/a",
+                                    "title": "記事A",
+                                    "markdown": "本文A" * 1000,
+                                }
+                            ]
+                        },
+                    }
+                )
+            if url.endswith("/v2/scrape"):
+                return FakeResp(
+                    {
+                        "success": True,
+                        "data": {
+                            "markdown": "ページ本文",
+                            "metadata": {"title": "タイトル"},
+                        },
+                    }
+                )
+            raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(firecrawl.httpx, "AsyncClient", FakeClient)
+    assert firecrawl.enabled() is True
+
+    result = _json.loads(asyncio.run(firecrawl.search("花火", limit=3)))
+    assert result["results"][0]["url"] == "https://example.jp/a"
+    assert len(result["results"][0]["snippet"]) <= firecrawl.MAX_SNIPPET_CHARS
+
+    scraped = _json.loads(asyncio.run(firecrawl.scrape("https://example.jp/a")))
+    assert scraped["title"] == "タイトル"
+    assert scraped["markdown"] == "ページ本文"
 
 
 def test_answer_ref_resolution():
