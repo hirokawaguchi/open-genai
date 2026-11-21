@@ -144,7 +144,9 @@ export const OfficePage = ({ appId }: { appId: OfficeAppId }) => {
     };
     const saveToLedger = async (name: string, bytes: ArrayBuffer, mode: 'save' | 'save-as') => {
       const binding = mode === 'save' ? bindingRef.current : null;
-      const query = binding ? { row_id: binding.rowId, file_id: binding.fileId } : {};
+      const query: Record<string, string> = binding
+        ? { row_id: binding.rowId, file_id: binding.fileId }
+        : {};
       const created = async (row: OfficeSaveRow, text: string) => {
         remember(row);
         setNotice({ text, ledgerId: row.ledger_id, rowId: row.id });
