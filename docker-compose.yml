@@ -930,6 +930,10 @@ services:
       - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-2}
       - BROWSER_SCREEN=${BROWSER_SCREEN:-1280x800}
       - BROWSER_EGRESS_PORT=${BROWSER_EGRESS_PORT:-18080}
+      - BROWSER_PROFILE_DIR=/data/browser-profiles
+      - BROWSER_PROFILE_MAX_BYTES=${BROWSER_PROFILE_MAX_BYTES:-536870912}
+    volumes:
+      - browser_app_data:/data
     shm_size: "2gb"
     mem_limit: 3g
     # Chromium のサンドボックスが clone できるよう、このサービスだけ seccomp を外す。
@@ -1061,5 +1065,6 @@ volumes:
   procuretech_hearing_app_data:
   ssh_app_data:
   sengoku_app_data:
+  browser_app_data:
   nishukan_app_data:
   lms_app_data:

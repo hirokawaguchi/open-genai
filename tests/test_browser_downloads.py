@@ -20,6 +20,14 @@ def test_finished_names_skip_partials_and_hidden_files() -> None:
     assert downloads.safe_download_name("..") is None
 
 
+def test_japanese_locale_is_written_before_launch(tmp_path: Path) -> None:
+    downloads.write_japanese_locale(tmp_path)
+    prefs = (tmp_path / "chrome" / "Default" / "Preferences").read_text(encoding="utf-8")
+    local = (tmp_path / "chrome" / "Local State").read_text(encoding="utf-8")
+    assert "ja-JP,ja" in prefs
+    assert '"app_locale": "ja"' in local
+
+
 def test_download_prefs_pin_the_session_directory(tmp_path: Path) -> None:
     target = tmp_path / "Downloads"
     downloads.write_download_prefs(tmp_path, target)

@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-cjk \
         fonts-liberation \
         ca-certificates \
+        locales \
+    && sed -i 's/^# *\(ja_JP.UTF-8 UTF-8\)/\1/' /etc/locale.gen \
+    && locale-gen ja_JP.UTF-8 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 --shell /bin/sh browser
 

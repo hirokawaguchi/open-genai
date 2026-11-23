@@ -13,6 +13,7 @@
   "HomepageLocation": "about:blank",
   "HomepageIsNewTabPage": false,
   "RestoreOnStartup": 5,
+  "ApplicationLocaleValue": "ja",
   "WebRtcIPHandlingPolicy": "disable_non_proxied_udp",
   "PromptForDownload": false,
   "PasswordManagerEnabled": false,

@@ -2,7 +2,7 @@
 
 - 庁内: backend が JWT 検証後、HMAC 署名付きで /sessions と /ws へプロキシ
 - Chromium はコンテナ内で起動し、画面だけを WebSocket で返す
-- 出口は公開 IP の 80/443 のみ。プロファイルはセッション終了で消す
+- 出口は公開 IP の 80/443 のみ。Cookie と履歴は利用者ごとに残す
 
 Compose では profiles: ["browser"] でオプション起動する。
 """

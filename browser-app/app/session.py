@@ -1,12 +1,13 @@
 """利用者ごとの Chromium セッション。
 
 Xvfb の上で Chromium を開き、x11vnc のバイト列を WebSocket へ中継する。
-プロファイルはセッション終了で消す。
+Cookie と履歴は利用者ごとに残す。画面とダウンロードの一時ファイルはセッション終了で消す。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -24,7 +25,24 @@ MAX_PER_USER = int(os.environ.get("BROWSER_MAX_SESSIONS_PER_USER", "1"))
 MAX_SESSIONS = int(os.environ.get("BROWSER_MAX_SESSIONS", "2"))
 EGRESS_PORT = int(os.environ.get("BROWSER_EGRESS_PORT", "18080"))
 CONNECT_GRACE_SECONDS = int(os.environ.get("BROWSER_CONNECT_GRACE_SECONDS", "60"))
+RUNTIME_ROOT = Path(os.environ.get("BROWSER_RUNTIME_DIR", "/tmp/open-genai-browser"))
+PROFILE_ROOT = Path(os.environ.get("BROWSER_PROFILE_DIR", "/data/browser-profiles"))
+PROFILE_MAX_BYTES = int(os.environ.get("BROWSER_PROFILE_MAX_BYTES", str(512 * 1024 * 1024)))
+DISK_CACHE_BYTES = int(os.environ.get("BROWSER_DISK_CACHE_BYTES", str(64 * 1024 * 1024)))
 _ID_OK = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+_CACHE_RELATIVE = (
+    "Default/Cache",
+    "Default/Code Cache",
+    "Default/GPUCache",
+    "Default/DawnGraphiteCache",
+    "Default/DawnWebGPUCache",
+    "ShaderCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    "Default/Service Worker/CacheStorage",
+    "Default/Service Worker/ScriptCache",
+)
+_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 
 
 class SessionLimitError(Exception):
@@ -71,9 +89,75 @@ def _chromium_args(profile: Path, width: int, height: int) -> list[str]:
         f"--window-size={width},{height}",
         "--window-position=0,0",
         "--lang=ja",
+        "--accept-lang=ja-JP,ja",
+        f"--disk-cache-size={DISK_CACHE_BYTES}",
         "--password-store=basic",
         "about:blank",
     ]
+
+
+def profile_key(user_id: str) -> str:
+    """利用者 ID をディレクトリ名にする。メールアドレスはパスに出さない。"""
+    uid = (user_id or "").strip()
+    if not uid or "\x00" in uid:
+        raise BrowserStartError("利用者が分かりません")
+    return hashlib.sha256(uid.encode("utf-8")).hexdigest()[:32]
+
+
+def chrome_home_for(user_id: str) -> Path:
+    return PROFILE_ROOT / profile_key(user_id)
+
+
+def directory_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_symlink() or not item.is_file():
+            continue
+        try:
+            total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def trim_profile_cache(chrome_dir: Path, limit: int = PROFILE_MAX_BYTES) -> bool:
+    """上限を超えていたらキャッシュだけ捨てる。Cookie と履歴は残す。"""
+    if directory_size(chrome_dir) <= limit:
+        return False
+    for relative in _CACHE_RELATIVE:
+        shutil.rmtree(chrome_dir / relative, ignore_errors=True)
+    return True
+
+
+def clear_chrome_locks(chrome_dir: Path) -> None:
+    for name in _LOCK_NAMES:
+        path = chrome_dir / name
+        try:
+            if path.is_symlink() or path.exists():
+                path.unlink()
+        except OSError:
+            continue
+
+
+def clear_profile_downloads(chrome_dir: Path) -> None:
+    for relative in ("Default/Downloads", "Downloads"):
+        shutil.rmtree(chrome_dir / relative, ignore_errors=True)
+
+
+def prepare_chrome_home(home: Path) -> None:
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        os.chmod(home, 0o700)
+        chrome_dir = home / "chrome"
+        chrome_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(chrome_dir, 0o700)
+    except OSError as exc:
+        raise BrowserStartError("プロファイルを用意できませんでした") from exc
+    trim_profile_cache(chrome_dir)
+    clear_chrome_locks(chrome_dir)
+    clear_profile_downloads(chrome_dir)
 
 
 @dataclass
@@ -85,6 +169,7 @@ class BrowserSession:
     width: int
     height: int
     profile: Path
+    chrome_home: Path | None = None
     downloads: dict[str, tuple[str, Path]] = field(default_factory=dict)
     download_notes: list[str] = field(default_factory=list)
     watch_task: asyncio.Task | None = None
@@ -131,6 +216,8 @@ class BrowserSession:
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
         shutil.rmtree(self.profile, ignore_errors=True)
+        if self.chrome_home is not None:
+            clear_profile_downloads(self.chrome_home / "chrome")
 
 
 _lock = asyncio.Lock()
@@ -160,7 +247,9 @@ def _env(profile: Path, display: int) -> dict[str, str]:
     env["HOME"] = str(profile)
     env["XDG_CONFIG_HOME"] = str(profile / "config")
     env["XDG_CACHE_HOME"] = str(profile / "cache")
-    env["LANG"] = env.get("LANG") or "C.UTF-8"
+    env["LANG"] = "ja_JP.UTF-8"
+    env["LANGUAGE"] = "ja_JP:ja"
+    env["LC_ALL"] = "ja_JP.UTF-8"
     return env
 
 
@@ -219,8 +308,12 @@ async def _start_processes(sess: BrowserSession) -> None:
     if pulse is not None:
         sess.procs.append(pulse)
         sess.audio_ready = True
+    if sess.chrome_home is None:
+        raise BrowserStartError("プロファイルを用意できませんでした")
+    prepare_chrome_home(sess.chrome_home)
     download_dir = sess.profile / "Downloads"
-    downloads.write_download_prefs(sess.profile, download_dir)
+    downloads.write_download_prefs(sess.chrome_home, download_dir)
+    downloads.write_japanese_locale(sess.chrome_home)
     env["XDG_DOWNLOAD_DIR"] = str(download_dir)
     (sess.profile / "config" / "user-dirs.dirs").write_text(
         f'XDG_DOWNLOAD_DIR="{download_dir}"\n',
@@ -263,7 +356,7 @@ async def _start_processes(sess: BrowserSession) -> None:
     )
     sess.procs.append(vnc)
     await _wait_port(sess.vnc_port, vnc, "画面転送を起動できませんでした")
-    chrome = await _spawn(_chromium_args(sess.profile, sess.width, sess.height), env)
+    chrome = await _spawn(_chromium_args(sess.chrome_home, sess.width, sess.height), env)
     sess.procs.append(chrome)
     await asyncio.sleep(1.2)
     if chrome.returncode is not None:
@@ -287,7 +380,8 @@ async def _guard(sess: BrowserSession) -> None:
 
 
 async def open_session(user_id: str) -> BrowserSession:
-    """利用者の既存セッションは閉じてから、新しい Chromium を開く。"""
+    """利用者の既存セッションは閉じてから、同じプロファイルで Chromium を開く。"""
+    chrome_home = chrome_home_for(user_id)
     async with _lock:
         old = [s for s in _sessions.values() if s.user_id == user_id]
         others = [s for s in _sessions.values() if s.user_id != user_id]
@@ -300,7 +394,7 @@ async def open_session(user_id: str) -> BrowserSession:
         display, vnc_port = _alloc_slot()
         width, height = screen_size()
         session_id = secrets.token_urlsafe(18)
-        profile = Path("/tmp/open-genai-browser") / session_id
+        profile = RUNTIME_ROOT / session_id
         sess = BrowserSession(
             id=session_id,
             user_id=user_id,
@@ -309,6 +403,7 @@ async def open_session(user_id: str) -> BrowserSession:
             width=width,
             height=height,
             profile=profile,
+            chrome_home=chrome_home,
         )
         _displays.add(display)
         _sessions[session_id] = sess

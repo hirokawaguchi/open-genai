@@ -49,3 +49,43 @@ def write_download_prefs(profile: Path, download_dir: Path) -> None:
     prefs["savefile"] = {"default_directory": str(download_dir)}
     prefs_path.write_text(json.dumps(prefs), encoding="utf-8")
     prefs_path.chmod(0o600)
+
+
+def write_japanese_locale(profile: Path) -> None:
+    """メニューとページの言語を日本語にする。"""
+    default = profile / "chrome" / "Default"
+    default.mkdir(parents=True, exist_ok=True)
+    prefs_path = default / "Preferences"
+    prefs: dict = {}
+    if prefs_path.exists():
+        try:
+            loaded = json.loads(prefs_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                prefs = loaded
+        except json.JSONDecodeError:
+            prefs = {}
+    intl = prefs.get("intl")
+    if not isinstance(intl, dict):
+        intl = {}
+    intl["accept_languages"] = "ja-JP,ja"
+    intl["selected_languages"] = "ja-JP,ja"
+    prefs["intl"] = intl
+    prefs_path.write_text(json.dumps(prefs), encoding="utf-8")
+    prefs_path.chmod(0o600)
+
+    local_path = profile / "chrome" / "Local State"
+    local: dict = {}
+    if local_path.exists():
+        try:
+            loaded = json.loads(local_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                local = loaded
+        except json.JSONDecodeError:
+            local = {}
+    local_intl = local.get("intl")
+    if not isinstance(local_intl, dict):
+        local_intl = {}
+    local_intl["app_locale"] = "ja"
+    local["intl"] = local_intl
+    local_path.write_text(json.dumps(local), encoding="utf-8")
+    local_path.chmod(0o600)
