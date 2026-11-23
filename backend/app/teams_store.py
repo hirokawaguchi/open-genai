@@ -242,6 +242,7 @@ OFFICIAL_CATALOG_EXAPP_IDS = (
     "rag",
     "notebook",
     "ssh",
+    "browser",
     "lms",
     "worldmonitor",
     "budget",
@@ -591,6 +592,12 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
             if (
                 app.get("exAppId") == "whisper"
                 and description == "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き）。"
+            ):
+                description = app.get("description", "")
+            if (
+                app.get("exAppId") == "browser"
+                and description
+                == "サーバ上の Chromium をこの画面に表示します。公開されている Web サイトを開けます。"
             ):
                 description = app.get("description", "")
             # 公開ステータスは管理者がメニュー表示の切り替えに使うので上書きしない

@@ -90,8 +90,8 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/
 # 認証不要のパス
 # /health は完全一致のみ（/health/details は JWT 必須）。
 # /files/ は Authorization を付けられない img/PUT 用。認可は HMAC クエリで行う。
-# /ssh/ws はブラウザが Upgrade に Authorization を付けられない。JWT は accept 後の最初の JSON で検証する。
-PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws", "/worldmonitor/gate", "/office/gate"})
+# /ssh/ws と /browser/ws と /browser/audio はブラウザが Upgrade に Authorization を付けられない。JWT は accept 後の最初の JSON で検証する。
+PUBLIC_EXACT_PATHS = frozenset({"/health", "/ssh/ws", "/browser/ws", "/browser/audio", "/worldmonitor/gate", "/office/gate"})
 PUBLIC_PATH_PREFIXES = (
     "/auth/",
     "/files/",
@@ -156,6 +156,8 @@ PROCURETECH_EDITOR_APP_URL = os.environ.get(
 )
 # Web SSH（Compose profiles: ["ssh"]）。実 API は /ssh/* と /ssh/ws。
 SSH_APP_URL = os.environ.get("SSH_APP_URL", "http://ssh-app:8018/invoke")
+# Web ブラウザ（Compose profiles: ["browser"]）。実 API は /browser/* と /browser/ws と /browser/audio。
+BROWSER_APP_URL = os.environ.get("BROWSER_APP_URL", "http://browser-app:8024/invoke")
 
 # ワールドモニター（Compose profiles: ["worldmonitor"]）。UI は /worldmonitor。
 # 実体は別コンテナ。/health は無いので到達確認は sidecar。endpoint の /invoke は導出用。
@@ -940,6 +942,36 @@ SSH_SEED: dict[str, Any] = {
     "status": "published",
 }
 
+# Web ブラウザ（共通アプリ）。UI は専用ページ /browser。Compose profile `browser`
+# 未起動時は /health 失敗で一覧非表示。endpoint はヘルスチェック用。
+BROWSER_SEED: dict[str, Any] = {
+    "exAppId": "browser",
+    "teamId": COMMON_TEAM_ID,
+    "exAppName": "Web ブラウザ",
+    "endpoint": (
+        BROWSER_APP_URL
+        if BROWSER_APP_URL.endswith("/invoke")
+        else BROWSER_APP_URL.rstrip("/") + "/invoke"
+    ),
+    "apiKey": RAG_API_KEY,
+    "config": "",
+    "placeholder": "",
+    "description": (
+        "コンテナ型のセキュアブラウザです。"
+        "ファイルの入出力は制御されています。"
+    ),
+    "howToUse": (
+        "## 使い方\n\n"
+        "- 「ブラウザを開く」で Chromium が起動します。アドレスバーは Chromium のものです。\n"
+        "- 開けるのは公開 Web の 80 番と 443 番だけです。庁内のアドレスには届きません。\n"
+        "- ログイン状態は残しません。閉じるか、操作がないまま時間がたつと消えます。\n"
+        "- 有効化するには `docker compose --profile browser up -d` "
+        "または `.env` に `COMPOSE_PROFILES=browser` を設定します。\n"
+    ),
+    "copyable": False,
+    "status": "published",
+}
+
 # 戦国国取り（共通アプリ・お遊び）。UI は専用ページ /sengoku。Compose profile `sengoku`
 # 未起動時は /health 失敗で一覧非表示。endpoint はヘルスチェック用（実 API は /sengoku/* プロキシ）。
 SENGOKU_SEED: dict[str, Any] = {
@@ -1168,6 +1200,7 @@ EXAPP_SEEDS = [
     PROCURETECH_EDITOR_SEED,
     PROCURETECH_HEARING_SEED,
     SSH_SEED,
+    BROWSER_SEED,
     SENGOKU_SEED,
     BUDGET_SEED,
     WORLDMONITOR_SEED,
@@ -2011,6 +2044,8 @@ async def auth_middleware(request: Request, call_next):
 async def audit_access_middleware(request: Request, call_next):
     if request.method == "OPTIONS" or request.url.path in {
         "/ssh/ws",
+        "/browser/ws",
+        "/browser/audio",
         "/worldmonitor/gate",
         "/office/gate",
     }:
@@ -4465,6 +4500,7 @@ def _official_service_endpoints() -> list[tuple[str, str]]:
         ("procuretech-editor", _as_invoke_url(PROCURETECH_EDITOR_APP_URL)),
         ("notebook", _as_invoke_url(NOTEBOOK_APP_URL)),
         ("ssh", _as_invoke_url(SSH_APP_URL)),
+        ("browser", _as_invoke_url(BROWSER_APP_URL)),
         ("sengoku", _as_invoke_url(SENGOKU_APP_URL)),
         ("budget", _as_invoke_url(BUDGET_APP_URL)),
         ("worldmonitor", f"{WORLDMONITOR_UPSTREAM}/invoke"),
@@ -7303,6 +7339,467 @@ async def ssh_ws(websocket: WebSocket) -> None:
                 exAppId="ssh",
                 teamId=COMMON_TEAM_ID,
                 input_text=host_meta,
+                status=200,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                user_id=_user_id(claims),
+                user_email=claims.get("email"),
+                user_name=claims.get("name"),
+                groups=claims.get("groups") or [],
+            )
+
+
+# ---------------------------------------------------------------------------
+# Web ブラウザ専用ページ(/browser) 用プロキシ
+#
+# Compose profiles: ["browser"] 未起動時は接続失敗 → 専用ページが有効化案内を表示する。
+# スコープは共通チーム(COMMON_TEAM_ID)固定。ページ URL は監査に残さない。
+# ---------------------------------------------------------------------------
+def _browser_app_url(path: str) -> str:
+    if BROWSER_APP_URL.endswith("/invoke"):
+        base = BROWSER_APP_URL[: -len("/invoke")]
+    else:
+        base = BROWSER_APP_URL.rstrip("/")
+    return base + path
+
+
+def _browser_ws_url(path: str = "/ws") -> str:
+    http_url = _browser_app_url(path)
+    if http_url.startswith("https://"):
+        return "wss://" + http_url[len("https://") :]
+    if http_url.startswith("http://"):
+        return "ws://" + http_url[len("http://") :]
+    return http_url
+
+
+def _browser_headers_from_claims(claims: dict[str, Any]) -> tuple[JSONResponse | None, dict[str, str]]:
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"}), {}
+    groups_str = ",".join(claims.get("groups") or [])
+    team_ids = _user_team_ids_str(user_id)
+    teams_hdr = _user_teams_header(user_id)
+    headers = {
+        "x-api-key": RAG_API_KEY,
+        "x-user-id": user_id,
+        "x-user-groups": groups_str,
+        "x-user-tags": team_ids,
+        "x-user-teams": teams_hdr,
+        "x-scope": COMMON_TEAM_ID,
+        **intauth.signed_headers(user_id, groups_str, COMMON_TEAM_ID, team_ids),
+        "Content-Type": "application/json",
+    }
+    return None, headers
+
+
+def _browser_headers(request: Request) -> tuple[JSONResponse | None, dict[str, str]]:
+    return _browser_headers_from_claims(_claims_from_request(request))
+
+
+async def _proxy_browser(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any | None = None,
+    *,
+    timeout: float = 60,
+) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.request(method, url, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": (
+                    "ブラウザサービスに接続できませんでした。"
+                    "有効化するには `docker compose --profile browser up -d` "
+                    "または `COMPOSE_PROFILES=browser` を設定してください。"
+                    f"（詳細: {e}）"
+                ),
+                "enabled": False,
+            },
+        )
+    try:
+        payload = res.json()
+    except ValueError:
+        payload = {"error": "ブラウザサービスから不正な応答を受け取りました"}
+    return JSONResponse(status_code=res.status_code, content=payload)
+
+
+def _open_browser_upstream(url: str, headers: dict[str, str]):
+    import websockets
+
+    try:
+        return websockets.connect(url, additional_headers=headers)
+    except TypeError:
+        return websockets.connect(url, extra_headers=list(headers.items()))
+
+
+_BROWSER_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+
+
+def _browser_export_name(raw: str) -> tuple[str, str] | None:
+    import mimetypes
+
+    name = (raw or "").replace("\\", "/").split("/")[-1].strip()
+    if not name or name in {".", ".."} or len(name) > 180 or "\x00" in name:
+        return None
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return name, mime
+
+
+@app.get("/browser/config")
+async def browser_config(request: Request) -> JSONResponse:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    proxied = await _proxy_browser("GET", _browser_app_url("/config"), headers)
+    if proxied.status_code != 200:
+        return proxied
+    try:
+        payload = json.loads(proxied.body)
+    except (TypeError, ValueError):
+        return proxied
+    if isinstance(payload, dict):
+        payload["delivery"] = artifact_delivery.resolve_delivery(ARTIFACT_DELIVERY_MODE, request)
+        return JSONResponse(content=payload)
+    return proxied
+
+
+@app.post("/browser/sessions")
+async def browser_create_session(request: Request) -> JSONResponse:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    return await _proxy_browser(
+        "POST", _browser_app_url("/sessions"), headers, {}, timeout=60
+    )
+
+
+@app.post("/browser/sessions/{session_id}/touch")
+async def browser_touch_session(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    return await _proxy_browser(
+        "POST", _browser_app_url(f"/sessions/{quote(session_id)}/touch"), headers, {}
+    )
+
+
+@app.delete("/browser/sessions/{session_id}")
+async def browser_delete_session(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    return await _proxy_browser(
+        "DELETE", _browser_app_url(f"/sessions/{quote(session_id)}"), headers
+    )
+
+
+@app.get("/browser/sessions/{session_id}/downloads")
+async def browser_list_downloads(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    if not _BROWSER_ID.fullmatch(session_id or ""):
+        return JSONResponse(status_code=404, content={"error": "ブラウザセッションが見つかりません"})
+    return await _proxy_browser(
+        "GET", _browser_app_url(f"/sessions/{quote(session_id)}/downloads"), headers
+    )
+
+
+async def _proxy_browser_file(url: str, headers: dict[str, str]) -> Response:
+    forward = {key: value for key, value in headers.items() if key.lower() != "content-type"}
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(url, headers=forward)
+    except httpx.HTTPError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"ブラウザサービスに接続できませんでした。（詳細: {e}）"},
+        )
+    if res.status_code != 200:
+        try:
+            payload = res.json()
+        except ValueError:
+            payload = {"error": "ファイルを受け取れませんでした"}
+        return JSONResponse(status_code=res.status_code, content=payload)
+    disposition = res.headers.get("content-disposition") or "attachment"
+    return Response(
+        content=res.content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@app.get("/browser/sessions/{session_id}/downloads/{file_id}")
+async def browser_take_download(session_id: str, file_id: str, request: Request) -> Response:
+    err, headers = _browser_headers(request)
+    if err:
+        return err
+    if not _BROWSER_ID.fullmatch(session_id or "") or not _BROWSER_ID.fullmatch(file_id or ""):
+        return JSONResponse(status_code=404, content={"error": "ファイルが見つかりません"})
+    return await _proxy_browser_file(
+        _browser_app_url(f"/sessions/{quote(session_id)}/downloads/{quote(file_id)}"),
+        headers,
+    )
+
+
+@app.put("/browser/export")
+async def browser_export(request: Request, name: str = Query(default="")) -> JSONResponse:
+    """Chromium が受け取ったファイルを、成果物の配信設定で渡す。
+
+    文書台帳には書かない。open のときは保存せず、呼び出し側が手元へ保存する。
+    carrier のときは SeaweedFS へ書き、案内ファイル用の object_key を返す。
+    """
+    claims = _claims_from_request(request)
+    user_id = _user_id(claims)
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "認証が必要です"})
+    parsed = _browser_export_name(name)
+    if not parsed:
+        return JSONResponse(status_code=400, content={"error": "ファイル名が不正です"})
+    filename, mime = parsed
+    data = await request.body()
+    if len(data) > _ARTIFACT_MAX_BYTES:
+        return JSONResponse(status_code=413, content={"error": "ファイルが大きすぎます"})
+    if not artifact_delivery.use_carrier(ARTIFACT_DELIVERY_MODE, request):
+        return JSONResponse(content={"delivery": "open", "display_name": filename})
+    object_key = None
+    if objstore.is_configured():
+        _presigned, object_key = objstore.put_and_presign(
+            data, filename=filename, content_type=mime, user_id=user_id
+        )
+    if not object_key:
+        return JSONResponse(
+            content={
+                "delivery": "open",
+                "display_name": filename,
+                "error": "保存領域へ書けなかったため、ファイル本体を保存してください。",
+            }
+        )
+    try:
+        audit.record(
+            request,
+            action="file.output",
+            usecase="browser",
+            output_text=f"{filename} -> objstore",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse(
+        content={
+            "delivery": "carrier",
+            "display_name": filename,
+            "mime_type": mime,
+            "file_url": "",
+            "object_key": object_key,
+        }
+        )
+
+
+@app.websocket("/browser/audio")
+async def browser_audio(websocket: WebSocket) -> None:
+    """再生の PCM とマイクの PCM を中継する。セッションの開始と終了は画面側で記録する。"""
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        try:
+            first = json.loads(raw)
+        except json.JSONDecodeError:
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        if not isinstance(first, dict):
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        token = str(first.pop("token", "") or "")
+        try:
+            claims = auth.verify_token(token)
+        except Exception:  # noqa: BLE001
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "認証が必要です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4401)
+            return
+        err, headers = _browser_headers_from_claims(claims)
+        if err:
+            await websocket.send_text(err.body.decode("utf-8") if err.body else '{"error":"unauthorized"}')
+            await websocket.close(code=4401)
+            return
+        ws_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+        async with _open_browser_upstream(_browser_ws_url("/audio"), ws_headers) as upstream:
+            await upstream.send(json.dumps(first, ensure_ascii=False))
+
+            async def browser_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        await upstream.close()
+                        return
+                    if message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+                    elif message.get("text") is not None:
+                        await upstream.send(message["text"])
+
+            async def upstream_to_browser() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            done, pending = await asyncio.wait(
+                {
+                    asyncio.create_task(browser_to_upstream()),
+                    asyncio.create_task(upstream_to_browser()),
+                },
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                exc = task.exception()
+                if exc and not isinstance(exc, Exception):
+                    raise exc
+    except WebSocketDisconnect:
+        pass
+    except Exception:  # noqa: BLE001
+        try:
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "音声の転送が切れました"}, ensure_ascii=False)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.websocket("/browser/ws")
+async def browser_ws(websocket: WebSocket) -> None:
+    """ブラウザ ↔ browser-app の画面中継。最初の JSON で JWT を受け取る。"""
+    await websocket.accept()
+    started = time.monotonic()
+    claims: dict[str, Any] = {}
+    session_meta = ""
+    try:
+        raw = await websocket.receive_text()
+        try:
+            first = json.loads(raw)
+        except json.JSONDecodeError:
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        if not isinstance(first, dict):
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "接続パラメータが不正です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4400)
+            return
+        token = str(first.pop("token", "") or "")
+        try:
+            claims = auth.verify_token(token)
+        except Exception:  # noqa: BLE001
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "認証が必要です"}, ensure_ascii=False)
+            )
+            await websocket.close(code=4401)
+            return
+        err, headers = _browser_headers_from_claims(claims)
+        if err:
+            await websocket.send_text(err.body.decode("utf-8") if err.body else '{"error":"unauthorized"}')
+            await websocket.close(code=4401)
+            return
+        session_id = str(first.get("sessionId") or first.get("session_id") or "")
+        session_meta = f"sessionId={session_id}"
+        audit.record(
+            action="browser.session_start",
+            usecase="browser",
+            exAppId="browser",
+            teamId=COMMON_TEAM_ID,
+            input_text=session_meta,
+            status=200,
+            user_id=_user_id(claims),
+            user_email=claims.get("email"),
+            user_name=claims.get("name"),
+            groups=claims.get("groups") or [],
+        )
+        ws_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+        async with _open_browser_upstream(_browser_ws_url(), ws_headers) as upstream:
+            await upstream.send(json.dumps(first, ensure_ascii=False))
+
+            async def browser_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        await upstream.close()
+                        return
+                    if message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+                    elif message.get("text") is not None:
+                        await upstream.send(message["text"])
+
+            async def upstream_to_browser() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            done, pending = await asyncio.wait(
+                {
+                    asyncio.create_task(browser_to_upstream()),
+                    asyncio.create_task(upstream_to_browser()),
+                },
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                exc = task.exception()
+                if exc and not isinstance(exc, (WebSocketDisconnect, Exception)):
+                    raise exc
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        try:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": (
+                            "ブラウザサービスに接続できませんでした。"
+                            "有効化するには `docker compose --profile browser up -d` "
+                            "または `COMPOSE_PROFILES=browser` を設定してください。"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"[browser] websocket error: {e}")
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        if claims:
+            audit.record(
+                action="browser.session_end",
+                usecase="browser",
+                exAppId="browser",
+                teamId=COMMON_TEAM_ID,
+                input_text=session_meta,
                 status=200,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 user_id=_user_id(claims),
