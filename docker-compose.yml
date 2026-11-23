@@ -108,6 +108,8 @@ services:
       - LEDGER_APP_URL=${LEDGER_APP_URL:-http://ledger-app:8023/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
+      # Web ブラウザ（profiles: ["browser"]。未起動時は専用ページが案内を表示）
+      - BROWSER_APP_URL=${BROWSER_APP_URL:-http://browser-app:8024/invoke}
       # ワールドモニター（profiles: ["worldmonitor"]。未起動時は専用ページが案内を表示）
       - WORLDMONITOR_UPSTREAM=${WORLDMONITOR_UPSTREAM:-http://worldmonitor:8080}
       # オフィス（profiles: ["office"]。未起動時は専用ページが案内を表示）
@@ -912,6 +914,28 @@ services:
       - ssh_app_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 任意: Web ブラウザ (`docker compose --profile browser up -d` または COMPOSE_PROFILES=browser)
+  # ホストポートは公開しない。Chromium は公開 IP の 80/443 だけへ出る。
+  browser-app:
+    profiles: ["browser"]
+    build: ./browser-app
+    container_name: open-genai-browser-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
+      - BROWSER_IDLE_SECONDS=${BROWSER_IDLE_SECONDS:-1800}
+      - BROWSER_MAX_SESSIONS_PER_USER=${BROWSER_MAX_SESSIONS_PER_USER:-1}
+      - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-2}
+      - BROWSER_SCREEN=${BROWSER_SCREEN:-1280x800}
+      - BROWSER_EGRESS_PORT=${BROWSER_EGRESS_PORT:-18080}
+    shm_size: "2gb"
+    mem_limit: 3g
+    # Chromium のサンドボックスが clone できるよう、このサービスだけ seccomp を外す。
+    security_opt:
+      - seccomp:unconfined
+    init: true
     restart: unless-stopped
 
   # 任意: 戦国国取り（お遊びのシミュレーションゲーム）

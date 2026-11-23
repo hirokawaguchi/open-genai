@@ -39,6 +39,7 @@ const FEATURE_OPTIONS = [
   { id: 'notebook', label: 'ノートブック' },
   { id: 'budget', label: '自治体予算' },
   { id: 'ssh', label: 'SSH 端末' },
+  { id: 'browser', label: 'Web ブラウザ' },
   { id: 'lms', label: '研修' },
   { id: 'worldmonitor', label: 'ワールドモニター' },
 ] as const;
