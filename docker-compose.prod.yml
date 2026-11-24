@@ -132,6 +132,8 @@ services:
       - LEDGER_APP_URL=${LEDGER_APP_URL:-http://ledger-app:8023/invoke}
       # Web SSH（profiles: ["ssh"]。未起動時は専用ページが案内を表示）
       - SSH_APP_URL=${SSH_APP_URL:-http://ssh-app:8018/invoke}
+      # Web ブラウザ（profiles: ["browser"]。未起動時は専用ページが案内を表示）
+      - BROWSER_APP_URL=${BROWSER_APP_URL:-http://browser-app:8024/invoke}
       # ワールドモニター（profiles: ["worldmonitor"]。未起動時は専用ページが案内を表示）
       - WORLDMONITOR_UPSTREAM=${WORLDMONITOR_UPSTREAM:-http://worldmonitor:8080}
       # オフィス（profiles: ["office"]。未起動時は専用ページが案内を表示）
@@ -309,6 +311,8 @@ services:
     container_name: open-genai-embed
     environment:
       - EMBED_MODEL=${EMBED_MODEL:-cl-nagoya/ruri-v3-310m}
+      # 既定 2。全コアを使うとチャットの CPU 推論と同時にマシンが埋まる。
+      - EMBED_NUM_THREADS=${EMBED_NUM_THREADS:-2}
     volumes:
       - embed_data:/data
     expose:
@@ -340,6 +344,8 @@ services:
       # 未設定(空)なら OPENAI_BASE_URL / OPENAI_API_KEY にフォールバック（従来挙動）。
       - EMBED_BASE_URL=${EMBED_BASE_URL:-}
       - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-16}
+      - EMBED_TIMEOUT=${EMBED_TIMEOUT:-180}
       # 検索クエリ/文書の prefix はモデル依存。既定は mxbai 互換（クエリのみ英語 prefix）。
       - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
       - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
@@ -828,6 +834,32 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # 任意: Web ブラウザ（`COMPOSE_PROFILES=browser` または `--profile browser`）
+  # ホストポートは公開しない。Chromium は公開 IP の 80/443 だけへ出る。
+  browser-app:
+    profiles: ["browser"]
+    build: ./browser-app
+    container_name: open-genai-browser-app
+    environment:
+      - RAG_API_KEY=${RAG_API_KEY:-local-rag-key}
+      - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:?INTERNAL_SIGNING_SECRET を設定してください}
+      - BROWSER_IDLE_SECONDS=${BROWSER_IDLE_SECONDS:-1800}
+      - BROWSER_MAX_SESSIONS_PER_USER=${BROWSER_MAX_SESSIONS_PER_USER:-1}
+      - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-2}
+      - BROWSER_SCREEN=${BROWSER_SCREEN:-1280x800}
+      - BROWSER_EGRESS_PORT=${BROWSER_EGRESS_PORT:-18080}
+      - BROWSER_PROFILE_DIR=/data/browser-profiles
+      - BROWSER_PROFILE_MAX_BYTES=${BROWSER_PROFILE_MAX_BYTES:-536870912}
+    volumes:
+      - browser_app_data:/data
+    shm_size: "2gb"
+    mem_limit: 3g
+    # Chromium のサンドボックスが clone できるよう、このサービスだけ seccomp を外す。
+    security_opt:
+      - seccomp:unconfined
+    init: true
+    restart: unless-stopped
+
   # 任意: 二週間の仕事（`COMPOSE_PROFILES=nishukan` または `--profile nishukan`）
   # ホストポートは公開しない。画面と受付鍵は backend からのみ到達する。
   nishukan-app:
@@ -933,5 +965,6 @@ volumes:
   # ノートブック用。既存環境のボリューム名を維持する。
   procuretech_hearing_app_data:
   ssh_app_data:
+  browser_app_data:
   nishukan_app_data:
   lms_app_data:

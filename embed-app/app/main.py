@@ -14,22 +14,40 @@ ModernBERT-Ja, ONNX 非提供）の受け皿としても使える。
 
 検索クエリ/文書への prefix（モデル依存: 例 Ruri の「検索クエリ: 」「検索文書: 」）は
 呼び出し側(rag-app)で付与済みのため、ここではそのままエンコードする。
+
+CPU スレッドは EMBED_NUM_THREADS（既定 2）。同時リクエストも 1 本に並べ、
+スレッド数 × 並列数で全コアを使わない。
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
+from .cpu_limit import apply_blas_env, embed_num_threads
+
+NUM_THREADS = embed_num_threads()
+apply_blas_env(NUM_THREADS)
+
+import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
+
+torch.set_num_threads(NUM_THREADS)
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    # すでに並列処理が始まったプロセスでは変更できない。スレッド数の上限は残る。
+    pass
 
 MODEL_ID = os.environ.get("EMBED_MODEL", "cl-nagoya/ruri-v3-310m")
 NORMALIZE = os.environ.get("EMBED_NORMALIZE", "true").lower() != "false"
 
 app = FastAPI(title="open-genai embed sidecar")
 _model: SentenceTransformer | None = None
+_encode_lock = threading.Lock()
 
 
 def _get_model() -> SentenceTransformer:
@@ -52,18 +70,19 @@ def _warmup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "model": MODEL_ID}
+    return {"status": "ok", "model": MODEL_ID, "threads": NUM_THREADS}
 
 
 @app.post("/v1/embeddings")
 def embeddings(req: EmbeddingsRequest) -> dict[str, Any]:
     inputs = [req.input] if isinstance(req.input, str) else list(req.input)
     model = _get_model()
-    vectors = model.encode(
-        inputs,
-        normalize_embeddings=NORMALIZE,
-        convert_to_numpy=True,
-    )
+    with _encode_lock:
+        vectors = model.encode(
+            inputs,
+            normalize_embeddings=NORMALIZE,
+            convert_to_numpy=True,
+        )
     data = [
         {"object": "embedding", "index": i, "embedding": vec.tolist()}
         for i, vec in enumerate(vectors)

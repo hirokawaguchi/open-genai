@@ -13,7 +13,7 @@ from shared.docextract import (
 )
 
 from . import docstore, tree_builder, vectorstore
-from .embeddings import embed
+from .embeddings import embed_many
 
 
 def _chunk_text(text: str, size: int = 600, overlap: int = 80) -> list[str]:
@@ -49,29 +49,31 @@ async def _upsert_vector_chunks(
     doc_id: str,
 ) -> int:
     await vectorstore.delete_by_source(source, scope)
-    items: list[dict[str, Any]] = []
     seen: set[str] = set()
+    chunks: list[tuple[str, str]] = []
     for chunk in _chunk_text(full):
         cid = _make_chunk_id(scope, source, chunk)
         if cid in seen:
             continue
         seen.add(cid)
-        vector = await embed(chunk)
-        items.append(
-            {
-                "id": cid,
-                "vector": vector,
-                "payload": {
-                    "text": chunk,
-                    "source": source,
-                    "scope": scope,
-                    "tags": tags or [],
-                    "doc_id": doc_id,
-                },
-            }
-        )
-    if not items:
+        chunks.append((cid, chunk))
+    if not chunks:
         return 0
+    vectors = await embed_many([text for _, text in chunks])
+    items: list[dict[str, Any]] = [
+        {
+            "id": cid,
+            "vector": vector,
+            "payload": {
+                "text": text,
+                "source": source,
+                "scope": scope,
+                "tags": tags or [],
+                "doc_id": doc_id,
+            },
+        }
+        for (cid, text), vector in zip(chunks, vectors)
+    ]
     return await vectorstore.upsert(items)
 
 

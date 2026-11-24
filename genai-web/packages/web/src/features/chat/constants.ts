@@ -7,7 +7,8 @@ export const FILE_LIMIT: FileLimit = {
     video: ['.mkv', '.mov', '.mp4', '.webm'],
   },
   maxFileCount: 5,
-  maxFileSizeMB: 4.5,
+  // 文書の読み取り上限（MAX_DOC_BYTES、20MiB）に揃える。比較は 10^6 バイト単位。
+  maxFileSizeMB: 20,
   maxImageFileCount: 20,
   maxImageFileSizeMB: 3.75,
   maxVideoFileCount: 1,
