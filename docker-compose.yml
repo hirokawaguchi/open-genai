@@ -264,6 +264,8 @@ services:
       - EMBED_DIM=${EMBED_DIM:-1024}
       - EMBED_BASE_URL=${EMBED_BASE_URL:-}
       - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-16}
+      - EMBED_TIMEOUT=${EMBED_TIMEOUT:-180}
       - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
       - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"
       - RAG_MODEL=${RAG_MODEL:-gpt-oss:20b}
