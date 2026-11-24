@@ -1,6 +1,6 @@
 # Open GENAI
 
-![Version](https://img.shields.io/badge/version-0.13.0-blue)
+![Version](https://img.shields.io/badge/version-0.14.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI--compatible-0a7)
 ![Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Qdrant%20%7C%20Keycloak-success)
@@ -10,7 +10,7 @@
 デジタル庁がオープンソースで公開したガバメント AI「源内（GENAI）」を、
 **完全ローカル環境 × ローカル LLM（OpenAI 互換 API）** で動かすためのプロジェクトです。
 
-> **バージョン:** 現在 **v0.13.0**（研修。手続きの書類と審査、日程調整のウィザード）。v0.12.0 = 二週間の仕事・図の draw.io 編集・画像生成のチャット・棟ごとのモデル制御、v0.11.0 = マルチテナント・おすすめアプリ・Markdown エディタの HTML/PPTX 書き出し、v0.10.0 = ノートブック＝資料を集めて調べ項目に整理。スキル/MCP/OCR。Web SSH、アプリ表示の編集、ヒアリングシート、v0.9.0 = 提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成（生成 API はプラガブル）、v0.8.0 = 提案実装 第2弾：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP、v0.7.0 = 提案実装（書類読取とチェック・日程調整・様式 Excel 文書生成）、v0.6.0 = 添付・ナレッジの個人情報検知／ナレッジ専用ページ／チャット大容量添付の mapreduce／Dify エラー分類、v0.5.0 = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.x = 出典表示・画像生成一本化等、v0.2.x = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
+> **バージョン:** 現在 **v0.14.0**（台帳とオフィス。Web 検索、文字起こしの待ち順、チャットの文書とスライド）。v0.13.0 = 研修・手続きの書類と審査・日程調整のウィザード、v0.12.0 = 二週間の仕事・図の draw.io 編集・画像生成のチャット・棟ごとのモデル制御、v0.11.0 = マルチテナント・おすすめアプリ・Markdown エディタの HTML/PPTX 書き出し、v0.10.0 = ノートブック＝資料を集めて調べ項目に整理。スキル/MCP/OCR。Web SSH、アプリ表示の編集、ヒアリングシート、v0.9.0 = 提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成（生成 API はプラガブル）、v0.8.0 = 提案実装 第2弾：オンラインフォーム（patchform）／手続き（申請束）・申請受付／マイ手続き（docmaker）／手続き MCP、v0.7.0 = 提案実装（書類読取とチェック・日程調整・様式 Excel 文書生成）、v0.6.0 = 添付・ナレッジの個人情報検知／ナレッジ専用ページ／チャット大容量添付の mapreduce／Dify エラー分類、v0.5.0 = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデルの差し替え・SAML/認証堅牢化、v0.4.0 = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、v0.3.x = 出典表示・画像生成一本化等、v0.2.x = 自治体・閉域向け拡張、v0.1.0 = ローカル源内化の第一段階。
 > 変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
 
 > **免責 / Disclaimer**: 本リポジトリは有志による**非公式フォーク**です。デジタル庁とは一切関係がなく、
@@ -40,7 +40,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 
 本番は `docker-compose.prod.yml` で TLS(443) 終端。閉域検証は HTTP(80) のみ（`docker-compose.verify.yml`）。SeaweedFS（8333）は本番 compose ではホスト非公開で、成果物のダウンロードは `S3_PUBLIC_ENDPOINT` 経由のリバースプロキシを別途用意します（詳細は「成果物ファイル」節）。
 
-> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.13.0** = 研修・手続きの書類と審査・日程調整のウィザード、**v0.12.0** = 二週間の仕事・図の draw.io 編集・画像生成のチャット・棟ごとのモデル制御、**v0.11.0** = マルチテナント・おすすめアプリ・Markdown エディタの HTML/PPTX 書き出し、**v0.10.0** = ノートブック（調べて項目に整理・スキル/MCP/OCR）・Web SSH・アプリ表示の編集、**v0.9.0** = 提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成（生成 API はプラガブル・契約は OSS 公開）、**v0.8.0** = 提案実装 第2弾：オンラインフォーム（patchform）・手続き（申請束）・申請受付・マイ手続き（docmaker）・手続き MCP、**v0.7.0** = 提案実装：書類読取とチェック・日程調整・様式 Excel 文書生成、**v0.6.0** = PII 検知・ナレッジ専用ページ・大容量添付 mapreduce 等、**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデル差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、それ以前は CHANGELOG 参照）
+> **変更履歴:** [CHANGELOG.md](CHANGELOG.md)（**v0.14.0** = 台帳とオフィス・Web 検索・文字起こしの待ち順・チャットの文書とスライド、**v0.13.0** = 研修・手続きの書類と審査・日程調整のウィザード、**v0.12.0** = 二週間の仕事・図の draw.io 編集・画像生成のチャット・棟ごとのモデル制御、**v0.11.0** = マルチテナント・おすすめアプリ・Markdown エディタの HTML/PPTX 書き出し、**v0.10.0** = ノートブック（調べて項目に整理・スキル/MCP/OCR）・Web SSH・アプリ表示の編集、**v0.9.0** = 提案実装 第3弾：Markdown エディタ＋オプションの各種文書作成（生成 API はプラガブル・契約は OSS 公開）、**v0.8.0** = 提案実装 第2弾：オンラインフォーム（patchform）・手続き（申請束）・申請受付・マイ手続き（docmaker）・手続き MCP、**v0.7.0** = 提案実装：書類読取とチェック・日程調整・様式 Excel 文書生成、**v0.6.0** = PII 検知・ナレッジ専用ページ・大容量添付 mapreduce 等、**v0.5.0** = 本番静的ビルド/デプロイ整備・複数LLM/埋め込み/画像モデル差し替え・SAML/認証堅牢化、**v0.4.0** = 構造化 RAG・ナレッジ MCP・Dify 連携事例・マイナンバー検査、それ以前は CHANGELOG 参照）
 
 ## 設計思想：自治体・閉域運用への拡張
 
@@ -94,6 +94,7 @@ Linux + NVIDIA GPU 機（例: **NVIDIA DGX Spark**）でも動作します。
 | `notebook-app/` | ノートブック（標準起動。資料を構造化して項目・対話・ヒアリングシート Excel を作る。詳細は [`docs/notebook.md`](docs/notebook.md)） |
 | `budget-app/` | 自治体予算（オプション・`profiles: ["budget"]`。市区町村の普通会計決算。詳細は [`budget-app/README.md`](budget-app/README.md)） |
 | `ssh-app/` | Web SSH 端末（オプション・`profiles: ["ssh"]`。詳細は [`docs/ssh.md`](docs/ssh.md)） |
+| `browser-app/` | Web ブラウザ（オプション・`profiles: ["browser"]`。サーバ上の Chromium。詳細は [`docs/browser.md`](docs/browser.md)） |
 | `sengoku-app/` | 戦国国取り（お遊びのシミュレーションゲーム。オプション・`profiles: ["sengoku"]`。詳細は [`docs/sengoku.md`](docs/sengoku.md)） |
 | （profile `worldmonitor`） | ワールドモニター（上流タグからビルド。ソースは同梱しない。詳細は [`docs/worldmonitor.md`](docs/worldmonitor.md)） |
 | （profile `office`） | 文書・表計算・スライド（ibisOffice のブラウザー版。配布物は同梱しない。詳細は [`docs/office.md`](docs/office.md)） |
@@ -376,6 +377,8 @@ RAG の埋め込みモデルは推論モデルと同様に**差し替え可能**
 | `EMBED_BASE_URL` | 空（=`OPENAI_BASE_URL` にフォールバック） | 埋め込みだけ別の OpenAI 互換エンドポイントへ分離する場合に設定 |
 | `EMBED_API_KEY` | 空（=`OPENAI_API_KEY`） | 上記エンドポイントの API キー |
 | `EMBED_QUERY_PREFIX` / `EMBED_DOC_PREFIX` | mxbai 互換（クエリのみ英語 prefix・文書なし） | モデル依存の検索クエリ/文書 prefix |
+| `EMBED_NUM_THREADS` | `2` | embed サイドカーが使う CPU スレッド数。全コアを使わない |
+| `EMBED_BATCH_SIZE` | `16` | ナレッジ登録で 1 回に埋め込むチャンク数 |
 
 > **重要（再インデックス）:** 埋め込みモデルを変えると**ベクトル次元と意味空間が変わります**。
 > Qdrant のコレクションは次元固定のため、既存コレクションへ別モデルのベクトルを混在させられません。
@@ -398,6 +401,8 @@ ModernBERT-Ja・ONNX 非提供）は、同梱の汎用サイドカー `embed`（
 #   QDRANT_COLLECTION=open_genai_rag_ruri_v3_310m   # 768 次元の別コレクション
 #   EMBED_QUERY_PREFIX=検索クエリ: 
 #   EMBED_DOC_PREFIX=検索文書: 
+#   EMBED_NUM_THREADS=2
+#   EMBED_BATCH_SIZE=16
 
 # embed サイドカーを含めて起動（COMPOSE_PROFILES=embed を .env.prod に入れれば --profile 省略可）
 docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed up -d --build embed rag-app
@@ -406,6 +411,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed u
 - `embed` を起動しない運用では `EMBED_BASE_URL` を外部の埋め込み API に向けても構いません（サイドカー不要）。
 - 開発・検証環境では `embed` は不要です（`docker-compose.yml` / `docker-compose.verify.yml` は既定 mxbai のまま）。
 - 初回起動時にモデルを HuggingFace から取得し `embed_data` ボリュームへキャッシュします（数百 MB〜。閉域では事前取得が必要）。
+- CPU 埋め込みは既定で 2 スレッドだけ使う。登録はチャンク 16 件を 1 リクエストにまとめる。スレッドを増やすと登録は短くなり、そのぶんチャットの CPU 推論と競合する。
 
 ## ファイル添付（画像 / ドキュメント）
 

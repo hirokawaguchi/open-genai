@@ -70,4 +70,10 @@ jobs:
             tests/features/generate-image/utils/parseAssistantImageContent.test.ts \
             tests/features/exapp/components/ExAppConversationList.test.tsx \
             tests/open-genai/ssh/sshWsUrl.test.ts \
-            tests/open-genai/ssh/encodePty.test.ts
+            tests/open-genai/ssh/encodePty.test.ts \
+            tests/open-genai/browser/browserWsUrl.test.ts \
+            tests/open-genai/browser/browserWindow.test.ts \
+            tests/open-genai/browser/imeText.test.ts \
+            tests/open-genai/browser/deliverBrowserFile.test.ts \
+            tests/open-genai/browser/pcm.test.ts \
+            tests/open-genai/browser/browserMic.test.ts

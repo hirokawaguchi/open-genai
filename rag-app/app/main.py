@@ -183,9 +183,9 @@ async def ephemeral_search(
     if not chunks:
         return []
     qvec = await embeddings.embed(question, is_query=True)
+    vectors = await embeddings.embed_many([text for _, text in chunks])
     scored: list[dict[str, Any]] = []
-    for source, text in chunks:
-        vec = await embeddings.embed(text)
+    for (source, text), vec in zip(chunks, vectors):
         scored.append(
             {"score": _cosine(qvec, vec), "payload": {"text": text, "source": source}}
         )

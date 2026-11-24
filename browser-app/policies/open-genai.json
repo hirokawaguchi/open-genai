@@ -1,0 +1,23 @@
+{
+  "URLBlocklist": [
+    "file://*",
+    "chrome://*",
+    "chrome-untrusted://*",
+    "devtools://*",
+    "view-source:*",
+    "javascript:*",
+    "about:*"
+  ],
+  "URLAllowlist": ["about:blank", "http://*", "https://*"],
+  "NewTabPageLocation": "about:blank",
+  "HomepageLocation": "about:blank",
+  "HomepageIsNewTabPage": false,
+  "RestoreOnStartup": 5,
+  "ApplicationLocaleValue": "ja",
+  "WebRtcIPHandlingPolicy": "disable_non_proxied_udp",
+  "PromptForDownload": false,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "SyncDisabled": true,
+  "BrowserSignin": 0
+}
