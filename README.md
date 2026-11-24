@@ -377,6 +377,8 @@ RAG の埋め込みモデルは推論モデルと同様に**差し替え可能**
 | `EMBED_BASE_URL` | 空（=`OPENAI_BASE_URL` にフォールバック） | 埋め込みだけ別の OpenAI 互換エンドポイントへ分離する場合に設定 |
 | `EMBED_API_KEY` | 空（=`OPENAI_API_KEY`） | 上記エンドポイントの API キー |
 | `EMBED_QUERY_PREFIX` / `EMBED_DOC_PREFIX` | mxbai 互換（クエリのみ英語 prefix・文書なし） | モデル依存の検索クエリ/文書 prefix |
+| `EMBED_NUM_THREADS` | `2` | embed サイドカーが使う CPU スレッド数。全コアを使わない |
+| `EMBED_BATCH_SIZE` | `16` | ナレッジ登録で 1 回に埋め込むチャンク数 |
 
 > **重要（再インデックス）:** 埋め込みモデルを変えると**ベクトル次元と意味空間が変わります**。
 > Qdrant のコレクションは次元固定のため、既存コレクションへ別モデルのベクトルを混在させられません。
@@ -399,6 +401,8 @@ ModernBERT-Ja・ONNX 非提供）は、同梱の汎用サイドカー `embed`（
 #   QDRANT_COLLECTION=open_genai_rag_ruri_v3_310m   # 768 次元の別コレクション
 #   EMBED_QUERY_PREFIX=検索クエリ: 
 #   EMBED_DOC_PREFIX=検索文書: 
+#   EMBED_NUM_THREADS=2
+#   EMBED_BATCH_SIZE=16
 
 # embed サイドカーを含めて起動（COMPOSE_PROFILES=embed を .env.prod に入れれば --profile 省略可）
 docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed up -d --build embed rag-app
@@ -407,6 +411,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod --profile embed u
 - `embed` を起動しない運用では `EMBED_BASE_URL` を外部の埋め込み API に向けても構いません（サイドカー不要）。
 - 開発・検証環境では `embed` は不要です（`docker-compose.yml` / `docker-compose.verify.yml` は既定 mxbai のまま）。
 - 初回起動時にモデルを HuggingFace から取得し `embed_data` ボリュームへキャッシュします（数百 MB〜。閉域では事前取得が必要）。
+- CPU 埋め込みは既定で 2 スレッドだけ使う。登録はチャンク 16 件を 1 リクエストにまとめる。スレッドを増やすと登録は短くなり、そのぶんチャットの CPU 推論と競合する。
 
 ## ファイル添付（画像 / ドキュメント）
 

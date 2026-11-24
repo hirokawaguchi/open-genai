@@ -311,6 +311,8 @@ services:
     container_name: open-genai-embed
     environment:
       - EMBED_MODEL=${EMBED_MODEL:-cl-nagoya/ruri-v3-310m}
+      # 既定 2。全コアを使うとチャットの CPU 推論と同時にマシンが埋まる。
+      - EMBED_NUM_THREADS=${EMBED_NUM_THREADS:-2}
     volumes:
       - embed_data:/data
     expose:
@@ -342,6 +344,8 @@ services:
       # 未設定(空)なら OPENAI_BASE_URL / OPENAI_API_KEY にフォールバック（従来挙動）。
       - EMBED_BASE_URL=${EMBED_BASE_URL:-}
       - EMBED_API_KEY=${EMBED_API_KEY:-}
+      - EMBED_BATCH_SIZE=${EMBED_BATCH_SIZE:-16}
+      - EMBED_TIMEOUT=${EMBED_TIMEOUT:-180}
       # 検索クエリ/文書の prefix はモデル依存。既定は mxbai 互換（クエリのみ英語 prefix）。
       - "EMBED_QUERY_PREFIX=${EMBED_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
       - "EMBED_DOC_PREFIX=${EMBED_DOC_PREFIX-}"

@@ -24,6 +24,23 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "ollama"
 EMBED_BASE_URL = (os.environ.get("EMBED_BASE_URL") or OPENAI_BASE_URL).rstrip("/")
 EMBED_API_KEY = os.environ.get("EMBED_API_KEY") or OPENAI_API_KEY
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# ナレッジ登録はチャンクごとに 1 リクエストすると、CPU 埋め込みがコアを埋め続ける。
+# この件数ずつまとめて送る。
+EMBED_BATCH_SIZE = _positive_int("EMBED_BATCH_SIZE", 16)
+EMBED_TIMEOUT = float(os.environ.get("EMBED_TIMEOUT", "180") or "180")
 RAG_MODEL = os.environ.get("RAG_MODEL", "gpt-oss:20b")
 # Qwen3.x は既定で思考モードになり、content が空のまま数分待たされる。
 # 通常チャット (LLM_PROVIDERS.extra_body) と同じく、既定は思考オフ。
@@ -84,17 +101,37 @@ def _embed_headers() -> dict[str, str]:
     }
 
 
-async def embed(text: str, *, is_query: bool = False) -> list[float]:
-    prompt = (QUERY_PREFIX + text) if is_query else (DOC_PREFIX + text)
-    async with httpx.AsyncClient(timeout=120) as client:
+def _with_prefix(text: str, *, is_query: bool) -> str:
+    return (QUERY_PREFIX + text) if is_query else (DOC_PREFIX + text)
+
+
+async def _post_embeddings(prompts: list[str]) -> list[list[float]]:
+    async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
         res = await client.post(
             f"{EMBED_BASE_URL}/embeddings",
-            json={"model": EMBED_MODEL, "input": prompt},
+            json={"model": EMBED_MODEL, "input": prompts},
             headers=_embed_headers(),
         )
         res.raise_for_status()
-        data = res.json()
-    return data["data"][0]["embedding"]
+        rows = list(res.json().get("data") or [])
+    rows.sort(key=lambda row: int(row.get("index") or 0))
+    return [list(row["embedding"]) for row in rows]
+
+
+async def embed_many(texts: list[str], *, is_query: bool = False) -> list[list[float]]:
+    """文書チャンクを EMBED_BATCH_SIZE 件ずつ埋め込む。"""
+    if not texts:
+        return []
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), EMBED_BATCH_SIZE):
+        batch = [_with_prefix(text, is_query=is_query) for text in texts[start : start + EMBED_BATCH_SIZE]]
+        vectors.extend(await _post_embeddings(batch))
+    return vectors
+
+
+async def embed(text: str, *, is_query: bool = False) -> list[float]:
+    vectors = await embed_many([text], is_query=is_query)
+    return vectors[0]
 
 
 async def generate(messages: list[dict[str, Any]]) -> str:
