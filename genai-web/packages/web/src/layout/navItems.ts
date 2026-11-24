@@ -4,24 +4,25 @@ import { useExAppCatalog } from '@/features/exapps/hooks/useExAppCatalog';
 import { isCatalogListed } from '@/features/exapps/utils/builtinExApp';
 import type { PinnedAppItem } from '@/open-genai/app-pins/types';
 import { useImageAvailable } from '@/open-genai/image-health/useImageAvailable';
+import { OFFICE_APPS, officeAppById } from '@/open-genai/office/kinds';
 import { ALWAYS_ON_OFFICIAL_APP_IDS } from '@/open-genai/official-apps/runtime';
 import { useOfficialAppRuntime } from '@/open-genai/official-apps/useOfficialAppRuntime';
 import {
+  useBrowserAvailable,
   useBudgetAvailable,
   useDoccheckAvailable,
+  useLedgerAvailable,
   useLmsAvailable,
   useNishukanAvailable,
   useNotebookAvailable,
-  useLedgerAvailable,
+  useOfficeAvailable,
   usePatchformAvailable,
   useProcuretechAvailable,
   useProcuretechEditorAvailable,
   useSengokuAvailable,
   useSshAvailable,
-  useOfficeAvailable,
   useWorldmonitorAvailable,
 } from '@/open-genai/optional-app-health/useOptionalAppAvailable';
-import { OFFICE_APPS, officeAppById } from '@/open-genai/office/kinds';
 import { RECOMMENDED_APP_OPTIONS } from '@/open-genai/recommended-apps/recommendedApps';
 import { useRecommendedApps } from '@/open-genai/recommended-apps/useRecommendedApps';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -102,6 +103,12 @@ export const SSH_PATH = '/ssh';
 /** Web SSH exApp の識別子（専用ページへ振り替える対象） */
 export const SSH_EXAPP_ID = 'ssh';
 
+/** Web ブラウザは汎用 exApp フォームではなく専用ページで提供する */
+export const BROWSER_PATH = '/browser';
+
+/** Web ブラウザ exApp の識別子（専用ページへ振り替える対象） */
+export const BROWSER_EXAPP_ID = 'browser';
+
 /** 文書・表計算・スライドの親パス。旧「オフィス」もここへ寄せる */
 export const OFFICE_PATH = '/office/word';
 
@@ -180,6 +187,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
   const procuretechEditorAvailable = useProcuretechEditorAvailable();
   const notebookAvailable = useNotebookAvailable();
   const sshAvailable = useSshAvailable();
+  const browserAvailable = useBrowserAvailable();
   const sengokuAvailable = useSengokuAvailable();
   const budgetAvailable = useBudgetAvailable();
   const officeAvailable = useOfficeAvailable();
@@ -375,6 +383,17 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       });
     }
 
+    if (browserAvailable && listed(BROWSER_EXAPP_ID)) {
+      items.push({
+        label: nameOf(BROWSER_EXAPP_ID, 'Web ブラウザ'),
+        to: BROWSER_PATH,
+        description: descOf(
+          BROWSER_EXAPP_ID,
+          'コンテナ型のセキュアブラウザです。ファイルの入出力は制御されています。',
+        ),
+      });
+    }
+
     if (officeAvailable) {
       for (const app of OFFICE_APPS) {
         if (!listed(app.id)) continue;
@@ -467,6 +486,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
     procuretechEditorAvailable,
     notebookAvailable,
     sshAvailable,
+    browserAvailable,
     sengokuAvailable,
     budgetAvailable,
     officeAvailable,
@@ -527,6 +547,9 @@ export const pinnedAppHref = (item: PinnedAppItem): string => {
   }
   if (item.app.value === SSH_EXAPP_ID) {
     return SSH_PATH;
+  }
+  if (item.app.value === BROWSER_EXAPP_ID) {
+    return BROWSER_PATH;
   }
   // 戦国国取りは専用ページへ振り替える
   if (item.app.value === SENGOKU_EXAPP_ID) {

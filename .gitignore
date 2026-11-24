@@ -77,6 +77,7 @@ deletion-report-*.txt
 !/docs/agent.md
 !/docs/procuretech-hearing.md
 !/docs/ssh.md
+!/docs/browser.md
 !/docs/ledger.md
 !/docs/lms.md
 !/docs/worldmonitor.md

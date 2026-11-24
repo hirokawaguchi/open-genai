@@ -26,21 +26,15 @@ import { AuditLogsPage } from '@/open-genai/admin-audit/AuditLogsPage';
 import { ModelPolicyPage } from '@/open-genai/admin-modelpolicy/ModelPolicyPage';
 import { NgWordPage } from '@/open-genai/admin-ngword/NgWordPage';
 import { UserMgmtPage } from '@/open-genai/admin-usermgmt/UserMgmtPage';
+import { BrowserPage } from '@/open-genai/browser/BrowserPage';
+import { BrowserWindowPage } from '@/open-genai/browser/BrowserWindowPage';
+import { BudgetPage } from '@/open-genai/budget/BudgetPage';
 import { ChoseiEditPage } from '@/open-genai/chosei/ChoseiEditPage';
 import { ChoseiEventPage } from '@/open-genai/chosei/ChoseiEventPage';
 import { ChoseiPage } from '@/open-genai/chosei/ChoseiPage';
 import { DoccheckPage } from '@/open-genai/doccheck/DoccheckPage';
 import { DocmakerPage } from '@/open-genai/docmaker/DocmakerPage';
 import { KnowledgePage } from '@/open-genai/knowledge/KnowledgePage';
-import { LmsPage } from '@/open-genai/lms/LmsPage';
-import { NishukanPage } from '@/open-genai/nishukan/NishukanPage';
-import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
-import { NoticesPage } from '@/open-genai/notices/NoticesPage';
-import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
-import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
-import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
-import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
-import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
 import {
   LedgerAccessPage,
   LedgerApiPage,
@@ -52,6 +46,16 @@ import {
   LedgerRowsPage,
   LegacyLedgerRowRedirect,
 } from '@/open-genai/ledger/LedgerPages';
+import { LmsPage } from '@/open-genai/lms/LmsPage';
+import { NishukanPage } from '@/open-genai/nishukan/NishukanPage';
+import { NotebookPage } from '@/open-genai/notebook/NotebookPage';
+import { NoticesPage } from '@/open-genai/notices/NoticesPage';
+import { OfficePage } from '@/open-genai/office/OfficePage';
+import { PatchformApplicationPage } from '@/open-genai/patchform/PatchformApplicationPage';
+import { PatchformApplyPage } from '@/open-genai/patchform/PatchformApplyPage';
+import { PatchformDetailPage } from '@/open-genai/patchform/PatchformDetailPage';
+import { PatchformEditPage } from '@/open-genai/patchform/PatchformEditPage';
+import { PatchformInboxPage } from '@/open-genai/patchform/PatchformInboxPage';
 import { PatchformPage } from '@/open-genai/patchform/PatchformPage';
 import { PatchformProcedureEditPage } from '@/open-genai/patchform/PatchformProcedureEditPage';
 import { PatchformProceduresPage } from '@/open-genai/patchform/PatchformProceduresPage';
@@ -60,12 +64,10 @@ import { ProcuretechPage } from '@/open-genai/procuretech/ProcuretechPage';
 import { ProcuretechEditorPage } from '@/open-genai/procuretech-editor/ProcuretechEditorPage';
 import { PromptTemplatesPage } from '@/open-genai/prompt-templates/PromptTemplatesPage';
 import { RecommendedAppsPage } from '@/open-genai/recommended-apps/RecommendedAppsPage';
-import { BudgetPage } from '@/open-genai/budget/BudgetPage';
 import { SengokuPage } from '@/open-genai/sengoku/SengokuPage';
 import { SettingsPage } from '@/open-genai/settings/SettingsPage';
 import { SshPage } from '@/open-genai/ssh/SshPage';
 import { TenantsPage } from '@/open-genai/tenants/TenantsPage';
-import { OfficePage } from '@/open-genai/office/OfficePage';
 import { WorldmonitorPage } from '@/open-genai/worldmonitor/WorldmonitorPage';
 import { ApiRequestDataFormatPage } from '@/pages/ApiRequestDataFormat';
 import { isUseCaseEnabled } from '@/utils/isUseCaseEnabled';
@@ -164,6 +166,10 @@ export const createRoutes = (): RouteObject[] => {
     // Web SSH（Compose profiles: ["ssh"]）。
     { path: 'ssh', element: <SshPage /> },
     { path: 'apps/:teamId/ssh', element: <Navigate to='/ssh' replace /> },
+    // Web ブラウザ（Compose profiles: ["browser"]）。本体は /browser/window。
+    { path: 'browser', element: <BrowserPage /> },
+    { path: 'browser/window', element: <BrowserWindowPage /> },
+    { path: 'apps/:teamId/browser', element: <Navigate to='/browser' replace /> },
     // ワールドモニター（Compose profiles: ["worldmonitor"]）。
     { path: 'worldmonitor', element: <WorldmonitorPage /> },
     { path: 'apps/:teamId/worldmonitor', element: <Navigate to='/worldmonitor' replace /> },

@@ -49,6 +49,8 @@ export const useNotebookAvailable = (): boolean => useOptionalAppAvailable('note
 
 export const useSshAvailable = (): boolean => useOptionalAppAvailable('ssh/config');
 
+export const useBrowserAvailable = (): boolean => useOptionalAppAvailable('browser/config');
+
 export const useSengokuAvailable = (): boolean => useOptionalAppAvailable('sengoku/config');
 
 export const useBudgetAvailable = (): boolean => useOptionalAppAvailable('budget/config');
