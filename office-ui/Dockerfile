@@ -55,6 +55,8 @@ FROM nginx:1.30.7-alpine
 ARG IBIS_OFFICE_VERSION=0.8.7
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/ibis-office-${IBIS_OFFICE_VERSION}/www /usr/share/nginx/html
+# リクエストのたびに 74MB を圧縮しない。ブラウザが gzip を受けるときは .wasm.gz を返す。
+RUN gzip -9 -c /usr/share/nginx/html/pkg/ibis_office_app_bg.wasm > /usr/share/nginx/html/pkg/ibis_office_app_bg.wasm.gz
 COPY templates /usr/share/nginx/html/templates
 COPY MODIFICATION.txt /usr/share/nginx/html/OPEN-GENAI-MODIFICATION.txt
 EXPOSE 8080
