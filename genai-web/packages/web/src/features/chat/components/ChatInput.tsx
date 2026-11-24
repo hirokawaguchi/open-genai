@@ -318,7 +318,11 @@ export const ChatInput = (props: Props) => {
                         aria-disabled={uploading || undefined}
                         aria-busy={uploading || undefined}
                         className='inline-flex justify-center items-center gap-1 group-data-[has-error=true]/file-upload:border-error-1'
-                        title={uploading ? 'ファイルをアップロードしています' : '4.5MBまで'}
+                        title={
+                          uploading
+                            ? 'ファイルをアップロードしています'
+                            : `文書は${FILE_LIMIT.maxFileSizeMB}MBまで`
+                        }
                         onClick={handleClickFileUpload}
                       >
                         {uploading ? (

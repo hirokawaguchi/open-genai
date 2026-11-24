@@ -1,4 +1,5 @@
 import { useSubmitKey } from '@/hooks/useSubmitKey';
+import { FILE_LIMIT } from '../constants';
 
 export const ChatHints = () => {
   const { hint } = useSubmitKey();
@@ -24,8 +25,8 @@ export const ChatHints = () => {
       <div>
         <dt className='mb-1 text-std-16B-150'>ファイルを添付して質問する</dt>
         <dd>
-          資料を添付して質問できます（4.5MBまで）。対応形式は JPEG / PNG / WebP / GIF、PDF /
-          テキスト / CSV / HTML / Markdown / Word / Excel です。
+          資料を添付して質問できます（文書は{FILE_LIMIT.maxFileSizeMB}MBまで、画像は{FILE_LIMIT.maxImageFileSizeMB}MBまで）。対応形式は
+          JPEG / PNG / WebP / GIF、PDF / テキスト / CSV / HTML / Markdown / Word / Excel です。
         </dd>
       </div>
     </dl>
