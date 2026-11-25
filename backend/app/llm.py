@@ -22,6 +22,7 @@ from shared.docextract import extract_doc_text_full
 from shared.llm_fallback import Endpoint, iter_chat_lines, post_chat
 
 from .doc_mapreduce import CHAT_DOC_INLINE_CHARS, condense_document
+from .history_compact import compact_history
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 # OpenAI 互換のベース URL（未指定/空なら Ollama の /v1 を使う）
@@ -338,13 +339,19 @@ def _extract_image_urls(message: dict[str, Any]) -> list[str]:
 
 
 async def _complete(
-    messages: list[dict[str, Any]], model_id: str, *, temperature: float = 0.0
+    messages: list[dict[str, Any]],
+    model_id: str,
+    *,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
 ) -> str:
     """内部利用の非ストリーム補完（添付の要約/読み計画に使う）。"""
     provider = _provider_for(model_id)
     payload = _chat_payload(
         provider, model_id, messages, stream=False, temperature=temperature
     )
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     res = await post_chat(_endpoint(provider), payload, REQUEST_TIMEOUT)
     data = res.json()
     choices = data.get("choices") or [{}]
@@ -369,12 +376,19 @@ def _extract_doc_texts_full(message: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+async def _summarize_history(messages: list[dict[str, Any]]) -> str:
+    """会話前半の要約。選択中のモデルではなく、要約用モデルへ送る。"""
+    model_id = os.environ.get("CHAT_HISTORY_SUMMARY_MODEL", "").strip() or DEFAULT_MODEL
+    return await _complete(messages, model_id, max_tokens=1024)
+
+
 async def _prepare_openai_messages(
     messages: list[dict[str, Any]], model: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """OpenAI 形式へ変換しつつ、大きい添付はその場マップリデュースで圧縮する。
 
     小さい添付は全文注入。大きい添付は抜粋/要約に圧縮し、どう参照したかの注記を集約する。
+    長い会話は、選択中のモデルへ渡す前に前半を要約へ畳む。
     戻り値: (openai_messages, notes)
     """
     model_id = _resolve_model(model)
@@ -414,6 +428,7 @@ async def _prepare_openai_messages(
     for n in notes:
         if n not in deduped:
             deduped.append(n)
+    result = await compact_history(result, _summarize_history)
     return result, deduped
 
 
