@@ -14,6 +14,7 @@ import { FileCard } from '@/features/chat/components/FileCard';
 import { ZoomUpImage } from '@/features/chat/components/ZoomUpImage';
 import { ZoomUpVideo } from '@/features/chat/components/ZoomUpVideo';
 import { useFiles } from '@/hooks/useFiles';
+import { NotebookSourceHandoff } from '@/open-genai/notebook/NotebookSourceHandoff';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useTyping } from '@/hooks/useTyping';
 
@@ -164,6 +165,13 @@ export const AssistantMessage = ({
                 </Button>
               )}
               <ButtonCopy className='mr-0.5' text={answerText} targetRef={copyTextRef} />
+              <NotebookSourceHandoff
+                text={answerText}
+                filename='チャット.md'
+                titlePrefix='チャット'
+                appearance='text'
+                label='ノート'
+              />
               <ExportAnswerWord text={answerText} targetRef={copyTextRef} />
               <ExportAnswerPowerPoint text={answerText} modelId={chatContent.llmType} />
             </>

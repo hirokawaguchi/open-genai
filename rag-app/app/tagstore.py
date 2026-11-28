@@ -43,6 +43,11 @@ def init_db() -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(tags)")}
+        if "description" not in cols:
+            conn.execute(
+                "ALTER TABLE tags ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+            )
 
 
 def _now() -> str:
@@ -79,10 +84,28 @@ def create_tag(scope: str, tag: str) -> str:
 def list_tags(scope: str) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT tag, created_at, updated_at FROM tags WHERE scope = ? ORDER BY tag",
+            "SELECT tag, description, created_at, updated_at FROM tags WHERE scope = ? ORDER BY tag",
             (scope,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_description(scope: str, tag: str, description: str) -> str:
+    """タグの説明を保存する。未登録のタグは説明の保存時にレジストリへ足す。"""
+    name = textnorm.normalize_tag(tag)
+    if not name:
+        raise ValueError("タグ名が空です")
+    text = (description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(text) > 400:
+        raise ValueError("説明は400字以内にしてください")
+    ensure_tags(scope, [name])
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tags SET description = ?, updated_at = ? WHERE scope = ? AND tag = ?",
+            (text, now, scope, name),
+        )
+    return text
 
 
 def rename_tag(scope: str, old: str, new: str) -> None:

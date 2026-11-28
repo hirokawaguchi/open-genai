@@ -22,6 +22,8 @@ export type KnowledgeTag = {
   tag: string;
   /** 付与済みチャンク数。0 は未使用（検索対象外）。 */
   chunks: number;
+  /** タグの説明。未設定は空文字。 */
+  description?: string;
 };
 
 export type TagsResponse = {

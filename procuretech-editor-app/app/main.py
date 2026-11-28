@@ -1433,6 +1433,30 @@ def _prepare_sections_for_compose(
     return out, refs
 
 
+_SLIDE_MANUSCRIPT = re.compile(r"-スライド(?:-\d+)?\.md$")
+
+
+def _is_slide_manuscript(filename: str) -> bool:
+    """ノートがスライド用に書いた原稿。末尾は「-スライド.md」か「-スライド-2.md」。"""
+    base = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return bool(_SLIDE_MANUSCRIPT.search(base))
+
+
+def _pptx_outputs(name: str, sections: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """スライド原稿は見出しのまま、それ以外は内容を組み直して pptx にする。"""
+    slides = [sec for sec in sections if _is_slide_manuscript(str(sec.get("filename") or ""))]
+    others = [sec for sec in sections if sec not in slides]
+    outputs: list[dict[str, Any]] = []
+    if others:
+        outputs.append({"name": name, "format": "pptx", "sections": others})
+    if slides:
+        slide_name = name if not others else f"{name}（スライド）"
+        outputs.append(
+            {"name": slide_name, "format": "pptx", "sections": slides, "plan": False}
+        )
+    return outputs
+
+
 def _collect_output_sections(
     output: dict[str, Any], files_by_key: dict[str, dict[str, Any]],
     files_by_id: dict[str, dict[str, Any]],
@@ -1643,12 +1667,17 @@ async def _run_compose_job(
                     sections, files_by_rel, embed_images=embed
                 )
                 image_rels.extend(rels)
-                payload = {"name": name, "format": fmt, "sections": clean}
-                if fmt in generate.GENERIC_COMPOSE_FORMATS:
-                    generic_md.append(payload)
-                else:
-                    theme_md.append(payload)
-                included_names.append(name)
+                payloads = (
+                    _pptx_outputs(name, clean)
+                    if fmt == "pptx"
+                    else [{"name": name, "format": fmt, "sections": clean}]
+                )
+                for payload in payloads:
+                    if fmt in generate.GENERIC_COMPOSE_FORMATS:
+                        generic_md.append(payload)
+                    else:
+                        theme_md.append(payload)
+                    included_names.append(str(payload["name"]))
 
         assets: dict[str, bytes] = {}
         for rel in image_rels:

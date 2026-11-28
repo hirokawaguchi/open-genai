@@ -60,13 +60,22 @@ async def _rpc(
 
 
 def _parse_sse_json(text: str) -> dict[str, Any]:
+    """SSE の data 行から JSON-RPC 応答を取る。途中のログ通知は読み飛ばす。"""
+    fallback: dict[str, Any] | None = None
     for line in (text or "").splitlines():
-        if line.startswith("data:"):
-            raw = line[5:].strip()
-            if raw:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    return parsed
+        if not line.startswith("data:"):
+            continue
+        raw = line[5:].strip()
+        if not raw:
+            continue
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            continue
+        if "id" in parsed and ("result" in parsed or "error" in parsed):
+            return parsed
+        fallback = parsed
+    if fallback is not None:
+        return fallback
     raise ValueError("MCP SSE 応答を読めません")
 
 
@@ -174,7 +183,7 @@ def citations_from_payload(text: str) -> list[dict[str, Any]]:
         cites.append(
             {
                 "n": i,
-                "display_name": f"{label}（共有ナレッジ・未ソース）",
+                "display_name": f"{label}（共有ナレッジ）",
                 "text": str(n.get("text") or ""),
             }
         )

@@ -339,3 +339,25 @@ def test_markdown_to_docx_inline_lists_and_quote():
     assert "項目A" in xml
     assert "番号付き" in xml
     assert "引用です" in xml
+
+
+def test_pptx_without_plan_keeps_each_heading(monkeypatch):
+    pytest.importorskip("pptx")
+    from app import main as gen_main
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("見出しを保つときはデッキを組み直さない")
+
+    monkeypatch.setattr(gen_main, "plan_deck", boom)
+    data = gen_main._render_output(
+        "pptx",
+        "確認",
+        [{"filename": "a.md", "content": "# 背景\n\n- 紙の申請が残っている\n"}],
+        {},
+        plan=False,
+    )
+    assert data[:2] == b"PK"
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        xml = package.read("ppt/slides/slide2.xml").decode("utf-8")
+    assert "背景" in xml
+    assert "紙の申請が残っている" in xml

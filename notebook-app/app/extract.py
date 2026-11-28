@@ -9,6 +9,7 @@ from pathlib import Path
 from . import ocr
 
 _ACCEPT = (".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".html", ".json")
+_IMAGES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
 
 def _ensure_shared() -> None:
@@ -25,12 +26,21 @@ from shared.docextract import DocExtractError, extract_doc_pages  # noqa: E402
 
 
 def accept_exts() -> tuple[str, ...]:
-    return _ACCEPT
+    return _ACCEPT + _IMAGES
+
+
+def _basename(filename: str) -> str:
+    return filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def is_image_name(filename: str) -> bool:
+    name = _basename(filename)
+    return any(name.endswith(ext) for ext in _IMAGES)
 
 
 def allowed_name(filename: str) -> bool:
-    name = filename.rsplit("/", 1)[-1].lower()
-    return any(name.endswith(ext) for ext in _ACCEPT)
+    name = _basename(filename)
+    return any(name.endswith(ext) for ext in _ACCEPT) or is_image_name(filename)
 
 
 def _is_pdf(filename: str) -> bool:

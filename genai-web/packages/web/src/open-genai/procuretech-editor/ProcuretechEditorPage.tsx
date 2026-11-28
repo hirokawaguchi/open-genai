@@ -310,6 +310,32 @@ const previewStyleClass = (style: PreviewStyle): string =>
 const PROJECTS_TAB = 'projects';
 const EDIT_TAB = 'edit';
 const EXPORT_TAB = 'export';
+const EDITOR_TABS = [PROJECTS_TAB, EDIT_TAB, EXPORT_TAB];
+const EDITOR_VIEW_KEY = 'procuretech-editor-last-view';
+
+const readEditorView = (): { projectId: string | null; activeTab: string; selectedPath: string | null } => {
+  try {
+    const raw = sessionStorage.getItem(EDITOR_VIEW_KEY);
+    if (!raw) return { projectId: null, activeTab: PROJECTS_TAB, selectedPath: null };
+    const parsed = JSON.parse(raw) as {
+      projectId?: unknown;
+      activeTab?: unknown;
+      selectedPath?: unknown;
+    };
+    const activeTab = EDITOR_TABS.includes(String(parsed.activeTab))
+      ? String(parsed.activeTab)
+      : PROJECTS_TAB;
+    const projectId = typeof parsed.projectId === 'string' && parsed.projectId ? parsed.projectId : null;
+    const selectedPath =
+      typeof parsed.selectedPath === 'string' && parsed.selectedPath ? parsed.selectedPath : null;
+    if (activeTab === PROJECTS_TAB || !projectId) {
+      return { projectId: null, activeTab: PROJECTS_TAB, selectedPath: null };
+    }
+    return { projectId, activeTab, selectedPath };
+  } catch {
+    return { projectId: null, activeTab: PROJECTS_TAB, selectedPath: null };
+  }
+};
 
 const FileManagerModal = ({
   open,
@@ -1299,7 +1325,7 @@ export const ProcuretechEditorPage = () => {
     'プロジェクト内の文書（Markdown）を編集・校正し、Word / HTML などへ書き出します。';
   const howToUse = (registryApp?.howToUse || '').trim();
   const { projects, loadError: projectsError, mutate: mutateProjects } = useEditorProjects();
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(() => readEditorView().projectId);
   const {
     project,
     files,
@@ -1308,13 +1334,13 @@ export const ProcuretechEditorPage = () => {
   } = useEditorProject(projectId);
   const actions = useEditorActions();
 
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(() => readEditorView().selectedPath);
   const [draft, setDraft] = useState('');
   const [baseline, setBaseline] = useState('');
   const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<string>(PROJECTS_TAB);
+  const [activeTab, setActiveTab] = useState<string>(() => readEditorView().activeTab);
   const [helpOpen, setHelpOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [previewStyle, setPreviewStyle] = useState<PreviewStyle>(() => {
@@ -1536,10 +1562,32 @@ export const ProcuretechEditorPage = () => {
     if (openedFromQuery.current === id) return;
     openedFromQuery.current = id;
     openProject(id);
+    const file = searchParams.get('file');
+    if (file) setSelectedPath(file);
     const next = new URLSearchParams(searchParams);
     next.delete('project');
+    next.delete('file');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const view =
+      activeTab === PROJECTS_TAB || !projectId
+        ? { projectId: null, activeTab: PROJECTS_TAB, selectedPath: null }
+        : { projectId, activeTab, selectedPath };
+    try {
+      sessionStorage.setItem(EDITOR_VIEW_KEY, JSON.stringify(view));
+    } catch {
+      /* 保存できなくても画面は動く */
+    }
+  }, [activeTab, projectId, selectedPath]);
+
+  useEffect(() => {
+    if (!projectId || projectError !== 'プロジェクトが見つかりません。') return;
+    setProjectId(null);
+    setSelectedPath(null);
+    setActiveTab(PROJECTS_TAB);
+  }, [projectError, projectId]);
 
   const openFile = async (path: string) => {
     setFileModalOpen(false);
@@ -1565,6 +1613,14 @@ export const ProcuretechEditorPage = () => {
       setFileLoading(false);
     }
   };
+
+  const restoredFile = useRef(false);
+  useEffect(() => {
+    if (restoredFile.current || !projectId || !selectedPath || files.length === 0) return;
+    if (!files.some((file) => file.rel_path === selectedPath)) return;
+    restoredFile.current = true;
+    void openFile(selectedPath);
+  }, [files, projectId, selectedPath]);
 
   const onSave = useCallback(async () => {
     if (!selected || !projectId || !isEditable) return;

@@ -16,6 +16,10 @@ type Props = {
   picks: KnowledgePick[];
   onChange: (picks: KnowledgePick[]) => void;
   onClose: () => void;
+  /** 未指定なら、チャットの「選んだタグで検索する」説明を出す。 */
+  description?: string;
+  /** MCP の共有ナレッジが On のとき、共通スコープはすべて対象として見せ、個別のチェックは出さない。 */
+  sharedKnowledgeLocked?: boolean;
 };
 
 const pickKey = (scope: string, tag: string) => `${scope}\u0000${tag}`;
@@ -23,10 +27,12 @@ const pickKey = (scope: string, tag: string) => `${scope}\u0000${tag}`;
 const ScopeTags = ({
   scope,
   selected,
+  locked,
   onToggle,
 }: {
   scope: KnowledgeScope;
   selected: Set<string>;
+  locked: boolean;
   onToggle: (tag: KnowledgeTag, checked: boolean) => void;
 }) => {
   const { tags, isLoading, error } = useTags(scope.scope);
@@ -43,6 +49,11 @@ const ScopeTags = ({
   return (
     <section className='space-y-2'>
       <h3 className='text-std-16B-170'>{scope.name}</h3>
+      {locked && (
+        <p className='text-dns-14N-130 text-solid-gray-700'>
+          MCP の共有ナレッジが On です。共通チームの文書はすべて対象です。一部だけにするには、MCP を Off にしてからタグを登録してください。
+        </p>
+      )}
       {isLoading && <p className='text-solid-gray-600'>タグを読み込んでいます。</p>}
       {error && <p className='text-error-1'>タグを読み込めませんでした。</p>}
       {!isLoading && !error && searchable.length === 0 && (
@@ -51,6 +62,16 @@ const ScopeTags = ({
       {searchable.length > 0 && (
         <ul className='m-0 grid list-none gap-2 p-0 sm:grid-cols-2'>
           {searchable.map((tag) => {
+            const count = !docsLoading && !docsError ? `（${fileCounts.get(tag.tag) ?? 0}件）` : '';
+            if (locked) {
+              return (
+                <li key={tag.tag} className='text-solid-gray-800'>
+                  {tag.tag}
+                  {count}
+                  <span className='ml-2 text-dns-14N-130 text-solid-gray-600'>選択済み</span>
+                </li>
+              );
+            }
             const id = `knowledge-tag-${scope.scope}-${tag.tag}`;
             const checked = selected.has(pickKey(scope.scope, tag.tag));
             return (
@@ -65,7 +86,7 @@ const ScopeTags = ({
                   />
                   <span>
                     {tag.tag}
-                    {!docsLoading && !docsError && `（${fileCounts.get(tag.tag) ?? 0}件）`}
+                    {count}
                   </span>
                 </label>
               </li>
@@ -78,9 +99,19 @@ const ScopeTags = ({
 };
 
 /** 参照できるナレッジのタグを選び、閉じたあとも選択を残す。 */
-export const KnowledgeSelectDialog = ({ isOpen, picks, onChange, onClose }: Props) => {
+export const KnowledgeSelectDialog = ({
+  isOpen,
+  picks,
+  onChange,
+  onClose,
+  description,
+  sharedKnowledgeLocked = false,
+}: Props) => {
   const { scopes, isLoading, error } = useScopes();
   const selected = new Set(picks.map((pick) => pickKey(pick.scope, pick.tag)));
+  const clearable = sharedKnowledgeLocked
+    ? picks.filter((pick) => scopes.find((scope) => scope.scope === pick.scope)?.kind !== 'common')
+    : picks;
 
   const toggle = (scope: KnowledgeScope, tag: KnowledgeTag, checked: boolean) => {
     if (checked) {
@@ -101,7 +132,8 @@ export const KnowledgeSelectDialog = ({ isOpen, picks, onChange, onClose }: Prop
         </CustomDialogHeader>
         <CustomDialogBody>
           <p className='text-solid-gray-700'>
-            タグを選ぶと、そのタグが付いた文書を検索してから答えます。選んだタグは、解除するまで次の送信にも使います。
+            {description ??
+              'タグを選ぶと、そのタグが付いた文書を検索してから答えます。選んだタグは、解除するまで次の送信にも使います。'}
           </p>
           <div className='mt-4 max-h-[50vh] space-y-6 overflow-y-auto pr-1'>
             {isLoading && <p>参照できるナレッジを確認しています。</p>}
@@ -113,6 +145,7 @@ export const KnowledgeSelectDialog = ({ isOpen, picks, onChange, onClose }: Prop
                   key={scope.scope}
                   scope={scope}
                   selected={selected}
+                  locked={sharedKnowledgeLocked && scope.kind === 'common'}
                   onToggle={(tag, checked) => toggle(scope, tag, checked)}
                 />
               ))}
@@ -122,9 +155,9 @@ export const KnowledgeSelectDialog = ({ isOpen, picks, onChange, onClose }: Prop
               type='button'
               variant='outline'
               size='md'
-              aria-disabled={picks.length === 0 || undefined}
-              disabled={picks.length === 0}
-              onClick={() => onChange([])}
+              aria-disabled={clearable.length === 0 || undefined}
+              disabled={clearable.length === 0}
+              onClick={() => onChange(picks.filter((pick) => !clearable.includes(pick)))}
             >
               すべて解除
             </Button>

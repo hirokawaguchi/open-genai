@@ -1,5 +1,7 @@
 import type { ShownMessage } from 'genai-web';
 import { pageFileUrl } from '@/lib/fileUrl';
+import { NotebookSourceHandoff } from '@/open-genai/notebook/NotebookSourceHandoff';
+import { saveGeneratedImage } from '@/open-genai/notebook/notebookMedia';
 import { buildImageTurns } from '../utils/imageThread';
 
 type PendingTurn = {
@@ -68,6 +70,15 @@ export const ImageThread = ({ messages, pending, generating }: Props) => {
               />
             ))}
           </div>
+          {turn.images[0] ? (
+            <NotebookSourceHandoff
+              titlePrefix='画像'
+              label='ノートブックで扱う'
+              commit={(sessionId) =>
+                saveGeneratedImage(sessionId, turn.prompt, turn.images[0].src)
+              }
+            />
+          ) : null}
         </article>
       ))}
       {showPending && pending && (

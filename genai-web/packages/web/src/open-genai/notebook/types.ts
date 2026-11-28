@@ -61,6 +61,7 @@ export type NotebookItem = {
   label: string;
   value: string;
   citations?: NotebookCitation[];
+  message_id?: string;
 };
 
 export type NotebookPiiHit = {
@@ -77,6 +78,10 @@ export type NotebookBriefing = {
   ocr?: boolean;
   // スキャン PDF の文字認識が登録後に走っている間 true。完了すると消える。
   ocr_pending?: boolean;
+  kind?: string;
+  described?: boolean;
+  // 本文の読み取りが応答のあとで進んでいる間 "processing"。終わると消える。
+  ingest?: string;
   pii?: {
     warned?: boolean;
     categories?: string[];
@@ -143,10 +148,37 @@ export type NotebookSkill = {
   updated_at?: string;
 };
 
+export type NotebookManuscript = {
+  form?: '' | 'document' | 'slides';
+  chapters?: { label: string; value: string }[];
+  markdown?: string;
+};
+
+export type NotebookScheduleDate = {
+  start_time: string;
+  end_time?: string | null;
+  is_all_day?: boolean;
+};
+
+export type NotebookSchedule = {
+  status: 'proposed' | 'created';
+  title: string;
+  description: string;
+  dates: NotebookScheduleDate[];
+  event_id?: string;
+};
+
 export type NotebookSessionDetail = {
   id: string;
   title: string;
   instruction: string;
+  editor_project_id?: string;
+  manuscript?: NotebookManuscript;
+  manuscript_path?: string;
+  office_file?: string;
+  office_ref?: string;
+  slide_compose?: string;
+  schedule?: NotebookSchedule | null;
   created_at: string;
   updated_at: string;
   items: NotebookItem[];

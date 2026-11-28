@@ -139,6 +139,8 @@ def init_db() -> None:
         item_cols = {r[1] for r in db.execute("PRAGMA table_info(items)").fetchall()}
         if "citations" not in item_cols:
             db.execute("ALTER TABLE items ADD COLUMN citations TEXT NOT NULL DEFAULT '[]'")
+        if "message_id" not in item_cols:
+            db.execute("ALTER TABLE items ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
         msg_cols = {r[1] for r in db.execute("PRAGMA table_info(messages)").fetchall()}
         if "tool_trace" not in msg_cols:
             db.execute("ALTER TABLE messages ADD COLUMN tool_trace TEXT NOT NULL DEFAULT '[]'")
@@ -151,6 +153,35 @@ def init_db() -> None:
         if "open_editor" not in msg_cols:
             db.execute(
                 "ALTER TABLE messages ADD COLUMN open_editor INTEGER NOT NULL DEFAULT 0"
+            )
+        sess_cols = {r[1] for r in db.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "editor_project_id" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN editor_project_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "manuscript" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN manuscript TEXT NOT NULL DEFAULT ''"
+            )
+        if "manuscript_path" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN manuscript_path TEXT NOT NULL DEFAULT ''"
+            )
+        if "office_file" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN office_file TEXT NOT NULL DEFAULT ''"
+            )
+        if "slide_compose" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN slide_compose TEXT NOT NULL DEFAULT ''"
+            )
+        if "office_ref" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN office_ref TEXT NOT NULL DEFAULT ''"
+            )
+        if "schedule" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN schedule TEXT NOT NULL DEFAULT ''"
             )
         db.commit()
 
@@ -217,6 +248,73 @@ def _owned(session_id: str, user_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def owns_session(session_id: str, user_id: str) -> bool:
+    db = connect()
+    with _lock:
+        return _owned(session_id, user_id) is not None
+
+
+def _manuscript_markdown(form: str, chapters: list[dict[str, str]]) -> str:
+    parts: list[str] = []
+    for chapter in chapters:
+        label = chapter["label"]
+        value = chapter["value"]
+        if form == "slides":
+            parts.append(f"# {label}\n\n{value}")
+        else:
+            parts.append(f"## {label}\n\n{value}")
+    text = "\n\n".join(parts).strip()
+    return f"{text}\n" if text else ""
+
+
+def _public_manuscript(row: sqlite3.Row) -> dict[str, Any]:
+    raw = row["manuscript"] if "manuscript" in row.keys() else ""
+    data = _parse_json(raw, {})
+    if not isinstance(data, dict):
+        data = {}
+    chapters: list[dict[str, str]] = []
+    for chapter in data.get("chapters") or []:
+        if not isinstance(chapter, dict):
+            continue
+        label = str(chapter.get("label") or "").strip()
+        value = str(chapter.get("value") or "").strip()
+        if label and value:
+            chapters.append({"label": label, "value": value})
+    form = str(data.get("form") or "")
+    if form not in ("document", "slides"):
+        form = ""
+    fact = str(data.get("fact") or "")
+    if fact not in ("clean", "hold"):
+        fact = ""
+    findings = data.get("findings") if isinstance(data.get("findings"), list) else []
+    return {
+        "form": form,
+        "chapters": chapters,
+        "fact": fact,
+        "revised": bool(data.get("revised")),
+        "findings": findings,
+        "markdown": _manuscript_markdown(form, chapters),
+    }
+
+
+def save_manuscript(
+    session_id: str,
+    user_id: str,
+    manuscript: dict[str, Any],
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        db.execute(
+            "UPDATE sessions SET manuscript = ? WHERE id = ?",
+            (json.dumps(manuscript, ensure_ascii=False), session_id),
+        )
+        _touch(db, session_id)
+        db.commit()
+    return get_session(session_id, user_id)
+
+
 def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
     db = connect()
     with _lock:
@@ -224,7 +322,7 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         items = db.execute(
-            "SELECT id, label, value, position, citations FROM items"
+            "SELECT id, label, value, position, citations, message_id FROM items"
             " WHERE session_id = ? ORDER BY position",
             (session_id,),
         ).fetchall()
@@ -249,6 +347,15 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         "id": row["id"],
         "title": row["title"],
         "instruction": row["instruction"],
+        "editor_project_id": row["editor_project_id"]
+        if "editor_project_id" in row.keys()
+        else "",
+        "manuscript": _public_manuscript(row),
+        "manuscript_path": row["manuscript_path"] if "manuscript_path" in row.keys() else "",
+        "office_file": row["office_file"] if "office_file" in row.keys() else "",
+        "office_ref": row["office_ref"] if "office_ref" in row.keys() else "",
+        "slide_compose": row["slide_compose"] if "slide_compose" in row.keys() else "",
+        "schedule": _public_schedule(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "items": [_public_item(i) for i in items],
@@ -268,11 +375,13 @@ def _parse_json(raw: str, fallback: Any) -> Any:
 
 def _public_item(i: sqlite3.Row) -> dict[str, Any]:
     cites = _parse_json(i["citations"] if "citations" in i.keys() else "[]", [])
+    keys = i.keys()
     return {
         "id": i["id"],
         "label": i["label"],
         "value": i["value"],
         "citations": cites if isinstance(cites, list) else [],
+        "message_id": str(i["message_id"]) if "message_id" in keys else "",
     }
 
 
@@ -329,12 +438,66 @@ def _public_message(m: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _public_schedule(row: sqlite3.Row) -> dict[str, Any] | None:
+    raw = row["schedule"] if "schedule" in row.keys() else ""
+    data = _parse_json(raw, None)
+    if not isinstance(data, dict):
+        return None
+    title = str(data.get("title") or "").strip()
+    dates = data.get("dates")
+    if not title or not isinstance(dates, list) or not dates:
+        return None
+    clean: list[dict[str, Any]] = []
+    for item in dates:
+        if not isinstance(item, dict) or not str(item.get("start_time") or "").strip():
+            continue
+        clean.append(
+            {
+                "start_time": str(item.get("start_time") or ""),
+                "end_time": item.get("end_time") or None,
+                "is_all_day": bool(item.get("is_all_day")),
+            }
+        )
+    if not clean:
+        return None
+    status = "created" if data.get("status") == "created" else "proposed"
+    return {
+        "status": status,
+        "title": title,
+        "description": str(data.get("description") or ""),
+        "dates": clean,
+        "event_id": str(data.get("event_id") or ""),
+    }
+
+
+def set_schedule(
+    session_id: str, user_id: str, schedule: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        raw = "" if not schedule else json.dumps(schedule, ensure_ascii=False)
+        db.execute(
+            "UPDATE sessions SET schedule = ? WHERE id = ?",
+            (raw, session_id),
+        )
+        _touch(db, session_id)
+        db.commit()
+    return get_session(session_id, user_id)
+
+
 def update_session(
     session_id: str,
     user_id: str,
     *,
     title: str | None = None,
     instruction: str | None = None,
+    editor_project_id: str | None = None,
+    manuscript_path: str | None = None,
+    office_file: str | None = None,
+    office_ref: str | None = None,
+    slide_compose: str | None = None,
     mcp_enabled: dict[str, bool] | None = None,
 ) -> dict[str, Any] | None:
     db = connect()
@@ -351,6 +514,31 @@ def update_session(
             db.execute(
                 "UPDATE sessions SET instruction = ? WHERE id = ?",
                 (instruction, session_id),
+            )
+        if editor_project_id is not None:
+            db.execute(
+                "UPDATE sessions SET editor_project_id = ? WHERE id = ?",
+                (editor_project_id.strip(), session_id),
+            )
+        if manuscript_path is not None:
+            db.execute(
+                "UPDATE sessions SET manuscript_path = ? WHERE id = ?",
+                (manuscript_path.strip(), session_id),
+            )
+        if office_file is not None:
+            db.execute(
+                "UPDATE sessions SET office_file = ? WHERE id = ?",
+                (office_file.strip(), session_id),
+            )
+        if office_ref is not None:
+            db.execute(
+                "UPDATE sessions SET office_ref = ? WHERE id = ?",
+                (office_ref.strip(), session_id),
+            )
+        if slide_compose is not None:
+            db.execute(
+                "UPDATE sessions SET slide_compose = ? WHERE id = ?",
+                (slide_compose.strip(), session_id),
             )
         if mcp_enabled:
             _ensure_mcps_unlocked(db, user_id)
@@ -384,6 +572,67 @@ def delete_session(session_id: str, user_id: str) -> bool:
         )
         db.commit()
     return cur.rowcount > 0
+
+
+def _clip_heading(question: str) -> str:
+    text = " ".join((question or "").split())
+    if not text:
+        return "回答"
+    return text[:80]
+
+
+def clip_message(session_id: str, user_id: str, message_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """回答を1件のクリップにする。同じ回答の再実行は同じ行を更新する。"""
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None, "見つかりません"
+        rows = db.execute(
+            "SELECT id, role, content, citations FROM messages"
+            " WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        index = next((i for i, row in enumerate(rows) if row["id"] == message_id), None)
+        if index is None or rows[index]["role"] != "assistant":
+            return None, "見つかりません"
+        content = str(rows[index]["content"] or "").strip()
+        if not content:
+            return None, "回答がありません"
+        question = ""
+        for row in reversed(rows[:index]):
+            if row["role"] == "user" and str(row["content"] or "").strip():
+                question = str(row["content"])
+                break
+        cites = _parse_json(rows[index]["citations"], [])
+        if not isinstance(cites, list):
+            cites = []
+        label = _clip_heading(question)
+        encoded = json.dumps(cites, ensure_ascii=False)
+        existing = db.execute(
+            "SELECT id FROM items WHERE session_id = ? AND message_id = ?",
+            (session_id, message_id),
+        ).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE items SET label = ?, value = ?, citations = ? WHERE id = ?",
+                (label, content, encoded, existing["id"]),
+            )
+        else:
+            pos = db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS n FROM items WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["n"]
+            db.execute(
+                "INSERT INTO items (id, session_id, position, label, value, citations, message_id)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), session_id, pos, label, content, encoded, message_id),
+            )
+        _touch(db, session_id)
+        db.commit()
+    detail = get_session(session_id, user_id)
+    if not detail:
+        return None, "見つかりません"
+    return detail, None
 
 
 def add_item(session_id: str, user_id: str, *, label: str = "") -> dict[str, Any] | None:
@@ -437,6 +686,50 @@ def update_item(
         _touch(db, session_id)
         db.commit()
     return get_session(session_id, user_id)
+
+
+def upsert_labeled_item(
+    session_id: str,
+    user_id: str,
+    *,
+    label: str,
+    value: str,
+    citations: list[dict[str, Any]],
+) -> bool:
+    """見出しが同じ項目は上書きし、無ければ末尾に足す。"""
+    db = connect()
+    key = label.strip()
+    with _lock:
+        if not _owned(session_id, user_id) or not key:
+            return False
+        rows = db.execute(
+            "SELECT id, label FROM items WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+        target = ""
+        for row in rows:
+            if str(row["label"] or "").strip() == key:
+                target = str(row["id"])
+                break
+        cites = json.dumps(citations, ensure_ascii=False)
+        if target:
+            db.execute(
+                "UPDATE items SET label = ?, value = ?, citations = ? WHERE id = ?",
+                (key, value, cites, target),
+            )
+        else:
+            pos = db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS n FROM items WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["n"]
+            db.execute(
+                "INSERT INTO items (id, session_id, position, label, value, citations)"
+                " VALUES (?,?,?,?,?,?)",
+                (str(uuid.uuid4()), session_id, pos, key, value, cites),
+            )
+        _touch(db, session_id)
+        db.commit()
+    return True
 
 
 def delete_item(session_id: str, user_id: str, item_id: str) -> dict[str, Any] | None:
@@ -531,6 +824,24 @@ def update_file(
     return True
 
 
+def fail_interrupted_ingests() -> None:
+    """再起動で止まった読み取りを、未完了のまま残さない。"""
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT id, briefing FROM files").fetchall()
+        changed = False
+        for row in rows:
+            briefing = _parse_json(row["briefing"], {})
+            if isinstance(briefing, dict) and briefing.get("ingest") == "processing":
+                db.execute(
+                    "UPDATE files SET error = ?, briefing = ? WHERE id = ?",
+                    ("読み取りが中断されました。もう一度添付してください。", "{}", row["id"]),
+                )
+                changed = True
+        if changed:
+            db.commit()
+
+
 def delete_file(session_id: str, user_id: str, file_id: str) -> dict[str, Any] | None:
     db = connect()
     with _lock:
@@ -593,7 +904,7 @@ def list_material_nodes(
         if not _owned(session_id, user_id):
             return None
         files = db.execute(
-            "SELECT id, filename, nodes FROM files WHERE session_id = ? AND error = ''",
+            "SELECT id, filename, nodes, briefing FROM files WHERE session_id = ? AND error = ''",
             (session_id,),
         ).fetchall()
         refs = db.execute(
@@ -602,6 +913,9 @@ def list_material_nodes(
         ).fetchall()
     out: list[dict[str, Any]] = []
     for f in files:
+        briefing = _parse_json(f["briefing"] if "briefing" in f.keys() else "", {})
+        if isinstance(briefing, dict) and briefing.get("ingest") == "processing":
+            continue
         if wanted and str(f["id"]) not in wanted:
             continue
         for n in _parse_json(f["nodes"], []):
@@ -719,6 +1033,21 @@ def delete_knowledge_ref(
     return get_session(session_id, user_id)
 
 
+def delete_message(session_id: str, user_id: str, message_id: str) -> bool:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return False
+        cur = db.execute(
+            "DELETE FROM messages WHERE id = ? AND session_id = ?",
+            (message_id, session_id),
+        )
+        if cur.rowcount:
+            _touch(db, session_id)
+        db.commit()
+    return cur.rowcount > 0
+
+
 def add_message(
     session_id: str,
     user_id: str,
@@ -756,6 +1085,22 @@ def add_message(
         _touch(db, session_id)
         db.commit()
     return get_session(session_id, user_id)
+
+
+def get_file_bytes(
+    session_id: str, user_id: str, file_id: str
+) -> tuple[str, bytes] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        row = db.execute(
+            "SELECT filename, blob FROM files WHERE session_id = ? AND id = ?",
+            (session_id, file_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["filename"]), bytes(row["blob"])
 
 
 def list_file_blobs(session_id: str, user_id: str) -> list[tuple[str, bytes, str]] | None:
@@ -1104,23 +1449,13 @@ def _ensure_mcps_unlocked(db: sqlite3.Connection, user_id: str) -> list[dict[str
 
 
 def _session_mcps_unlocked(
-    db: sqlite3.Connection, session_id: str, user_id: str
+    db: sqlite3.Connection, _session_id: str, user_id: str
 ) -> list[dict[str, Any]]:
     catalog = _ensure_mcps_unlocked(db, user_id)
-    flags = {
-        str(r["mcp_id"]): bool(r["enabled"])
-        for r in db.execute(
-            "SELECT mcp_id, enabled FROM session_mcps WHERE session_id = ?",
-            (session_id,),
-        ).fetchall()
-    }
     out: list[dict[str, Any]] = []
     for item in catalog:
-        connected = bool(item.get("connected"))
-        default_on = connected
-        enabled = flags.get(str(item["id"]), default_on)
         row = dict(item)
-        row["enabled"] = bool(enabled) and connected
+        row["enabled"] = bool(item.get("connected"))
         out.append(row)
     return out
 

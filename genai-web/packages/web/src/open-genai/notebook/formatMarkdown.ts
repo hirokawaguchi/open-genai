@@ -20,7 +20,7 @@ export const stripCitationMarks = (text: string): string => {
       .slice(indent.length)
       .replace(CITATION_MARK, '')
       .replace(/ {2,}/g, ' ')
-      .replace(/[ \t]+$/g, '');
+      .replace(/^[ \t]+|[ \t]+$/g, '');
     if (SOURCE_ONLY_LINE.test(body)) continue;
     kept.push(indent + body);
   }
@@ -43,6 +43,3 @@ export const usedCitations = (text: string, cites: NotebookCitation[]): Notebook
 
 export const sourceLabel = (c: NotebookCitation): string =>
   (c.display_name || '').replace(/^\[\d+\]\s*/, '');
-
-export const linkifyCitationMarks = (md: string, idPrefix: string): string =>
-  (md || '').replace(/\[(\d+)\]/g, (_all, n: string) => `[[${n}]](#${idPrefix}-${n})`);

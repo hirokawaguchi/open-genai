@@ -7,6 +7,7 @@ import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { useTranslateStore } from '@/features/translate/stores/useTranslateStore';
 import { useChat } from '@/hooks/useChat';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
+import { NotebookSourceHandoff } from '@/open-genai/notebook/NotebookSourceHandoff';
 import { LANGUAGES } from '../constants';
 
 type Props = {
@@ -66,6 +67,11 @@ export const TranslatedResult = (props: Props) => {
         {showResult && (
           <div className='mt-auto -mb-2 flex w-full justify-end gap-1'>
             <ButtonCopy text={translatedSentence} targetRef={copyTextRef} />
+            <NotebookSourceHandoff
+              text={translatedSentence}
+              filename='翻訳.md'
+              titlePrefix='翻訳'
+            />
           </div>
         )}
       </div>

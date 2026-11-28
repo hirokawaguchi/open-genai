@@ -3,6 +3,8 @@ import { useRef } from 'react';
 import { LuNetwork } from 'react-icons/lu';
 import { VscCode } from 'react-icons/vsc';
 import { CloseIcon, HamburgerMenuButton } from '@/components/ui/dads/HamburgerMenuButton';
+import { NotebookSourceHandoff } from '@/open-genai/notebook/NotebookSourceHandoff';
+import { saveDiagramFiles } from '@/open-genai/notebook/notebookMedia';
 import { DownloadButton } from './DownloadButton';
 import { Markdown } from './Markdown';
 import { Mermaid } from './Mermaid';
@@ -33,6 +35,11 @@ export const DiagramRenderer = (props: DiagramRendererProps) => {
             <div className='flex gap-1'>
               <DownloadButton type='SVG' code={code} />
               <DownloadButton type='PNG' code={code} />
+              <NotebookSourceHandoff
+                titlePrefix='図'
+                label='ノートブックで扱う'
+                commit={(sessionId) => saveDiagramFiles(sessionId, code, code)}
+              />
             </div>
             <TabList className='flex cursor-pointer rounded-4 border bg-white text-oln-16N-100'>
               <Tab className={tabStyles}>

@@ -461,6 +461,8 @@ services:
       - VITE_APP_API_ENDPOINT=/api
       - VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT=/api
       - VITE_APP_TITLE=${VITE_APP_TITLE:-Open GENAI}
+      # sidebar | header。Vite は起動時の環境変数を .env より優先する。
+      - VITE_APP_NAV_LAYOUT=${VITE_APP_NAV_LAYOUT:-sidebar}
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-true}
     volumes:
       - ./genai-web:/app
@@ -796,7 +798,7 @@ services:
       - INTERNAL_SIGNING_SECRET=${INTERNAL_SIGNING_SECRET:-dev-internal-secret-change-me}
       - HEARING_DB_PATH=/data/procuretech_hearing.db
       - HEARING_RETENTION_DAYS=${HEARING_RETENTION_DAYS:-30}
-      - MAX_DOC_BYTES=${MAX_DOC_BYTES:-20971520}
+      - MAX_DOC_BYTES=${MAX_DOC_BYTES:-104857600}
       - HEARING_LLM=${HEARING_LLM:-1}
       - HEARING_LLM_MAX_TOKENS=${HEARING_LLM_MAX_TOKENS:-8192}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -815,7 +817,19 @@ services:
       # firecrawl-local（0.0.0.0 待受）へ送る Bearer トークン。サイドカーと同じ値。
       - FIRECRAWL_TOKEN=${FIRECRAWL_TOKEN:-}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
+      # 画像の説明。空や off なら説明文は作らず、画像ファイルだけ残す。
+      - NOTEBOOK_VISION_MODEL=${NOTEBOOK_VISION_MODEL:-gemma4:cloud}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
+      # Hermes のイメージが空のあいだは、同じ道具をこのプロセスで実行する。
+      # NOTEBOOK_HERMES_DOCKER=1 のときだけ、共有ディレクトリを持たない一時コンテナを起動する。
+      - NOTEBOOK_HERMES_URL=${NOTEBOOK_HERMES_URL:-}
+      - NOTEBOOK_HERMES_IMAGE=${NOTEBOOK_HERMES_IMAGE:-}
+      - NOTEBOOK_HERMES_DOCKER=${NOTEBOOK_HERMES_DOCKER:-0}
+      - NOTEBOOK_HERMES_NETWORK=${NOTEBOOK_HERMES_NETWORK:-open-genai_default}
+      - NOTEBOOK_AGENT_MAX=${NOTEBOOK_AGENT_MAX:-4}
+      - NOTEBOOK_AGENT_IDLE_SECONDS=${NOTEBOOK_AGENT_IDLE_SECONDS:-1800}
+      - LEDGER_URL=${LEDGER_URL:-http://ledger-app:8023}
+      - CHOSEI_URL=${CHOSEI_URL:-http://chosei-app:8010}
       - NGWORD_DB_PATH=/ngword-data/ngwords.db
     volumes:
       # 既存環境のボリューム名を維持する（中身はノートブックの SQLite）

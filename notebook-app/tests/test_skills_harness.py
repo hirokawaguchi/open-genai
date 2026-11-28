@@ -252,7 +252,7 @@ def test_mcp_citations_from_payload():
     )
     assert cites[0]["display_name"].startswith("規程.pdf")
     assert "共有ナレッジ" in cites[0]["display_name"]
-    assert "未ソース" in cites[0]["display_name"]
+    assert "未ソース" not in cites[0]["display_name"]
 
 
 def test_mcp_seed_connect_and_session_toggle(tmp_path, monkeypatch):
@@ -282,12 +282,19 @@ def test_mcp_seed_connect_and_session_toggle(tmp_path, monkeypatch):
     detail = store.get_session(sid, "u1")
     assert detail is not None
     weather = next(m for m in detail["mcps"] if m["catalog_id"] == "weather")
+    assert weather["connected"] is True
     assert weather["enabled"] is True
     detail = store.update_session(sid, "u1", mcp_enabled={weather["id"]: False})
+    weather = next(m for m in detail["mcps"] if m["catalog_id"] == "weather")
+    assert weather["enabled"] is True
+    store.update_mcp(weather["id"], "u1", connected=False)
+    detail = store.get_session(sid, "u1")
+    assert detail is not None
     weather = next(m for m in detail["mcps"] if m["catalog_id"] == "weather")
     assert weather["enabled"] is False
     enabled = {m["catalog_id"] for m in store.enabled_session_mcps(sid, "u1")}
     assert "weather" not in enabled
+    assert "clock" not in enabled
     assert "web_search" in enabled
 
 
@@ -312,8 +319,16 @@ def test_sample_clock_and_allowed_tools():
     assert allowed == [
         "search_sources",
         "get_current_time",
-        "propose_drafts",
-        "open_editor",
+        "set_goal",
+        "commit_items",
+        "ask_user",
+        "write_manuscript",
+        "fact_check",
+        "revise_manuscript",
+        "deliver",
+        "open_draft",
+        "write_office_draft",
+        "propose_schedule",
     ]
     assert extras == []
 
@@ -526,11 +541,11 @@ def test_harness_pins_designated_answers(tmp_path, monkeypatch):
     assert "合わせました" in answer
 
 
-def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_path, monkeypatch):
+def test_agent_writes_items_and_delivers_the_goal(tmp_path, monkeypatch):
     monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
     store._db = None
     store.init_db()
-    sid = store.create_session(user_id="u1")["id"]
+    sid = store.create_session(user_id="u1", title="評価書")["id"]
     _add_note(sid, "仕様書.pdf", "背景", "現行は紙である")
     replies = [
         {
@@ -539,7 +554,10 @@ def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_pa
             "tool_calls": [
                 {
                     "id": "c1",
-                    "function": {"name": "search_sources", "arguments": {"query": "背景"}},
+                    "function": {
+                        "name": "set_goal",
+                        "arguments": {"goal": "監査資料から評価書を作る"},
+                    },
                 }
             ],
         },
@@ -549,15 +567,39 @@ def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_pa
             "tool_calls": [
                 {
                     "id": "c2",
+                    "function": {"name": "search_sources", "arguments": {"query": "背景"}},
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c3",
                     "function": {
-                        "name": "propose_drafts",
+                        "name": "write_manuscript",
                         "arguments": {
+                            "form": "document",
                             "chapters": [
-                                {
-                                    "label": "背景",
-                                    "value": "現行は紙である [1]。",
-                                    "citations": [1],
-                                }
+                                {"label": "背景", "value": "現行は紙である。"},
+                            ],
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c4",
+                    "function": {
+                        "name": "fact_check",
+                        "arguments": {
+                            "findings": [
+                                {"claim": "現行は紙である", "status": "supported"}
                             ]
                         },
                     },
@@ -568,16 +610,35 @@ def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_pa
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "c3", "function": {"name": "open_editor", "arguments": {}}}
+                {
+                    "id": "c5",
+                    "function": {
+                        "name": "revise_manuscript",
+                        "arguments": {
+                            "chapters": [
+                                {"label": "背景", "value": "現行の手続きは紙です。"},
+                            ]
+                        },
+                    },
+                }
             ],
         },
-        {"role": "assistant", "content": "# 背景\n現行は紙である [1]。"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c6", "function": {"name": "deliver", "arguments": {}}}
+            ],
+        },
+        {"role": "assistant", "content": "評価書の原稿を書きました。"},
     ]
 
     async def fake_chat(messages, temperature=0.2, tools=None):
         names = [t["function"]["name"] for t in (tools or [])]
-        assert "propose_drafts" in names
-        assert "open_editor" in names
+        assert "set_goal" in names
+        assert "commit_items" in names
+        assert "deliver" in names
+        assert "propose_drafts" not in names
         return replies.pop(0)
 
     monkeypatch.setattr("app.llm.chat_completion", fake_chat)
@@ -586,15 +647,23 @@ def test_propose_drafts_stays_uncommitted_and_open_editor_does_not_create(tmp_pa
             session_id=sid,
             user_id="u1",
             scope="team-1",
-            question="仕様の下書きを置いて、エディタで開いて",
+            question="監査の評価書を作って",
             history=[],
         )
     )
     detail = store.get_session(sid, "u1")
+    assert detail["instruction"] == "監査資料から評価書を作る"
     assert detail["items"] == []
-    assert [t["name"] for t in traces] == ["search_sources", "propose_drafts", "open_editor"]
-    assert drafts[0]["label"] == "背景"
-    assert "紙" in drafts[0]["value"]
-    assert drafts[0]["citations"][0]["display_name"].startswith("仕様書.pdf")
+    assert detail["manuscript"]["chapters"][0]["label"] == "背景"
+    assert "紙" in detail["manuscript"]["chapters"][0]["value"]
+    assert drafts == []
     assert open_editor is True
-    assert "背景" in answer
+    assert [t["name"] for t in traces] == [
+        "set_goal",
+        "search_sources",
+        "write_manuscript",
+        "fact_check",
+        "revise_manuscript",
+        "deliver",
+    ]
+    assert "評価書" in answer

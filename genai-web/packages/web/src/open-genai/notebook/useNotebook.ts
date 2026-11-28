@@ -9,7 +9,6 @@ import type {
   NotebookMcp,
   NotebookSessionDetail,
   NotebookSessionSummary,
-  NotebookSkill,
 } from './types';
 
 const BASE = 'notebook';
@@ -102,23 +101,6 @@ export const useNotebookMcps = () => {
   };
 };
 
-export const useNotebookSkills = () => {
-  const { data, error, isLoading, mutate } = useSWR<{
-    skills: NotebookSkill[];
-    tools?: string[];
-  }>(`${BASE}/skills`, teamApiFetcher, {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
-  });
-  return {
-    skills: data?.skills ?? [],
-    toolNames: data?.tools ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, 'AIタイプ一覧の取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
 export const useNotebookSession = (sessionId: string | null) => {
   const key = sessionId ? `${BASE}/sessions/${encodeURIComponent(sessionId)}` : null;
   const { data, error, isLoading, mutate } = useSWR<NotebookSessionDetail>(key, teamApiFetcher, {
@@ -133,8 +115,33 @@ export const useNotebookSession = (sessionId: string | null) => {
   };
 };
 
+const watchSteps = (
+  sessionId: string,
+  turnId: string,
+  onSteps: (steps: string[]) => void,
+) => {
+  let stopped = false;
+  const pull = async () => {
+    try {
+      const res = await teamApi.get<{ steps?: string[] }>(
+        `${BASE}/sessions/${encodeURIComponent(sessionId)}/activity?turn=${encodeURIComponent(turnId)}`,
+      );
+      if (!stopped) onSteps(res.data?.steps ?? []);
+    } catch {
+      // 途中経過が取れなくても、回答そのものは待つ。
+    }
+  };
+  void pull();
+  const timer = window.setInterval(() => void pull(), 1000);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
+};
+
 export const useNotebookActions = () => {
   const [submitting, setSubmitting] = useState(false);
+  const [liveSteps, setLiveSteps] = useState<string[]>([]);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,7 +167,16 @@ export const useNotebookActions = () => {
   const updateSession = useCallback(
     async (
       sessionId: string,
-      body: { title?: string; instruction?: string; mcps?: { id: string; enabled: boolean }[] },
+      body: {
+        title?: string;
+        instruction?: string;
+        editor_project_id?: string;
+        manuscript_path?: string;
+        office_file?: string;
+        office_ref?: string;
+        slide_compose?: string;
+        mcps?: { id: string; enabled: boolean }[];
+      },
     ): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
@@ -191,6 +207,23 @@ export const useNotebookActions = () => {
     }
   }, []);
 
+  const clipMessage = useCallback(
+    async (sessionId: string, messageId: string): Promise<NotebookSessionDetail | null> => {
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/clip`,
+          {},
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'クリップに残せませんでした。'));
+        return null;
+      }
+    },
+    [],
+  );
+
   const addItem = useCallback(async (sessionId: string): Promise<NotebookSessionDetail | null> => {
     setError(null);
     try {
@@ -200,7 +233,7 @@ export const useNotebookActions = () => {
       );
       return res.data ?? null;
     } catch (e) {
-      setError(errorMessage(e, '項目の追加に失敗しました。'));
+      setError(errorMessage(e, 'クリップの追加に失敗しました。'));
       return null;
     }
   }, []);
@@ -219,7 +252,7 @@ export const useNotebookActions = () => {
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '項目の更新に失敗しました。'));
+        setError(errorMessage(e, 'クリップの更新に失敗しました。'));
         return null;
       }
     },
@@ -235,7 +268,7 @@ export const useNotebookActions = () => {
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '項目の削除に失敗しました。'));
+        setError(errorMessage(e, 'クリップの削除に失敗しました。'));
         return null;
       }
     },
@@ -247,13 +280,18 @@ export const useNotebookActions = () => {
       sessionId: string,
       filename: string,
       content: string,
+      options?: { describe?: boolean },
     ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/files`,
-          { filename, content },
+          {
+            filename,
+            content,
+            ...(options?.describe === false ? { describe: false } : {}),
+          },
         );
         return res.data ?? null;
       } catch (e) {
@@ -360,51 +398,58 @@ export const useNotebookActions = () => {
     [],
   );
 
-  const chat = useCallback(
-    async (
-      sessionId: string,
-      question: string,
-      skillId?: string,
-      sourceIds?: string[],
-    ): Promise<NotebookSessionDetail | null> => {
+  const retryChat = useCallback(
+    async (sessionId: string): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
+      setLiveSteps([]);
+      const turnId = crypto.randomUUID();
+      const stop = watchSteps(sessionId, turnId, setLiveSteps);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
-          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
-          {
-            question,
-            skill_id: skillId || undefined,
-            source_ids: sourceIds && sourceIds.length > 0 ? sourceIds : undefined,
-          },
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat/retry`,
+          { turn_id: turnId },
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '対話に失敗しました。'));
+        setError(errorMessage(e, '回答を作り直せませんでした。'));
         return null;
       } finally {
+        stop();
+        setLiveSteps([]);
         setSubmitting(false);
       }
     },
     [],
   );
 
-  const createSkill = useCallback(
-    async (body: {
-      name: string;
-      personality?: string;
-      instructions?: string;
-      tools?: string[];
-    }): Promise<NotebookSkill | null> => {
+  const chat = useCallback(
+    async (
+      sessionId: string,
+      question: string,
+      sourceIds?: string[],
+    ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
+      setLiveSteps([]);
+      const turnId = crypto.randomUUID();
+      const stop = watchSteps(sessionId, turnId, setLiveSteps);
       try {
-        const res = await teamApi.post<NotebookSkill>(`${BASE}/skills`, body);
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
+          {
+            question,
+            turn_id: turnId,
+            source_ids: sourceIds && sourceIds.length > 0 ? sourceIds : undefined,
+          },
+        );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, 'AIタイプの作成に失敗しました。'));
+        setError(errorMessage(e, '送信に失敗しました。'));
         return null;
       } finally {
+        stop();
+        setLiveSteps([]);
         setSubmitting(false);
       }
     },
@@ -462,19 +507,44 @@ export const useNotebookActions = () => {
     }
   }, []);
 
-  const deleteSkill = useCallback(async (skillId: string): Promise<boolean> => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      await teamApi.delete(`${BASE}/skills/${encodeURIComponent(skillId)}`);
-      return true;
-    } catch (e) {
-      setError(errorMessage(e, 'AIタイプの削除に失敗しました。'));
-      return false;
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
+  const confirmSchedule = useCallback(
+    async (sessionId: string): Promise<{ detail: NotebookSessionDetail | null; error: string }> => {
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/schedule`,
+          {},
+        );
+        return {
+          detail: res.data ?? null,
+          error: res.data ? '' : '案件を作れませんでした。招待は送っていません。',
+        };
+      } catch (e) {
+        return {
+          detail: null,
+          error: errorMessage(e, '案件を作れませんでした。招待は送っていません。'),
+        };
+      }
+    },
+    [],
+  );
+
+  const dismissSchedule = useCallback(
+    async (sessionId: string): Promise<{ detail: NotebookSessionDetail | null; error: string }> => {
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/schedule/dismiss`,
+          {},
+        );
+        return {
+          detail: res.data ?? null,
+          error: res.data ? '' : '候補を消せませんでした。',
+        };
+      } catch (e) {
+        return { detail: null, error: errorMessage(e, '候補を消せませんでした。') };
+      }
+    },
+    [],
+  );
 
   const generateItem = useCallback(
     async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
@@ -501,6 +571,7 @@ export const useNotebookActions = () => {
     updateSession,
     deleteSession,
     addItem,
+    clipMessage,
     updateItem,
     deleteItem,
     addFile,
@@ -509,12 +580,14 @@ export const useNotebookActions = () => {
     addKnowledgeRefs,
     deleteKnowledgeRef,
     chat,
-    createSkill,
-    deleteSkill,
+    retryChat,
+    liveSteps,
     updateMcp,
     createMcp,
     deleteMcp,
     generateItem,
+    confirmSchedule,
+    dismissSchedule,
     submitting,
     generatingId,
     error,
@@ -525,12 +598,14 @@ export const useNotebookActions = () => {
 export const openNotebookInEditor = async (
   sessionId: string,
   body: { mode: 'new' | 'existing'; name?: string; project_id?: string },
-): Promise<{ project_id: string; request_id: string }> => {
-  const res = await teamApi.post<{ project_id: string; request_id: string }>(
-    `${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`,
-    body,
-  );
-  if (!res.data?.project_id || !res.data.request_id) {
+): Promise<{ project_id: string; request_id?: string; ready?: boolean; file?: string }> => {
+  const res = await teamApi.post<{
+    project_id: string;
+    request_id?: string;
+    ready?: boolean;
+    file?: string;
+  }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`, body);
+  if (!res.data?.project_id || (!res.data.ready && !res.data.request_id)) {
     throw new ApiError(502, { error: '編集画面を開けませんでした。' });
   }
   return res.data;

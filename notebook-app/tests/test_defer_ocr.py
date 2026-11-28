@@ -41,6 +41,29 @@ def test_update_file_replaces_body(tmp_path, monkeypatch):
     assert store.update_file(sid, "other", "f1", error="x") is False
 
 
+def test_processing_file_is_not_searchable_and_restart_fails_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEARING_DB_PATH", str(tmp_path / "hearing.db"))
+    store._db = None
+    store.init_db()
+    created = store.create_session(user_id="u1")
+    sid = created["id"]
+    store.add_file(
+        sid,
+        "u1",
+        filename="big.pdf",
+        raw=b"%PDF",
+        nodes=[{"title": "途中", "text": "まだ", "source": "big.pdf"}],
+        briefing={"ingest": "processing"},
+        file_id="f2",
+    )
+    assert store.list_material_nodes(sid, "u1") == []
+    store.fail_interrupted_ingests()
+    detail = store.get_session(sid, "u1")
+    failed = detail["files"][0]
+    assert failed["briefing"].get("ingest") is None
+    assert "中断" in (failed["error"] or "")
+
+
 def test_text_file_needs_no_ocr(tmp_path):
     pages, pending = extract.extract_text_pages("note.txt", b"hello world")
     assert pending is False

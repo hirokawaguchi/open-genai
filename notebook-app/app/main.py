@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import re
 import sys
@@ -18,7 +19,8 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import extract, ground, harness, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools
+from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, preview, retrieve, schedule, store, structure, tools, vision
+from .agent_session import HermesUnavailable, PoolFull, SessionKey, pool as agent_pool
 
 for parent in Path(__file__).resolve().parents:
     if (parent / "shared" / "navsheet.py").exists():
@@ -29,7 +31,7 @@ from shared.navsheet import NavRow, NavSheet, empty_workbook, write_workbook  # 
 
 API_KEY = os.environ.get("RAG_API_KEY", "local-rag-key")
 RETENTION_DAYS = int(os.environ.get("HEARING_RETENTION_DAYS", "30"))
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_DOC_BYTES", str(20 * 1024 * 1024)))
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_DOC_BYTES", str(100 * 1024 * 1024)))
 
 app = FastAPI(title="Open GENAI Notebook", version="0.2.0")
 
@@ -108,6 +110,8 @@ def _cleanup_loop() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     store.init_db()
+    # 再起動で消えた読み取りタスクは、画面に残さない。
+    store.fail_interrupted_ingests()
     t = threading.Thread(target=_cleanup_loop, name="hearing-cleanup", daemon=True)
     t.start()
 
@@ -134,6 +138,7 @@ def get_config(request: Request) -> JSONResponse:
                 "base_url": llm.OPENAI_BASE_URL,
             },
             "ocr": ocr.status(),
+            "vision": {"enabled": vision.enabled(), "model": vision.model_name()},
             "tools": list(tools.ALL_TOOL_NAMES),
             "mcp": {
                 "knowledge": {
@@ -222,11 +227,75 @@ async def put_session(session_id: str, request: Request) -> JSONResponse:
         uid,
         title=body.get("title") if "title" in body else None,
         instruction=body.get("instruction") if "instruction" in body else None,
+        editor_project_id=body.get("editor_project_id")
+        if "editor_project_id" in body
+        else None,
+        manuscript_path=body.get("manuscript_path")
+        if "manuscript_path" in body
+        else None,
+        office_file=body.get("office_file") if "office_file" in body else None,
+        office_ref=body.get("office_ref") if "office_ref" in body else None,
+        slide_compose=body.get("slide_compose") if "slide_compose" in body else None,
         mcp_enabled=mcp_enabled,
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     return JSONResponse(content=detail)
+
+
+@app.post("/sessions/{session_id}/schedule")
+async def create_schedule(session_id: str, request: Request) -> JSONResponse:
+    """画面で確認された候補から、日程調整の案件を1件作る。招待は送らない。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail = store.get_session(session_id, uid)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    proposal = detail.get("schedule") or {}
+    if not isinstance(proposal, dict) or proposal.get("status") != "proposed":
+        return JSONResponse(status_code=400, content={"error": "確認できる候補がありません。"})
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower().startswith("x-")
+    }
+    event_id, failed = await schedule.create_event(headers, proposal)
+    if failed or not event_id:
+        return JSONResponse(
+            status_code=503,
+            content={"error": failed or "案件を作れませんでした。招待は送っていません。"},
+        )
+    saved = store.set_schedule(
+        session_id,
+        uid,
+        {**proposal, "status": "created", "event_id": event_id},
+    )
+    if not saved or (saved.get("schedule") or {}).get("event_id") != event_id:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "案件は作れましたが、ノートへ記録できませんでした。"},
+        )
+    return JSONResponse(content=saved)
+
+
+@app.post("/sessions/{session_id}/schedule/dismiss")
+def dismiss_schedule(session_id: str, request: Request) -> JSONResponse:
+    """まだ作っていない候補を消す。作った案件は削除しない。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail = store.get_session(session_id, uid)
+    proposal = (detail or {}).get("schedule") or {}
+    if isinstance(proposal, dict) and proposal.get("status") == "created":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "作った案件はここから削除できません。"},
+        )
+    saved = store.set_schedule(session_id, uid, None)
+    if not saved:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=saved)
 
 
 @app.delete("/sessions/{session_id}")
@@ -237,6 +306,20 @@ def delete_session(session_id: str, request: Request) -> JSONResponse:
     if not store.delete_session(session_id, uid):
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/sessions/{session_id}/messages/{message_id}/clip")
+async def clip_message(session_id: str, message_id: str, request: Request) -> JSONResponse:
+    """回答をクリップへ転記する。同じ回答は1件のまま更新する。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail, error = store.clip_message(session_id, uid, message_id)
+    if error == "見つかりません" or detail is None:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    if error:
+        return JSONResponse(status_code=400, content={"error": error})
+    return JSONResponse(content=detail)
 
 
 @app.post("/sessions/{session_id}/items")
@@ -300,47 +383,50 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001
         return JSONResponse(status_code=400, content={"error": "ファイルの復号に失敗しました"})
     if len(raw) > MAX_UPLOAD_BYTES:
-        return JSONResponse(status_code=400, content={"error": "ファイルが大きすぎます"})
+        limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"ファイルが大きすぎます。{limit_mb}MB までにしてください。"},
+        )
     if not extract.allowed_name(filename):
         return JSONResponse(
             status_code=400,
             content={"error": f"未対応の形式です: {filename}"},
         )
     tenant_id = request.headers.get("x-tenant-id")
-    error = ""
-    nodes: list[dict] = []
-    briefing: dict = {}
-    base_pages: list[dict] = []
-    ocr_pending = False
-    try:
-        # 本文抽出までで登録を受け付ける。スキャン PDF の OCR は応答のあとに回す。
-        base_pages, ocr_pending = extract.extract_text_pages(filename, raw)
-        if any(str(p.get("text") or "").strip() for p in base_pages):
-            nodes, briefing = await _build_file_briefing(filename, base_pages, tenant_id)
-        if ocr_pending:
-            # 画面に「読み取り中」を出すための印。OCR 完了後に消える。
-            briefing = dict(briefing)
-            briefing["ocr_pending"] = True
-    except extract.DocExtractError as e:
-        error = str(e)
     file_id = str(uuid.uuid4())
+    if extract.is_image_name(filename):
+        detail = store.add_file(
+            session_id,
+            uid,
+            filename=filename,
+            raw=raw,
+            error="",
+            nodes=[],
+            briefing={"kind": "image", "ingest": "processing"},
+            file_id=file_id,
+        )
+        if not detail:
+            return JSONResponse(status_code=404, content={"error": "見つかりません"})
+        want_description = body.get("describe") is not False and vision.enabled()
+        asyncio.create_task(
+            _finish_image(session_id, uid, file_id, filename, raw, want_description)
+        )
+        return JSONResponse(content=detail)
+    # 本文抽出は待たない。参考資料の件数は、読み取りが終わってから増える。
     detail = store.add_file(
         session_id,
         uid,
         filename=filename,
         raw=raw,
-        error=error,
-        nodes=nodes,
-        briefing=briefing,
+        error="",
+        nodes=[],
+        briefing={"ingest": "processing"},
         file_id=file_id,
     )
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
-    if ocr_pending and not error:
-        # OCR と再要約は応答のあとで。画面は完了後に本文更新を拾う。
-        asyncio.create_task(
-            _finish_file_ocr(session_id, uid, file_id, filename, raw, base_pages, tenant_id)
-        )
+    asyncio.create_task(_ingest_file(session_id, uid, file_id, filename, raw, tenant_id))
     return JSONResponse(content=detail)
 
 
@@ -360,51 +446,160 @@ async def _build_file_briefing(
     return nodes, briefing
 
 
-async def _finish_file_ocr(
+def _pages_have_text(pages: list[dict]) -> bool:
+    return any(str(p.get("text") or "").strip() for p in pages)
+
+
+def _image_media(filename: str) -> str:
+    name = filename.lower()
+    if name.endswith(".jpg") or name.endswith(".jpeg"):
+        return "image/jpeg"
+    if name.endswith(".webp"):
+        return "image/webp"
+    if name.endswith(".gif"):
+        return "image/gif"
+    return "image/png"
+
+
+async def _finish_image(
     session_id: str,
     uid: str,
     file_id: str,
     filename: str,
     raw: bytes,
-    base_pages: list[dict],
+    describe: bool,
+) -> None:
+    """画像はそのまま残し、画像対応モデルが有効なときだけ説明文を足す。"""
+    described = False
+    if describe:
+        text = await vision.describe_image(raw, media=_image_media(filename))
+        if text.strip():
+            note = f"# 画像の説明\n\n{text.strip()}\n"
+            note_name = vision.description_name(filename)
+            note_id = str(uuid.uuid4())
+            saved = store.add_file(
+                session_id,
+                uid,
+                filename=note_name,
+                raw=note.encode("utf-8"),
+                error="",
+                nodes=[],
+                briefing={"ingest": "processing"},
+                file_id=note_id,
+            )
+            if saved:
+                await _ingest_file(
+                    session_id, uid, note_id, note_name, note.encode("utf-8"), None
+                )
+                described = True
+    store.update_file(
+        session_id,
+        uid,
+        file_id,
+        briefing={"kind": "image", "ingest": "done", "described": described},
+        error="",
+    )
+
+
+async def _ingest_file(
+    session_id: str,
+    uid: str,
+    file_id: str,
+    filename: str,
+    raw: bytes,
     tenant_id: str | None,
 ) -> None:
-    """登録のあとに OCR を回し、本文（nodes/briefing）を更新する。"""
+    """受け付けたファイルの本文抽出・OCR・要約を、応答のあとで行う。"""
+    loop = asyncio.get_running_loop()
     try:
-        loop = asyncio.get_running_loop()
-        pages = await loop.run_in_executor(
-            None, lambda: extract.run_ocr(filename, raw, base_pages)
+        base_pages, ocr_pending = await loop.run_in_executor(
+            None, lambda: extract.extract_text_pages(filename, raw)
         )
-        if any(str(p.get("text") or "").strip() for p in pages):
-            nodes, briefing = await _build_file_briefing(filename, pages, tenant_id)
-            store.update_file(
-                session_id, uid, file_id, nodes=nodes, briefing=briefing, error=""
+    except extract.DocExtractError as e:
+        store.update_file(session_id, uid, file_id, briefing={}, error=str(e))
+        return
+    except Exception as e:  # noqa: BLE001
+        print(f"[notebook] 本文抽出に失敗: {e}")
+        store.update_file(session_id, uid, file_id, briefing={}, error="読み取りに失敗しました")
+        return
+
+    pages = base_pages
+    if ocr_pending:
+        if not store.update_file(
+            session_id,
+            uid,
+            file_id,
+            briefing={"ingest": "processing", "ocr_pending": True},
+            error="",
+        ):
+            return
+        try:
+            pages = await loop.run_in_executor(
+                None, lambda: extract.run_ocr(filename, raw, base_pages)
             )
-        elif not any(str(p.get("text") or "").strip() for p in base_pages):
-            # 文字が 1 つも取れなかった（スキャン画質など）。読み取り中を終わらせる。
-            store.update_file(
-                session_id,
-                uid,
-                file_id,
-                briefing={},
-                error=f"{filename} からテキストを抽出できませんでした",
-            )
-        else:
-            # 元から取れていた本文で確定（ocr_pending の印だけ外す）。
-            nodes, briefing = await _build_file_briefing(filename, base_pages, tenant_id)
-            store.update_file(
-                session_id, uid, file_id, nodes=nodes, briefing=briefing, error=""
-            )
-    except Exception as e:  # noqa: BLE001 - OCR 失敗で登録自体は残す
-        print(f"[notebook] OCR 後処理に失敗: {e}")
-        if not any(str(p.get("text") or "").strip() for p in base_pages):
-            store.update_file(
-                session_id,
-                uid,
-                file_id,
-                briefing={},
-                error="OCR に失敗しました",
-            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[notebook] OCR に失敗: {e}")
+            if not _pages_have_text(base_pages):
+                store.update_file(
+                    session_id, uid, file_id, briefing={}, error="OCR に失敗しました"
+                )
+                return
+            pages = base_pages
+
+    if not _pages_have_text(pages):
+        store.update_file(
+            session_id,
+            uid,
+            file_id,
+            briefing={},
+            error=f"{filename} からテキストを抽出できませんでした",
+        )
+        return
+    try:
+        nodes, briefing = await _build_file_briefing(filename, pages, tenant_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[notebook] 要約に失敗: {e}")
+        store.update_file(session_id, uid, file_id, briefing={}, error="読み取りに失敗しました")
+        return
+    store.update_file(session_id, uid, file_id, nodes=nodes, briefing=briefing, error="")
+
+
+@app.get("/sessions/{session_id}/files/{file_id}/content")
+def file_content(session_id: str, file_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    found = store.get_file_bytes(session_id, uid, file_id)
+    if not found:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    filename, raw = found
+    return JSONResponse(
+        content={
+            "filename": filename,
+            "content": base64.b64encode(raw).decode("ascii"),
+        }
+    )
+
+
+@app.get("/sessions/{session_id}/files/{file_id}/preview")
+def file_preview(session_id: str, file_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    found = store.get_file_bytes(session_id, uid, file_id)
+    if not found:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    filename, raw = found
+    try:
+        body = preview.office_preview(filename, raw)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        print(f"[notebook] プレビューに失敗: {exc}")
+        return JSONResponse(status_code=400, content={"error": "このファイルは画面では表示できません。"})
+    if body is None:
+        return JSONResponse(status_code=400, content={"error": "この形式は画面では表示できません。"})
+    return JSONResponse(content=body)
 
 
 @app.delete("/sessions/{session_id}/files/{file_id}")
@@ -628,6 +823,18 @@ def remove_skill(skill_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.get("/sessions/{session_id}/activity")
+async def session_activity(session_id: str, request: Request) -> JSONResponse:
+    """生成中に使った道具の名前。待ち画面が短い間隔で読む。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not store.owns_session(session_id, uid):
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    turn_id = str(request.query_params.get("turn") or "")
+    return JSONResponse(content={"steps": activity.snapshot(session_id, turn_id)})
+
+
 @app.post("/sessions/{session_id}/chat")
 async def chat(session_id: str, request: Request) -> JSONResponse:
     err, uid = _auth(request)
@@ -642,12 +849,6 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     detail = store.get_session(session_id, uid)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
-    skill = None
-    skill_id = str(body.get("skill_id") or "").strip()
-    if skill_id:
-        skill = store.get_skill(skill_id, uid)
-        if not skill:
-            return JSONResponse(status_code=404, content={"error": "スキルが見つかりません"})
     raw_ids = body.get("source_ids")
     requested: list[str] = []
     if isinstance(raw_ids, list):
@@ -674,10 +875,124 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     designated, ref_error = harness.resolve_answer_refs(question, history)
     if ref_error:
         return JSONResponse(status_code=400, content={"error": ref_error})
+    activity.begin(session_id, str(body.get("turn_id") or ""))
     store.add_message(
         session_id, uid, role="user", content=question, source_labels=labels
     )
+    return await _generate_reply(
+        session_id=session_id,
+        uid=uid,
+        request=request,
+        detail=detail,
+        question=question,
+        history=history,
+        labels=labels,
+        scoped=scoped,
+        designated=designated,
+    )
+
+
+@app.post("/sessions/{session_id}/chat/retry")
+async def retry_chat(session_id: str, request: Request) -> JSONResponse:
+    """直前の質問で、最後の回答だけを作り直す。質問の吹き出しは増やさない。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not llm.LLM_ENABLED:
+        return JSONResponse(status_code=503, content={"error": "LLM が無効です"})
+    detail = store.get_session(session_id, uid)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    messages = list(detail.get("messages") or [])
+    if not messages or messages[-1].get("role") != "assistant":
+        return JSONResponse(status_code=400, content={"error": "作り直す回答がありません"})
+    user_idx = next(
+        (
+            i
+            for i in range(len(messages) - 2, -1, -1)
+            if messages[i].get("role") == "user"
+        ),
+        None,
+    )
+    if user_idx is None:
+        return JSONResponse(status_code=400, content={"error": "作り直す質問がありません"})
+    question = str(messages[user_idx].get("content") or "").strip()
+    if not question:
+        return JSONResponse(status_code=400, content={"error": "作り直す質問がありません"})
+    labels = [
+        str(item).strip()
+        for item in (messages[user_idx].get("source_labels") or [])
+        if str(item).strip()
+    ]
+    history = messages[:user_idx]
+    designated, ref_error = harness.resolve_answer_refs(question, history)
+    if ref_error:
+        return JSONResponse(status_code=400, content={"error": ref_error})
+    previous = messages[-1]
+    try:
+        retry_body = await request.json()
+    except Exception:  # noqa: BLE001
+        retry_body = {}
+    if not isinstance(retry_body, dict):
+        retry_body = {}
+    activity.begin(session_id, str(retry_body.get("turn_id") or ""))
+    if not store.delete_message(session_id, uid, str(previous.get("id") or "")):
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    response = await _generate_reply(
+        session_id=session_id,
+        uid=uid,
+        request=request,
+        detail=detail,
+        question=question,
+        history=history,
+        labels=labels,
+        scoped=None,
+        designated=designated,
+    )
+    if response.status_code >= 400:
+        store.add_message(
+            session_id,
+            uid,
+            role="assistant",
+            content=str(previous.get("content") or ""),
+            citations=list(previous.get("citations") or []),
+            tool_trace=list(previous.get("tool_trace") or []),
+            drafts=list(previous.get("drafts") or []),
+            open_editor=bool(previous.get("open_editor")),
+        )
+    return response
+
+
+async def _generate_reply(
+    *,
+    session_id: str,
+    uid: str,
+    request: Request,
+    detail: dict,
+    question: str,
+    history: list,
+    labels: list[str],
+    scoped: list[str] | None,
+    designated: list,
+) -> JSONResponse:
     scope = (request.headers.get("x-scope") or "").strip()
+    forward = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower().startswith("x-")
+    }
+    try:
+        agent_pool.acquire(
+            SessionKey(
+                tenant=(request.headers.get("x-tenant-id") or "").strip(),
+                team=scope,
+                user=uid,
+            )
+        )
+    except PoolFull as e:
+        return JSONResponse(status_code=409, content={"error": str(e)})
+    except HermesUnavailable as e:
+        return JSONResponse(status_code=503, content={"error": str(e)})
     try:
         answer, cites, traces, drafts, open_editor = await harness.run(
             session_id=session_id,
@@ -686,10 +1001,10 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
             question=question,
             history=history,
             instruction=str(detail.get("instruction") or ""),
-            skill=skill,
             source_ids=scoped,
             source_labels=labels,
             designated_answers=designated,
+            forward_headers=forward,
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -708,6 +1023,32 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
         open_editor=open_editor,
     )
     return JSONResponse(content=detail)
+
+
+@app.post("/internal/mcp")
+async def internal_mcp(request: Request) -> Response:
+    """Hermes コンテナから、今のターンの道具だけを呼ぶ。"""
+    if (request.headers.get("x-api-key") or "") != API_KEY:
+        return JSONResponse(status_code=401, content={"error": "invalid api key"})
+    raw = await request.body()
+    if not raw:
+        return Response(status_code=202)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": "parse error"},
+            },
+        )
+    token = (request.headers.get("x-notebook-turn") or "").strip()
+    result = await hermes_mcp.handle(payload, token)
+    if result is None:
+        return Response(status_code=202)
+    return JSONResponse(result)
 
 
 @app.get("/sessions/{session_id}/download")

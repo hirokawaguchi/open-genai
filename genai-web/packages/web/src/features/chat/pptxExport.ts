@@ -25,6 +25,35 @@ export const slideCountRequested = (instruction: string): number | null => {
 export const countSlideHeadings = (markdown: string): number =>
   markdown.split('\n').filter((line) => /^##\s+\S/.test(line.trim())).length;
 
+/** 整理済みの章を、文書の合成が読む題名と見出しの並びに揃える。 */
+export const documentMarkdown = (
+  title: string,
+  chapters: { label: string; value: string }[],
+  existing?: string,
+): string => {
+  const head = `# ${(title || '文書').trim() || '文書'}`;
+  const body =
+    (existing || '').trim() ||
+    chapters
+      .filter((chapter) => chapter.label.trim() && chapter.value.trim())
+      .map((chapter) => `## ${chapter.label.trim()}\n\n${chapter.value.trim()}`)
+      .join('\n\n');
+  return body ? `${head}\n\n${body}\n` : `${head}\n`;
+};
+
+/** 整理済みの章を、チャットのスライド合成が読む題名と「##」の並びに揃える。 */
+export const slideDeckMarkdown = (
+  title: string,
+  chapters: { label: string; value: string }[],
+): string => {
+  const head = `# ${(title || 'スライド').trim() || 'スライド'}`;
+  const body = chapters
+    .filter((chapter) => chapter.label.trim() && chapter.value.trim())
+    .map((chapter) => `## ${chapter.label.trim()}\n\n${chapter.value.trim()}`)
+    .join('\n\n');
+  return body ? `${head}\n\n${body}\n` : `${head}\n`;
+};
+
 /** 先頭の `# 題名` を表紙に使い、残りを各スライドの原稿にする。 */
 export const splitDeckTitle = (markdown: string): { title: string; body: string } => {
   const text = markdown.trim();
@@ -135,19 +164,25 @@ export const startPptxCompose = async (
   assets: Record<string, string>,
   title: string,
   instruction: string,
+  format: 'pptx' | 'docx' = 'pptx',
+  plan = true,
 ): Promise<string> => {
+  const failed =
+    format === 'docx' ? '文書の作成を開始できませんでした。' : 'スライドの作成を開始できませんでした。';
   try {
     const res = await genUApi.post<{ jobId?: string }>('procuretech-generate/compose', {
       markdown,
       assets,
       title,
       instruction,
+      format,
+      ...(plan ? {} : { plan: false }),
     });
     const jobId = res.data.jobId ?? '';
-    if (!jobId) throw new Error('スライドの作成を開始できませんでした。');
+    if (!jobId) throw new Error(failed);
     return jobId;
   } catch (error) {
-    throw new Error(errorText(error, 'スライドの作成を開始できませんでした。'));
+    throw new Error(errorText(error, failed));
   }
 };
 
