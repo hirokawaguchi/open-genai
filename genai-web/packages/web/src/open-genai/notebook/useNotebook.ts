@@ -548,12 +548,13 @@ export const useNotebookActions = () => {
 export const openNotebookInEditor = async (
   sessionId: string,
   body: { mode: 'new' | 'existing'; name?: string; project_id?: string },
-): Promise<{ project_id: string; request_id: string }> => {
-  const res = await teamApi.post<{ project_id: string; request_id: string }>(
-    `${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`,
-    body,
-  );
-  if (!res.data?.project_id || !res.data.request_id) {
+): Promise<{ project_id: string; request_id?: string; ready?: boolean }> => {
+  const res = await teamApi.post<{
+    project_id: string;
+    request_id?: string;
+    ready?: boolean;
+  }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`, body);
+  if (!res.data?.project_id || (!res.data.ready && !res.data.request_id)) {
     throw new ApiError(502, { error: '編集画面を開けませんでした。' });
   }
   return res.data;

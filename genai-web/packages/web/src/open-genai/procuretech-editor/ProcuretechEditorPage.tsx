@@ -1562,8 +1562,11 @@ export const ProcuretechEditorPage = () => {
     if (openedFromQuery.current === id) return;
     openedFromQuery.current = id;
     openProject(id);
+    const file = searchParams.get('file');
+    if (file) setSelectedPath(file);
     const next = new URLSearchParams(searchParams);
     next.delete('project');
+    next.delete('file');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 

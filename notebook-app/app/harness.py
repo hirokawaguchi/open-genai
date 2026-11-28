@@ -9,7 +9,6 @@ from typing import Any
 
 from . import activity, hermes_client, hermes_mcp, llm, retrieve, store, tools
 
-MAX_STEPS = 12
 HISTORY_LIMIT = 8
 MAX_ANSWER_REFS = 5
 ANSWER_REF_CHARS = 4000
@@ -33,6 +32,7 @@ def _system_prompt(
     source_labels: list[str],
     catalog: list[dict[str, Any]],
     designated: list[dict[str, Any]] | None = None,
+    manuscript: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         "あなたはノートの中で動くエージェントです。日本語で答えてください。",
@@ -40,12 +40,20 @@ def _system_prompt(
         "参考資料にも MCP にも無いことは断定せず、『資料から判断できない』と述べてください。",
         "あいさつ、雑談、文書を作る頼みが無い発言には、短く返すだけにしてください。道具は呼ばず、文書の話をこちらから始めません。",
         "短い資料の質問には、調べて答えるだけにしてください。ゴールも項目も、エディタへの渡しも不要です。",
-        "文書を作ってほしいと分かった発言だけを、一文のゴールにします。節の選び方と生成指示は聞きません。",
-        "ゴールがまだ無いあいだは項目を書きません。この発言で一文になるなら set_goal を呼び、同じターンで資料を調べ、commit_items で項目へ書いてください。",
-        "文書の依頼なのに、何を作るかがまだ一文にならないときだけ、ask_user で一つ聞いて止めてください。",
-        "ゴールが決まったあとは、自分で節を選び、commit_items で項目へ書いてください。",
+        "文書を作ってほしいと分かった発言だけを、一文のゴールにします。",
+        "文書かスライドかがその発言に無ければ、ask_user で一度だけ聞いて止めてください。",
+        "形が分かったら list_items でクリップを見ます。クリップの文を優先し、その行は書き換えません。足りない事実だけ資料と MCP で補います。",
+        "write_manuscript で原稿を書きます。文書は見出しと段落、スライドは見出しごとの短い箇条書きです。",
+        "原稿の主張を資料に照らして fact_check を呼びます。食い違うか、資料に無い断定があれば、そこで止まります。",
+        "すべて資料と合うときだけ revise_manuscript を呼びます。見出しは変えず足さず、言い回しと章の形だけ変えます。新しい事実は足しません。",
+        "そのあと deliver を呼びます。エディタは届いた原稿を開きます。",
+        "人が直すと答えたら、食い違った箇所だけ資料に合わせて write_manuscript をやり直し、fact_check から同じ順です。",
+        "人がこのまま開くと答えたら open_draft を呼びます。推敲はしません。",
+        "利用者は道具の英語名を書きません。日本語の依頼から、呼ぶ道具を自分で決めてください。",
+        "回答の本文には道具の英語名を書かないでください。",
+        "文書を作る依頼は、事実がすべて合うところまで進んだら、言い回しを整えてエディタで開くまで同じ応答で終えます。残りの手順を利用者に頼んで止めません。",
+        "言い回しを整える、開く、という日本語は原稿の書き直しではありません。今の見出しを保ったまま言い回しだけ変えてから開きます。",
         "そのほかの ask_user は、資料が矛盾しているときか、決まったゴールに必要な事実が資料に無いときだけです。",
-        "項目が揃ったら deliver を呼んでください。生成指示はゴールの文そのものです。別の文は作りません。",
         "docx、xlsx、pptx を残すときは write_office_draft で文書台帳の下書きにします。台帳が止まっていたら書かず、ask_user で知らせて止めてください。確定と削除はしません。",
         "ナレッジへの投入は、検索のためだけです。成果物の保管先にはしません。",
         "接続中の MCP は、資料や質問に関係するときだけ呼んでください。あいさつや雑談では呼びません。",
@@ -56,8 +64,9 @@ def _system_prompt(
     extra = (instruction or "").strip()
     if extra:
         lines.append(f"\n# ゴール\n{extra}")
-        lines.append("この文を、deliver の生成指示としてそのまま使ってください。")
+        lines.append("この文が文書のゴールです。原稿はこの内容に沿って書きます。")
         lines.append("この発言があいさつや雑談なら、ゴールも項目も変えず、短く返してください。")
+    lines.extend(_manuscript_lines(manuscript))
     if enabled_mcps:
         lines.append("\n# このノートで有効な MCP")
         for mcp in enabled_mcps:
@@ -104,6 +113,30 @@ def _system_prompt(
     if designated:
         lines.append("\n" + _designated_section(designated))
     return "\n".join(lines)
+
+
+def _manuscript_lines(manuscript: dict[str, Any] | None) -> list[str]:
+    """今の原稿の見出しを、利用者に聞き直さず使える形で渡す。"""
+    data = manuscript if isinstance(manuscript, dict) else {}
+    labels = [
+        str(chapter.get("label") or "").strip()
+        for chapter in (data.get("chapters") or [])
+        if isinstance(chapter, dict) and str(chapter.get("label") or "").strip()
+    ]
+    if not labels:
+        return []
+    form = "スライド" if data.get("form") == "slides" else "文書"
+    fact = {"clean": "資料と合っている", "hold": "食い違いがある"}.get(
+        str(data.get("fact") or ""),
+        "まだ確かめていない",
+    )
+    revised = "整え済み" if data.get("revised") else "まだ整えていない"
+    return [
+        "\n# 今の原稿",
+        f"形は{form}です。事実は{fact}。言い回しは{revised}。",
+        "見出しは次のとおりです。この順と文言を保ってください。",
+        "、".join(labels),
+    ]
 
 
 def answer_ref_numbers(text: str) -> list[int]:
@@ -359,6 +392,7 @@ async def run(
                 source_labels=labels,
                 catalog=catalog,
                 designated=designated,
+                manuscript=(store.get_session(session_id, user_id) or {}).get("manuscript"),
             ),
         },
         *_history(history, designated),
@@ -390,7 +424,7 @@ async def run(
         cites = retrieve.filter_used_citations(text, ctx.citations)
         return text, cites, traces, list(ctx.drafts), ctx.open_editor
 
-    for _step in range(MAX_STEPS):
+    while True:
         try:
             reply = await llm.chat_completion(messages, tools=openai_tools or None)
         except Exception:  # noqa: BLE001
@@ -445,7 +479,3 @@ async def run(
         text = await llm.continue_if_length(messages, reply)
         cites = retrieve.filter_used_citations(text, ctx.citations)
         return text, cites, traces, list(ctx.drafts), ctx.open_editor
-
-    if ctx.open_editor:
-        return "項目を Markdown エディタへ渡します。", [], traces, [], True
-    raise ValueError("ツール実行の上限に達しました。質問を短くしてやり直してください。")

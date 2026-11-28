@@ -14,7 +14,17 @@ import httpx
 from . import firecrawl, mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
 
 # 対話が自分で項目を書き、揃ったらエディタへ渡す。
-FLOW_TOOLS = ("set_goal", "commit_items", "ask_user", "deliver", "write_office_draft")
+FLOW_TOOLS = (
+    "set_goal",
+    "commit_items",
+    "ask_user",
+    "write_manuscript",
+    "fact_check",
+    "revise_manuscript",
+    "deliver",
+    "open_draft",
+    "write_office_draft",
+)
 _CITE_NUM = re.compile(r"\[(\d+)\]")
 
 CORE_TOOL_NAMES = mcp_catalog.CORE_TOOLS
@@ -300,16 +310,182 @@ async def _ask_user(ctx: ToolContext, args: dict[str, Any]) -> str:
     return json.dumps({"stopped": True}, ensure_ascii=False)
 
 
-def _filled_items(detail: dict[str, Any]) -> list[dict[str, Any]]:
-    out = []
-    for item in detail.get("items") or []:
-        if str(item.get("label") or "").strip() and str(item.get("value") or "").strip():
-            out.append(item)
+def _manuscript_of(detail: dict[str, Any]) -> dict[str, Any]:
+    raw = detail.get("manuscript")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _chapters(args: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for chapter in args.get("chapters") or []:
+        if not isinstance(chapter, dict):
+            continue
+        label = str(chapter.get("label") or "").strip()
+        value = str(chapter.get("value") or "").strip()
+        if label and value:
+            out.append({"label": label, "value": value})
     return out
 
 
+def _form_name(raw: str) -> str:
+    text = raw.strip()
+    if text in ("document", "文書"):
+        return "document"
+    if text in ("slides", "スライド"):
+        return "slides"
+    return ""
+
+
+def _editor_payload(detail: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(detail.get("editor_project_id") or "").strip()
+    return {
+        "open_editor": True,
+        "instruction": str(detail.get("instruction") or "").strip(),
+        "mode": "existing" if project_id else "new",
+        "name": detail.get("title") or "",
+        "project_id": project_id,
+    }
+
+
+async def _write_manuscript(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """クリップを優先した原稿を、クリップとは別の章として残す。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    if not str(detail.get("instruction") or "").strip():
+        return json.dumps(
+            {"error": "ゴールがまだありません。先に set_goal を呼んでください。"},
+            ensure_ascii=False,
+        )
+    form = _form_name(str(args.get("form") or ""))
+    if not form:
+        return json.dumps(
+            {"error": "文書かスライドかを form に指定してください。"},
+            ensure_ascii=False,
+        )
+    chapters = _chapters(args)
+    if not chapters:
+        return json.dumps(
+            {"error": "見出しと本文のある章がありません。"},
+            ensure_ascii=False,
+        )
+    saved = store.save_manuscript(
+        ctx.session_id,
+        ctx.user_id,
+        {
+            "form": form,
+            "chapters": chapters,
+            "fact": "",
+            "revised": False,
+            "findings": [],
+        },
+    )
+    if not saved:
+        return json.dumps({"error": "原稿を書けませんでした。"}, ensure_ascii=False)
+    return json.dumps(
+        {"written": [chapter["label"] for chapter in chapters], "form": form},
+        ensure_ascii=False,
+    )
+
+
+async def _fact_check(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """原稿の主張を記録する。食い違えばその文を返してターンを止める。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    manuscript = _manuscript_of(detail)
+    if not manuscript.get("chapters"):
+        return json.dumps(
+            {"error": "原稿がまだありません。先に write_manuscript を呼んでください。"},
+            ensure_ascii=False,
+        )
+    findings: list[dict[str, str]] = []
+    for item in args.get("findings") or []:
+        if not isinstance(item, dict):
+            continue
+        claim = str(item.get("claim") or "").strip()
+        status = str(item.get("status") or "").strip()
+        note = str(item.get("note") or "").strip()
+        if not claim or status not in ("supported", "missing", "contradicted"):
+            continue
+        findings.append({"claim": claim, "status": status, "note": note})
+    if not findings:
+        return json.dumps(
+            {"error": "主張と、supported、missing、contradicted のどれかが必要です。"},
+            ensure_ascii=False,
+        )
+    held = [item for item in findings if item["status"] != "supported"]
+    saved = store.save_manuscript(
+        ctx.session_id,
+        ctx.user_id,
+        {
+            "form": manuscript.get("form") or "",
+            "chapters": manuscript.get("chapters") or [],
+            "fact": "hold" if held else "clean",
+            "revised": False,
+            "findings": findings,
+        },
+    )
+    if not saved:
+        return json.dumps({"error": "確認結果を残せませんでした。"}, ensure_ascii=False)
+    if not held:
+        labels = [str(chapter.get("label") or "") for chapter in manuscript.get("chapters") or []]
+        return json.dumps({"fact": "clean", "headings": labels}, ensure_ascii=False)
+    lines = ["資料と食い違う箇所があります。"]
+    for item in held:
+        label = "資料に無い" if item["status"] == "missing" else "資料と違う"
+        extra = f"（{item['note']}）" if item["note"] else ""
+        lines.append(f"- {label}: {item['claim']}{extra}")
+    lines.append("直すか、このままエディタで開くか、選んでください。")
+    ctx.ask_text = "\n".join(lines)
+    return json.dumps({"fact": "hold", "stopped": True}, ensure_ascii=False)
+
+
+async def _revise_manuscript(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """見出しは保ったまま、言い回しと章の形だけを差し替える。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    manuscript = _manuscript_of(detail)
+    current = manuscript.get("chapters") or []
+    if not current:
+        return json.dumps(
+            {"error": "原稿がまだありません。先に write_manuscript を呼んでください。"},
+            ensure_ascii=False,
+        )
+    if manuscript.get("fact") != "clean":
+        return json.dumps(
+            {"error": "事実が合うと確認できてから、言い回しを整えてください。"},
+            ensure_ascii=False,
+        )
+    chapters = _chapters(args)
+    labels = [chapter["label"] for chapter in current]
+    if [chapter["label"] for chapter in chapters] != labels:
+        return json.dumps(
+            {
+                "error": "見出しは変えず、足さず、削らず、言い回しだけ変えてください。",
+                "headings": labels,
+            },
+            ensure_ascii=False,
+        )
+    saved = store.save_manuscript(
+        ctx.session_id,
+        ctx.user_id,
+        {
+            "form": manuscript.get("form") or "",
+            "chapters": chapters,
+            "fact": "clean",
+            "revised": True,
+            "findings": manuscript.get("findings") or [],
+        },
+    )
+    if not saved:
+        return json.dumps({"error": "原稿を整えられませんでした。"}, ensure_ascii=False)
+    return json.dumps({"revised": labels}, ensure_ascii=False)
+
+
 async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
-    """ゴールの文を生成指示として、エディタ引き渡しの合図を出す。"""
+    """事実が合い、言い回しを整えた原稿をエディタで開く。"""
     detail = store.get_session(ctx.session_id, ctx.user_id)
     if not detail:
         return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
@@ -319,25 +495,41 @@ async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
             {"error": "ゴールがまだありません。先に set_goal を呼んでください。"},
             ensure_ascii=False,
         )
-    filled = _filled_items(detail)
-    if not filled:
+    manuscript = _manuscript_of(detail)
+    if not manuscript.get("chapters"):
         return json.dumps(
-            {"error": "見出しと本文のある項目がありません。先に commit_items を呼んでください。"},
+            {"error": "原稿がまだありません。先に write_manuscript を呼んでください。"},
             ensure_ascii=False,
         )
-    project_id = str(detail.get("editor_project_id") or "").strip()
+    if manuscript.get("fact") == "hold":
+        return json.dumps(
+            {"error": "資料と食い違っています。直すか、このまま開くかを選んでください。"},
+            ensure_ascii=False,
+        )
+    if manuscript.get("fact") != "clean" or not manuscript.get("revised"):
+        return json.dumps(
+            {"error": "事実を確かめ、言い回しを整えてから開いてください。"},
+            ensure_ascii=False,
+        )
     ctx.open_editor = True
-    mode = "existing" if project_id else "new"
-    return json.dumps(
-        {
-            "open_editor": True,
-            "instruction": goal,
-            "mode": mode,
-            "name": detail.get("title") or "",
-            "project_id": project_id,
-        },
-        ensure_ascii=False,
-    )
+    return json.dumps(_editor_payload(detail), ensure_ascii=False)
+
+
+async def _open_draft(ctx: ToolContext, _args: dict[str, Any]) -> str:
+    """人がこのまま開くと選んだ原稿を、推敲せずエディタで開く。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    manuscript = _manuscript_of(detail)
+    if not manuscript.get("chapters"):
+        return json.dumps({"error": "原稿がまだありません。"}, ensure_ascii=False)
+    if manuscript.get("fact") not in ("hold", "clean"):
+        return json.dumps(
+            {"error": "先に事実を確かめてください。"},
+            ensure_ascii=False,
+        )
+    ctx.open_editor = True
+    return json.dumps(_editor_payload(detail), ensure_ascii=False)
 
 
 def _ledger_url() -> str:
@@ -562,7 +754,11 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = 
     "set_goal": _set_goal,
     "commit_items": _commit_items,
     "ask_user": _ask_user,
+    "write_manuscript": _write_manuscript,
+    "fact_check": _fact_check,
+    "revise_manuscript": _revise_manuscript,
     "deliver": _deliver,
+    "open_draft": _open_draft,
     "write_office_draft": _write_office_draft,
     "knowledge_list_tags": _knowledge_list_tags,
     "knowledge_list_docs": _knowledge_list_docs,
@@ -656,8 +852,96 @@ _SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "write_manuscript",
+            "description": "クリップの文を優先した原稿を、クリップとは別に一度書く。文書は見出しと段落、スライドは見出しごとの短い箇条書き。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "form": {
+                        "type": "string",
+                        "enum": ["document", "slides"],
+                    },
+                    "chapters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["label", "value"],
+                        },
+                    },
+                },
+                "required": ["form", "chapters"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fact_check",
+            "description": "原稿の主張が資料と合うかを記録する。食い違うか資料に無い断定があれば、そこで止まり人に選ばせる。原稿は書き換えない。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "findings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "claim": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["supported", "missing", "contradicted"],
+                                },
+                                "note": {"type": "string"},
+                            },
+                            "required": ["claim", "status"],
+                        },
+                    }
+                },
+                "required": ["findings"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "revise_manuscript",
+            "description": "事実が合った原稿の言い回しと章の形だけを整える。見出しは変えず足さず、新しい事実も足さない。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["label", "value"],
+                        },
+                    }
+                },
+                "required": ["chapters"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deliver",
-            "description": "項目が揃ったら、ゴールの文を生成指示として Markdown エディタへ渡す。",
+            "description": "事実が合い、言い回しを整えた原稿を Markdown エディタで開く。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_draft",
+            "description": "人がこのまま開くと選んだときだけ、推敲せず原稿を Markdown エディタで開く。",
             "parameters": {"type": "object", "properties": {}},
         },
     },

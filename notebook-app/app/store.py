@@ -159,6 +159,10 @@ def init_db() -> None:
             db.execute(
                 "ALTER TABLE sessions ADD COLUMN editor_project_id TEXT NOT NULL DEFAULT ''"
             )
+        if "manuscript" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN manuscript TEXT NOT NULL DEFAULT ''"
+            )
         db.commit()
 
 
@@ -230,6 +234,67 @@ def owns_session(session_id: str, user_id: str) -> bool:
         return _owned(session_id, user_id) is not None
 
 
+def _manuscript_markdown(form: str, chapters: list[dict[str, str]]) -> str:
+    parts: list[str] = []
+    for chapter in chapters:
+        label = chapter["label"]
+        value = chapter["value"]
+        if form == "slides":
+            parts.append(f"# {label}\n\n{value}")
+        else:
+            parts.append(f"## {label}\n\n{value}")
+    text = "\n\n".join(parts).strip()
+    return f"{text}\n" if text else ""
+
+
+def _public_manuscript(row: sqlite3.Row) -> dict[str, Any]:
+    raw = row["manuscript"] if "manuscript" in row.keys() else ""
+    data = _parse_json(raw, {})
+    if not isinstance(data, dict):
+        data = {}
+    chapters: list[dict[str, str]] = []
+    for chapter in data.get("chapters") or []:
+        if not isinstance(chapter, dict):
+            continue
+        label = str(chapter.get("label") or "").strip()
+        value = str(chapter.get("value") or "").strip()
+        if label and value:
+            chapters.append({"label": label, "value": value})
+    form = str(data.get("form") or "")
+    if form not in ("document", "slides"):
+        form = ""
+    fact = str(data.get("fact") or "")
+    if fact not in ("clean", "hold"):
+        fact = ""
+    findings = data.get("findings") if isinstance(data.get("findings"), list) else []
+    return {
+        "form": form,
+        "chapters": chapters,
+        "fact": fact,
+        "revised": bool(data.get("revised")),
+        "findings": findings,
+        "markdown": _manuscript_markdown(form, chapters),
+    }
+
+
+def save_manuscript(
+    session_id: str,
+    user_id: str,
+    manuscript: dict[str, Any],
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        db.execute(
+            "UPDATE sessions SET manuscript = ? WHERE id = ?",
+            (json.dumps(manuscript, ensure_ascii=False), session_id),
+        )
+        _touch(db, session_id)
+        db.commit()
+    return get_session(session_id, user_id)
+
+
 def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
     db = connect()
     with _lock:
@@ -265,6 +330,7 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         "editor_project_id": row["editor_project_id"]
         if "editor_project_id" in row.keys()
         else "",
+        "manuscript": _public_manuscript(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "items": [_public_item(i) for i in items],

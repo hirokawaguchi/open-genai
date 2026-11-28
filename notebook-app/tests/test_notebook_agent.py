@@ -66,17 +66,38 @@ def test_commit_requires_a_goal(tmp_path, monkeypatch):
     assert store.get_session(sid, "u1")["items"] == []
 
 
+def _write_checked_manuscript(ctx: tools.ToolContext) -> None:
+    asyncio.run(
+        tools.dispatch(
+            "write_manuscript",
+            {
+                "form": "document",
+                "chapters": [{"label": "結果", "value": "適合である"}],
+            },
+            ctx,
+        )
+    )
+    asyncio.run(
+        tools.dispatch(
+            "fact_check",
+            {"findings": [{"claim": "適合である", "status": "supported"}]},
+            ctx,
+        )
+    )
+    asyncio.run(
+        tools.dispatch(
+            "revise_manuscript",
+            {"chapters": [{"label": "結果", "value": "結果は適合です。"}]},
+            ctx,
+        )
+    )
+
+
 def test_goal_is_the_instruction_and_deliver_matches_it(tmp_path, monkeypatch):
     sid = _session(tmp_path, monkeypatch)
     ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
     asyncio.run(tools.dispatch("set_goal", {"goal": "監査資料から評価書を作る"}, ctx))
-    asyncio.run(
-        tools.dispatch(
-            "commit_items",
-            {"chapters": [{"label": "結果", "value": "適合である"}]},
-            ctx,
-        )
-    )
+    _write_checked_manuscript(ctx)
     blocked = json.loads(asyncio.run(tools.dispatch("deliver", {}, tools.ToolContext(
         session_id=sid, user_id="other", scope="team"
     ))))
@@ -87,6 +108,94 @@ def test_goal_is_the_instruction_and_deliver_matches_it(tmp_path, monkeypatch):
     assert opened["mode"] == "new"
     assert opened["name"] == "評価書"
     assert ctx.open_editor is True
+    assert detail["items"] == []
+    assert detail["manuscript"]["chapters"][0]["value"] == "結果は適合です。"
+
+
+def test_fact_check_stops_before_the_editor(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    asyncio.run(tools.dispatch("set_goal", {"goal": "評価書を作る"}, ctx))
+    asyncio.run(
+        tools.dispatch(
+            "write_manuscript",
+            {"form": "文書", "chapters": [{"label": "結果", "value": "適合である"}]},
+            ctx,
+        )
+    )
+    checked = json.loads(
+        asyncio.run(
+            tools.dispatch(
+                "fact_check",
+                {
+                    "findings": [
+                        {
+                            "claim": "適合である",
+                            "status": "contradicted",
+                            "note": "資料は不適合",
+                        }
+                    ]
+                },
+                ctx,
+            )
+        )
+    )
+    assert checked["fact"] == "hold"
+    assert "不適合" in ctx.ask_text
+    blocked = json.loads(asyncio.run(tools.dispatch("deliver", {}, ctx)))
+    assert "食い違" in blocked["error"]
+    assert ctx.open_editor is False
+    opened = json.loads(asyncio.run(tools.dispatch("open_draft", {}, ctx)))
+    assert opened["open_editor"] is True
+    assert ctx.open_editor is True
+
+
+def test_revise_keeps_the_same_headings(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    asyncio.run(tools.dispatch("set_goal", {"goal": "評価書を作る"}, ctx))
+    asyncio.run(
+        tools.dispatch(
+            "write_manuscript",
+            {"form": "slides", "chapters": [{"label": "結果", "value": "適合である"}]},
+            ctx,
+        )
+    )
+    early = json.loads(
+        asyncio.run(
+            tools.dispatch(
+                "revise_manuscript",
+                {"chapters": [{"label": "結果", "value": "結果は適合です。"}]},
+                ctx,
+            )
+        )
+    )
+    assert "事実" in early["error"]
+    asyncio.run(
+        tools.dispatch(
+            "fact_check",
+            {"findings": [{"claim": "適合である", "status": "supported"}]},
+            ctx,
+        )
+    )
+    added = json.loads(
+        asyncio.run(
+            tools.dispatch(
+                "revise_manuscript",
+                {
+                    "chapters": [
+                        {"label": "結果", "value": "結果は適合です。"},
+                        {"label": "補足", "value": "新しい章"},
+                    ]
+                },
+                ctx,
+            )
+        )
+    )
+    assert "見出し" in added["error"]
+    assert added["headings"] == ["結果"]
+    detail = store.get_session(sid, "u1")
+    assert [chapter["label"] for chapter in detail["manuscript"]["chapters"]] == ["結果"]
 
 
 def test_empty_items_do_not_deliver(tmp_path, monkeypatch):
@@ -94,7 +203,7 @@ def test_empty_items_do_not_deliver(tmp_path, monkeypatch):
     ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
     asyncio.run(tools.dispatch("set_goal", {"goal": "評価書を作る"}, ctx))
     raw = json.loads(asyncio.run(tools.dispatch("deliver", {}, ctx)))
-    assert "項目" in raw["error"]
+    assert "原稿" in raw["error"]
     assert ctx.open_editor is False
 
 
@@ -200,6 +309,26 @@ def test_greeting_does_not_start_a_document():
     assert "まだ一文にならないときは" not in text
     assert "引用番号は書かない" in text
     assert "AIタイプ" not in text
+    assert "利用者は道具の英語名を書きません" in text
+    assert "回答の本文には道具の英語名を書かない" in text
+    assert "残りの手順を利用者に頼んで止めません" in text
+
+
+def test_prompt_keeps_the_current_headings():
+    text = harness._system_prompt(
+        "",
+        [],
+        source_labels=[],
+        catalog=[],
+        manuscript={
+            "form": "document",
+            "fact": "clean",
+            "revised": False,
+            "chapters": [{"label": "背景", "value": "本文"}],
+        },
+    )
+    assert "見出しは次のとおりです" in text
+    assert "背景" in text
 
 
 def test_activity_keeps_each_new_step():

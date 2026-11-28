@@ -1026,6 +1026,12 @@ export const NotebookPage = () => {
       if (!projectId) {
         await actions.updateSession(sessionId, { editor_project_id: started.project_id });
       }
+      if (started.ready) {
+        navigate(
+          `/procuretech-editor?project=${encodeURIComponent(started.project_id)}&file=${encodeURIComponent('原稿.md')}`,
+        );
+        return;
+      }
       const deadline = Date.now() + 5 * 60 * 1000;
       let status = await fetchGeneration(started.project_id, started.request_id);
       while (status.status !== 'success' && status.status !== 'error') {

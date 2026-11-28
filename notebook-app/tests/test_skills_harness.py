@@ -322,7 +322,11 @@ def test_sample_clock_and_allowed_tools():
         "set_goal",
         "commit_items",
         "ask_user",
+        "write_manuscript",
+        "fact_check",
+        "revise_manuscript",
         "deliver",
+        "open_draft",
         "write_office_draft",
     ]
     assert extras == []
@@ -573,14 +577,28 @@ def test_agent_writes_items_and_delivers_the_goal(tmp_path, monkeypatch):
                 {
                     "id": "c3",
                     "function": {
-                        "name": "commit_items",
+                        "name": "write_manuscript",
                         "arguments": {
+                            "form": "document",
                             "chapters": [
-                                {
-                                    "label": "背景",
-                                    "value": "現行は紙である [1]。",
-                                    "citations": [1],
-                                }
+                                {"label": "背景", "value": "現行は紙である。"},
+                            ],
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c4",
+                    "function": {
+                        "name": "fact_check",
+                        "arguments": {
+                            "findings": [
+                                {"claim": "現行は紙である", "status": "supported"}
                             ]
                         },
                     },
@@ -591,10 +609,27 @@ def test_agent_writes_items_and_delivers_the_goal(tmp_path, monkeypatch):
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "c4", "function": {"name": "deliver", "arguments": {}}}
+                {
+                    "id": "c5",
+                    "function": {
+                        "name": "revise_manuscript",
+                        "arguments": {
+                            "chapters": [
+                                {"label": "背景", "value": "現行の手続きは紙です。"},
+                            ]
+                        },
+                    },
+                }
             ],
         },
-        {"role": "assistant", "content": "評価書の項目を書きました。"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c6", "function": {"name": "deliver", "arguments": {}}}
+            ],
+        },
+        {"role": "assistant", "content": "評価書の原稿を書きました。"},
     ]
 
     async def fake_chat(messages, temperature=0.2, tools=None):
@@ -617,14 +652,17 @@ def test_agent_writes_items_and_delivers_the_goal(tmp_path, monkeypatch):
     )
     detail = store.get_session(sid, "u1")
     assert detail["instruction"] == "監査資料から評価書を作る"
-    assert detail["items"][0]["label"] == "背景"
-    assert "紙" in detail["items"][0]["value"]
+    assert detail["items"] == []
+    assert detail["manuscript"]["chapters"][0]["label"] == "背景"
+    assert "紙" in detail["manuscript"]["chapters"][0]["value"]
     assert drafts == []
     assert open_editor is True
     assert [t["name"] for t in traces] == [
         "set_goal",
         "search_sources",
-        "commit_items",
+        "write_manuscript",
+        "fact_check",
+        "revise_manuscript",
         "deliver",
     ]
     assert "評価書" in answer

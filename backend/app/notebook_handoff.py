@@ -31,27 +31,17 @@ def _error_text(res: httpx.Response, fallback: str) -> str:
     return fallback
 
 
-async def open_in_editor(
+async def _ensure_project(
     client: httpx.AsyncClient,
     *,
-    download_url: str,
     editor_base: str,
-    notebook_headers: dict[str, str],
     editor_headers: dict[str, str],
     mode: str,
     name: str,
     project_id: str,
-) -> dict[str, str]:
-    """記入済みシートを作り、新規または既存プロジェクトで生成を始める。"""
+) -> tuple[str, str]:
     if mode not in ("new", "existing"):
         raise HandoffError(400, "渡し先を選んでください。")
-    sheet = await client.get(download_url, headers=notebook_headers)
-    if sheet.status_code != 200 or not sheet.content.startswith(b"PK"):
-        raise HandoffError(
-            sheet.status_code if sheet.status_code != 200 else 502,
-            _error_text(sheet, "シートを用意できませんでした。"),
-        )
-    encoded = base64.b64encode(sheet.content).decode("ascii")
     base = editor_base.rstrip("/")
     if mode == "new":
         title = name.strip()
@@ -68,18 +58,81 @@ async def open_in_editor(
         pid = str((created.json().get("project") or {}).get("id") or "")
         if not pid:
             raise HandoffError(502, "プロジェクトを作成できませんでした。")
-    else:
-        pid = project_id.strip()
-        if not pid:
-            raise HandoffError(400, "プロジェクトを選んでください。")
-        found = await client.get(
-            f"{base}/projects/{quote(pid, safe='')}", headers=editor_headers
+        return base, pid
+    pid = project_id.strip()
+    if not pid:
+        raise HandoffError(400, "プロジェクトを選んでください。")
+    found = await client.get(
+        f"{base}/projects/{quote(pid, safe='')}", headers=editor_headers
+    )
+    if found.status_code != 200:
+        raise HandoffError(
+            found.status_code,
+            _error_text(found, "プロジェクトが見つかりません。"),
         )
-        if found.status_code != 200:
-            raise HandoffError(
-                found.status_code,
-                _error_text(found, "プロジェクトが見つかりません。"),
-            )
+    return base, pid
+
+
+async def place_manuscript(
+    client: httpx.AsyncClient,
+    *,
+    editor_base: str,
+    editor_headers: dict[str, str],
+    mode: str,
+    name: str,
+    project_id: str,
+    manuscript: str,
+) -> dict[str, Any]:
+    """書き終えた原稿をプロジェクトへ置き、エディタでは生成しない。"""
+    base, pid = await _ensure_project(
+        client,
+        editor_base=editor_base,
+        editor_headers=editor_headers,
+        mode=mode,
+        name=name,
+        project_id=project_id,
+    )
+    saved = await client.post(
+        f"{base}/projects/{quote(pid, safe='')}/files/save",
+        headers=editor_headers,
+        json={"path": "原稿.md", "content": manuscript},
+    )
+    if saved.status_code != 200:
+        raise HandoffError(
+            saved.status_code,
+            _error_text(saved, "原稿を置けませんでした。"),
+            project_id=pid,
+        )
+    return {"project_id": pid, "ready": True}
+
+
+async def open_in_editor(
+    client: httpx.AsyncClient,
+    *,
+    download_url: str,
+    editor_base: str,
+    notebook_headers: dict[str, str],
+    editor_headers: dict[str, str],
+    mode: str,
+    name: str,
+    project_id: str,
+) -> dict[str, str]:
+    """記入済みシートを作り、新規または既存プロジェクトで生成を始める。"""
+    sheet = await client.get(download_url, headers=notebook_headers)
+    if sheet.status_code != 200 or not sheet.content.startswith(b"PK"):
+        raise HandoffError(
+            sheet.status_code if sheet.status_code != 200 else 502,
+            _error_text(sheet, "シートを用意できませんでした。"),
+        )
+    encoded = base64.b64encode(sheet.content).decode("ascii")
+    base, pid = await _ensure_project(
+        client,
+        editor_base=editor_base,
+        editor_headers=editor_headers,
+        mode=mode,
+        name=name,
+        project_id=project_id,
+    )
     started = await client.post(
         f"{base}/projects/{quote(pid, safe='')}/generate",
         headers=editor_headers,

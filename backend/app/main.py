@@ -9048,7 +9048,7 @@ async def procuretech_hearing_download(
 @app.post("/notebook/sessions/{session_id}/open-editor")
 async def notebook_open_editor(session_id: str, request: Request) -> JSONResponse:
     """採用済みの項目を、Markdown エディタのプロジェクト編集画面へ渡す。"""
-    from .notebook_handoff import HandoffError, open_in_editor
+    from .notebook_handoff import HandoffError, open_in_editor, place_manuscript
 
     err, notebook_headers = _procuretech_hearing_headers(request)
     if err:
@@ -9064,18 +9064,39 @@ async def notebook_open_editor(session_id: str, request: Request) -> JSONRespons
         body = {}
     try:
         async with httpx.AsyncClient(timeout=240) as client:
-            opened = await open_in_editor(
-                client,
-                download_url=_procuretech_hearing_app_url(
-                    f"/sessions/{session_id}/download"
-                ),
-                editor_base=_procuretech_editor_app_url(""),
-                notebook_headers=notebook_headers,
-                editor_headers=editor_headers,
-                mode=str(body.get("mode") or ""),
-                name=str(body.get("name") or ""),
-                project_id=str(body.get("project_id") or ""),
+            session_res = await client.get(
+                _procuretech_hearing_app_url(f"/sessions/{session_id}"),
+                headers=notebook_headers,
             )
+            manuscript = ""
+            if session_res.status_code == 200:
+                try:
+                    payload = session_res.json()
+                except Exception:  # noqa: BLE001
+                    payload = {}
+                raw = payload.get("manuscript") if isinstance(payload, dict) else None
+                if isinstance(raw, dict):
+                    manuscript = str(raw.get("markdown") or "")
+            handoff = {
+                "editor_base": _procuretech_editor_app_url(""),
+                "editor_headers": editor_headers,
+                "mode": str(body.get("mode") or ""),
+                "name": str(body.get("name") or ""),
+                "project_id": str(body.get("project_id") or ""),
+            }
+            if manuscript.strip():
+                opened = await place_manuscript(
+                    client, manuscript=manuscript, **handoff
+                )
+            else:
+                opened = await open_in_editor(
+                    client,
+                    download_url=_procuretech_hearing_app_url(
+                        f"/sessions/{session_id}/download"
+                    ),
+                    notebook_headers=notebook_headers,
+                    **handoff,
+                )
     except HandoffError as e:
         content: dict[str, Any] = {"error": e.message}
         if e.project_id:
