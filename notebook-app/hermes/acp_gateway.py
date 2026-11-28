@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ノート用の ACP ゲートウェイ。
 
-作業ディレクトリは持たない。cwd は ACP_GATEWAY_CWD（既定 /tmp）。
+接続ごとに空の Hermes ホームを作り、終わったら捨てる。
+設定と人格以外は共有ホームへ残さない。
 接続の turn クエリに対応するノートの MCP だけを、そのセッションへ渡す。
 """
 
@@ -11,7 +12,11 @@ import asyncio
 import json
 import logging
 import os
+import pwd
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -139,6 +144,37 @@ class GatewayClient(Client):
         raise acp.RequestError(code=-32601, message="write_text_file not supported")
 
 
+def _hermes_ids() -> tuple[int, int]:
+    try:
+        account = pwd.getpwnam("hermes")
+    except KeyError:
+        return os.getuid(), os.getgid()
+    return account.pw_uid, account.pw_gid
+
+
+def _turn_home() -> Path:
+    """この接続だけのホーム。共有の記録や作業ファイルはコピーしない。"""
+    source = Path(os.environ.get("HERMES_HOME") or "/opt/data")
+    home = Path(tempfile.mkdtemp(prefix="hermes-turn-"))
+    for name in ("config.yaml", "SOUL.md"):
+        src = source / name
+        if src.is_file():
+            shutil.copy2(src, home / name)
+    for name in ("installs", "tools"):
+        src = source / name
+        if src.exists():
+            target = os.path.realpath(src) if src.is_symlink() else src
+            os.symlink(target, home / name)
+    uid, gid = _hermes_ids()
+    os.chown(home, uid, gid)
+    os.chmod(home, 0o700)
+    for child in home.iterdir():
+        if child.is_symlink():
+            continue
+        os.chown(child, uid, gid)
+    return home
+
+
 def _mcp_servers(turn: str) -> list[Any]:
     url = (os.environ.get("NOTEBOOK_MCP_URL") or "").strip()
     if not url or not turn:
@@ -162,55 +198,65 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     client = GatewayClient(ws)
     turn = (request.query.get("turn") or "").strip()
     log.info("WS connected turn=%s", turn[:8])
+    home = _turn_home()
+    log.info("turn home %s", home.name)
     try:
-        async with spawn_agent_process(
-            client,
-            "hermes",
-            "acp",
-            cwd=WORKDIR,
-            transport_kwargs={"limit": STREAM_LIMIT},
-        ) as (conn, _proc):
-            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
-            sess = await conn.new_session(cwd=WORKDIR, mcp_servers=_mcp_servers(turn))
-            await client._emit({"type": "status", "text": "ready", "session_id": sess.session_id})
-
-            async def run_prompt(text: str) -> None:
-                await client._emit({"type": "prompt_started"})
-                try:
-                    resp = await asyncio.wait_for(
-                        conn.prompt(
-                            prompt=[text_block(text)],
-                            session_id=sess.session_id,
-                            message_id=str(uuid.uuid4()),
-                        ),
-                        timeout=PROMPT_TIMEOUT_SEC,
-                    )
-                    dumped = _dump(resp)
-                    await client._emit({"type": "done", "stop_reason": dumped.get("stop_reason")})
-                except asyncio.TimeoutError:
-                    await client._emit({"type": "error", "text": "prompt timeout"})
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("prompt failed")
-                    await client._emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
-
-            async for msg in ws:
-                if msg.type == WSMsgType.TEXT:
-                    try:
-                        data = json.loads(msg.data)
-                    except Exception:
-                        continue
-                    if data.get("type") == "prompt":
-                        text = str(data.get("text") or "").strip()
-                        if text:
-                            asyncio.create_task(run_prompt(text))
-                elif msg.type == WSMsgType.ERROR:
-                    break
-    except Exception as exc:  # noqa: BLE001
-        log.exception("gateway error")
+        env = dict(os.environ)
+        env["HERMES_HOME"] = str(home)
         try:
-            await client._emit({"type": "error", "text": f"gateway: {exc}"})
-        except Exception:
-            pass
+            async with spawn_agent_process(
+                client,
+                "hermes",
+                "acp",
+                cwd=str(home),
+                # ACP の既定は HOME と PATH しか渡さない。HERMES_HOME が落ちると
+                # モデル設定を読まず、対話が Internal error になる。
+                env=env,
+                transport_kwargs={"limit": STREAM_LIMIT, "stderr": None},
+            ) as (conn, _proc):
+                await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+                sess = await conn.new_session(cwd=str(home), mcp_servers=_mcp_servers(turn))
+                await client._emit({"type": "status", "text": "ready", "session_id": sess.session_id})
+
+                async def run_prompt(text: str) -> None:
+                    await client._emit({"type": "prompt_started"})
+                    try:
+                        resp = await asyncio.wait_for(
+                            conn.prompt(
+                                prompt=[text_block(text)],
+                                session_id=sess.session_id,
+                                message_id=str(uuid.uuid4()),
+                            ),
+                            timeout=PROMPT_TIMEOUT_SEC,
+                        )
+                        dumped = _dump(resp)
+                        await client._emit({"type": "done", "stop_reason": dumped.get("stop_reason")})
+                    except asyncio.TimeoutError:
+                        await client._emit({"type": "error", "text": "prompt timeout"})
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("prompt failed")
+                        await client._emit({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
+
+                async for msg in ws:
+                    if msg.type == WSMsgType.TEXT:
+                        try:
+                            data = json.loads(msg.data)
+                        except Exception:
+                            continue
+                        if data.get("type") == "prompt":
+                            text = str(data.get("text") or "").strip()
+                            if text:
+                                asyncio.create_task(run_prompt(text))
+                    elif msg.type == WSMsgType.ERROR:
+                        break
+        except Exception as exc:  # noqa: BLE001
+            log.exception("gateway error")
+            try:
+                await client._emit({"type": "error", "text": f"gateway: {exc}"})
+            except Exception:
+                pass
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
     return ws
 
 
