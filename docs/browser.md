@@ -35,6 +35,8 @@ docker compose --profile browser up -d --build
   → 出口プロキシ → 公開 IP の 80/443
 ```
 
+WebSocket の Upgrade が手前のプロキシで落ちるときは、同じバイト列を通常の HTTP で往復する。画面は `GET /api/browser/sessions/{id}/stream`、操作は `POST /api/browser/sessions/{id}/input`。音声は `.../audio/stream` と `.../audio/input`。制御テキストとバイナリは、1 バイトの種別と 4 バイトの長さを付けて一つの応答にまとめる。応答はデータが届くか 15 秒経つまで保留し、そこで完結させる。ブラウザは先に WebSocket を試し、開く前に失敗したときだけ HTTP に切り替える。
+
 Chromium のアドレスバーとタブがそのまま見えます。Open GENAI 側でページ描画を作り直してはいません。
 
 ## 出口
