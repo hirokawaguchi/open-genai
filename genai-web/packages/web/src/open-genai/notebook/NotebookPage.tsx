@@ -746,12 +746,14 @@ export const NotebookPage = () => {
         if (!alive()) return;
         const filename = officeExportName(title, format);
         setSlideStatus('文書台帳へ置いています');
+        const officeBytes = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(officeBytes).set(bytes);
         const placed = await teamApi.putBinary<{
           id?: string;
           files?: { file_id?: string; role?: string }[];
         }>(
           `ledger/office/files?${new URLSearchParams({ name: filename })}`,
-          new Blob([bytes]),
+          new Blob([officeBytes]),
           { 'Content-Type': 'application/octet-stream' },
         );
         const rowId = placed.data?.id || '';
@@ -1249,8 +1251,13 @@ export const NotebookPage = () => {
         }
         return;
       }
+      const requestId = started.request_id;
+      if (!requestId) {
+        setOpenError('章の作成を始められませんでした。');
+        return;
+      }
       const deadline = Date.now() + 5 * 60 * 1000;
-      let status = await fetchGeneration(started.project_id, started.request_id);
+      let status = await fetchGeneration(started.project_id, requestId);
       while (status.status !== 'success' && status.status !== 'error') {
         if (openRun.current !== run) return;
         if (Date.now() > deadline) {
@@ -1259,7 +1266,7 @@ export const NotebookPage = () => {
         }
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
         if (openRun.current !== run) return;
-        status = await fetchGeneration(started.project_id, started.request_id);
+        status = await fetchGeneration(started.project_id, requestId);
       }
       if (status.status === 'error') {
         setOpenError(status.error || '章の作成に失敗しました。');
