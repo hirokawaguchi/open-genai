@@ -345,7 +345,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
         to: NOTEBOOK_PATH,
         description: descOf(
           NOTEBOOK_EXAPP_ID,
-          '参考資料を集めて調べ、項目として整理します。必要ならヒアリングシートも作れます。',
+          '参考資料を集めて調べ、残したい回答はクリップに置きます。',
         ),
       });
     }

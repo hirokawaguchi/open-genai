@@ -896,16 +896,16 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
     "config": "",
     "placeholder": "",
     "description": (
-        "参考資料を集めて調べ、項目として整理します。"
-        "Markdown エディタに読み込ませるヒアリングシートも作成できます。"
+        "参考資料を集めて調べ、残したい回答はクリップに置きます。"
+        "Markdown エディタの編集画面へ渡せます。"
     ),
     "howToUse": (
         "## 使い方\n\n"
         "- 専用ページ「ノートブック」でノートを作成します。\n"
-        "- 参考ファイルや既存ナレッジをソースに追加します（取込時に構造化します）。\n"
-        "- 項目（設問）ごとに値を手入力または生成します。対話でも、取り込んだソースを使えます。\n"
-        "- 対話の履歴はエージェントが見ます。過去の応答を番号で指定する必要はありません。\n"
-        "- 記入済みヒアリングシートをダウンロードし、Markdown エディタの生成入力として使えます。\n"
+        "- 参考ファイルや既存ナレッジをソースに追加します。入った資料は「参考資料」に出ます。\n"
+        "- 「エージェント」で調べます。残したい回答は「クリップ」を押します。\n"
+        "- 文書を作る依頼では、エージェントがクリップへ章を書くことがあります。\n"
+        "- 章が揃うと、そのゴールを生成指示として Markdown エディタを開きます。\n"
         "- `docker compose up -d` で標準起動します。\n"
     ),
     "copyable": False,
@@ -1292,6 +1292,15 @@ _STALE_SEED_LABEL_MIGRATIONS: list[dict[str, Any]] = [
             "必要なら文書生成用のヒアリングシート（Excel）も作れます。"
         ),
         "old_howto_markers": ("対話でも同じソースを使えます",),
+    },
+    {
+        "seed": PROCURETECH_HEARING_SEED,
+        "old_name": "ノートブック",
+        "old_description": (
+            "参考資料を集めて調べ、項目として整理します。"
+            "Markdown エディタに読み込ませるヒアリングシートも作成できます。"
+        ),
+        "old_howto_markers": ("項目（設問）ごとに値を手入力",),
     },
     {
         "seed": WHISPER_SEED,
@@ -8896,6 +8905,24 @@ async def procuretech_hearing_delete_session(
         return err
     return await _proxy_procuretech_hearing(
         "DELETE", _procuretech_hearing_app_url(f"/sessions/{session_id}"), headers
+    )
+
+
+@app.post("/notebook/sessions/{session_id}/messages/{message_id}/clip")
+@app.post("/procuretech-hearing/sessions/{session_id}/messages/{message_id}/clip")
+async def notebook_clip_message(
+    session_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(
+            f"/sessions/{session_id}/messages/{message_id}/clip"
+        ),
+        headers,
+        {},
     )
 
 

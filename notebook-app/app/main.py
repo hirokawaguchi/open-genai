@@ -246,6 +246,20 @@ def delete_session(session_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/sessions/{session_id}/messages/{message_id}/clip")
+async def clip_message(session_id: str, message_id: str, request: Request) -> JSONResponse:
+    """回答をクリップへ転記する。同じ回答は1件のまま更新する。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail, error = store.clip_message(session_id, uid, message_id)
+    if error == "見つかりません" or detail is None:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    if error:
+        return JSONResponse(status_code=400, content={"error": error})
+    return JSONResponse(content=detail)
+
+
 @app.post("/sessions/{session_id}/items")
 async def add_item(session_id: str, request: Request) -> JSONResponse:
     err, uid = _auth(request)

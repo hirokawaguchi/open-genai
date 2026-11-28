@@ -203,6 +203,23 @@ export const useNotebookActions = () => {
     }
   }, []);
 
+  const clipMessage = useCallback(
+    async (sessionId: string, messageId: string): Promise<NotebookSessionDetail | null> => {
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/clip`,
+          {},
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, 'クリップに残せませんでした。'));
+        return null;
+      }
+    },
+    [],
+  );
+
   const addItem = useCallback(async (sessionId: string): Promise<NotebookSessionDetail | null> => {
     setError(null);
     try {
@@ -212,7 +229,7 @@ export const useNotebookActions = () => {
       );
       return res.data ?? null;
     } catch (e) {
-      setError(errorMessage(e, '項目の追加に失敗しました。'));
+      setError(errorMessage(e, 'クリップの追加に失敗しました。'));
       return null;
     }
   }, []);
@@ -231,7 +248,7 @@ export const useNotebookActions = () => {
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '項目の更新に失敗しました。'));
+        setError(errorMessage(e, 'クリップの更新に失敗しました。'));
         return null;
       }
     },
@@ -247,7 +264,7 @@ export const useNotebookActions = () => {
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '項目の削除に失敗しました。'));
+        setError(errorMessage(e, 'クリップの削除に失敗しました。'));
         return null;
       }
     },
@@ -506,6 +523,7 @@ export const useNotebookActions = () => {
     updateSession,
     deleteSession,
     addItem,
+    clipMessage,
     updateItem,
     deleteItem,
     addFile,

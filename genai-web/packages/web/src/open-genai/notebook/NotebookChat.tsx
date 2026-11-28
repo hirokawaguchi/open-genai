@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { AttachmentIcon } from '@/components/ui/icons/AttachmentIcon';
+import { ClipIcon } from '@/components/ui/icons/ClipIcon';
 import { ReplayIcon } from '@/components/ui/icons/ReplayIcon';
 import { SearchIcon } from '@/components/ui/icons/SearchIcon';
 import { SendIcon } from '@/components/ui/icons/SendIcon';
@@ -51,6 +52,8 @@ type Props = {
   onSend: () => void;
   sessionId: string | null;
   onRetry: () => void;
+  onClip: (messageId: string) => void;
+  clippedMessageIds?: string[];
 };
 
 const stepTraces = (names: string[]): NotebookToolTrace[] =>
@@ -111,12 +114,16 @@ const AnswerActions = ({
   message,
   allowRetry,
   onRetry,
+  onClip,
+  clipped,
   copyRef,
 }: {
   sessionId: string | null;
   message: NotebookMessage;
   allowRetry: boolean;
   onRetry: () => void;
+  onClip: (messageId: string) => void;
+  clipped: boolean;
   copyRef: RefObject<HTMLDivElement | null>;
 }) => {
   const text = message.content.trim();
@@ -164,6 +171,15 @@ const AnswerActions = ({
       <ButtonCopy className='mr-0.5' text={plain} targetRef={copyRef} />
       <ExportAnswerWord text={plain} targetRef={copyRef} />
       <ExportAnswerPowerPoint text={plain} />
+      <Button
+        variant='text'
+        size='sm'
+        className='inline-flex items-center justify-center gap-x-1'
+        onClick={() => onClip(message.id)}
+      >
+        <ClipIcon className='shrink-0' aria-hidden={true} />
+        {clipped ? 'クリップ済み' : 'クリップ'}
+      </Button>
     </div>
   );
 };
@@ -175,6 +191,8 @@ const AssistantTurn = ({
   liveSteps,
   allowRetry,
   onRetry,
+  onClip,
+  clipped,
 }: {
   message: NotebookMessage;
   sessionId: string | null;
@@ -182,6 +200,8 @@ const AssistantTurn = ({
   liveSteps: string[];
   allowRetry: boolean;
   onRetry: () => void;
+  onClip: (messageId: string) => void;
+  clipped: boolean;
 }) => {
   const copyRef = useRef<HTMLDivElement>(null);
   const traces = pending && liveSteps.length ? stepTraces(liveSteps) : message.tool_trace;
@@ -205,6 +225,8 @@ const AssistantTurn = ({
           message={message}
           allowRetry={allowRetry}
           onRetry={onRetry}
+          onClip={onClip}
+          clipped={clipped}
           copyRef={copyRef}
         />
       )}
@@ -251,6 +273,8 @@ export const NotebookChat = ({
   onSend,
   sessionId,
   onRetry,
+  onClip,
+  clippedMessageIds = [],
 }: Props) => {
   const { hint } = useSubmitKey();
   const listRef = useRef<HTMLDivElement>(null);
@@ -291,6 +315,8 @@ export const NotebookChat = ({
               liveSteps={pending ? liveSteps : []}
               allowRetry={latest && !submitting}
               onRetry={onRetry}
+              onClip={onClip}
+              clipped={clippedMessageIds.includes(m.id)}
             />
           ) : (
             <article

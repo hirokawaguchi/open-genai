@@ -139,6 +139,8 @@ def init_db() -> None:
         item_cols = {r[1] for r in db.execute("PRAGMA table_info(items)").fetchall()}
         if "citations" not in item_cols:
             db.execute("ALTER TABLE items ADD COLUMN citations TEXT NOT NULL DEFAULT '[]'")
+        if "message_id" not in item_cols:
+            db.execute("ALTER TABLE items ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
         msg_cols = {r[1] for r in db.execute("PRAGMA table_info(messages)").fetchall()}
         if "tool_trace" not in msg_cols:
             db.execute("ALTER TABLE messages ADD COLUMN tool_trace TEXT NOT NULL DEFAULT '[]'")
@@ -235,7 +237,7 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         items = db.execute(
-            "SELECT id, label, value, position, citations FROM items"
+            "SELECT id, label, value, position, citations, message_id FROM items"
             " WHERE session_id = ? ORDER BY position",
             (session_id,),
         ).fetchall()
@@ -282,11 +284,13 @@ def _parse_json(raw: str, fallback: Any) -> Any:
 
 def _public_item(i: sqlite3.Row) -> dict[str, Any]:
     cites = _parse_json(i["citations"] if "citations" in i.keys() else "[]", [])
+    keys = i.keys()
     return {
         "id": i["id"],
         "label": i["label"],
         "value": i["value"],
         "citations": cites if isinstance(cites, list) else [],
+        "message_id": str(i["message_id"]) if "message_id" in keys else "",
     }
 
 
@@ -404,6 +408,67 @@ def delete_session(session_id: str, user_id: str) -> bool:
         )
         db.commit()
     return cur.rowcount > 0
+
+
+def _clip_heading(question: str) -> str:
+    text = " ".join((question or "").split())
+    if not text:
+        return "回答"
+    return text[:80]
+
+
+def clip_message(session_id: str, user_id: str, message_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """回答を1件のクリップにする。同じ回答の再実行は同じ行を更新する。"""
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None, "見つかりません"
+        rows = db.execute(
+            "SELECT id, role, content, citations FROM messages"
+            " WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        index = next((i for i, row in enumerate(rows) if row["id"] == message_id), None)
+        if index is None or rows[index]["role"] != "assistant":
+            return None, "見つかりません"
+        content = str(rows[index]["content"] or "").strip()
+        if not content:
+            return None, "回答がありません"
+        question = ""
+        for row in reversed(rows[:index]):
+            if row["role"] == "user" and str(row["content"] or "").strip():
+                question = str(row["content"])
+                break
+        cites = _parse_json(rows[index]["citations"], [])
+        if not isinstance(cites, list):
+            cites = []
+        label = _clip_heading(question)
+        encoded = json.dumps(cites, ensure_ascii=False)
+        existing = db.execute(
+            "SELECT id FROM items WHERE session_id = ? AND message_id = ?",
+            (session_id, message_id),
+        ).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE items SET label = ?, value = ?, citations = ? WHERE id = ?",
+                (label, content, encoded, existing["id"]),
+            )
+        else:
+            pos = db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS n FROM items WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["n"]
+            db.execute(
+                "INSERT INTO items (id, session_id, position, label, value, citations, message_id)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), session_id, pos, label, content, encoded, message_id),
+            )
+        _touch(db, session_id)
+        db.commit()
+    detail = get_session(session_id, user_id)
+    if not detail:
+        return None, "見つかりません"
+    return detail, None
 
 
 def add_item(session_id: str, user_id: str, *, label: str = "") -> dict[str, Any] | None:

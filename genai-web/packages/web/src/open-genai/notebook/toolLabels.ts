@@ -1,8 +1,8 @@
 export const TOOL_LABELS: Record<string, string> = {
   search_sources: 'ノートの参考資料を検索',
-  list_items: '項目を確認',
+  list_items: 'クリップを確認',
   set_goal: 'ゴールを記録',
-  commit_items: '項目へ書く',
+  commit_items: 'クリップへ書く',
   ask_user: '確認する',
   deliver: 'エディタへ渡す',
   write_office_draft: '文書台帳へ書く',

@@ -35,6 +35,7 @@ import { NotebookChat } from './NotebookChat';
 import { NotebookManageDialog } from './NotebookManageDialog';
 import type {
   NotebookBriefing,
+  NotebookCitation,
   NotebookFile,
   NotebookKnowledgeRef,
   NotebookSessionDetail,
@@ -53,7 +54,7 @@ const PANE_TABS = [
   { id: 'list' as const, label: 'ノート一覧' },
   { id: 'chat' as const, label: 'エージェント' },
   { id: 'sources' as const, label: '参考資料' },
-  { id: 'items' as const, label: '項目' },
+  { id: 'items' as const, label: 'クリップ' },
   { id: 'editor' as const, label: 'Markdownエディタで編集' },
 ];
 
@@ -165,6 +166,91 @@ const FileSourceCard = ({ file, onDelete }: { file: NotebookFile; onDelete: () =
         </Button>
       </div>
     </article>
+  );
+};
+
+const ClipBody = ({
+  itemId,
+  draftValue,
+  savedValue,
+  editing,
+  citations,
+  onChange,
+  onBlur,
+  onEdit,
+  onDone,
+}: {
+  itemId: string;
+  draftValue: string;
+  savedValue: string;
+  editing: boolean;
+  citations: NotebookCitation[];
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  onEdit: () => void;
+  onDone: () => void;
+}) => {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const showEditor = editing || !savedValue.trim();
+  useEffect(() => {
+    if (showEditor && detailsRef.current) detailsRef.current.open = true;
+  }, [showEditor]);
+  return (
+    <details
+      ref={detailsRef}
+      className='clip-body rounded-8 border border-solid-gray-300'
+      {...(!savedValue.trim() ? { open: true } : {})}
+    >
+      <summary className='flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-std-16N-170 text-solid-gray-900 hover:bg-solid-gray-50 [&::-webkit-details-marker]:hidden'>
+        <svg
+          aria-hidden={true}
+          className='clip-body-mark size-4 shrink-0 text-blue-900'
+          viewBox='0 0 16 16'
+          fill='none'
+        >
+          <path
+            d='M3.5 6 L8 10.5 L12.5 6'
+            stroke='currentColor'
+            strokeWidth='1.5'
+            strokeLinecap='round'
+            strokeLinejoin='round'
+          />
+        </svg>
+        本文
+      </summary>
+      <div className='flex flex-col gap-2 border-t border-solid-gray-300 px-3 py-2'>
+        {showEditor ? (
+          <>
+            {!!draftValue.trim() && (
+              <div className='flex justify-end'>
+                <Button type='button' variant='outline' size='xs' onClick={onDone}>
+                  表示に戻す
+                </Button>
+              </div>
+            )}
+            <Textarea
+              id={`notebook-value-${itemId}`}
+              rows={5}
+              placeholder='本文（手入力または生成）'
+              aria-label='本文'
+              value={draftValue}
+              onChange={(e) => onChange(e.target.value)}
+              onBlur={onBlur}
+            />
+          </>
+        ) : (
+          <>
+            <div className='flex justify-end'>
+              <Button type='button' variant='outline' size='xs' onClick={onEdit}>
+                編集
+              </Button>
+            </div>
+            <Markdown>{formatNotebookMarkdown(draftValue)}</Markdown>
+          </>
+        )}
+        <SourceList citations={citations} />
+      </div>
+    </details>
   );
 };
 
@@ -425,7 +511,7 @@ export const NotebookPage = () => {
     COMMON_EXAPPS_TEAM_ID,
     NOTEBOOK_EXAPP_ID,
     'ノートブック',
-    '参考資料を集めて調べ、項目として整理します。Markdown エディタの編集画面へ渡せます。',
+    '参考資料を集めて調べ、残したい回答はクリップに置きます。Markdown エディタの編集画面へ渡せます。',
   );
   const { config, isLoading: configLoading, unavailable } = useNotebookConfig();
   const { sessions, mutate: mutateSessions } = useNotebookSessions();
@@ -622,6 +708,12 @@ export const NotebookPage = () => {
     const current = detail.items.find((i) => i.id === itemId);
     if (!draft || !current || draft[field] === current[field]) return;
     const next = await actions.updateItem(sessionId, itemId, { [field]: draft[field] });
+    if (next) await refresh(next);
+  };
+
+  const onClip = async (messageId: string) => {
+    if (!sessionId) return;
+    const next = await actions.clipMessage(sessionId, messageId);
     if (next) await refresh(next);
   };
 
@@ -1093,7 +1185,11 @@ export const NotebookPage = () => {
                         : 'whitespace-nowrap px-3 py-2 text-std-16N-170 text-solid-gray-700 hover:text-blue-900'
                     }
                   >
-                    {t.id === 'sources' && detail ? `${t.label}（${sourceCount}）` : t.label}
+                    {t.id === 'sources' && detail
+                      ? `${t.label}（${sourceCount}）`
+                      : t.id === 'items' && detail
+                        ? `${t.label}（${detail.items.length}）`
+                        : t.label}
                   </button>
                 ))}
               </div>
@@ -1145,7 +1241,7 @@ export const NotebookPage = () => {
                       <tr className='border-b border-solid-gray-300 bg-solid-gray-50 text-left text-solid-gray-600'>
                         <th className='w-3/5 min-w-[32rem] px-3 py-2'>ノート名</th>
                         <th className='px-3 py-2'>更新</th>
-                        <th className='px-3 py-2'>項目</th>
+                        <th className='px-3 py-2'>クリップ</th>
                         <th className='px-3 py-2 text-right'>操作</th>
                       </tr>
                     </thead>
@@ -1286,6 +1382,10 @@ export const NotebookPage = () => {
                   onSend={() => void onChat()}
                   sessionId={sessionId}
                   onRetry={() => void onRetry()}
+                  onClip={(messageId) => void onClip(messageId)}
+                  clippedMessageIds={(detail.items ?? [])
+                    .map((item) => item.message_id)
+                    .filter((id): id is string => Boolean(id))}
                 />
               </div>
             )}
@@ -1293,28 +1393,33 @@ export const NotebookPage = () => {
             {pane === 'items' && detail && (
               <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-4'>
                 <div className='flex items-center justify-between gap-2'>
-                  <h2 className='text-std-18B-160'>項目</h2>
+                  <h2 className='text-std-18B-160'>クリップ</h2>
                   <Button
                     type='button'
                     variant='outline'
                     size='sm'
                     onClick={() => void onAddItem()}
                   >
-                    項目を追加
+                    クリップを追加
                   </Button>
                 </div>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  見出しが章の名前、本文が章の中身です。エージェントの下書きは、章ごとに項目にしてから正本になります。生成は参考資料の該当節だけを根拠にします。
+                  回答の「クリップ」で残した文が並びます。見出しと本文は編集できます。
                 </p>
+                <style>{`
+                  .clip-body > summary > .clip-body-mark { transition: transform 150ms ease; }
+                  .clip-body[open] > summary > .clip-body-mark { transform: rotate(180deg); }
+                `}</style>
                 <div className='flex flex-col gap-3 pb-2'>
                   {detail.items.length === 0 && (
                     <p className='text-dns-14N-130 text-solid-gray-600'>
-                      「項目を追加」から章を増やしてください。
+                      回答の「クリップ」から残すか、「クリップを追加」で空の欄を作ってください。
                     </p>
                   )}
                   {detail.items.map((item, index) => {
                     const draft = drafts[item.id] ?? { label: item.label, value: item.value };
                     const busy = actions.generatingId === item.id;
+                    const canGenerate = busy || !draft.value.trim();
                     return (
                       <article
                         key={item.id}
@@ -1323,28 +1428,30 @@ export const NotebookPage = () => {
                         <div className='flex flex-wrap items-center justify-between gap-2'>
                           <Label htmlFor={`notebook-label-${item.id}`}>見出し {index + 1}</Label>
                           <div className='flex flex-wrap gap-2'>
-                            <Button
-                              type='button'
-                              variant='solid-fill'
-                              size='sm'
-                              aria-disabled={
-                                busy || !llmEnabled || !draft.label.trim() || undefined
-                              }
-                              onClick={() => {
-                                if (busy || !llmEnabled || !draft.label.trim()) return;
-                                void onGenerate(item.id);
-                              }}
-                            >
-                              {busy ? (
-                                <>
-                                  <Spinner /> 生成中
-                                </>
-                              ) : llmEnabled ? (
-                                '生成'
-                              ) : (
-                                'LLM 未設定'
-                              )}
-                            </Button>
+                            {canGenerate && (
+                              <Button
+                                type='button'
+                                variant='solid-fill'
+                                size='sm'
+                                aria-disabled={
+                                  busy || !llmEnabled || !draft.label.trim() || undefined
+                                }
+                                onClick={() => {
+                                  if (busy || !llmEnabled || !draft.label.trim()) return;
+                                  void onGenerate(item.id);
+                                }}
+                              >
+                                {busy ? (
+                                  <>
+                                    <Spinner /> 生成中
+                                  </>
+                                ) : llmEnabled ? (
+                                  '生成'
+                                ) : (
+                                  'LLM 未設定'
+                                )}
+                              </Button>
+                            )}
                             <Button
                               type='button'
                               variant='outline'
@@ -1368,54 +1475,25 @@ export const NotebookPage = () => {
                           }
                           onBlur={() => void onSaveItem(item.id, 'label')}
                         />
-                        <Label htmlFor={`notebook-value-${item.id}`}>本文</Label>
-                        {editingValueId === item.id || !draft.value.trim() ? (
-                          <div className='flex flex-col gap-2'>
-                            {!!draft.value.trim() && (
-                              <div className='flex justify-end'>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='xs'
-                                  onClick={() => {
-                                    void onSaveItem(item.id, 'value');
-                                    setEditingValueId(null);
-                                  }}
-                                >
-                                  表示に戻す
-                                </Button>
-                              </div>
-                            )}
-                            <Textarea
-                              id={`notebook-value-${item.id}`}
-                              rows={5}
-                              placeholder='本文（手入力または生成）'
-                              value={draft.value}
-                              onChange={(e) =>
-                                setDrafts((prev) => ({
-                                  ...prev,
-                                  [item.id]: { ...draft, value: e.target.value },
-                                }))
-                              }
-                              onBlur={() => void onSaveItem(item.id, 'value')}
-                            />
-                          </div>
-                        ) : (
-                          <div className='rounded-8 border border-solid-gray-300 px-3 py-2'>
-                            <div className='mb-2 flex justify-end'>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='xs'
-                                onClick={() => setEditingValueId(item.id)}
-                              >
-                                編集
-                              </Button>
-                            </div>
-                            <Markdown>{formatNotebookMarkdown(draft.value)}</Markdown>
-                          </div>
-                        )}
-                        <SourceList citations={item.citations ?? []} />
+                        <ClipBody
+                          itemId={item.id}
+                          draftValue={draft.value}
+                          savedValue={item.value}
+                          editing={editingValueId === item.id}
+                          citations={item.citations ?? []}
+                          onChange={(value) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: { ...draft, value },
+                            }))
+                          }
+                          onBlur={() => void onSaveItem(item.id, 'value')}
+                          onEdit={() => setEditingValueId(item.id)}
+                          onDone={() => {
+                            void onSaveItem(item.id, 'value');
+                            setEditingValueId(null);
+                          }}
+                        />
                       </article>
                     );
                   })}
@@ -1515,10 +1593,10 @@ export const NotebookPage = () => {
                   ・共有ナレッジの MCP が On のあいだは、共有ナレッジの文書がすべて対象です。一部のタグだけにするには、MCP を Off にしてからそのタグを登録します。
                 </p>
                 <p>
-                  ・「エージェント」で、何を作るかを話します。決まると、資料を調べて項目へ書きます。確認が必要なときだけ、そこで聞きます。
+                  ・「エージェント」で調べます。残したい回答は「クリップ」を押します。確認が必要なときだけ、そこで聞きます。
                 </p>
                 <p>
-                  ・項目が揃うと、そのゴールを生成指示として Markdown エディタを開きます。生成指示の入力や、渡し先の選択はありません。
+                  ・文書を作る依頼では、エージェントがクリップへ章を書くことがあります。章が揃うと、そのゴールを生成指示として Markdown エディタを開きます。
                 </p>
               </div>
             )}

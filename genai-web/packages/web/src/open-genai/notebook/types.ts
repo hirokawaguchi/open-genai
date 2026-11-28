@@ -61,6 +61,7 @@ export type NotebookItem = {
   label: string;
   value: string;
   citations?: NotebookCitation[];
+  message_id?: string;
 };
 
 export type NotebookPiiHit = {

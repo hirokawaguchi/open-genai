@@ -26,6 +26,32 @@ def test_delete_message_removes_only_that_row(tmp_path, monkeypatch):
     assert store.delete_message(sid, "other", answer_id) is False
 
 
+def test_clip_keeps_one_row_for_the_same_answer(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    store.add_message(sid, "u1", role="user", content="DX推進計画の\n対象期間は？")
+    detail = store.add_message(
+        sid,
+        "u1",
+        role="assistant",
+        content="6年間です",
+        citations=[{"display_name": "大分市DX推進計画", "n": 1}],
+    )
+    assert detail is not None
+    message_id = detail["messages"][-1]["id"]
+    first, err = store.clip_message(sid, "u1", message_id)
+    assert err is None and first is not None
+    second, err = store.clip_message(sid, "u1", message_id)
+    assert err is None and second is not None
+    assert len(second["items"]) == 1
+    clip = second["items"][0]
+    assert clip["message_id"] == message_id
+    assert clip["label"] == "DX推進計画の 対象期間は？"
+    assert clip["value"] == "6年間です"
+    assert clip["citations"][0]["display_name"] == "大分市DX推進計画"
+    missing, err = store.clip_message(sid, "u1", "absent")
+    assert missing is None and err == "見つかりません"
+
+
 def test_commit_requires_a_goal(tmp_path, monkeypatch):
     sid = _session(tmp_path, monkeypatch)
     ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
