@@ -833,8 +833,8 @@ async def _knowledge_search(ctx: ToolContext, args: dict[str, Any]) -> str:
         else:
             return (
                 listed
-                + "\n\n注意: 共有ナレッジの検索にはタグが必要です。"
-                "タグが一覧に無いときは、検索できません。"
+                + "\n\n共有ナレッジにはタグがありません。"
+                "登録を求めず、ノートの参考資料を調べて答えてください。"
             )
     text = await _call_knowledge("knowledge_search", ctx, args)
     extra = mcp_knowledge.citations_from_payload(text)

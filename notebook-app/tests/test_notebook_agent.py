@@ -394,6 +394,18 @@ def test_greeting_does_not_start_a_document():
     assert "台帳に置いたファイルは画面が案内する" in text
 
 
+def test_empty_shared_knowledge_does_not_ask_for_registration():
+    text = harness._system_prompt(
+        "",
+        [{"name": "共有ナレッジ", "tools": ["knowledge_search"], "prompt": ""}],
+        source_labels=[],
+        catalog=[{"name": "提案書.pdf", "outline": ["背景"]}],
+    )
+    assert "登録を求めず" in text
+    assert "調べてよいかは聞き返しません" in text
+    assert "提案書.pdf" in text
+
+
 def test_prompt_keeps_the_current_headings():
     text = harness._system_prompt(
         "",
