@@ -182,13 +182,15 @@ const createApiClient = (baseURL: string) => {
   ): Promise<{ status: number }> => {
     const url = buildUrl(baseURL, path);
     const token = await getIdToken();
+    const bytes = new ArrayBuffer(body.byteLength);
+    new Uint8Array(bytes).set(body);
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'Content-Type': 'application/octet-stream',
       },
-      body: new Blob([body]),
+      body: new Blob([bytes]),
     });
     if (!res.ok) {
       if (res.status === 401) {
