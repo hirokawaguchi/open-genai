@@ -8,7 +8,7 @@ import json
 
 import httpx
 
-from app.notebook_handoff import HandoffError, open_in_editor
+from app.notebook_handoff import HandoffError, manuscript_filename, open_in_editor, place_manuscript
 
 
 def _run(handler, **kwargs):
@@ -86,3 +86,51 @@ def test_generate_failure_keeps_the_new_project_id() -> None:
         assert "接続できません" in e.message
     else:
         raise AssertionError("失敗するはず")
+
+
+def test_manuscript_filename_keeps_the_previous_file() -> None:
+    assert manuscript_filename("DXに関する取組", "document", set()) == "DXに関する取組-文書.md"
+    assert (
+        manuscript_filename("DXに関する取組", "slides", {"DXに関する取組-文書.md"})
+        == "DXに関する取組-スライド.md"
+    )
+    assert (
+        manuscript_filename("DXに関する取組", "document", {"DXに関する取組-文書.md"})
+        == "DXに関する取組-文書-2.md"
+    )
+
+
+def test_place_manuscript_uses_a_new_name() -> None:
+    saved: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/projects/p1":
+            return httpx.Response(200, json={"project": {"id": "p1"}})
+        if request.method == "GET" and request.url.path == "/projects/p1/files":
+            return httpx.Response(200, json={"files": [{"rel_path": "DXに関する取組-文書.md"}]})
+        if request.method == "POST" and request.url.path == "/projects/p1/files/save":
+            body = json.loads(request.content)
+            saved["path"] = body["path"]
+            saved["content"] = body["content"]
+            return httpx.Response(200, json={"path": body["path"]})
+        return httpx.Response(500, json={"error": "unexpected"})
+
+    async def main():
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await place_manuscript(
+                client,
+                editor_base="http://editor",
+                editor_headers={"x-user-id": "u"},
+                mode="existing",
+                name="DXに関する取組",
+                project_id="p1",
+                manuscript="本文",
+                form="slides",
+                title="DXに関する取組",
+            )
+
+    result = asyncio.run(main())
+    assert result["file"] == "DXに関する取組-スライド.md"
+    assert saved["path"] == "DXに関する取組-スライド.md"
+    assert saved["content"] == "本文"

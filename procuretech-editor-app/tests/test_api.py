@@ -1328,3 +1328,22 @@ def test_compose_md_skips_mermaid_overrides(client, monkeypatch):
     assert body["status"] == "success"
     assert captured["outputs"][0]["sections"][0]["content"].startswith("# 背景")
     assert "![diagram]" not in captured["outputs"][0]["sections"][0]["content"]
+
+
+def test_slide_filename_keeps_pptx_headings():
+    from app.main import _pptx_outputs
+
+    slide = {"filename": "DXに関する取組-スライド.md", "content": "# 背景\n\n本文"}
+    numbered = {"filename": "DXに関する取組-スライド-2.md", "content": "# 次"}
+    document = {"filename": "DXに関する取組-文書.md", "content": "# 背景\n\n長い本文"}
+    kept = _pptx_outputs("案内", [slide, numbered])
+    assert kept == [
+        {"name": "案内", "format": "pptx", "sections": [slide, numbered], "plan": False}
+    ]
+    planned = _pptx_outputs("案内", [document])
+    assert planned == [{"name": "案内", "format": "pptx", "sections": [document]}]
+    mixed = _pptx_outputs("案内", [document, slide])
+    assert mixed[0] == {"name": "案内", "format": "pptx", "sections": [document]}
+    assert mixed[1]["name"] == "案内（スライド）"
+    assert mixed[1]["plan"] is False
+    assert mixed[1]["sections"] == [slide]

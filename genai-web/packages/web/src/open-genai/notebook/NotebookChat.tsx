@@ -32,9 +32,21 @@ export type NotebookFileNotice = {
   hits?: NotebookPiiHit[];
 };
 
+export type ManuscriptPlace = {
+  projectId: string;
+  projectName: string;
+  fileName: string;
+};
+
 type Props = {
   messages: NotebookMessage[];
   draft: string;
+  manuscriptPlace?: ManuscriptPlace | null;
+  onOpenManuscript?: () => void;
+  officeFile?: string;
+  officeAttempted?: boolean;
+  officeCompose?: 'pptx' | 'docx' | '';
+  onOpenOffice?: () => void;
   submitting: boolean;
   liveSteps?: string[];
   llmEnabled: boolean;
@@ -184,6 +196,57 @@ const AnswerActions = ({
   );
 };
 
+const ManuscriptNote = ({
+  place,
+  onOpen,
+  officeFile,
+  officeAttempted,
+  officeCompose,
+  onOpenOffice,
+}: {
+  place: ManuscriptPlace;
+  onOpen: () => void;
+  officeFile?: string;
+  officeAttempted?: boolean;
+  officeCompose?: 'pptx' | 'docx' | '';
+  onOpenOffice?: () => void;
+}) => (
+  <div className='mt-3 rounded-8 border border-solid-gray-420 bg-solid-gray-50 p-3'>
+    <p className='text-std-16N-170 text-solid-gray-800'>
+      原稿は Markdown エディタのプロジェクト「{place.projectName}」に、「{place.fileName}」として書き出しています。前のファイルは残します。
+    </p>
+    <p className='mt-2 text-dns-14N-130 text-solid-gray-700'>
+      開くときは、左のメニューで Markdown エディタを選び、プロジェクト「{place.projectName}」を開いて「
+      {place.fileName}」を選んでください。
+    </p>
+    {officeFile ? (
+      <p className='mt-2 text-dns-14N-130 text-solid-gray-700'>
+        文書台帳の下書きに「{officeFile}」を置きました。台帳の「文書」を開き、そのファイル名を選んでください。
+      </p>
+    ) : officeCompose === 'pptx' ? (
+      <p className='mt-2 text-dns-14N-130 text-solid-gray-700'>
+        見出しごとの原稿をそのままスライドにし、文書台帳の下書きに置きます。
+      </p>
+    ) : officeCompose === 'docx' ? (
+      <p className='mt-2 text-dns-14N-130 text-solid-gray-700'>
+        原稿を文書にし、文書台帳の下書きに置きます。
+      </p>
+    ) : officeAttempted ? (
+      <p className='mt-2 text-dns-14N-130 text-solid-gray-700'>文書台帳には保存できていません。</p>
+    ) : null}
+    <div className='mt-3 flex flex-wrap gap-2'>
+      <Button type='button' variant='outline' size='md' onClick={onOpen}>
+        {place.fileName} を開く
+      </Button>
+      {officeFile && onOpenOffice ? (
+        <Button type='button' variant='outline' size='md' onClick={onOpenOffice}>
+          {officeFile} を開く
+        </Button>
+      ) : null}
+    </div>
+  </div>
+);
+
 const AssistantTurn = ({
   message,
   sessionId,
@@ -193,6 +256,12 @@ const AssistantTurn = ({
   onRetry,
   onClip,
   clipped,
+  manuscriptPlace,
+  onOpenManuscript,
+  officeFile,
+  officeAttempted,
+  officeCompose,
+  onOpenOffice,
 }: {
   message: NotebookMessage;
   sessionId: string | null;
@@ -202,6 +271,12 @@ const AssistantTurn = ({
   onRetry: () => void;
   onClip: (messageId: string) => void;
   clipped: boolean;
+  manuscriptPlace?: ManuscriptPlace | null;
+  onOpenManuscript?: () => void;
+  officeFile?: string;
+  officeAttempted?: boolean;
+  officeCompose?: 'pptx' | 'docx' | '';
+  onOpenOffice?: () => void;
 }) => {
   const copyRef = useRef<HTMLDivElement>(null);
   const traces = pending && liveSteps.length ? stepTraces(liveSteps) : message.tool_trace;
@@ -216,6 +291,16 @@ const AssistantTurn = ({
             citations={message.citations ?? []}
             idPrefix={`nb-cite-${message.id}`}
           />
+          {manuscriptPlace && onOpenManuscript && (
+            <ManuscriptNote
+              place={manuscriptPlace}
+              onOpen={onOpenManuscript}
+              officeFile={officeFile}
+              officeAttempted={officeAttempted}
+              officeCompose={officeCompose}
+              onOpenOffice={onOpenOffice}
+            />
+          )}
         </div>
       )}
       {pending && <ThinkingLine steps={liveSteps} />}
@@ -275,6 +360,12 @@ export const NotebookChat = ({
   onRetry,
   onClip,
   clippedMessageIds = [],
+  manuscriptPlace = null,
+  onOpenManuscript,
+  officeFile,
+  officeAttempted,
+  officeCompose,
+  onOpenOffice,
 }: Props) => {
   const { hint } = useSubmitKey();
   const listRef = useRef<HTMLDivElement>(null);
@@ -306,6 +397,11 @@ export const NotebookChat = ({
         {messages.map((m, index) => {
           const latest = index === messages.length - 1;
           const pending = submitting && latest && m.role === 'assistant';
+          const showManuscript =
+            !pending &&
+            m.open_editor &&
+            Boolean(manuscriptPlace) &&
+            !messages.slice(index + 1).some((later) => later.role === 'assistant' && later.open_editor);
           return m.role === 'assistant' ? (
             <AssistantTurn
               key={m.id}
@@ -317,6 +413,12 @@ export const NotebookChat = ({
               onRetry={onRetry}
               onClip={onClip}
               clipped={clippedMessageIds.includes(m.id)}
+              manuscriptPlace={showManuscript ? manuscriptPlace : null}
+              onOpenManuscript={onOpenManuscript}
+              officeFile={showManuscript ? officeFile : undefined}
+              officeAttempted={showManuscript ? officeAttempted : false}
+              officeCompose={showManuscript ? officeCompose : ''}
+              onOpenOffice={showManuscript ? onOpenOffice : undefined}
             />
           ) : (
             <article

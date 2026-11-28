@@ -229,6 +229,12 @@ async def put_session(session_id: str, request: Request) -> JSONResponse:
         editor_project_id=body.get("editor_project_id")
         if "editor_project_id" in body
         else None,
+        manuscript_path=body.get("manuscript_path")
+        if "manuscript_path" in body
+        else None,
+        office_file=body.get("office_file") if "office_file" in body else None,
+        office_ref=body.get("office_ref") if "office_ref" in body else None,
+        slide_compose=body.get("slide_compose") if "slide_compose" in body else None,
         mcp_enabled=mcp_enabled,
     )
     if not detail:

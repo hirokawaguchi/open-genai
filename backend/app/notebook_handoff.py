@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import base64
+import re
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 
 class HandoffError(Exception):
@@ -73,6 +76,34 @@ async def _ensure_project(
     return base, pid
 
 
+def manuscript_filename(title: str, form: str, taken: set[str]) -> str:
+    """文書とスライドを別の名前にし、すでにあるファイルは残す。"""
+    kind = "スライド" if form == "slides" else "文書"
+    stem = _UNSAFE_NAME.sub(" ", title or "").strip()
+    stem = re.sub(r"\s+", " ", stem).strip(" .")[:40] or "原稿"
+    base = f"{stem}-{kind}"
+    name = f"{base}.md"
+    n = 2
+    while name in taken and n < 100:
+        name = f"{base}-{n}.md"
+        n += 1
+    return name
+
+
+def _taken_paths(payload: Any) -> set[str]:
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, list):
+        return set()
+    taken: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("rel_path") or item.get("path") or "").strip()
+        if path:
+            taken.add(path)
+    return taken
+
+
 async def place_manuscript(
     client: httpx.AsyncClient,
     *,
@@ -82,6 +113,8 @@ async def place_manuscript(
     name: str,
     project_id: str,
     manuscript: str,
+    form: str = "",
+    title: str = "",
 ) -> dict[str, Any]:
     """書き終えた原稿をプロジェクトへ置き、エディタでは生成しない。"""
     base, pid = await _ensure_project(
@@ -92,10 +125,16 @@ async def place_manuscript(
         name=name,
         project_id=project_id,
     )
+    listed = await client.get(
+        f"{base}/projects/{quote(pid, safe='')}/files",
+        headers=editor_headers,
+    )
+    taken = _taken_paths(listed.json()) if listed.status_code == 200 else set()
+    path = manuscript_filename(title or name, form, taken)
     saved = await client.post(
         f"{base}/projects/{quote(pid, safe='')}/files/save",
         headers=editor_headers,
-        json={"path": "原稿.md", "content": manuscript},
+        json={"path": path, "content": manuscript},
     )
     if saved.status_code != 200:
         raise HandoffError(
@@ -103,7 +142,7 @@ async def place_manuscript(
             _error_text(saved, "原稿を置けませんでした。"),
             project_id=pid,
         )
-    return {"project_id": pid, "ready": True}
+    return {"project_id": pid, "ready": True, "file": path}
 
 
 async def open_in_editor(

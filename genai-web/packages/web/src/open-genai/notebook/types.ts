@@ -146,11 +146,22 @@ export type NotebookSkill = {
   updated_at?: string;
 };
 
+export type NotebookManuscript = {
+  form?: '' | 'document' | 'slides';
+  chapters?: { label: string; value: string }[];
+  markdown?: string;
+};
+
 export type NotebookSessionDetail = {
   id: string;
   title: string;
   instruction: string;
   editor_project_id?: string;
+  manuscript?: NotebookManuscript;
+  manuscript_path?: string;
+  office_file?: string;
+  office_ref?: string;
+  slide_compose?: string;
   created_at: string;
   updated_at: string;
   items: NotebookItem[];

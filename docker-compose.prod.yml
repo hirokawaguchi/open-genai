@@ -764,7 +764,7 @@ services:
       - NOTEBOOK_HERMES_NETWORK=${NOTEBOOK_HERMES_NETWORK:-open-genai_default}
       - NOTEBOOK_AGENT_MAX=${NOTEBOOK_AGENT_MAX:-4}
       - NOTEBOOK_AGENT_IDLE_SECONDS=${NOTEBOOK_AGENT_IDLE_SECONDS:-1800}
-      - LEDGER_URL=${LEDGER_URL:-}
+      - LEDGER_URL=${LEDGER_URL:-http://ledger-app:8023}
       # 棟の個人情報警告設定（backend と同じ ngwords.db を読む）
       - NGWORD_DB_PATH=/ngword-data/ngwords.db
     volumes:

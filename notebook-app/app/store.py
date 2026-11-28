@@ -163,6 +163,22 @@ def init_db() -> None:
             db.execute(
                 "ALTER TABLE sessions ADD COLUMN manuscript TEXT NOT NULL DEFAULT ''"
             )
+        if "manuscript_path" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN manuscript_path TEXT NOT NULL DEFAULT ''"
+            )
+        if "office_file" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN office_file TEXT NOT NULL DEFAULT ''"
+            )
+        if "slide_compose" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN slide_compose TEXT NOT NULL DEFAULT ''"
+            )
+        if "office_ref" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN office_ref TEXT NOT NULL DEFAULT ''"
+            )
         db.commit()
 
 
@@ -331,6 +347,10 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         if "editor_project_id" in row.keys()
         else "",
         "manuscript": _public_manuscript(row),
+        "manuscript_path": row["manuscript_path"] if "manuscript_path" in row.keys() else "",
+        "office_file": row["office_file"] if "office_file" in row.keys() else "",
+        "office_ref": row["office_ref"] if "office_ref" in row.keys() else "",
+        "slide_compose": row["slide_compose"] if "slide_compose" in row.keys() else "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "items": [_public_item(i) for i in items],
@@ -420,6 +440,10 @@ def update_session(
     title: str | None = None,
     instruction: str | None = None,
     editor_project_id: str | None = None,
+    manuscript_path: str | None = None,
+    office_file: str | None = None,
+    office_ref: str | None = None,
+    slide_compose: str | None = None,
     mcp_enabled: dict[str, bool] | None = None,
 ) -> dict[str, Any] | None:
     db = connect()
@@ -441,6 +465,26 @@ def update_session(
             db.execute(
                 "UPDATE sessions SET editor_project_id = ? WHERE id = ?",
                 (editor_project_id.strip(), session_id),
+            )
+        if manuscript_path is not None:
+            db.execute(
+                "UPDATE sessions SET manuscript_path = ? WHERE id = ?",
+                (manuscript_path.strip(), session_id),
+            )
+        if office_file is not None:
+            db.execute(
+                "UPDATE sessions SET office_file = ? WHERE id = ?",
+                (office_file.strip(), session_id),
+            )
+        if office_ref is not None:
+            db.execute(
+                "UPDATE sessions SET office_ref = ? WHERE id = ?",
+                (office_ref.strip(), session_id),
+            )
+        if slide_compose is not None:
+            db.execute(
+                "UPDATE sessions SET slide_compose = ? WHERE id = ?",
+                (slide_compose.strip(), session_id),
             )
         if mcp_enabled:
             _ensure_mcps_unlocked(db, user_id)

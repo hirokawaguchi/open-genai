@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import pytest
@@ -108,6 +109,7 @@ def test_goal_is_the_instruction_and_deliver_matches_it(tmp_path, monkeypatch):
     assert opened["mode"] == "new"
     assert opened["name"] == "評価書"
     assert ctx.open_editor is True
+    assert detail["slide_compose"] == "docx"
     assert detail["items"] == []
     assert detail["manuscript"]["chapters"][0]["value"] == "結果は適合です。"
 
@@ -148,6 +150,7 @@ def test_fact_check_stops_before_the_editor(tmp_path, monkeypatch):
     opened = json.loads(asyncio.run(tools.dispatch("open_draft", {}, ctx)))
     assert opened["open_editor"] is True
     assert ctx.open_editor is True
+    assert store.get_session(sid, "u1")["slide_compose"] == "docx"
 
 
 def test_revise_keeps_the_same_headings(tmp_path, monkeypatch):
@@ -240,6 +243,79 @@ def test_office_write_stops_when_ledger_is_down(tmp_path, monkeypatch):
     assert "台帳が止まっています" in missing["error"]
 
 
+def test_office_file_comes_from_the_manuscript(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    asyncio.run(tools.dispatch("set_goal", {"goal": "スライドを作る"}, ctx))
+    asyncio.run(
+        tools.dispatch(
+            "write_manuscript",
+            {"form": "slides", "chapters": [{"label": "背景", "value": "- 紙の申請"}]},
+            ctx,
+        )
+    )
+    empty = base64.b64decode("UEsFBgAAAAAAAAAAAAAAAAAAAAAAAAA==")
+    assert not tools.is_office_package(empty)
+    monkeypatch.setenv("LEDGER_URL", "http://ledger")
+    seen: dict[str, bytes] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def put(self, url, params=None, content=b"", headers=None):
+            seen["name"] = params["name"]
+            seen["body"] = content
+            return FakeResponse()
+
+    monkeypatch.setattr(tools.httpx, "AsyncClient", FakeClient)
+    composed = json.loads(
+        asyncio.run(tools.dispatch("write_office_draft", {"format": "pptx"}, ctx))
+    )
+    assert composed == {"compose": "pptx", "open": "office"}
+    assert "name" not in seen
+    detail = store.get_session(sid, "u1")
+    assert detail["slide_compose"] == "pptx"
+    assert detail["office_file"] == ""
+    word = json.loads(
+        asyncio.run(tools.dispatch("write_office_draft", {"format": "docx"}, ctx))
+    )
+    assert word == {"compose": "docx", "open": "office"}
+    assert "name" not in seen
+    assert store.get_session(sid, "u1")["slide_compose"] == "docx"
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        return
+    package = tools.office_bytes([{"label": "背景", "value": "紙の申請"}], "docx")
+    saved = json.loads(
+        asyncio.run(
+            tools.dispatch(
+                "write_office_draft",
+                {
+                    "format": "docx",
+                    "filename": "評価書.docx",
+                    "content_base64": base64.b64encode(package).decode(),
+                },
+                ctx,
+            )
+        )
+    )
+    assert saved["saved"] == "評価書.docx"
+    assert tools.is_office_package(seen["body"])
+    assert store.get_session(sid, "u1")["office_file"] == "評価書.docx"
+    assert store.get_session(sid, "u1")["slide_compose"] == ""
+
+
 def test_session_key_is_tenant_team_and_user():
     pool = agent_session.Pool()
     monkey_max = agent_session.MAX_SESSIONS
@@ -312,6 +388,10 @@ def test_greeting_does_not_start_a_document():
     assert "利用者は道具の英語名を書きません" in text
     assert "回答の本文には道具の英語名を書かない" in text
     assert "残りの手順を利用者に頼んで止めません" in text
+    assert "画面は開きません" in text
+    assert "プロジェクト名と開き方は画面が案内する" in text
+    assert "整理済みの見出しをそのまま1枚にします" in text
+    assert "台帳に置いたファイルは画面が案内する" in text
 
 
 def test_prompt_keeps_the_current_headings():

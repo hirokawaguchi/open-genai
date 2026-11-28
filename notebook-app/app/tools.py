@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import re
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -436,7 +438,7 @@ async def _fact_check(ctx: ToolContext, args: dict[str, Any]) -> str:
         label = "資料に無い" if item["status"] == "missing" else "資料と違う"
         extra = f"（{item['note']}）" if item["note"] else ""
         lines.append(f"- {label}: {item['claim']}{extra}")
-    lines.append("直すか、このままエディタで開くか、選んでください。")
+    lines.append("直すか、このまま書き出すか、選んでください。")
     ctx.ask_text = "\n".join(lines)
     return json.dumps({"fact": "hold", "stopped": True}, ensure_ascii=False)
 
@@ -485,7 +487,7 @@ async def _revise_manuscript(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 
 async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
-    """事実が合い、言い回しを整えた原稿をエディタで開く。"""
+    """事実が合い、言い回しを整えた原稿をプロジェクトへ書き出す。画面は開かない。"""
     detail = store.get_session(ctx.session_id, ctx.user_id)
     if not detail:
         return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
@@ -503,7 +505,7 @@ async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
         )
     if manuscript.get("fact") == "hold":
         return json.dumps(
-            {"error": "資料と食い違っています。直すか、このまま開くかを選んでください。"},
+            {"error": "資料と食い違っています。直すか、このまま書き出すかを選んでください。"},
             ensure_ascii=False,
         )
     if manuscript.get("fact") != "clean" or not manuscript.get("revised"):
@@ -512,11 +514,12 @@ async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
     ctx.open_editor = True
+    _queue_composed_file(ctx, detail)
     return json.dumps(_editor_payload(detail), ensure_ascii=False)
 
 
 async def _open_draft(ctx: ToolContext, _args: dict[str, Any]) -> str:
-    """人がこのまま開くと選んだ原稿を、推敲せずエディタで開く。"""
+    """人がこのまま書き出すと選んだ原稿を、推敲せずプロジェクトへ書き出す。"""
     detail = store.get_session(ctx.session_id, ctx.user_id)
     if not detail:
         return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
@@ -529,41 +532,172 @@ async def _open_draft(ctx: ToolContext, _args: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
     ctx.open_editor = True
+    _queue_composed_file(ctx, detail)
     return json.dumps(_editor_payload(detail), ensure_ascii=False)
+
+
+def _queue_composed_file(ctx: ToolContext, detail: dict[str, Any]) -> None:
+    """書き出した原稿を、画面が合成して台帳の下書きへ置く合図にする。"""
+    form = str(_manuscript_of(detail).get("form") or "")
+    kind = "pptx" if form == "slides" else "docx" if form == "document" else ""
+    if not kind:
+        return
+    store.update_session(
+        ctx.session_id, ctx.user_id, slide_compose=kind, office_file="", office_ref=""
+    )
 
 
 def _ledger_url() -> str:
     return os.environ.get("LEDGER_URL", "").strip().rstrip("/")
 
 
+def _office_ext(raw: str, form: str) -> str:
+    text = raw.strip().lower()
+    if text in ("pptx", "スライド"):
+        return "pptx"
+    if text in ("xlsx", "表"):
+        return "xlsx"
+    if text in ("docx", "文書"):
+        return "docx"
+    return "pptx" if form == "slides" else "docx"
+
+
+def _office_filename(title: str, ext: str) -> str:
+    kind = {"pptx": "スライド", "xlsx": "表", "docx": "文書"}.get(ext, "文書")
+    stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", title or "")
+    stem = re.sub(r"\s+", " ", stem).strip(" .")[:40] or "原稿"
+    return f"{stem}-{kind}.{ext}"
+
+
+def is_office_package(data: bytes) -> bool:
+    """中身のある Office ファイルか。空の ZIP は受け取らない。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            return "[Content_Types].xml" in package.namelist()
+    except zipfile.BadZipFile:
+        return False
+
+
+def _chapter_lines(value: str) -> list[str]:
+    lines: list[str] = []
+    for raw in (value or "").splitlines():
+        line = raw.strip()
+        if line.startswith(("- ", "* ")):
+            line = line[2:].strip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def office_bytes(chapters: list[dict[str, str]], ext: str) -> bytes:
+    """原稿の章から、文書・表・スライドのファイルを作る。"""
+    buf = io.BytesIO()
+    if ext == "pptx":
+        from pptx import Presentation
+
+        deck = Presentation()
+        layout = deck.slide_layouts[1] if len(deck.slide_layouts) > 1 else deck.slide_layouts[0]
+        for chapter in chapters:
+            slide = deck.slides.add_slide(layout)
+            slide.shapes.title.text = chapter["label"]
+            lines = _chapter_lines(chapter["value"])
+            frame = slide.placeholders[1].text_frame
+            frame.text = lines[0] if lines else ""
+            for line in lines[1:]:
+                frame.add_paragraph().text = line
+        deck.save(buf)
+    elif ext == "xlsx":
+        from openpyxl import Workbook
+
+        book = Workbook()
+        sheet = book.active
+        sheet.title = "原稿"
+        sheet.append(["見出し", "本文"])
+        for chapter in chapters:
+            sheet.append([chapter["label"], chapter["value"]])
+        book.save(buf)
+    else:
+        from docx import Document
+
+        doc = Document()
+        for chapter in chapters:
+            doc.add_heading(chapter["label"], level=1)
+            lines = _chapter_lines(chapter["value"])
+            if not lines:
+                doc.add_paragraph("")
+            for line in lines:
+                doc.add_paragraph(line)
+        doc.save(buf)
+    return buf.getvalue()
+
+
 async def _write_office_draft(ctx: ToolContext, args: dict[str, Any]) -> str:
-    """文書台帳へ下書きの本体を書く。確定と削除はしない。"""
+    """今の原稿から文書台帳の下書きを作る。確定と削除はしない。"""
+    store.update_session(ctx.session_id, ctx.user_id, office_file="", office_ref="")
     if args.get("status") or args.get("delete") or args.get("finalize"):
         return json.dumps(
             {"error": "確定と削除はできません。下書きのファイルだけ書けます。"},
             ensure_ascii=False,
         )
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    manuscript = _manuscript_of(detail)
+    chapters = [
+        {"label": str(chapter.get("label") or ""), "value": str(chapter.get("value") or "")}
+        for chapter in (manuscript.get("chapters") or [])
+        if isinstance(chapter, dict)
+    ]
+    raw_b64 = str(args.get("content_base64") or "").strip()
+    ext = _office_ext(str(args.get("format") or ""), str(manuscript.get("form") or ""))
+    if ext in ("pptx", "docx") and not raw_b64:
+        if not chapters:
+            return json.dumps(
+                {"error": "原稿がまだありません。先に原稿を書いてください。"},
+                ensure_ascii=False,
+            )
+        store.update_session(ctx.session_id, ctx.user_id, slide_compose=ext)
+        return json.dumps({"compose": ext, "open": "office"}, ensure_ascii=False)
+    store.update_session(ctx.session_id, ctx.user_id, slide_compose="")
     filename = str(args.get("filename") or "").strip()
-    if not filename.lower().endswith((".docx", ".xlsx", ".pptx")):
+    if filename and not filename.lower().endswith((".docx", ".xlsx", ".pptx")):
         return json.dumps(
             {"error": "文書、表計算、スライドのファイルだけ書けます。"},
             ensure_ascii=False,
         )
-    raw_b64 = str(args.get("content_base64") or "").strip()
-    if not raw_b64:
-        return json.dumps({"error": "ファイルの中身がありません。"}, ensure_ascii=False)
+    if raw_b64:
+        try:
+            data = base64.b64decode(raw_b64, validate=True)
+        except Exception:  # noqa: BLE001
+            return json.dumps({"error": "ファイルの中身を読めませんでした。"}, ensure_ascii=False)
+        if not filename:
+            filename = _office_filename(str(detail.get("title") or ""), ext)
+    else:
+        if not chapters:
+            return json.dumps(
+                {"error": "原稿がまだありません。先に原稿を書いてください。"},
+                ensure_ascii=False,
+            )
+        try:
+            data = office_bytes(chapters, ext)
+        except Exception as e:  # noqa: BLE001
+            return json.dumps(
+                {"error": f"ファイルを作れませんでした。{e}"},
+                ensure_ascii=False,
+            )
+        if not filename:
+            filename = _office_filename(str(detail.get("title") or ""), ext)
     base = _ledger_url()
     if not base:
         return json.dumps(
             {"error": "台帳が止まっています。ファイルは置けません。"},
             ensure_ascii=False,
         )
-    try:
-        data = base64.b64decode(raw_b64, validate=True)
-    except Exception:  # noqa: BLE001
-        return json.dumps({"error": "ファイルの中身を読めませんでした。"}, ensure_ascii=False)
-    if not data:
-        return json.dumps({"error": "ファイルが空です。"}, ensure_ascii=False)
+    if not is_office_package(data):
+        return json.dumps(
+            {"error": "ファイルの中身が文書になっていません。保存していません。"},
+            ensure_ascii=False,
+        )
     headers = {
         k: v
         for k, v in (ctx.forward_headers or {}).items()
@@ -587,7 +721,11 @@ async def _write_office_draft(ctx: ToolContext, args: dict[str, Any]) -> str:
             {"error": "台帳へ書けませんでした。確定や削除はしていません。"},
             ensure_ascii=False,
         )
-    return json.dumps({"saved": filename, "draft": True}, ensure_ascii=False)
+    store.update_session(ctx.session_id, ctx.user_id, office_file=filename)
+    return json.dumps(
+        {"saved": filename, "draft": True, "ledger": "文書"},
+        ensure_ascii=False,
+    )
 
 
 async def _list_items(ctx: ToolContext, _args: dict[str, Any]) -> str:
@@ -933,7 +1071,7 @@ _SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "deliver",
-            "description": "事実が合い、言い回しを整えた原稿を Markdown エディタで開く。",
+            "description": "事実が合い、言い回しを整えた原稿を Markdown エディタのプロジェクトへ書き出す。画面は開かない。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -941,7 +1079,7 @@ _SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "open_draft",
-            "description": "人がこのまま開くと選んだときだけ、推敲せず原稿を Markdown エディタで開く。",
+            "description": "人がこのまま書き出すと選んだときだけ、推敲せず原稿をプロジェクトへ書き出す。画面は開かない。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -949,14 +1087,12 @@ _SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "write_office_draft",
-            "description": "docx、xlsx、pptx を文書台帳の下書きとして書く。確定と削除はできない。台帳が止まっていれば書かない。",
+            "description": "原稿を書き出したあとに呼ぶ。画面が文書は docx、スライドは見出しどおりの pptx を文書台帳の下書きに置く。中身は渡さない。置いたかどうかは画面が案内する。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string"},
-                    "content_base64": {"type": "string"},
+                    "format": {"type": "string", "description": "docx または pptx。省略すると原稿の形に合わせる。"},
                 },
-                "required": ["filename", "content_base64"],
             },
         },
     },

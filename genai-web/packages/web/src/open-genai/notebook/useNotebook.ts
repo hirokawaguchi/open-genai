@@ -171,6 +171,10 @@ export const useNotebookActions = () => {
         title?: string;
         instruction?: string;
         editor_project_id?: string;
+        manuscript_path?: string;
+        office_file?: string;
+        office_ref?: string;
+        slide_compose?: string;
         mcps?: { id: string; enabled: boolean }[];
       },
     ): Promise<NotebookSessionDetail | null> => {
@@ -548,11 +552,12 @@ export const useNotebookActions = () => {
 export const openNotebookInEditor = async (
   sessionId: string,
   body: { mode: 'new' | 'existing'; name?: string; project_id?: string },
-): Promise<{ project_id: string; request_id?: string; ready?: boolean }> => {
+): Promise<{ project_id: string; request_id?: string; ready?: boolean; file?: string }> => {
   const res = await teamApi.post<{
     project_id: string;
     request_id?: string;
     ready?: boolean;
+    file?: string;
   }>(`${BASE}/sessions/${encodeURIComponent(sessionId)}/open-editor`, body);
   if (!res.data?.project_id || (!res.data.ready && !res.data.request_id)) {
     throw new ApiError(502, { error: '編集画面を開けませんでした。' });

@@ -126,6 +126,7 @@
     `need_mermaid` → `POST /compose/jobs/{id}/mermaid`。同期 `/compose` と画像化失敗時は箱と矢印。
     スライド題名と同じ見出しは本文に出さない。収まらない KPI（文書番号・日付など）は項目表に直す。根拠原文はスピーカーノート（pptx）に残す。
     `GENERATE_PPTX_LLM=0` または計画失敗時は html を長文変換、pptx を見出し分割へ落とす。
+    出力の `plan` を false にすると、その pptx だけ見出し分割にする。チャットは省略し、従来どおり計画する。Markdown エディタは、ファイル名が「-スライド.md」（「-スライド-2.md」を含む）の原稿だけ plan を false にする。
     `GENERATE_PPTX_REVIEW=0` でレビューだけ省略。
 - `reference` は任意（Word のスタイル参照ドキュメントの種別など）。docx 以外では無視してよい。
 - `assets` は任意。本文が参照する**画像を `{相対パス: base64}`** で渡す。視覚形式（docx / html / pptx）では

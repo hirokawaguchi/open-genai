@@ -20,8 +20,14 @@ import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMet
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
-import { ApiError } from '@/lib/fetcher';
+import { ApiError, teamApi } from '@/lib/fetcher';
 import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
+import {
+  documentMarkdown,
+  embedMermaidFences,
+  startPptxCompose,
+  waitForPptx,
+} from '@/features/chat/pptxExport';
 import type { KnowledgePick } from '@/features/chat/stores/useChatStore';
 import { listDocs, listTags, useScopes } from '@/open-genai/knowledge/useKnowledge';
 import type { KnowledgeDoc } from '@/open-genai/knowledge/types';
@@ -31,7 +37,8 @@ import {
 import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
 import { formatNotebookMarkdown } from './formatMarkdown';
-import { NotebookChat } from './NotebookChat';
+import { NotebookChat, type ManuscriptPlace } from './NotebookChat';
+import { notebookToolName } from './toolLabels';
 import { NotebookManageDialog } from './NotebookManageDialog';
 import type {
   NotebookBriefing,
@@ -50,12 +57,13 @@ import {
   useNotebookSessions,
 } from './useNotebook';
 
+const MANUSCRIPT_FILE = '原稿.md';
+
 const PANE_TABS = [
   { id: 'list' as const, label: 'ノート一覧' },
   { id: 'chat' as const, label: 'エージェント' },
   { id: 'sources' as const, label: '参考資料' },
   { id: 'items' as const, label: 'クリップ' },
-  { id: 'editor' as const, label: 'Markdownエディタで編集' },
 ];
 
 type NotebookPane = (typeof PANE_TABS)[number]['id'];
@@ -506,6 +514,46 @@ const UnavailableNotice = ({ message }: { message?: string }) => (
   </div>
 );
 
+const SLIDE_AS_WRITTEN =
+  '渡された原稿の見出しと箇条書きを、そのまま1見出し1枚のスライドにしてください。見出しの追加、削除、並べ替え、新しい事実はしないでください。';
+
+const DOC_AS_WRITTEN =
+  '渡された原稿の見出しと本文を、そのまま文書にしてください。見出しの追加、削除、並べ替え、新しい事実はしないでください。';
+
+const officeExportName = (title: string, ext: 'pptx' | 'docx'): string => {
+  const kind = ext === 'docx' ? '文書' : 'スライド';
+  const stem = title
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
+  return `${stem || kind}-${kind}.${ext}`;
+};
+
+const officeOpenPath = (name: string, ref: string): string => {
+  const [row, file] = ref.split('/');
+  if (!row || !file) return '';
+  const base = name.toLowerCase().endsWith('.docx')
+    ? '/office/word'
+    : name.toLowerCase().endsWith('.pptx')
+      ? '/office/powerpoint'
+      : '';
+  if (!base) return '';
+  return `${base}?row=${encodeURIComponent(row)}&file=${encodeURIComponent(file)}`;
+};
+
+const slideMarkdown = (
+  chapters: { label: string; value: string }[],
+  existing?: string,
+): string => {
+  const body = (existing || '').trim();
+  if (body) return `${body}\n`;
+  return `${chapters
+    .filter((chapter) => chapter.label.trim() && chapter.value.trim())
+    .map((chapter) => `# ${chapter.label.trim()}\n\n${chapter.value.trim()}`)
+    .join('\n\n')}\n`;
+};
+
 export const NotebookPage = () => {
   const { documentTitle, howToUse, title, description } = useRegisteredAppMeta(
     COMMON_EXAPPS_TEAM_ID,
@@ -527,8 +575,59 @@ export const NotebookPage = () => {
   const [newNoteName, setNewNoteName] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { label: string; value: string }>>({});
   const [openError, setOpenError] = useState<string | null>(null);
+  const [slideStatus, setSlideStatus] = useState('');
+  const slideTicket = useRef(0);
   const [openingEditor, setOpeningEditor] = useState(false);
-  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
+  const [manuscriptPlace, setManuscriptPlace] = useState<ManuscriptPlace | null>(null);
+  const deliveredProjectId = (detail?.messages ?? []).some((message) => message.open_editor)
+    ? (detail?.editor_project_id?.trim() ?? '')
+    : '';
+  useEffect(() => {
+    if (!deliveredProjectId) {
+      setManuscriptPlace(null);
+      return;
+    }
+    let cancelled = false;
+    const fallback = detail?.title?.trim() || 'プロジェクト';
+    const fileName = detail?.manuscript_path?.trim() || MANUSCRIPT_FILE;
+    void teamApi
+      .get<{ project?: { name?: string } }>(
+        `procuretech-editor/projects/${encodeURIComponent(deliveredProjectId)}`,
+      )
+      .then((res) => {
+        if (cancelled) return;
+        setManuscriptPlace({
+          projectId: deliveredProjectId,
+          projectName: res.data?.project?.name?.trim() || fallback,
+          fileName,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setManuscriptPlace({
+          projectId: deliveredProjectId,
+          projectName: fallback,
+          fileName,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deliveredProjectId, detail?.title, detail?.manuscript_path]);
+  const placedMessage = [...(detail?.messages ?? [])]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.open_editor);
+  const officeAttempted = (placedMessage?.tool_trace ?? []).some(
+    (trace) => notebookToolName(trace.name) === 'write_office_draft',
+  );
+  const officeCompose: 'pptx' | 'docx' | '' =
+    officeAttempted && !detail?.office_file?.trim()
+      ? detail?.manuscript?.form === 'slides'
+        ? 'pptx'
+        : detail?.manuscript?.form === 'document'
+          ? 'docx'
+          : ''
+      : '';
   const [pane, setPane] = useState<NotebookPane>(() => readNotebookView().pane);
   useEffect(() => {
     const handed = (location.state as { sessionId?: string } | null)?.sessionId;
@@ -565,9 +664,99 @@ export const NotebookPage = () => {
   const knowledgeSync = useRef(Promise.resolve());
   const detailRef = useRef(detail);
   detailRef.current = detail;
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  const mutateDetailRef = useRef(mutateDetail);
+  mutateDetailRef.current = mutateDetail;
+  const seenSession = useRef(sessionId);
+  const startedCompose = useRef('');
 
   useEffect(() => {
-    setPendingProjectId(null);
+    if (seenSession.current !== sessionId) {
+      seenSession.current = sessionId;
+      slideTicket.current += 1;
+      startedCompose.current = '';
+    }
+    const source = detailRef.current;
+    const format = source?.slide_compose === 'docx' || source?.slide_compose === 'pptx'
+      ? source.slide_compose
+      : '';
+    if (!source || source.id !== sessionId || !format) return;
+    const key = `${source.id}:${format}`;
+    if (startedCompose.current === key) return;
+    startedCompose.current = key;
+    const ticket = ++slideTicket.current;
+    const alive = () => slideTicket.current === ticket;
+    const making = format === 'docx' ? '文書を作っています' : 'スライドを作っています';
+    setSlideStatus(making);
+    setOpenError(null);
+    void (async () => {
+      try {
+        const updated = await actionsRef.current.updateSession(source.id, { slide_compose: '' });
+        if (updated) await mutateDetailRef.current(updated, { revalidate: false });
+        if (!alive()) return;
+        const chapters = (source.manuscript?.chapters ?? []).filter(
+          (chapter) => chapter.label.trim() && chapter.value.trim(),
+        );
+        if (!chapters.length) {
+          setOpenError('原稿がまだありません。先に原稿を書いてください。');
+          setSlideStatus('');
+          return;
+        }
+        const title = (source.title || (format === 'docx' ? '文書' : 'スライド')).trim();
+        const body =
+          format === 'docx'
+            ? documentMarkdown(title, chapters, source.manuscript?.markdown)
+            : slideMarkdown(chapters, source.manuscript?.markdown);
+        setSlideStatus('図を画像化しています');
+        const prepared = await embedMermaidFences(body);
+        if (!alive()) return;
+        setSlideStatus(making);
+        const jobId = await startPptxCompose(
+          prepared.markdown,
+          prepared.assets,
+          title,
+          format === 'docx' ? DOC_AS_WRITTEN : SLIDE_AS_WRITTEN,
+          format,
+          format !== 'pptx',
+        );
+        const bytes = await waitForPptx(jobId, setSlideStatus, () => !alive());
+        if (!alive()) return;
+        const filename = officeExportName(title, format);
+        setSlideStatus('文書台帳へ置いています');
+        const placed = await teamApi.putBinary<{
+          id?: string;
+          files?: { file_id?: string; role?: string }[];
+        }>(
+          `ledger/office/files?${new URLSearchParams({ name: filename })}`,
+          new Blob([bytes]),
+          { 'Content-Type': 'application/octet-stream' },
+        );
+        const rowId = placed.data?.id || '';
+        const fileId =
+          (placed.data?.files || []).find((file) => file.role === 'body')?.file_id ||
+          placed.data?.files?.[0]?.file_id ||
+          '';
+        const saved = await actionsRef.current.updateSession(source.id, {
+          office_file: filename,
+          office_ref: rowId && fileId ? `${rowId}/${fileId}` : '',
+        });
+        if (saved) await mutateDetailRef.current(saved, { revalidate: false });
+      } catch (error) {
+        if (!alive()) return;
+        const message = error instanceof Error ? error.message : '';
+        if (message === 'cancelled') return;
+        setOpenError(message || (format === 'docx' ? '文書を作れませんでした。' : 'スライドを作れませんでした。'));
+      } finally {
+        if (slideTicket.current === ticket) {
+          startedCompose.current = '';
+          setSlideStatus('');
+        }
+      }
+    })();
+  }, [sessionId, detail?.slide_compose]);
+
+  useEffect(() => {
     setOpenError(null);
     knowledgePicksRef.current = [];
     setKnowledgePicks([]);
@@ -909,6 +1098,8 @@ export const NotebookPage = () => {
     const next = await actions.retryChat(sessionId);
     if (next) {
       await refresh(next);
+      const last = [...(next.messages ?? [])].reverse().find((m) => m.role === 'assistant');
+      if (last?.open_editor) void onOpenEditor(next, { stay: true });
       return;
     }
     await mutateDetail(prev, { revalidate: false });
@@ -941,10 +1132,7 @@ export const NotebookPage = () => {
     if (next) {
       await refresh(next);
       const last = [...(next.messages ?? [])].reverse().find((m) => m.role === 'assistant');
-      if (last?.open_editor) {
-        setPane('editor');
-        void onOpenEditor(next);
-      }
+      if (last?.open_editor) void onOpenEditor(next, { stay: true });
       return;
     }
     setChatDraft(q);
@@ -1006,13 +1194,12 @@ export const NotebookPage = () => {
     }
   };
 
-  const onOpenEditor = async (source?: NotebookSessionDetail) => {
+  const onOpenEditor = async (source?: NotebookSessionDetail, options?: { stay?: boolean }) => {
     const current = source ?? detail;
     if (!sessionId || !current || openingEditor) return;
     const run = openRun.current + 1;
     openRun.current = run;
     setOpenError(null);
-    setPendingProjectId(null);
     setOpeningEditor(true);
     try {
       await flushDrafts();
@@ -1023,13 +1210,21 @@ export const NotebookPage = () => {
         name: projectId ? undefined : current.title,
         project_id: projectId || undefined,
       });
-      if (!projectId) {
-        await actions.updateSession(sessionId, { editor_project_id: started.project_id });
+      const placedFile = started.file?.trim() || '';
+      if (!projectId || placedFile) {
+        const saved = await actions.updateSession(sessionId, {
+          ...(projectId ? {} : { editor_project_id: started.project_id }),
+          ...(placedFile ? { manuscript_path: placedFile } : {}),
+        });
+        if (saved) await refresh(saved);
       }
+      const openFile = placedFile || MANUSCRIPT_FILE;
       if (started.ready) {
-        navigate(
-          `/procuretech-editor?project=${encodeURIComponent(started.project_id)}&file=${encodeURIComponent('原稿.md')}`,
-        );
+        if (!options?.stay) {
+          navigate(
+            `/procuretech-editor?project=${encodeURIComponent(started.project_id)}&file=${encodeURIComponent(openFile)}`,
+          );
+        }
         return;
       }
       const deadline = Date.now() + 5 * 60 * 1000;
@@ -1037,8 +1232,7 @@ export const NotebookPage = () => {
       while (status.status !== 'success' && status.status !== 'error') {
         if (openRun.current !== run) return;
         if (Date.now() > deadline) {
-          setPendingProjectId(started.project_id);
-          setOpenError('章の作成が時間内に終わりませんでした。作成したプロジェクトは開けます。');
+          setOpenError('章の作成が時間内に終わりませんでした。');
           return;
         }
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
@@ -1046,16 +1240,16 @@ export const NotebookPage = () => {
         status = await fetchGeneration(started.project_id, started.request_id);
       }
       if (status.status === 'error') {
-        setPendingProjectId(started.project_id);
         setOpenError(status.error || '章の作成に失敗しました。');
         return;
       }
-      navigate(`/procuretech-editor?project=${encodeURIComponent(started.project_id)}`);
+      if (!options?.stay) {
+        navigate(`/procuretech-editor?project=${encodeURIComponent(started.project_id)}`);
+      }
     } catch (e) {
       if (openRun.current !== run) return;
       const data =
         e instanceof ApiError ? (e.data as { error?: string; project_id?: string }) : undefined;
-      if (data?.project_id) setPendingProjectId(data.project_id);
       setOpenError(data?.error || '編集画面を開けませんでした。');
     } finally {
       if (openRun.current === run) setOpeningEditor(false);
@@ -1205,6 +1399,11 @@ export const NotebookPage = () => {
             {(actions.error || openError) && (
               <p className='shrink-0 py-2 text-std-16N-170 text-error-1' role='alert'>
                 {actions.error || openError}
+              </p>
+            )}
+            {slideStatus && (
+              <p className='shrink-0 py-2 text-std-16N-170 text-solid-gray-700' role='status'>
+                {slideStatus}
               </p>
             )}
 
@@ -1389,6 +1588,27 @@ export const NotebookPage = () => {
                   sessionId={sessionId}
                   onRetry={() => void onRetry()}
                   onClip={(messageId) => void onClip(messageId)}
+                  manuscriptPlace={manuscriptPlace}
+                  officeFile={detail.office_file?.trim() || ''}
+                  officeAttempted={officeAttempted}
+                  officeCompose={officeCompose}
+                  onOpenOffice={
+                    officeOpenPath(detail.office_file?.trim() || '', detail.office_ref?.trim() || '')
+                      ? () => {
+                          const path = officeOpenPath(
+                            detail.office_file?.trim() || '',
+                            detail.office_ref?.trim() || '',
+                          );
+                          if (path) navigate(path);
+                        }
+                      : undefined
+                  }
+                  onOpenManuscript={() => {
+                    if (!manuscriptPlace) return;
+                    navigate(
+                      `/procuretech-editor?project=${encodeURIComponent(manuscriptPlace.projectId)}&file=${encodeURIComponent(manuscriptPlace.fileName)}`,
+                    );
+                  }}
                   clippedMessageIds={(detail.items ?? [])
                     .map((item) => item.message_id)
                     .filter((id): id is string => Boolean(id))}
@@ -1504,37 +1724,6 @@ export const NotebookPage = () => {
                     );
                   })}
                 </div>
-              </div>
-            )}
-
-            {pane === 'editor' && detail && (
-              <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-4'>
-                <h2 className='text-std-18B-160'>Markdownエディタで編集</h2>
-                <p className='text-dns-14N-130 text-solid-gray-600'>
-                  エージェントで文書が揃うと、編集画面を開きます。章の手直しと書き出しは、開いたあとのエディタで行います。
-                </p>
-                {openingEditor && (
-                  <p className='inline-flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
-                    <Spinner />
-                    編集画面を開いています。
-                  </p>
-                )}
-                {(pendingProjectId || detail.editor_project_id) && (
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='md'
-                    onClick={() => {
-                      const projectId = pendingProjectId || detail.editor_project_id;
-                      if (!projectId) return;
-                      navigate(
-                        `/procuretech-editor?project=${encodeURIComponent(projectId)}`,
-                      );
-                    }}
-                  >
-                    編集画面を開く
-                  </Button>
-                )}
               </div>
             )}
             </div>

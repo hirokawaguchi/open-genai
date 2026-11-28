@@ -6724,11 +6724,16 @@ def _pptx_assets(raw: Any) -> dict[str, str] | None:
     return assets
 
 
-def _remember_pptx_job(user_id: str, job_id: str) -> None:
+_COMPOSE_FORMATS: dict[str, str] = {}
+
+
+def _remember_pptx_job(user_id: str, job_id: str, fmt: str = "pptx") -> None:
     _PPTX_JOBS[job_id] = user_id
+    _COMPOSE_FORMATS[job_id] = fmt
     if len(_PPTX_JOBS) > 200:
         for old in list(_PPTX_JOBS)[:50]:
             _PPTX_JOBS.pop(old, None)
+            _COMPOSE_FORMATS.pop(old, None)
 
 
 def _pptx_title(raw: str) -> str:
@@ -6738,19 +6743,25 @@ def _pptx_title(raw: str) -> str:
     return title or "回答"
 
 
-def _pptx_from_zip(data: bytes) -> bytes | None:
+def _office_from_zip(data: bytes, ext: str) -> bytes | None:
+    """合成結果の ZIP から文書かスライドを取り出す。中身自体がそのファイルならそれを返す。"""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = [
+            names = archive.namelist()
+            packed = [
                 name
-                for name in archive.namelist()
-                if name.lower().endswith(".pptx") and not name.endswith("/")
+                for name in names
+                if name.lower().endswith(f".{ext}") and not name.endswith("/")
             ]
-            if not names:
-                return None
-            return archive.read(names[0])
+            if packed:
+                return archive.read(packed[0])
+            if ext == "docx" and "word/document.xml" in names:
+                return data
+            if ext == "pptx" and "ppt/presentation.xml" in names:
+                return data
     except zipfile.BadZipFile:
         return None
+    return None
 
 
 async def _generate_json(
@@ -6800,6 +6811,14 @@ async def procuretech_generate_compose(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={"error": "画像の指定が不正です"})
     title = _pptx_title(str((body or {}).get("title") or ""))
     instruction = str((body or {}).get("instruction") or "").strip()[:1000]
+    fmt = str((body or {}).get("format") or "pptx").strip().lower()
+    if fmt not in ("docx", "pptx"):
+        return JSONResponse(status_code=400, content={"error": "文書かスライドだけ合成できます。"})
+    plan = (body or {}).get("plan", True)
+    if isinstance(plan, str):
+        plan = plan.strip().lower() not in ("0", "false", "headings", "off")
+    plan = bool(plan)
+    kind = "文書" if fmt == "docx" else "スライド"
     status, payload = await _generate_json(
         "POST",
         "/compose/jobs",
@@ -6807,7 +6826,8 @@ async def procuretech_generate_compose(request: Request) -> JSONResponse:
             "outputs": [
                 {
                     "name": title,
-                    "format": "pptx",
+                    "format": fmt,
+                    "plan": plan,
                     "instruction": instruction,
                     "sections": [{"filename": "回答.md", "content": markdown}],
                 }
@@ -6819,9 +6839,9 @@ async def procuretech_generate_compose(request: Request) -> JSONResponse:
     if status not in (200, 202) or not _PPTX_JOB_ID.fullmatch(job_id):
         return JSONResponse(
             status_code=503 if status >= 500 or status == 0 else 502,
-            content={"error": str(payload.get("error") or "スライドの作成を開始できませんでした。")},
+            content={"error": str(payload.get("error") or f"{kind}の作成を開始できませんでした。")},
         )
-    _remember_pptx_job(user, job_id)
+    _remember_pptx_job(user, job_id, fmt)
     return JSONResponse(status_code=202, content={"jobId": job_id})
 
 
@@ -6902,15 +6922,17 @@ async def procuretech_generate_compose_file(request: Request, job_id: str) -> Re
             )
     except httpx.HTTPError:
         return JSONResponse(status_code=503, content={"error": "文書生成に接続できませんでした。"})
+    fmt = _COMPOSE_FORMATS.get(job_id, "pptx")
+    kind = "文書" if fmt == "docx" else "スライド"
     if res.status_code != 200:
-        return JSONResponse(status_code=409, content={"error": "スライドはまだできていません。"})
-    pptx = _pptx_from_zip(res.content)
-    if not pptx:
-        return JSONResponse(status_code=502, content={"error": "スライドを取り出せませんでした。"})
+        return JSONResponse(status_code=409, content={"error": f"{kind}はまだできていません。"})
+    office = _office_from_zip(res.content, fmt)
+    if not office:
+        return JSONResponse(status_code=502, content={"error": f"{kind}を取り出せませんでした。"})
     return Response(
-        content=pptx,
-        media_type=_OFFICE_EXPORT_TYPES["pptx"],
-        headers={"Content-Disposition": 'attachment; filename="answer.pptx"'},
+        content=office,
+        media_type=_OFFICE_EXPORT_TYPES[fmt],
+        headers={"Content-Disposition": f'attachment; filename="answer.{fmt}"'},
     )
 
 
@@ -9069,6 +9091,8 @@ async def notebook_open_editor(session_id: str, request: Request) -> JSONRespons
                 headers=notebook_headers,
             )
             manuscript = ""
+            manuscript_form = ""
+            note_title = ""
             if session_res.status_code == 200:
                 try:
                     payload = session_res.json()
@@ -9077,6 +9101,10 @@ async def notebook_open_editor(session_id: str, request: Request) -> JSONRespons
                 raw = payload.get("manuscript") if isinstance(payload, dict) else None
                 if isinstance(raw, dict):
                     manuscript = str(raw.get("markdown") or "")
+                    manuscript_form = str(raw.get("form") or "")
+                else:
+                    manuscript_form = ""
+                note_title = str(payload.get("title") or "") if isinstance(payload, dict) else ""
             handoff = {
                 "editor_base": _procuretech_editor_app_url(""),
                 "editor_headers": editor_headers,
@@ -9086,7 +9114,11 @@ async def notebook_open_editor(session_id: str, request: Request) -> JSONRespons
             }
             if manuscript.strip():
                 opened = await place_manuscript(
-                    client, manuscript=manuscript, **handoff
+                    client,
+                    manuscript=manuscript,
+                    form=manuscript_form,
+                    title=note_title or str(body.get("name") or ""),
+                    **handoff,
                 )
             else:
                 opened = await open_in_editor(

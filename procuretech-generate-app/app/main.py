@@ -476,6 +476,15 @@ def _log_deck_check(fmt: str, deck: dict[str, Any], data: bytes) -> None:
     print(f"[generate] {fmt}: {format_issues(issues)}")
 
 
+def _wants_pptx_plan(raw: Any) -> bool:
+    """既定は LLM でデッキを組み直す。整理済みの見出しを保つときは plan を偽にする。"""
+    if raw is False or raw == 0:
+        return False
+    if isinstance(raw, str) and raw.strip().lower() in {"0", "false", "headings", "off"}:
+        return False
+    return True
+
+
 def _render_output(
     fmt: str,
     name: str,
@@ -483,11 +492,18 @@ def _render_output(
     assets: dict[str, bytes],
     on_progress: Any = None,
     instruction: str = "",
+    plan: bool = True,
 ) -> bytes:
     # HTML はブラウザでの庁内情報伝達を目的とし、常に縦スクロールの単一文書にする。
-    # スライド（LLM デッキ）は PPTX 専用に残す。
+    # スライド（LLM デッキ）は PPTX 専用に残す。plan が偽のときは見出しで分ける。
     if fmt == "html":
         data = markdown_to_html(name, sections, assets)
+        if on_progress:
+            on_progress(1.0, "書き出し")
+        return data
+    if fmt == "pptx" and not plan:
+        print("[generate] pptx: headings")
+        data = markdown_to_pptx(name, sections, assets)
         if on_progress:
             on_progress(1.0, "書き出し")
         return data
@@ -559,6 +575,7 @@ def _render_all(
             assets,
             on_progress=_op if progress_cb else None,
             instruction=str(o.get("instruction") or ""),
+            plan=_wants_pptx_plan(o.get("plan", True)),
         )
         arc = f"{name}.{fmt}"
         n = 2
@@ -627,7 +644,12 @@ def _prepare_compose(
                 progress_cb(pct, f"{_name}: {label}")
 
         op = _op if progress_cb else None
-        if fmt == "pptx" and defer_mermaid:
+        plan = _wants_pptx_plan(o.get("plan", True))
+        if fmt == "pptx" and not plan:
+            data = markdown_to_pptx(name, sections, assets)
+            if op:
+                op(1.0, "書き出し")
+        elif fmt == "pptx" and defer_mermaid:
             deck = plan_deck(
                 name,
                 sections,
@@ -660,6 +682,7 @@ def _prepare_compose(
                 assets,
                 on_progress=op,
                 instruction=str(o.get("instruction") or ""),
+                plan=plan,
             )
         rendered.append((_unique_arc(name, fmt, used), data))
         idx += 1
