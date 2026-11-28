@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app import agent_session, harness, hermes_client, hermes_mcp, store, tools
+from app import agent_session, harness, hermes_client, hermes_mcp, mcp_knowledge, store, tools
 
 
 def _session(tmp_path, monkeypatch) -> str:
@@ -203,3 +203,15 @@ def test_hermes_permission_prefers_once():
         ]
     )
     assert chosen == "allow_once"
+
+
+def test_sse_parser_skips_log_notification():
+    text = """event: message
+data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}
+
+event: message
+data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"ok"}]}}
+"""
+    data = mcp_knowledge._parse_sse_json(text)
+    assert data["id"] == 3
+    assert data["result"]["content"][0]["text"] == "ok"
