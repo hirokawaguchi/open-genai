@@ -13,6 +13,20 @@ export const TOOL_LABELS: Record<string, string> = {
   get_weather: '天気を確認',
   wikipedia_search: 'Wikipediaを検索',
   web_search: 'Wikipediaを検索',
+  firecrawl_search: 'Webを検索',
+  firecrawl_scrape: 'Webページを読む',
+  search_meetings: '会議を検索',
+  search_utterances: '会議録を検索',
+  get_meeting: '会議を開く',
+  get_utterance: '発言を確認',
+  find_agenda: '議題を検索',
+  list_stances: 'スタンスを確認',
+  list_docs: '計画の文書を一覧',
+  search_plans: '計画を本文検索',
+  get_section: '節を確認',
+  get_doc_outline: '目次を確認',
+  find_measures: '施策を検索',
+  get_measure: '施策を開く',
 };
 
 /** Hermes が付ける内部名を、ノートの道具名へ戻す。探索や呼び出し ID は空。 */

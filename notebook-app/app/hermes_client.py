@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import struct
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -144,7 +145,14 @@ async def _open(host: str, port: int, path: str) -> tuple[asyncio.StreamReader, 
     return reader, writer
 
 
-async def complete(base_url: str, token: str, prompt: str, *, timeout: float = 600) -> tuple[str, list[dict[str, str]]]:
+async def complete(
+    base_url: str,
+    token: str,
+    prompt: str,
+    *,
+    timeout: float = 600,
+    on_tool: Callable[[str], None] | None = None,
+) -> tuple[str, list[dict[str, str]]]:
     """1ターンを送り、応答本文とツール痕跡を返す。"""
     host, port, path = _ws_target(base_url, token)
 
@@ -193,6 +201,8 @@ async def complete(base_url: str, token: str, prompt: str, *, timeout: float = 6
                             name,
                             str(event.get("output") or event.get("status") or "")[:1200],
                         )
+                        if on_tool:
+                            on_tool(name)
                 elif kind == "permission":
                     option = allow_option(event.get("options") or [])
                     writer.write(

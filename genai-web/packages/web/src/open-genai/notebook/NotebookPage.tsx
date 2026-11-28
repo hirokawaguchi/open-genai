@@ -1270,6 +1270,7 @@ export const NotebookPage = () => {
                   messages={detail.messages ?? []}
                   draft={chatDraft}
                   submitting={sending}
+                  liveSteps={actions.liveSteps}
                   llmEnabled={llmEnabled}
                   attaching={addingFiles}
                   knowledgeBusy={addingKnowledge}

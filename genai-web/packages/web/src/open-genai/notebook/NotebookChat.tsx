@@ -5,7 +5,6 @@ import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
-import { ProgressIndicator } from '@/components/ui/dads/ProgressIndicator';
 import { SupportText } from '@/components/ui/dads/SupportText';
 import { AttachmentIcon } from '@/components/ui/icons/AttachmentIcon';
 import { ReplayIcon } from '@/components/ui/icons/ReplayIcon';
@@ -36,6 +35,7 @@ type Props = {
   messages: NotebookMessage[];
   draft: string;
   submitting: boolean;
+  liveSteps?: string[];
   llmEnabled: boolean;
   attaching: boolean;
   knowledgeBusy: boolean;
@@ -51,6 +51,23 @@ type Props = {
   onSend: () => void;
   sessionId: string | null;
   onRetry: () => void;
+};
+
+const stepTraces = (names: string[]): NotebookToolTrace[] =>
+  names.map((name) => ({ name }));
+
+const ThinkingLine = ({ steps }: { steps: string[] }) => {
+  const latest = [...steps].reverse().map((name) => toolLabel(name)).find(Boolean) ?? '';
+  const text = latest ? `考えています · ${latest}` : '考えています';
+  return (
+    <div className='flex items-center gap-2 px-1 py-1' role='status' aria-live='polite'>
+      <span
+        className='inline-block size-3 shrink-0 animate-spin rounded-full border-2 border-solid-gray-300 border-t-solid-gray-536'
+        aria-hidden={true}
+      />
+      <p className='min-w-0 truncate text-dns-14N-130 text-solid-gray-536'>{text}</p>
+    </div>
+  );
 };
 
 const visibleSteps = (traces?: NotebookToolTrace[]) => {
@@ -155,28 +172,33 @@ const AssistantTurn = ({
   message,
   sessionId,
   pending,
+  liveSteps,
   allowRetry,
   onRetry,
 }: {
   message: NotebookMessage;
   sessionId: string | null;
   pending: boolean;
+  liveSteps: string[];
   allowRetry: boolean;
   onRetry: () => void;
 }) => {
   const copyRef = useRef<HTMLDivElement>(null);
+  const traces = pending && liveSteps.length ? stepTraces(liveSteps) : message.tool_trace;
   return (
     <article className='rounded-12 border border-solid-gray-420 bg-white p-4 lg:px-6'>
       <h2 className='sr-only'>AIの回答</h2>
-      <AgentSteps traces={message.tool_trace} />
-      <div ref={copyRef}>
-        <ChatAnswer
-          content={message.content}
-          citations={message.citations ?? []}
-          idPrefix={`nb-cite-${message.id}`}
-        />
-      </div>
-      {pending && <ProgressIndicator className='my-0.5' />}
+      <AgentSteps traces={traces} />
+      {!pending && (
+        <div ref={copyRef}>
+          <ChatAnswer
+            content={message.content}
+            citations={message.citations ?? []}
+            idPrefix={`nb-cite-${message.id}`}
+          />
+        </div>
+      )}
+      {pending && <ThinkingLine steps={liveSteps} />}
       {!pending && (
         <AnswerActions
           sessionId={sessionId}
@@ -213,6 +235,7 @@ export const NotebookChat = ({
   messages,
   draft,
   submitting,
+  liveSteps = [],
   llmEnabled,
   attaching,
   knowledgeBusy,
@@ -243,7 +266,7 @@ export const NotebookChat = ({
       el.scrollTop = el.scrollHeight;
     });
     return () => window.cancelAnimationFrame(id);
-  }, [lastKey, lastText, messages.length, submitting]);
+  }, [lastKey, lastText, liveSteps.join('\n'), messages.length, submitting]);
 
   return (
     <div className='flex min-h-0 flex-1 flex-col'>
@@ -265,6 +288,7 @@ export const NotebookChat = ({
               message={m}
               sessionId={sessionId}
               pending={pending}
+              liveSteps={pending ? liveSteps : []}
               allowRetry={latest && !submitting}
               onRetry={onRetry}
             />
@@ -281,12 +305,9 @@ export const NotebookChat = ({
           );
         })}
         {submitting && messages[messages.length - 1]?.role !== 'assistant' && (
-          <div className='flex items-center gap-2 px-1 py-1' role='status' aria-live='polite'>
-            <span
-              className='inline-block size-3 shrink-0 animate-spin rounded-full border-2 border-solid-gray-300 border-t-solid-gray-536'
-              aria-hidden={true}
-            />
-            <p className='truncate text-dns-14N-130 text-solid-gray-536'>考えています</p>
+          <div>
+            <AgentSteps traces={stepTraces(liveSteps)} />
+            <ThinkingLine steps={liveSteps} />
           </div>
         )}
       </div>

@@ -19,7 +19,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools
+from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools
 from .agent_session import HermesUnavailable, PoolFull, SessionKey, pool as agent_pool
 
 for parent in Path(__file__).resolve().parents:
@@ -640,6 +640,18 @@ def remove_skill(skill_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.get("/sessions/{session_id}/activity")
+async def session_activity(session_id: str, request: Request) -> JSONResponse:
+    """生成中に使った道具の名前。待ち画面が短い間隔で読む。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    if not store.owns_session(session_id, uid):
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    turn_id = str(request.query_params.get("turn") or "")
+    return JSONResponse(content={"steps": activity.snapshot(session_id, turn_id)})
+
+
 @app.post("/sessions/{session_id}/chat")
 async def chat(session_id: str, request: Request) -> JSONResponse:
     err, uid = _auth(request)
@@ -680,6 +692,7 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     designated, ref_error = harness.resolve_answer_refs(question, history)
     if ref_error:
         return JSONResponse(status_code=400, content={"error": ref_error})
+    activity.begin(session_id, str(body.get("turn_id") or ""))
     store.add_message(
         session_id, uid, role="user", content=question, source_labels=labels
     )
@@ -733,6 +746,13 @@ async def retry_chat(session_id: str, request: Request) -> JSONResponse:
     if ref_error:
         return JSONResponse(status_code=400, content={"error": ref_error})
     previous = messages[-1]
+    try:
+        retry_body = await request.json()
+    except Exception:  # noqa: BLE001
+        retry_body = {}
+    if not isinstance(retry_body, dict):
+        retry_body = {}
+    activity.begin(session_id, str(retry_body.get("turn_id") or ""))
     if not store.delete_message(session_id, uid, str(previous.get("id") or "")):
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     response = await _generate_reply(

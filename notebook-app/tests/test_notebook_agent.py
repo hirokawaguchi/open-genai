@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app import agent_session, harness, hermes_client, hermes_mcp, mcp_knowledge, store, tools
+from app import activity, agent_session, harness, hermes_client, hermes_mcp, mcp_knowledge, store, tools
 
 
 def _session(tmp_path, monkeypatch) -> str:
@@ -174,6 +174,19 @@ def test_greeting_does_not_start_a_document():
     assert "まだ一文にならないときは" not in text
     assert "引用番号は書かない" in text
     assert "AIタイプ" not in text
+
+
+def test_activity_keeps_each_new_step():
+    activity.begin("s-progress", "turn-a")
+    activity.note("s-progress", "search_utterances")
+    activity.note("s-progress", "search_utterances")
+    activity.note("s-progress", "")
+    activity.note("s-progress", "search_plans")
+    assert activity.snapshot("s-progress", "turn-a") == ["search_utterances", "search_plans"]
+    assert activity.snapshot("s-progress", "turn-b") == []
+    activity.begin("s-progress", "turn-b")
+    assert activity.snapshot("s-progress", "turn-a") == []
+    assert activity.snapshot("s-progress", "turn-b") == []
 
 
 def test_hermes_collapses_a_repeated_tool():

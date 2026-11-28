@@ -7,7 +7,7 @@ import os
 import re
 from typing import Any
 
-from . import hermes_client, hermes_mcp, llm, retrieve, store, tools
+from . import activity, hermes_client, hermes_mcp, llm, retrieve, store, tools
 
 MAX_STEPS = 12
 HISTORY_LIMIT = 8
@@ -376,7 +376,10 @@ async def run(
         token = hermes_mcp.open_turn(ctx, allowed, extra_specs)
         try:
             text, traces = await hermes_client.complete(
-                hermes_url, token, _prompt_for_hermes(messages)
+                hermes_url,
+                token,
+                _prompt_for_hermes(messages),
+                on_tool=lambda name: activity.note(session_id, name),
             )
         finally:
             hermes_mcp.close_turn(token)
@@ -413,6 +416,7 @@ async def run(
                 else:
                     result = await tools.dispatch(name, fn.get("arguments"), ctx)
                 traces.append({"name": name, "result": result[:1200]})
+                activity.note(session_id, name)
                 messages.append(
                     {
                         "role": "tool",
@@ -429,6 +433,7 @@ async def run(
         if parsed:
             result = await tools.dispatch(parsed["name"], parsed["arguments"], ctx)
             traces.append({"name": parsed["name"], "result": result[:1200]})
+            activity.note(session_id, parsed["name"])
             if ctx.ask_text:
                 return ctx.ask_text, [], traces, [], False
             messages.append({"role": "assistant", "content": text})

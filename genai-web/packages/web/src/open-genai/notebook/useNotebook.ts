@@ -115,8 +115,33 @@ export const useNotebookSession = (sessionId: string | null) => {
   };
 };
 
+const watchSteps = (
+  sessionId: string,
+  turnId: string,
+  onSteps: (steps: string[]) => void,
+) => {
+  let stopped = false;
+  const pull = async () => {
+    try {
+      const res = await teamApi.get<{ steps?: string[] }>(
+        `${BASE}/sessions/${encodeURIComponent(sessionId)}/activity?turn=${encodeURIComponent(turnId)}`,
+      );
+      if (!stopped) onSteps(res.data?.steps ?? []);
+    } catch {
+      // 途中経過が取れなくても、回答そのものは待つ。
+    }
+  };
+  void pull();
+  const timer = window.setInterval(() => void pull(), 1000);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
+};
+
 export const useNotebookActions = () => {
   const [submitting, setSubmitting] = useState(false);
+  const [liveSteps, setLiveSteps] = useState<string[]>([]);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -351,16 +376,21 @@ export const useNotebookActions = () => {
     async (sessionId: string): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
+      setLiveSteps([]);
+      const turnId = crypto.randomUUID();
+      const stop = watchSteps(sessionId, turnId, setLiveSteps);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat/retry`,
-          {},
+          { turn_id: turnId },
         );
         return res.data ?? null;
       } catch (e) {
         setError(errorMessage(e, '回答を作り直せませんでした。'));
         return null;
       } finally {
+        stop();
+        setLiveSteps([]);
         setSubmitting(false);
       }
     },
@@ -375,11 +405,15 @@ export const useNotebookActions = () => {
     ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
+      setLiveSteps([]);
+      const turnId = crypto.randomUUID();
+      const stop = watchSteps(sessionId, turnId, setLiveSteps);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
           {
             question,
+            turn_id: turnId,
             source_ids: sourceIds && sourceIds.length > 0 ? sourceIds : undefined,
           },
         );
@@ -388,6 +422,8 @@ export const useNotebookActions = () => {
         setError(errorMessage(e, '送信に失敗しました。'));
         return null;
       } finally {
+        stop();
+        setLiveSteps([]);
         setSubmitting(false);
       }
     },
@@ -479,6 +515,7 @@ export const useNotebookActions = () => {
     deleteKnowledgeRef,
     chat,
     retryChat,
+    liveSteps,
     updateMcp,
     createMcp,
     deleteMcp,

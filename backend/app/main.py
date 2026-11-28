@@ -9273,6 +9273,23 @@ async def notebook_delete_mcp(mcp_id: str, request: Request) -> JSONResponse:
     )
 
 
+@app.get("/notebook/sessions/{session_id}/activity")
+@app.get("/procuretech-hearing/sessions/{session_id}/activity")
+async def notebook_session_activity(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    turn = quote(str(request.query_params.get("turn") or ""), safe="")
+    path = f"/sessions/{session_id}/activity"
+    if turn:
+        path += f"?turn={turn}"
+    return await _proxy_procuretech_hearing(
+        "GET",
+        _procuretech_hearing_app_url(path),
+        headers,
+    )
+
+
 @app.post("/notebook/sessions/{session_id}/chat")
 @app.post("/procuretech-hearing/sessions/{session_id}/chat")
 async def procuretech_hearing_chat(
@@ -9300,11 +9317,15 @@ async def notebook_retry_chat(session_id: str, request: Request) -> JSONResponse
     err, headers = _procuretech_hearing_headers(request)
     if err:
         return err
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
     return await _proxy_procuretech_hearing(
         "POST",
         _procuretech_hearing_app_url(f"/sessions/{session_id}/chat/retry"),
         headers,
-        {},
+        body if isinstance(body, dict) else {},
         timeout=240,
     )
 

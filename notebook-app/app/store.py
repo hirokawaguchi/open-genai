@@ -222,6 +222,12 @@ def _owned(session_id: str, user_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def owns_session(session_id: str, user_id: str) -> bool:
+    db = connect()
+    with _lock:
+        return _owned(session_id, user_id) is not None
+
+
 def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
     db = connect()
     with _lock:
