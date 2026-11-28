@@ -39,6 +39,11 @@ export const useTags = (scope: string | undefined) => {
   return { tags: (data?.tags ?? []) as KnowledgeTag[], error, isLoading, mutate };
 };
 
+export const listTags = (scope: string) =>
+  teamApi
+    .get<TagsResponse>('knowledge/tags', { params: { scope } })
+    .then((r) => r.data.tags ?? []);
+
 export const listDocs = (scope: string, tags?: string[]) => {
   const tagParam = (tags ?? []).filter(Boolean).join(',');
   return teamApi
@@ -88,6 +93,11 @@ export const renameTag = (scope: string, tag: string, renameTo: string) =>
 
 export const deleteTag = (scope: string, tag: string) =>
   teamApi.post('knowledge/tags/delete', { scope, tag }).then((r) => r.data);
+
+export const updateTagDescription = (scope: string, tag: string, description: string) =>
+  teamApi
+    .post('knowledge/tags/description', { scope, tag, description })
+    .then((r) => r.data);
 
 export const registerFiles = (
   scope: string,

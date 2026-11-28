@@ -638,7 +638,12 @@ async def api_list_tags(
         used[name] = used.get(name, 0) + int(r.get("chunks") or 0)
     names = sorted(set(reg) | set(used))
     tags_out = [
-        {"tag": name, "chunks": int(used.get(name, 0))} for name in names
+        {
+            "tag": name,
+            "chunks": int(used.get(name, 0)),
+            "description": str((reg.get(name) or {}).get("description") or ""),
+        }
+        for name in names
     ]
     return {"scope": resolved, "tags": tags_out}
 
@@ -976,6 +981,10 @@ class KnowledgeError(Exception):
 
 async def _kb_create_tag(scope: str, name: str) -> str:
     return tagstore.create_tag(scope, (name or "").strip())
+
+
+async def _kb_describe_tag(scope: str, name: str, description: str) -> str:
+    return tagstore.set_description(scope, (name or "").strip(), description or "")
 
 
 async def _kb_rename_tag(scope: str, old: str, new: str) -> dict[str, Any]:
@@ -1749,6 +1758,33 @@ async def api_delete_tag(
     except (ValueError, KnowledgeError) as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     return {"ok": True, "scope": scope, "tag": name}
+
+
+@app.post("/knowledge/tags/description")
+async def api_describe_tag(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+    x_user_groups: str | None = Header(default=None),
+    x_scope: str | None = Header(default=None),
+    x_user_ts: str | None = Header(default=None),
+    x_user_sig: str | None = Header(default=None),
+    x_user_tags: str | None = Header(default=None),
+) -> Any:
+    scope, is_admin, body, err = await _kb_rest_auth(
+        request, x_api_key, x_user_id, x_user_groups, x_scope, x_user_ts, x_user_sig, x_user_tags
+    )
+    if err:
+        return err
+    if not _can_manage(scope, is_admin):
+        return JSONResponse(status_code=403, content=_FORBIDDEN_MANAGE)
+    try:
+        text = await _kb_describe_tag(
+            scope, body.get("tag") or "", str(body.get("description") or "")
+        )
+    except (ValueError, KnowledgeError) as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"ok": True, "scope": scope, "tag": body.get("tag") or "", "description": text}
 
 
 @app.post("/knowledge/register")

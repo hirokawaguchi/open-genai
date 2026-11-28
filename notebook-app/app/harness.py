@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
-from . import llm, retrieve, store, tools
+from . import hermes_client, hermes_mcp, llm, retrieve, store, tools
 
 MAX_STEPS = 12
 HISTORY_LIMIT = 8
@@ -26,7 +27,6 @@ def _catalog_for_prompt(
 
 
 def _system_prompt(
-    skill: dict[str, Any] | None,
     instruction: str,
     enabled_mcps: list[dict[str, Any]],
     *,
@@ -35,26 +35,29 @@ def _system_prompt(
     designated: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
-        "あなたはノートの参考資料と、接続中の MCP を根拠にするアシスタントです。",
-        "日本語で答えてください。参照したソースには [1] のように番号を付けてください。",
+        "あなたはノートの中で動くエージェントです。日本語で答えてください。",
+        "対話の文に [1] のような引用番号は書かない。出所は Open-Meteo や資料名のように、名前で書く。",
         "参考資料にも MCP にも無いことは断定せず、『資料から判断できない』と述べてください。",
-        "項目は人が採用します。あなたは下書きを提案するだけです。",
-        "文書の下書きを頼まれたときは、調べたあと propose_drafts で章の一覧を置いてください。",
-        "各章は label（見出し）、value（本文）、citations（資料番号の配列）です。番号は検索結果の [1] と同じです。",
-        "propose_drafts は正本にしません。人が画面で項目にします。",
-        "回答本文にも、同じ章を Markdown の見出し（# から ###）で書いてください。見出しの前に長い前置きを置かないでください。",
-        "短い質問への返答は、見出しにも下書きにも分けないでください。",
-        "利用者がエディタで開く、編集画面へ渡す、と言ったときだけ open_editor を呼んでください。",
-        "新しいプロジェクトか既存かは人が選びます。あなたは決めません。",
-        "接続中の MCP は、質問に少しでも関係があれば答える前に呼んでください。",
+        "あいさつ、雑談、文書を作る頼みが無い発言には、短く返すだけにしてください。道具は呼ばず、文書の話をこちらから始めません。",
+        "短い資料の質問には、調べて答えるだけにしてください。ゴールも項目も、エディタへの渡しも不要です。",
+        "文書を作ってほしいと分かった発言だけを、一文のゴールにします。節の選び方と生成指示は聞きません。",
+        "ゴールがまだ無いあいだは項目を書きません。この発言で一文になるなら set_goal を呼び、同じターンで資料を調べ、commit_items で項目へ書いてください。",
+        "文書の依頼なのに、何を作るかがまだ一文にならないときだけ、ask_user で一つ聞いて止めてください。",
+        "ゴールが決まったあとは、自分で節を選び、commit_items で項目へ書いてください。",
+        "そのほかの ask_user は、資料が矛盾しているときか、決まったゴールに必要な事実が資料に無いときだけです。",
+        "項目が揃ったら deliver を呼んでください。生成指示はゴールの文そのものです。別の文は作りません。",
+        "docx、xlsx、pptx を残すときは write_office_draft で文書台帳の下書きにします。台帳が止まっていたら書かず、ask_user で知らせて止めてください。確定と削除はしません。",
+        "ナレッジへの投入は、検索のためだけです。成果物の保管先にはしません。",
+        "接続中の MCP は、資料や質問に関係するときだけ呼んでください。あいさつや雑談では呼びません。",
         "推測で日時・天気・Wikipedia にある用語を埋めないでください。",
         "参考資料だけで足りないときは、使える MCP を当たってから答えてください。",
-        "共有ナレッジ MCP のヒットは参照です。項目の根拠にするには、"
-        "人が参考資料タブからナレッジを追加する必要があります。",
+        "共有ナレッジ MCP が有効なとき、共通チームの資料はすべてこの対話の対象です。knowledge_search の結果も、参考資料と同じ根拠にしてください。",
     ]
     extra = (instruction or "").strip()
     if extra:
-        lines.append(f"\n# ノートの生成指示\n{extra}")
+        lines.append(f"\n# ゴール\n{extra}")
+        lines.append("この文を、deliver の生成指示としてそのまま使ってください。")
+        lines.append("この発言があいさつや雑談なら、ゴールも項目も変えず、短く返してください。")
     if enabled_mcps:
         lines.append("\n# このノートで有効な MCP")
         for mcp in enabled_mcps:
@@ -66,24 +69,24 @@ def _system_prompt(
                 lines.append(f"ツール: {tool_names}")
             if prompt:
                 lines.append(prompt)
-    if skill:
-        name = str(skill.get("name") or "").strip()
-        personality = str(skill.get("personality") or "").strip()
-        custom = str(skill.get("instructions") or "").strip()
-        if name:
-            lines.append(f"\n# AIタイプ: {name}")
-        if personality:
-            lines.append(f"性格: {personality}")
-        if custom:
-            lines.append(custom)
     lines.append("\n# この送信の資料範囲")
+    knowledge_on = any("knowledge_search" in (mcp.get("tools") or []) for mcp in enabled_mcps)
     if source_labels:
         lines.append("指定された資料だけを検索する: " + "、".join(source_labels))
     else:
         lines.append("未指定のため、ノートの参考資料すべてを検索する。")
+    if knowledge_on:
+        lines.append(
+            "共有ナレッジ MCP が On のため、共通チームの資料もすべて対象です。"
+            "調べるときは knowledge_search を使い、その結果も根拠にしてください。"
+        )
     lines.append("\n# 資料と見出し")
     if not catalog:
-        lines.append("参考資料はまだありません。")
+        lines.append(
+            "ノートに写した参考資料はまだありません。共有ナレッジは対象です。"
+            if knowledge_on
+            else "参考資料はまだありません。"
+        )
     else:
         shown = catalog[:20]
         for src in shown:
@@ -94,10 +97,9 @@ def _system_prompt(
         if rest > 0:
             lines.append(f"- ほか {rest} 件")
     lines.append(
-        "資料名・節・項目のどれも質問が指しておらず、"
+        "資料について聞かれているのに、資料名・節・項目のどれも質問が指しておらず、"
         "search_sources が本文を返さないときは、見出しを示してどの節かを1つだけ聞く。"
         "そのときは下書きしない。"
-        "AIタイプの型で下書きするのは、見る資料と節が決まってから。"
     )
     if designated:
         lines.append("\n" + _designated_section(designated))
@@ -268,6 +270,22 @@ def _json_objects(text: str) -> list[str]:
     return out
 
 
+def _prompt_for_hermes(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        role = str(message.get("role") or "")
+        if role == "system":
+            parts.append(content)
+        elif role == "assistant":
+            parts.append(f"エージェント:\n{content}")
+        else:
+            parts.append(f"利用者:\n{content}")
+    return "\n\n".join(parts)
+
+
 def _parse_json_tool(text: str, allowed: list[str]) -> dict[str, Any] | None:
     for raw in _json_objects(text or ""):
         try:
@@ -299,6 +317,7 @@ async def run(
     source_ids: list[str] | None = None,
     source_labels: list[str] | None = None,
     designated_answers: list[dict[str, Any]] | None = None,
+    forward_headers: dict[str, str] | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, str]], list[dict[str, Any]], bool]:
     mcps = enabled_mcps
     if mcps is None:
@@ -316,6 +335,7 @@ async def run(
         scope=scope,
         remote_mcps=[m for m in mcps if m.get("kind") == "remote" and m.get("url")],
         source_ids=scoped,
+        forward_headers=dict(forward_headers or {}),
     )
     traces: list[dict[str, str]] = []
     openai_tools = tools.openai_tools(allowed, extra_specs)
@@ -334,7 +354,6 @@ async def run(
         {
             "role": "system",
             "content": _system_prompt(
-                skill,
                 instruction,
                 mcps,
                 source_labels=labels,
@@ -351,6 +370,22 @@ async def run(
         " 使わないときは通常の日本語で答える。"
         " 日時・天気・Wikipedia にある用語は推測せず、使えるツールを先に呼ぶ。"
     )
+
+    hermes_url = os.environ.get("NOTEBOOK_HERMES_URL", "").strip().rstrip("/")
+    if hermes_url:
+        token = hermes_mcp.open_turn(ctx, allowed, extra_specs)
+        try:
+            text, traces = await hermes_client.complete(
+                hermes_url, token, _prompt_for_hermes(messages)
+            )
+        finally:
+            hermes_mcp.close_turn(token)
+        if ctx.ask_text:
+            return ctx.ask_text, [], traces, [], False
+        if not text.strip():
+            raise ValueError("Hermes の応答本文が空です")
+        cites = retrieve.filter_used_citations(text, ctx.citations)
+        return text, cites, traces, list(ctx.drafts), ctx.open_editor
 
     for _step in range(MAX_STEPS):
         try:
@@ -385,6 +420,8 @@ async def run(
                         "content": result,
                     }
                 )
+            if ctx.ask_text:
+                return ctx.ask_text, [], traces, [], False
             continue
 
         text = llm.message_text(reply)
@@ -392,6 +429,8 @@ async def run(
         if parsed:
             result = await tools.dispatch(parsed["name"], parsed["arguments"], ctx)
             traces.append({"name": parsed["name"], "result": result[:1200]})
+            if ctx.ask_text:
+                return ctx.ask_text, [], traces, [], False
             messages.append({"role": "assistant", "content": text})
             messages.append({"role": "user", "content": f"# ツール結果\n{result}"})
             continue
@@ -402,9 +441,6 @@ async def run(
         cites = retrieve.filter_used_citations(text, ctx.citations)
         return text, cites, traces, list(ctx.drafts), ctx.open_editor
 
-    if ctx.drafts or ctx.open_editor:
-        note = "下書きを置きました。項目にするかは人が選びます。"
-        if ctx.open_editor:
-            note = "編集タブを開きます。渡し先は人が選びます。"
-        return note, [], traces, list(ctx.drafts), ctx.open_editor
+    if ctx.open_editor:
+        return "項目を Markdown エディタへ渡します。", [], traces, [], True
     raise ValueError("ツール実行の上限に達しました。質問を短くしてやり直してください。")

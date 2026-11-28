@@ -5,6 +5,9 @@ describe('stripCitationMarks', () => {
   it('文中の引用番号だけを消す', () => {
     expect(stripCitationMarks('現行は紙である[1]。')).toBe('現行は紙である。');
     expect(stripCitationMarks('現行は紙である [1] です。')).toBe('現行は紙である です。');
+    expect(stripCitationMarks('[1] Open-Meteo のデータを参照しました。')).toBe(
+      'Open-Meteo のデータを参照しました。',
+    );
   });
 
   it('入れ子の字下げを残し、出典だけの行を捨てる', () => {

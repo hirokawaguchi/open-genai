@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PiBookOpenBold, PiFilePlus, PiPuzzlePieceBold } from 'react-icons/pi';
 import { useLocation, useNavigate } from 'react-router';
+import useSWR from 'swr';
 import { Markdown } from '@/components/Markdown';
 import { PageTitle } from '@/components/PageTitle';
+import { BreadcrumbsNav } from '@/components/ui/BreadcrumbsNav';
 import {
   CustomDialog,
   CustomDialogBody,
@@ -10,34 +12,33 @@ import {
   CustomDialogPanel,
 } from '@/components/ui/CustomDialog';
 import { Button } from '@/components/ui/dads/Button';
-import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Input } from '@/components/ui/dads/Input';
 import { Label } from '@/components/ui/dads/Label';
-import { Select } from '@/components/ui/dads/Select';
 import { Textarea } from '@/components/ui/dads/Textarea';
-import { LoadingButton } from '@/components/ui/LoadingButton';
-import { Switch } from '@/components/ui/Switch';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
-import { ManagedAppHeader } from '@/features/exapp/components/ManagedAppHeader';
 import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMeta';
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { NOTEBOOK_EXAPP_ID } from '@/layout/navItems';
 import { ApiError } from '@/lib/fetcher';
-import { tagFileChoices } from '@/open-genai/knowledge/tagFileCounts';
-import { listDocs, useDocs, useScopes } from '@/open-genai/knowledge/useKnowledge';
+import { KnowledgeSelectDialog } from '@/features/chat/components/KnowledgeSelectDialog';
+import type { KnowledgePick } from '@/features/chat/stores/useChatStore';
+import { listDocs, listTags, useScopes } from '@/open-genai/knowledge/useKnowledge';
 import type { KnowledgeDoc } from '@/open-genai/knowledge/types';
 import {
   fetchGeneration,
-  useEditorProjects,
 } from '@/open-genai/procuretech-editor/useProcuretechEditor';
 import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
-import { chaptersFromAnswer } from './chapters';
-import { formatNotebookMarkdown, stripCitationMarks, usedCitations } from './formatMarkdown';
+import { formatNotebookMarkdown } from './formatMarkdown';
 import { NotebookChat } from './NotebookChat';
 import { NotebookManageDialog } from './NotebookManageDialog';
-import type { NotebookBriefing, NotebookDraft, NotebookMessage } from './types';
+import type {
+  NotebookBriefing,
+  NotebookFile,
+  NotebookKnowledgeRef,
+  NotebookSessionDetail,
+} from './types';
 import {
   fileToBase64,
   openNotebookInEditor,
@@ -46,16 +47,36 @@ import {
   useNotebookMcps,
   useNotebookSession,
   useNotebookSessions,
-  useNotebookSkills,
 } from './useNotebook';
 
 const PANE_TABS = [
   { id: 'list' as const, label: 'ノート一覧' },
+  { id: 'chat' as const, label: 'エージェント' },
   { id: 'sources' as const, label: '参考資料' },
-  { id: 'chat' as const, label: '対話' },
   { id: 'items' as const, label: '項目' },
   { id: 'editor' as const, label: 'Markdownエディタで編集' },
 ];
+
+type NotebookPane = (typeof PANE_TABS)[number]['id'];
+
+const NOTEBOOK_VIEW_KEY = 'notebook-last-view';
+
+const readNotebookView = (): { sessionId: string | null; pane: NotebookPane } => {
+  try {
+    const raw = sessionStorage.getItem(NOTEBOOK_VIEW_KEY);
+    if (!raw) return { sessionId: null, pane: 'list' };
+    const parsed = JSON.parse(raw) as { sessionId?: unknown; pane?: unknown };
+    const pane = PANE_TABS.some((tab) => tab.id === parsed.pane)
+      ? (parsed.pane as NotebookPane)
+      : 'list';
+    const sessionId =
+      typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : null;
+    if (pane !== 'list' && !sessionId) return { sessionId: null, pane: 'list' };
+    return { sessionId, pane };
+  } catch {
+    return { sessionId: null, pane: 'list' };
+  }
+};
 
 const defaultNoteTitle = (existing: { title: string }[]) => {
   const d = new Date();
@@ -84,104 +105,302 @@ const Spinner = () => (
   />
 );
 
+const fileProblem = (error?: string | null) => {
+  const text = (error ?? '').trim();
+  if (!text) return null;
+  if (/file is not a zip file/i.test(text)) {
+    return 'このファイルを読み取れませんでした。パスワードが掛かっているか、壊れているか、拡張子と中身が違う可能性があります。';
+  }
+  return text;
+};
+
 const SourcePiiWarning = ({ briefing }: { briefing?: NotebookBriefing }) => {
   const pii = briefing?.pii;
   if (!pii?.warned) return null;
   const hits = pii.hits ?? [];
+  const lines = (pii.message || '').split('\n').filter(Boolean);
   return (
-    <div className='mt-2 text-orange-800 whitespace-pre-wrap'>
-      <p>
-        ＊
-        {(pii.message || '').split('\n')[0] ||
-          `個人情報の可能性: ${(pii.categories ?? []).join('・')}`}
-      </p>
-      {hits.length > 0 && (
-        <ul className='mt-1 list-disc pl-5 text-dns-14N-130'>
-          {hits.slice(0, 6).map((h, i) => (
-            <li key={`${h.category}-${h.offset ?? i}-${h.match}`}>
-              {h.category}: 「{h.context || h.match}」
+    <div className='mt-2 text-dns-14N-130 text-orange-800 whitespace-pre-wrap'>
+      <p>＊{lines[0] || `個人情報の可能性: ${(pii.categories ?? []).join('・')}`}</p>
+      {hits.length > 0 ? (
+        <ul className='mt-1 list-disc pl-5'>
+          {hits.slice(0, 6).map((hit, index) => (
+            <li key={`${hit.category}-${hit.offset ?? index}-${hit.match}`}>
+              {hit.category}: 「{hit.context || hit.match}」
             </li>
           ))}
         </ul>
+      ) : (
+        lines.slice(1).map((line) => <p key={line}>{line}</p>)
       )}
     </div>
   );
 };
 
-const SourceBriefing = ({ briefing }: { briefing?: NotebookBriefing }) => {
-  if (
-    !briefing?.summary &&
-    !briefing?.outline?.length &&
-    !briefing?.terms?.length &&
-    !briefing?.ocr &&
-    !briefing?.ocr_pending
-  ) {
-    return null;
-  }
+const FileSourceCard = ({ file, onDelete }: { file: NotebookFile; onDelete: () => void }) => {
+  const problem = fileProblem(file.error);
+  const briefing = file.briefing;
+  const reading = briefing?.ingest === 'processing';
+  let status = '読み取りました。';
+  if (problem) status = '';
+  else if (reading && briefing?.ocr_pending) status = 'スキャン画像を読み取っています。';
+  else if (reading) status = '本文を読み取っています。';
+  else if (briefing?.ocr) status = 'スキャンを OCR で読み取りました。';
   return (
-    <div className='space-y-1 text-dns-14N-130 text-solid-gray-700'>
-      {briefing.ocr_pending && (
-        <p className='text-solid-gray-600'>
-          スキャン画像を読み取り中です…（完了すると本文が増えます）
-        </p>
-      )}
-      {briefing.ocr && <p className='text-solid-gray-600'>スキャンを OCR で読み取りました。</p>}
-      {briefing.summary && <p>{briefing.summary}</p>}
-      {!!briefing.outline?.length && (
-        <p className='text-solid-gray-600'>目次: {briefing.outline.slice(0, 8).join(' / ')}</p>
-      )}
-      {!!briefing.terms?.length && (
-        <p className='text-solid-gray-600'>用語: {briefing.terms.slice(0, 8).join('、')}</p>
-      )}
-    </div>
-  );
-};
-
-const SourceCard = ({
-  kind,
-  name,
-  nodeCount,
-  error,
-  briefing,
-  onDelete,
-}: {
-  kind: 'ファイル' | 'ナレッジ';
-  name: string;
-  nodeCount?: number;
-  error?: string | null;
-  briefing?: NotebookBriefing;
-  onDelete: () => void;
-}) => {
-  const hasBody =
-    !!error ||
-    !!nodeCount ||
-    !!briefing?.summary ||
-    !!briefing?.outline?.length ||
-    !!briefing?.terms?.length ||
-    !!briefing?.ocr ||
-    !!briefing?.ocr_pending;
-  return (
-    <div className='rounded-8 border border-solid-gray-300 px-3 py-2 text-dns-14N-130'>
-      <div className='flex items-start justify-between gap-2'>
+    <article className='rounded-8 border border-solid-gray-300 px-3 py-3'>
+      <div className='flex items-start justify-between gap-3'>
         <div className='min-w-0'>
-          <p className='text-dns-14N-130 text-solid-gray-600'>{kind}</p>
-          <p className='break-all text-solid-gray-900'>{name}</p>
+          <p className='break-all text-std-16N-170 text-solid-gray-900'>{file.filename}</p>
+          {status && (
+            <p className='mt-1 flex items-center gap-2 text-dns-14N-130 text-solid-gray-600'>
+              {reading && <Spinner />}
+              {status}
+            </p>
+          )}
+          {problem && <p className='mt-1 text-dns-14N-130 text-error-1'>{problem}</p>}
+          <SourcePiiWarning briefing={briefing} />
         </div>
-        <Button type='button' variant='outline' size='xs' onClick={onDelete}>
+        <Button type='button' variant='outline' size='sm' className='shrink-0' onClick={onDelete}>
           削除
         </Button>
       </div>
-      <SourcePiiWarning briefing={briefing} />
-      {hasBody && (
-        <Disclosure className='mt-2'>
-          <DisclosureSummary>詳細</DisclosureSummary>
-          <div className='mt-2 space-y-1'>
-            {error && <p className='text-error-1'>{error}</p>}
-            {!!nodeCount && !error && <p className='text-solid-gray-600'>{nodeCount}節</p>}
-            {!error && <SourceBriefing briefing={briefing} />}
-          </div>
-        </Disclosure>
-      )}
+    </article>
+  );
+};
+
+const TagAccordion = ({
+  title,
+  count,
+  description,
+  children,
+}: {
+  title: string;
+  count: number;
+  description?: string;
+  children: ReactNode;
+}) => (
+  <details className='tag-accordion rounded-8 border border-solid-gray-300'>
+    <summary className='flex cursor-pointer list-none items-start gap-2 px-3 py-3 hover:bg-solid-gray-50 [&::-webkit-details-marker]:hidden'>
+      <svg
+        aria-hidden={true}
+        className='tag-accordion-mark mt-1 size-4 shrink-0 text-blue-900'
+        viewBox='0 0 16 16'
+        fill='none'
+      >
+        <path
+          d='M3.5 6 L8 10.5 L12.5 6'
+          stroke='currentColor'
+          strokeWidth='1.5'
+          strokeLinecap='round'
+          strokeLinejoin='round'
+        />
+      </svg>
+      <span className='min-w-0 flex-1'>
+        <span className='block break-all text-std-16N-170 text-solid-gray-900'>{title}</span>
+        {description && (
+          <span className='mt-1 block text-dns-14N-130 text-solid-gray-700'>{description}</span>
+        )}
+      </span>
+      <span className='shrink-0 text-dns-14N-130 text-solid-gray-700'>{count}件</span>
+    </summary>
+    {children}
+  </details>
+);
+
+const KnowledgeSourceList = ({
+  refs,
+  sharedScope,
+  sharedDocs,
+}: {
+  refs: NotebookKnowledgeRef[];
+  /** MCP の共有ナレッジが On のとき。このスコープの文書はすべて対象として出す。 */
+  sharedScope?: { scope: string; name: string } | null;
+  sharedDocs?: KnowledgeDoc[] | null;
+}) => {
+  const { scopes } = useScopes();
+  const listedRefs = useMemo(
+    () => (sharedScope ? refs.filter((ref) => ref.scope !== sharedScope.scope) : refs),
+    [refs, sharedScope],
+  );
+  const scopeIds = useMemo(() => {
+    const ids = new Set(listedRefs.map((ref) => ref.scope));
+    if (sharedScope) ids.add(sharedScope.scope);
+    return [...ids].sort();
+  }, [listedRefs, sharedScope]);
+  const fetchIds = useMemo(
+    () => scopeIds.filter((id) => id !== sharedScope?.scope),
+    [scopeIds, sharedScope],
+  );
+  const fetchKey = fetchIds.join('\u0000');
+  const { data, error, isLoading } = useSWR(
+    fetchIds.length ? (['notebook-source-docs', fetchKey] as const) : null,
+    async ([, joined]) => {
+      const ids = joined.split('\u0000').filter(Boolean);
+      const pairs = await Promise.all(
+        ids.map(async (scope) => [scope, await listDocs(scope)] as const),
+      );
+      return new Map(pairs);
+    },
+  );
+  // タグ説明はナレッジ管理で後から変わる。開いている参考資料が保存前の一覧を持ったままにならないよう、表示のたびに取り直す。
+  const [tagLists, setTagLists] = useState<Map<string, Awaited<ReturnType<typeof listTags>>> | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!scopeIds.length) {
+      setTagLists(new Map());
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      void Promise.all(
+        scopeIds.map(async (scope) => [scope, await listTags(scope)] as const),
+      ).then((pairs) => {
+        if (!cancelled) setTagLists(new Map(pairs));
+      });
+    };
+    load();
+    window.addEventListener('focus', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', load);
+    };
+  }, [scopeIds]);
+  const scopeName = (scope: string) =>
+    scopes.find((item) => item.scope === scope)?.name ||
+    (scope === sharedScope?.scope ? sharedScope.name : '');
+  const teams = useMemo(() => {
+    const waitingForShared = Boolean(sharedScope) && sharedDocs == null;
+    const waitingForRefs = fetchIds.length > 0 && !data;
+    if (waitingForShared || waitingForRefs) return null;
+    const docsByScope = new Map(data ?? []);
+    if (sharedScope && sharedDocs) docsByScope.set(sharedScope.scope, sharedDocs);
+    const tagsOf = new Map<string, string[]>();
+    for (const [scope, docs] of docsByScope) {
+      for (const doc of docs) {
+        tagsOf.set(`${scope}\u0000${doc.doc_id}`, (doc.tags ?? []).filter(Boolean));
+      }
+    }
+    const descriptions = new Map<string, string>();
+    for (const [scope, tags] of tagLists ?? []) {
+      for (const tag of tags) {
+        descriptions.set(`${scope}\u0000${tag.tag}`, (tag.description ?? '').trim());
+      }
+    }
+    const byScope = new Map<
+      string,
+      {
+        scope: string;
+        tags: Map<string, { tag: string; description: string; refs: NotebookKnowledgeRef[] }>;
+        untagged: NotebookKnowledgeRef[];
+      }
+    >();
+    const teamOf = (scope: string) => {
+      const current = byScope.get(scope);
+      if (current) return current;
+      const created = { scope, tags: new Map(), untagged: [] as NotebookKnowledgeRef[] };
+      byScope.set(scope, created);
+      return created;
+    };
+    const place = (ref: NotebookKnowledgeRef, tags: string[]) => {
+      const team = teamOf(ref.scope);
+      if (tags.length === 0) {
+        team.untagged.push(ref);
+        return;
+      }
+      for (const tag of tags) {
+        const key = `${ref.scope}\u0000${tag}`;
+        const group = team.tags.get(tag) ?? {
+          tag,
+          description: descriptions.get(key) ?? '',
+          refs: [],
+        };
+        group.description = descriptions.get(key) ?? group.description;
+        group.refs.push(ref);
+        team.tags.set(tag, group);
+      }
+    };
+    for (const ref of listedRefs) {
+      place(ref, tagsOf.get(`${ref.scope}\u0000${ref.doc_id}`) ?? []);
+    }
+    if (sharedScope && sharedDocs) {
+      for (const doc of sharedDocs) {
+        if (doc.ingest_status === 'failed') continue;
+        place(
+          {
+            id: `shared-${doc.doc_id}`,
+            scope: sharedScope.scope,
+            doc_id: doc.doc_id,
+            source: doc.source,
+            title: doc.source,
+            created_at: '',
+          },
+          (doc.tags ?? []).map((tag) => tag.trim()).filter(Boolean),
+        );
+      }
+    }
+    return [...byScope.values()]
+      .map((team) => ({
+        scope: team.scope,
+        name: scopeName(team.scope) || team.scope,
+        common: scopes.find((item) => item.scope === team.scope)?.kind === 'common',
+        tags: [...team.tags.values()].sort((a, b) => a.tag.localeCompare(b.tag, 'ja')),
+        untagged: team.untagged,
+      }))
+      .filter((team) => team.tags.length > 0 || team.untagged.length > 0)
+      .sort((a, b) => {
+        if (a.common !== b.common) return a.common ? -1 : 1;
+        return a.name.localeCompare(b.name, 'ja');
+      });
+  }, [data, fetchIds.length, listedRefs, scopes, sharedDocs, sharedScope, tagLists]);
+
+  const waiting = (Boolean(sharedScope) && sharedDocs == null) || (fetchIds.length > 0 && isLoading);
+  if (error || !teams) {
+    return (
+      <p className='text-dns-14N-130 text-solid-gray-600'>
+        {error || !waiting ? 'タグ名を読み込めませんでした。' : 'タグを読み込んでいます。'}
+      </p>
+    );
+  }
+
+  return (
+    <div className='flex flex-col gap-6'>
+      <style>{`
+        .tag-accordion > summary > .tag-accordion-mark { transition: transform 150ms ease; }
+        .tag-accordion[open] > summary > .tag-accordion-mark { transform: rotate(180deg); }
+      `}</style>
+      {teams.map((team) => (
+        <section key={team.scope} className='flex flex-col gap-2'>
+          <h4 className='text-std-16B-150 text-solid-gray-900'>{team.name}</h4>
+          {team.tags.map((group) => (
+            <TagAccordion
+              key={`${team.scope}\u0000${group.tag}`}
+              title={group.tag}
+              count={group.refs.length}
+              description={group.description}
+            >
+              <ul className='flex flex-col gap-1 border-t border-solid-gray-200 px-3 py-3 pl-9'>
+                {group.refs.map((ref) => (
+                  <li key={ref.id} className='break-all text-dns-14N-130 text-solid-gray-800'>
+                    {ref.title || ref.source}
+                  </li>
+                ))}
+              </ul>
+            </TagAccordion>
+          ))}
+          {team.untagged.length > 0 && (
+            <TagAccordion title='タグが付いていません' count={team.untagged.length}>
+              <ul className='flex flex-col gap-1 border-t border-solid-gray-200 px-3 py-3 pl-9'>
+                {team.untagged.map((ref) => (
+                  <li key={ref.id} className='break-all text-dns-14N-130 text-solid-gray-800'>
+                    {ref.title || ref.source}
+                  </li>
+                ))}
+              </ul>
+            </TagAccordion>
+          )}
+        </section>
+      ))}
     </div>
   );
 };
@@ -211,107 +430,106 @@ export const NotebookPage = () => {
   const { config, isLoading: configLoading, unavailable } = useNotebookConfig();
   const { sessions, mutate: mutateSessions } = useNotebookSessions();
   const location = useLocation();
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(() => readNotebookView().sessionId);
+  const { detail, loadError, mutate: mutateDetail } = useNotebookSession(sessionId);
+  const { mcps, mutate: mutateMcps } = useNotebookMcps();
+  const actions = useNotebookActions();
+  const navigate = useNavigate();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const openRun = useRef(0);
+  const [listTitles, setListTitles] = useState<Record<string, string>>({});
+  const [newNoteName, setNewNoteName] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, { label: string; value: string }>>({});
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [openingEditor, setOpeningEditor] = useState(false);
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
+  const [pane, setPane] = useState<NotebookPane>(() => readNotebookView().pane);
   useEffect(() => {
     const handed = (location.state as { sessionId?: string } | null)?.sessionId;
     if (handed) {
       setSessionId(handed);
+      setPane('chat');
     }
   }, [location.state]);
-  const { detail, mutate: mutateDetail } = useNotebookSession(sessionId);
-  const { skills, mutate: mutateSkills } = useNotebookSkills();
-  const { mcps, mutate: mutateMcps } = useNotebookMcps();
-  const actions = useNotebookActions();
-  const navigate = useNavigate();
-  const { projects: editorProjects, loadError: editorProjectsError } = useEditorProjects();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const editorNameTouched = useRef(false);
-  const openRun = useRef(0);
-  const [listTitles, setListTitles] = useState<Record<string, string>>({});
-  const [newNoteName, setNewNoteName] = useState('');
-  const [instruction, setInstruction] = useState('');
-  const [drafts, setDrafts] = useState<Record<string, { label: string; value: string }>>({});
-  const [openError, setOpenError] = useState<string | null>(null);
-  const [openingEditor, setOpeningEditor] = useState(false);
-  const [editorMode, setEditorMode] = useState<'new' | 'existing'>('new');
-  const [editorName, setEditorName] = useState('');
-  const [editorProjectId, setEditorProjectId] = useState('');
-  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
-  const [pane, setPane] = useState<(typeof PANE_TABS)[number]['id']>('list');
+  useEffect(() => {
+    const view =
+      pane === 'list' || !sessionId
+        ? { sessionId: null, pane: 'list' as const }
+        : { sessionId, pane };
+    sessionStorage.setItem(NOTEBOOK_VIEW_KEY, JSON.stringify(view));
+  }, [sessionId, pane]);
+  useEffect(() => {
+    if (!sessionId || loadError !== '見つかりません') return;
+    setSessionId(null);
+    setPane('list');
+  }, [sessionId, loadError]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  const [sessionMcpOpen, setSessionMcpOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [skillId, setSkillId] = useState('');
-  const [applyItemId, setApplyItemId] = useState('');
-  const [knowledgeScope, setKnowledgeScope] = useState('');
-  const [knowledgeTag, setKnowledgeTag] = useState('');
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [knowledgePicks, setKnowledgePicks] = useState<KnowledgePick[]>([]);
+  const [addingKnowledge, setAddingKnowledge] = useState(false);
   const [addingKnowledgeLabel, setAddingKnowledgeLabel] = useState('');
-  const [knowledgeNote, setKnowledgeNote] = useState('');
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [addingFiles, setAddingFiles] = useState(false);
   const [addingFileLabel, setAddingFileLabel] = useState('');
-  const { scopes } = useScopes();
-  const { docs: knowledgeDocs, isLoading: knowledgeDocsLoading } = useDocs(
-    knowledgeScope || undefined,
-  );
-  const tagChoices = useMemo(() => tagFileChoices(knowledgeDocs), [knowledgeDocs]);
-  const selectedTag = tagChoices.find((choice) => choice.tag === knowledgeTag);
-  const selectedReady = selectedTag ? selectedTag.files - selectedTag.pending : 0;
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null);
+  const sourceNoticeTimer = useRef<number | null>(null);
+  const knowledgePicksRef = useRef<KnowledgePick[]>([]);
+  const knowledgeSync = useRef(Promise.resolve());
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
 
   useEffect(() => {
-    editorNameTouched.current = false;
-    setEditorName('');
-    setEditorProjectId('');
     setPendingProjectId(null);
     setOpenError(null);
+    knowledgePicksRef.current = [];
+    setKnowledgePicks([]);
   }, [sessionId]);
-
-  useEffect(() => {
-    if (!detail || editorNameTouched.current) return;
-    setEditorName(detail.title);
-  }, [detail]);
 
   useEffect(
     () => () => {
       openRun.current += 1;
+      if (sourceNoticeTimer.current !== null) window.clearTimeout(sourceNoticeTimer.current);
     },
     [],
   );
 
+  const showSourceNotice = (text: string) => {
+    setSourceNotice(text);
+    if (sourceNoticeTimer.current !== null) window.clearTimeout(sourceNoticeTimer.current);
+    sourceNoticeTimer.current = window.setTimeout(() => {
+      setSourceNotice(null);
+      sourceNoticeTimer.current = null;
+    }, 5000);
+  };
+
   useEffect(() => {
     if (!detail) return;
-    setInstruction(detail.instruction);
     setDrafts(
       Object.fromEntries(detail.items.map((i) => [i.id, { label: i.label, value: i.value }])),
     );
   }, [detail]);
 
-  // スキャン PDF の OCR は登録後に走る。完了すると本文が増えるので、
-  // 読み取り中の資料がある間だけ短い間隔で取り直す。編集中は差し替えない（下書きを消さない）。
-  const ocrPending = useMemo(
-    () => (detail?.files ?? []).some((f) => f.briefing?.ocr_pending),
+  // 読み取り中の資料がある間だけ短い間隔で取り直す。件数は読み取り完了後に増える。
+  // 編集中は差し替えない（下書きを消さない）。
+  const ingestPending = useMemo(
+    () =>
+      (detail?.files ?? []).some(
+        (f) => f.briefing?.ingest === 'processing' || f.briefing?.ocr_pending,
+      ),
     [detail],
   );
   useEffect(() => {
-    if (!ocrPending || !sessionId) return;
+    if (!ingestPending || !sessionId) return;
     const timer = window.setInterval(() => {
       if (editingValueId !== null) return;
-      if (instruction !== (detail?.instruction ?? '')) return;
       void mutateDetail();
-    }, 4000);
+    }, 2000);
     return () => window.clearInterval(timer);
-  }, [ocrPending, sessionId, editingValueId, instruction, detail, mutateDetail]);
+  }, [ingestPending, sessionId, editingValueId, detail, mutateDetail]);
 
   useEffect(() => {
-    if (!knowledgeScope && scopes.length > 0) {
-      setKnowledgeScope(scopes[0].scope);
-    }
-  }, [knowledgeScope, scopes]);
-
-  useEffect(() => {
-    if (pane === 'list') return;
     const root = document.getElementById('layoutRoot');
     const main = document.getElementById('mainContents');
     const column = main?.parentElement ?? null;
@@ -333,7 +551,9 @@ export const NotebookPage = () => {
       el.classList.add(...next);
       added.push([el, next]);
     };
-    add(row, ['min-h-0', 'overflow-hidden']);
+    // サイドメニューと同じ行に overflow を付けると、sticky の基準が行になり、
+    // メニューがヘッダーの高さぶん下がる。縮むのは中の列だけにする。
+    add(row, ['min-h-0']);
     add(column, ['min-h-0', 'overflow-hidden']);
     add(main, ['flex', 'min-h-0', 'flex-col', 'overflow-hidden']);
     const shell = document.getElementById('notebook-shell');
@@ -353,24 +573,6 @@ export const NotebookPage = () => {
       }
     };
   }, [pane]);
-
-  const chatSources = useMemo(
-    () => [
-      ...(detail?.files ?? [])
-        .filter((file) => !file.error)
-        .map((file) => ({ id: file.id, name: file.filename })),
-      ...(detail?.knowledge_refs ?? []).map((ref) => ({
-        id: ref.id,
-        name: ref.title || ref.source,
-      })),
-    ],
-    [detail],
-  );
-
-  useEffect(() => {
-    const ids = new Set(chatSources.map((source) => source.id));
-    setSelectedSourceIds((prev) => prev.filter((id) => ids.has(id)));
-  }, [chatSources]);
 
   const accept = (
     config?.accept ?? ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md', '.csv', '.html', '.json']
@@ -414,23 +616,6 @@ export const NotebookPage = () => {
     else await mutateSessions();
   };
 
-  const onSaveInstruction = async () => {
-    if (!sessionId || !detail || instruction === detail.instruction) return;
-    const next = await actions.updateSession(sessionId, { instruction });
-    if (next) await refresh(next);
-  };
-
-  const onUseAsInstruction = async (message: NotebookMessage) => {
-    if (!sessionId || message.role !== 'assistant') return;
-    const text = stripCitationMarks(message.content);
-    if (!text) return;
-    const next = await actions.updateSession(sessionId, { instruction: text });
-    if (!next) return;
-    setInstruction(text);
-    await refresh(next);
-    setPane('editor');
-  };
-
   const onSaveItem = async (itemId: string, field: 'label' | 'value') => {
     if (!sessionId || !detail) return;
     const draft = drafts[itemId];
@@ -470,9 +655,9 @@ export const NotebookPage = () => {
         setAddingFileLabel(list.length > 1 ? `${file.name}（${i + 1}/${list.length}）` : file.name);
         const content = await fileToBase64(file);
         latest = (await actions.addFile(sessionId, file.name, content)) ?? latest;
+        if (latest) await refresh(latest);
       }
       if (fileRef.current) fileRef.current.value = '';
-      if (latest) await refresh(latest);
     } finally {
       setAddingFiles(false);
       setAddingFileLabel('');
@@ -481,62 +666,160 @@ export const NotebookPage = () => {
 
   const onDeleteFile = async (fileId: string) => {
     if (!sessionId) return;
+    if (!window.confirm('このファイルを参考資料から外しますか？')) return;
     const next = await actions.deleteFile(sessionId, fileId);
     if (next) await refresh(next);
   };
 
-  const onAddKnowledge = async () => {
-    if (!sessionId || !knowledgeScope || !knowledgeTag) return;
-    setKnowledgeNote('');
-    let docs: KnowledgeDoc[] = [];
+  const pickKey = (pick: KnowledgePick) => `${pick.scope}\u0000${pick.tag}`;
+
+  const docsForPicks = async (picks: KnowledgePick[]) => {
+    const docs: KnowledgeDoc[] = [];
+    for (const pick of picks) {
+      const listed = await listDocs(pick.scope, [pick.tag]);
+      for (const doc of listed) {
+        docs.push({ ...doc, scope: doc.scope || pick.scope });
+      }
+    }
+    return docs;
+  };
+
+  const applyKnowledgeChange = async (
+    session: string,
+    prev: KnowledgePick[],
+    nextPicks: KnowledgePick[],
+  ) => {
+    const prevKeys = new Set(prev.map(pickKey));
+    const nextKeys = new Set(nextPicks.map(pickKey));
+    const added = nextPicks.filter((pick) => !prevKeys.has(pickKey(pick)));
+    const removed = prev.filter((pick) => !nextKeys.has(pickKey(pick)));
+    if (added.length === 0 && removed.length === 0) return;
+
+    setAddingKnowledge(true);
     try {
-      docs = await listDocs(knowledgeScope, [knowledgeTag]);
-    } catch {
-      actions.setError('ナレッジの文書を読み込めませんでした。');
-      return;
+      let latest = detailRef.current;
+      if (added.length > 0) {
+        const pendingNotes: string[] = [];
+        const toAdd: { scope: string; doc_id: string; source: string }[] = [];
+        const existing = new Set(
+          (latest?.knowledge_refs ?? []).map((ref) => `${ref.scope}\u0000${ref.doc_id}`),
+        );
+        for (const pick of added) {
+          let docs: KnowledgeDoc[] = [];
+          try {
+            docs = await listDocs(pick.scope, [pick.tag]);
+          } catch {
+            actions.setError('ナレッジの文書を読み込めませんでした。');
+            continue;
+          }
+          const pending = docs.filter(
+            (doc) => doc.ingest_status === 'queued' || doc.ingest_status === 'processing',
+          );
+          const ready = docs.filter(
+            (doc) =>
+              doc.ingest_status !== 'failed' &&
+              doc.ingest_status !== 'queued' &&
+              doc.ingest_status !== 'processing',
+          );
+          if (pending.length > 0) {
+            pendingNotes.push(`${pick.tag} は処理中が ${pending.length} 件あります。`);
+          }
+          if (ready.length === 0 && pending.length === 0) {
+            actions.setError(
+              docs.length > 0
+                ? `${pick.tag} の文書は取り込みに失敗しているため、追加できません。`
+                : `${pick.tag} が付いた文書はありません。`,
+            );
+          }
+          for (const doc of ready) {
+            const key = `${pick.scope}\u0000${doc.doc_id}`;
+            if (existing.has(key)) continue;
+            existing.add(key);
+            toAdd.push({ scope: pick.scope, doc_id: doc.doc_id, source: doc.source });
+          }
+        }
+        if (toAdd.length > 0) {
+          const imported = await actions.addKnowledgeRefs(session, toAdd, setAddingKnowledgeLabel);
+          if (imported) {
+            latest = imported;
+            detailRef.current = imported;
+            await refresh(imported);
+            showSourceNotice('参考資料に登録しました');
+          }
+        }
+        if (pendingNotes.length > 0) {
+          actions.setError(
+            `${pendingNotes.join('')} 終わってから、同じタグをもう一度選んでください。`,
+          );
+        }
+      }
+      if (removed.length > 0) {
+        let removeDocs: KnowledgeDoc[] = [];
+        let keepDocs: KnowledgeDoc[] = [];
+        try {
+          removeDocs = await docsForPicks(removed);
+          keepDocs = await docsForPicks(nextPicks);
+        } catch {
+          actions.setError('ナレッジの文書を読み込めませんでした。');
+          return;
+        }
+        const removeIds = new Set(removeDocs.map((doc) => `${doc.scope}\u0000${doc.doc_id}`));
+        const keepIds = new Set(keepDocs.map((doc) => `${doc.scope}\u0000${doc.doc_id}`));
+        const refs = (latest?.knowledge_refs ?? detailRef.current?.knowledge_refs ?? []).filter(
+          (ref) => {
+            const key = `${ref.scope}\u0000${ref.doc_id}`;
+            return removeIds.has(key) && !keepIds.has(key);
+          },
+        );
+        for (const ref of refs) {
+          const deleted = await actions.deleteKnowledgeRef(session, ref.id);
+          if (deleted) {
+            latest = deleted;
+            detailRef.current = deleted;
+            await refresh(deleted);
+          }
+        }
+      }
+    } finally {
+      setAddingKnowledge(false);
+      setAddingKnowledgeLabel('');
     }
-    const pending = docs.filter(
-      (doc) => doc.ingest_status === 'queued' || doc.ingest_status === 'processing',
-    );
-    const ready = docs.filter(
-      (doc) =>
-        doc.ingest_status !== 'failed' &&
-        doc.ingest_status !== 'queued' &&
-        doc.ingest_status !== 'processing',
-    );
-    if (ready.length === 0) {
-      actions.setError(
-        pending.length > 0
-          ? 'このタグの文書はまだ処理中です。終わってから、もう一度追加してください。'
-          : docs.length > 0
-            ? 'このタグの文書は取り込みに失敗しているため、追加できません。'
-            : 'このタグが付いた文書はありません。',
-      );
-      return;
-    }
-    const next = await actions.addKnowledgeRefs(
-      sessionId,
-      ready.map((doc) => ({ scope: knowledgeScope, doc_id: doc.doc_id, source: doc.source })),
-      setAddingKnowledgeLabel,
-    );
-    if (pending.length > 0) {
-      setKnowledgeNote(
-        `処理中の文書が ${pending.length} 件あります。終わってから、同じタグでもう一度追加してください。`,
-      );
-    }
-    if (next) await refresh(next);
   };
 
-  const onDeleteKnowledge = async (refId: string) => {
+  const onKnowledgePicks = (nextPicks: KnowledgePick[]) => {
+    const prev = knowledgePicksRef.current;
+    knowledgePicksRef.current = nextPicks;
+    setKnowledgePicks(nextPicks);
     if (!sessionId) return;
-    const next = await actions.deleteKnowledgeRef(sessionId, refId);
-    if (next) await refresh(next);
+    const session = sessionId;
+    knowledgeSync.current = knowledgeSync.current
+      .then(() => applyKnowledgeChange(session, prev, nextPicks))
+      .catch(() => undefined);
   };
 
-  const onToggleSource = (id: string) => {
-    setSelectedSourceIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+  const onRetry = async () => {
+    if (!sessionId || !detail) return;
+    const messages = detail.messages ?? [];
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    const prev = detail;
+    await mutateDetail(
+      {
+        ...detail,
+        messages: messages.map((message, index) =>
+          index === messages.length - 1
+            ? { ...message, content: ' ', tool_trace: [], citations: [] }
+            : message,
+        ),
+      },
+      { revalidate: false },
     );
+    const next = await actions.retryChat(sessionId);
+    if (next) {
+      await refresh(next);
+      return;
+    }
+    await mutateDetail(prev, { revalidate: false });
   };
 
   const onChat = async () => {
@@ -544,12 +827,6 @@ export const NotebookPage = () => {
     const q = chatDraft.trim();
     const prev = detail;
     const localId = `local-${newId()}`;
-    const sourceIds = chatSources
-      .map((source) => source.id)
-      .filter((id) => selectedSourceIds.includes(id));
-    const sourceLabels = chatSources
-      .filter((source) => sourceIds.includes(source.id))
-      .map((source) => source.name);
     setChatDraft('');
     if (detail) {
       await mutateDetail(
@@ -561,7 +838,6 @@ export const NotebookPage = () => {
               id: localId,
               role: 'user',
               content: q,
-              source_labels: sourceLabels,
               created_at: new Date().toISOString(),
             },
           ],
@@ -569,38 +845,19 @@ export const NotebookPage = () => {
         { revalidate: false },
       );
     }
-    const next = await actions.chat(sessionId, q, skillId || undefined, sourceIds);
+    const next = await actions.chat(sessionId, q);
     if (next) {
       await refresh(next);
       const last = [...(next.messages ?? [])].reverse().find((m) => m.role === 'assistant');
-      if (last?.open_editor && !(last.drafts && last.drafts.length > 0)) {
+      if (last?.open_editor) {
         setPane('editor');
+        void onOpenEditor(next);
       }
       return;
     }
     setChatDraft(q);
     if (prev) await mutateDetail(prev, { revalidate: false });
     else await mutateDetail();
-  };
-
-  const onCreateSkill = async (name: string, instructions: string) => {
-    const created = await actions.createSkill({
-      name,
-      instructions: instructions || undefined,
-    });
-    if (!created) return false;
-    setSkillId(created.id);
-    await mutateSkills();
-    return true;
-  };
-
-  const onDeleteSkill = async (id: string) => {
-    if (!window.confirm('このAIタイプを削除しますか？')) return;
-    const ok = await actions.deleteSkill(id);
-    if (ok) {
-      if (skillId === id) setSkillId('');
-      await mutateSkills();
-    }
   };
 
   const onUpdateMcp = async (
@@ -610,7 +867,6 @@ export const NotebookPage = () => {
     const next = await actions.updateMcp(id, body);
     if (!next) return false;
     await mutateMcps();
-    if (sessionId) await mutateDetail();
     return true;
   };
 
@@ -631,70 +887,6 @@ export const NotebookPage = () => {
     }
   };
 
-  const onToggleSessionMcp = async (id: string, enabled: boolean) => {
-    if (!sessionId) return;
-    const next = await actions.updateSession(sessionId, { mcps: [{ id, enabled }] });
-    if (next) await refresh(next);
-  };
-
-  const questionForAssistant = (messageId: string): string => {
-    const messages = detail?.messages ?? [];
-    const idx = messages.findIndex((m) => m.id === messageId);
-    for (let i = idx - 1; i >= 0; i -= 1) {
-      if (messages[i].role === 'user' && messages[i].content.trim()) {
-        return messages[i].content.trim();
-      }
-    }
-    return '';
-  };
-
-  const onAdoptDrafts = async (chapters: NotebookDraft[]) => {
-    if (!sessionId || chapters.length === 0) return;
-    let latest: Awaited<ReturnType<typeof actions.addItem>> = null;
-    for (const chapter of chapters) {
-      const added = await actions.addItem(sessionId);
-      const item = added?.items[added.items.length - 1];
-      if (!item) return;
-      latest = await actions.updateItem(sessionId, item.id, {
-        label: chapter.label,
-        value: chapter.value,
-        citations: chapter.citations ?? [],
-      });
-    }
-    if (latest) await refresh(latest);
-  };
-
-  const onChatToItem = async (message: NotebookMessage) => {
-    if (!sessionId || message.role !== 'assistant') return;
-    const value = stripCitationMarks(message.content);
-    const citations = usedCitations(message.content, message.citations ?? []);
-    if (applyItemId) {
-      const next = await actions.updateItem(sessionId, applyItemId, { value, citations });
-      if (next) await refresh(next);
-      return;
-    }
-    const chapters = chaptersFromAnswer(message.content);
-    const pieces =
-      chapters.length > 0
-        ? chapters
-        : [{ label: questionForAssistant(message.id) || '対話から追加', value }];
-    let latest: Awaited<ReturnType<typeof actions.addItem>> = null;
-    for (const piece of pieces) {
-      const added = await actions.addItem(sessionId);
-      const item = added?.items[added.items.length - 1];
-      if (!item) return;
-      latest = await actions.updateItem(sessionId, item.id, {
-        label: piece.label,
-        value: piece.value,
-        citations,
-      });
-    }
-    if (latest) {
-      setPane('items');
-      await refresh(latest);
-    }
-  };
-
   const onDeleteSession = async (id?: string) => {
     const target = id || sessionId;
     if (!target) return;
@@ -710,10 +902,6 @@ export const NotebookPage = () => {
 
   const flushDrafts = async () => {
     if (!sessionId || !detail) return;
-    if (instruction !== detail.instruction) {
-      const next = await actions.updateSession(sessionId, { instruction });
-      if (next) await refresh(next);
-    }
     for (const item of detail.items) {
       const draft = drafts[item.id];
       if (!draft) continue;
@@ -726,8 +914,9 @@ export const NotebookPage = () => {
     }
   };
 
-  const onOpenEditor = async () => {
-    if (!sessionId || !detail || openingEditor) return;
+  const onOpenEditor = async (source?: NotebookSessionDetail) => {
+    const current = source ?? detail;
+    if (!sessionId || !current || openingEditor) return;
     const run = openRun.current + 1;
     openRun.current = run;
     setOpenError(null);
@@ -736,11 +925,15 @@ export const NotebookPage = () => {
     try {
       await flushDrafts();
       if (openRun.current !== run) return;
+      const projectId = current.editor_project_id?.trim() ?? '';
       const started = await openNotebookInEditor(sessionId, {
-        mode: editorMode,
-        name: editorMode === 'new' ? editorName.trim() : undefined,
-        project_id: editorMode === 'existing' ? editorProjectId : undefined,
+        mode: projectId ? 'existing' : 'new',
+        name: projectId ? undefined : current.title,
+        project_id: projectId || undefined,
       });
+      if (!projectId) {
+        await actions.updateSession(sessionId, { editor_project_id: started.project_id });
+      }
       const deadline = Date.now() + 5 * 60 * 1000;
       let status = await fetchGeneration(started.project_id, started.request_id);
       while (status.status !== 'success' && status.status !== 'error') {
@@ -771,46 +964,115 @@ export const NotebookPage = () => {
     }
   };
 
-  const adoptedItems = (detail?.items ?? []).filter((item) => {
-    const draft = drafts[item.id] ?? item;
-    return draft.label.trim().length > 0 && draft.value.trim().length > 0;
-  });
-
-  const sourceCount = (detail?.files.length ?? 0) + (detail?.knowledge_refs?.length ?? 0);
-  const connectedMcps = (detail?.mcps ?? []).filter((m) => m.connected);
-  const enabledMcpCount = connectedMcps.filter((m) => m.enabled).length;
+  const fileSettled = (file: { briefing?: { ingest?: string } }) =>
+    file.briefing?.ingest !== 'processing';
+  const fileNotices = useMemo(
+    () =>
+      (detail?.files ?? []).flatMap((file) => {
+        const pii = file.briefing?.pii;
+        if (!pii?.warned) return [];
+        return [
+          {
+            id: file.id,
+            filename: file.filename,
+            message: pii.message,
+            categories: pii.categories,
+            hits: pii.hits,
+          },
+        ];
+      }),
+    [detail],
+  );
+  const sharedKnowledgeViaMcp = mcps.some(
+    (mcp) => mcp.catalog_id === 'knowledge' && mcp.connected && mcp.available,
+  );
+  const { scopes } = useScopes();
+  const commonScope = scopes.find((item) => item.kind === 'common') ?? null;
+  const sharedScope =
+    sharedKnowledgeViaMcp && commonScope
+      ? { scope: commonScope.scope, name: commonScope.name }
+      : null;
+  const { data: sharedDocs } = useSWR(
+    sharedScope ? (['notebook-shared-docs', sharedScope.scope] as const) : null,
+    ([, scope]) => listDocs(scope),
+  );
+  const sharedDocCount = (sharedDocs ?? []).filter((doc) => doc.ingest_status !== 'failed').length;
+  const registeredRefs = (detail?.knowledge_refs ?? []).filter(
+    (ref) => !(sharedDocs && sharedScope && ref.scope === sharedScope.scope),
+  );
+  const sourceCount =
+    (detail?.files.filter(fileSettled).length ?? 0) + registeredRefs.length + sharedDocCount;
+  const sharedPending = Boolean(sharedScope) && sharedDocs == null;
+  const listedSourceCount =
+    (detail?.files.length ?? 0) + registeredRefs.length + sharedDocCount;
+  const webSearchMcp = mcps.find((mcp) => mcp.catalog_id === 'firecrawl');
+  const webSearchOn = Boolean(webSearchMcp?.available && webSearchMcp.connected);
+  const onWebSearch = (next: boolean) => {
+    if (!webSearchMcp?.available) return;
+    void onUpdateMcp(webSearchMcp.id, { connected: next });
+  };
+  const sending = actions.submitting && !addingFiles && !addingKnowledge;
+  const maxUploadMb = Math.round((config?.max_upload_bytes ?? 20 * 1024 * 1024) / 1024 / 1024);
 
   const needNote = pane !== 'list' && !detail;
+  const noteTitle = detail?.title?.trim() || 'ノート';
+  const crumbs =
+    pane !== 'list' && (detail || sessionId)
+      ? [
+          { label: 'ホーム', to: '/' },
+          { label: title, onClick: () => setPane('list') },
+          { label: noteTitle },
+        ]
+      : [
+          { label: 'ホーム', to: '/' },
+          { label: title },
+        ];
 
   return (
     <LayoutBody>
       <PageTitle title={documentTitle} />
       <div
-        id={pane === 'list' ? undefined : 'notebook-shell'}
-        className={
-          pane === 'list'
-            ? 'mx-auto flex w-full max-w-(--page-width) flex-col gap-3 p-4 lg:p-6'
-            : 'mx-auto flex min-h-0 w-full max-w-(--page-width) flex-1 flex-col gap-2 overflow-hidden px-4 py-2 lg:px-6'
-        }
+        id='notebook-shell'
+        className='mx-auto flex min-h-0 w-full max-w-(--page-width) flex-1 flex-col overflow-hidden px-4 py-2 lg:px-6'
       >
-        {pane === 'list' ? (
-          <ManagedAppHeader
-            teamId={COMMON_EXAPPS_TEAM_ID}
-            exAppId={NOTEBOOK_EXAPP_ID}
-            fallbackTitle='ノートブック'
-            fallbackDescription='参考資料を集めて調べ、項目として整理します。Markdown エディタの編集画面へ渡せます。'
-            hideHowTo={true}
-          />
-        ) : (
-          <div className='flex min-w-0 items-baseline gap-3'>
-            <h1 className='shrink-0 text-std-16B-170 text-solid-gray-900'>{title}</h1>
-            {description && (
-              <p className='truncate text-dns-14N-130 text-solid-gray-600' title={description}>
-                {description}
-              </p>
-            )}
+        <div className='shrink-0'>
+          <BreadcrumbsNav items={crumbs} />
+          <div className='mt-1 flex min-w-0 items-center gap-3'>
+            <div className='flex min-w-0 flex-1 items-center gap-3'>
+              <h1 className='min-w-0 shrink-0 text-std-16B-170 text-solid-gray-900'>{title}</h1>
+              {description && (
+                <p
+                  className='min-w-0 flex-1 truncate text-dns-14N-130 text-solid-gray-600'
+                  title={description}
+                >
+                  {description}
+                </p>
+              )}
+            </div>
+            <div className='flex shrink-0 items-center gap-2'>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='inline-flex items-center gap-1'
+                onClick={() => setManageOpen(true)}
+              >
+                <PiPuzzlePieceBold aria-hidden={true} className='size-4' />
+                MCP
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='inline-flex items-center gap-1'
+                onClick={() => setHelpOpen(true)}
+              >
+                <PiBookOpenBold aria-hidden={true} className='size-4' />
+                使い方
+              </Button>
+            </div>
           </div>
-        )}
+        </div>
 
         {(unavailable || (!configLoading && config?.enabled === false)) && (
           <UnavailableNotice message={config?.error} />
@@ -818,8 +1080,8 @@ export const NotebookPage = () => {
 
         {!unavailable && (
           <>
-            <div className='flex flex-wrap items-center justify-between gap-2'>
-              <div className='flex flex-wrap gap-1 overflow-x-auto border-b border-solid-gray-300'>
+            <div className='mt-3 shrink-0 overflow-x-auto border-b border-solid-gray-300'>
+              <div className='flex w-max min-w-full gap-1'>
                 {PANE_TABS.map((t) => (
                   <button
                     key={t.id}
@@ -835,32 +1097,17 @@ export const NotebookPage = () => {
                   </button>
                 ))}
               </div>
-              <div className='flex flex-wrap gap-2'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  className='inline-flex items-center gap-1'
-                  onClick={() => setManageOpen(true)}
-                >
-                  <PiPuzzlePieceBold aria-hidden={true} className='size-4' />
-                  AIタイプとMCP
-                </Button>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  className='inline-flex items-center gap-1'
-                  onClick={() => setHelpOpen(true)}
-                >
-                  <PiBookOpenBold aria-hidden={true} className='size-4' />
-                  使い方
-                </Button>
-              </div>
             </div>
 
+            <div className='flex min-h-0 flex-1 flex-col'>
+            {(actions.error || openError) && (
+              <p className='shrink-0 py-2 text-std-16N-170 text-error-1' role='alert'>
+                {actions.error || openError}
+              </p>
+            )}
+
             {pane === 'list' && (
-              <section className='flex flex-col gap-3'>
+              <section className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-4'>
                 <div className='flex flex-wrap items-end justify-between gap-2'>
                   <h2 className='text-std-18B-160 text-solid-gray-900'>ノート一覧</h2>
                   <div className='flex flex-wrap items-end gap-2'>
@@ -961,170 +1208,57 @@ export const NotebookPage = () => {
             )}
 
             {needNote && (
-              <div className='rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
+              <div className='my-4 rounded-8 border border-solid-gray-300 bg-solid-gray-50 p-6 text-std-16N-170 text-solid-gray-600'>
                 「ノート一覧」タブからノートを開いてください。
               </div>
             )}
 
             {pane === 'sources' && detail && (
-              <section className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
+              <section className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-4'>
                 <h2 className='text-std-18B-160 text-solid-gray-900'>
                   参考資料（{sourceCount}件）
                 </h2>
-                <div className='flex flex-col gap-3 rounded-8 border border-solid-gray-300 p-3'>
-                  <p className='text-std-16B-150 text-solid-gray-900'>参考資料を追加</p>
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    ノートに取り込む資料です。項目の根拠になります。スキャン PDF は OCR
-                    で読みます。PDF / Word / Excel / PowerPoint / テキストなど（上限{' '}
-                    {Math.round((config?.max_upload_bytes ?? 20 * 1024 * 1024) / 1024 / 1024)}MB）
+                <p className='text-dns-14N-130 text-solid-gray-600'>
+                  いまこのノートの対象です。ファイルの添付と、チームのタグの選択は、エージェントの入力欄から行います。共有ナレッジの
+                  MCP が On のあいだは、共有ナレッジの文書もすべて対象です。一部のタグだけにするには、MCP
+                  を Off にしてからそのタグを登録します。いらないファイルは、ここから外せます。
+                </p>
+                {(addingFiles || addingKnowledge) && (
+                  <p className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
+                    <Spinner />
+                    {addingFileLabel
+                      ? `${addingFileLabel} を取り込んでいます`
+                      : addingKnowledgeLabel
+                        ? `${addingKnowledgeLabel} を取り込んでいます`
+                        : '参考資料を取り込んでいます'}
                   </p>
-                  <input
-                    ref={fileRef}
-                    type='file'
-                    multiple
-                    accept={accept}
-                    className='sr-only'
-                    onChange={(e) => void onPickFiles(e.target.files)}
-                  />
-                  <div className='grid gap-3 lg:grid-cols-2'>
-                    <div className='flex flex-col gap-2'>
-                      <p className='text-dns-14N-130 text-solid-gray-700'>ファイル</p>
-                      <LoadingButton
-                        type='button'
-                        variant='solid-fill'
-                        size='sm'
-                        className='w-fit'
-                        disabled={addingFiles || actions.submitting}
-                        loading={addingFiles}
-                        onClick={() => fileRef.current?.click()}
-                      >
-                        {addingFiles ? '追加中...' : 'ファイルを追加'}
-                      </LoadingButton>
-                      {addingFiles && (
-                        <p className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
-                          <Spinner />
-                          {addingFileLabel
-                            ? `${addingFileLabel} を取り込んでいます`
-                            : 'ファイルを取り込んでいます'}
-                        </p>
-                      )}
-                    </div>
-                    <div className='flex flex-col gap-2'>
-                      <p className='text-dns-14N-130 text-solid-gray-700'>ナレッジを取り込む</p>
-                      <p className='text-dns-14N-130 text-solid-gray-600'>
-                        選んだタグが付いている文書を、いまの内容でこのノートに写します。同じタグへあとから足した文書は、もう一度追加するまで入りません。「このノートのMCP」とは別です。
-                      </p>
-                      <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end'>
-                        <Select
-                          id='notebook-knowledge-scope'
-                          blockSize='sm'
-                          value={knowledgeScope}
-                          onChange={(e) => {
-                            setKnowledgeScope(e.target.value);
-                            setKnowledgeTag('');
-                            setKnowledgeNote('');
-                          }}
-                          className='sm:min-w-40 sm:flex-1'
-                        >
-                          {scopes.map((s) => (
-                            <option key={s.scope} value={s.scope}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </Select>
-                        <Select
-                          id='notebook-knowledge-tag'
-                          blockSize='sm'
-                          value={knowledgeTag}
-                          onChange={(e) => {
-                            setKnowledgeTag(e.target.value);
-                            setKnowledgeNote('');
-                          }}
-                          className='sm:min-w-40 sm:flex-1'
-                        >
-                          <option value=''>
-                            {knowledgeDocsLoading ? 'タグを読み込んでいます' : 'タグを選ぶ'}
-                          </option>
-                          {tagChoices.map((choice) => (
-                            <option key={choice.tag} value={choice.tag}>
-                              {choice.tag}（{choice.files}件）
-                            </option>
-                          ))}
-                        </Select>
-                        <Button
-                          type='button'
-                          variant='solid-fill'
-                          size='sm'
-                          className='w-fit'
-                          aria-disabled={
-                            actions.submitting || !knowledgeTag || selectedReady === 0 || undefined
-                          }
-                          onClick={() => void onAddKnowledge()}
-                        >
-                          {selectedTag
-                            ? `ナレッジから追加（${selectedReady}件）`
-                            : 'ナレッジから追加'}
-                        </Button>
-                      </div>
-                      {selectedTag && selectedTag.pending > 0 && (
-                        <p className='text-dns-14N-130 text-solid-gray-700'>
-                          処理中が {selectedTag.pending} 件あるため、いま写すのは {selectedReady}{' '}
-                          件です。
-                        </p>
-                      )}
-                      {addingKnowledgeLabel && (
-                        <p className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
-                          <Spinner />
-                          {addingKnowledgeLabel} を取り込んでいます
-                        </p>
-                      )}
-                      {knowledgeNote && (
-                        <p className='text-dns-14N-130 text-solid-gray-700'>{knowledgeNote}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className='flex flex-col gap-2 border-t border-solid-gray-200 pt-3'>
-                    <p className='text-dns-14N-130 text-solid-gray-700'>MCP</p>
-                    <p className='text-dns-14N-130 text-solid-gray-600'>
-                      対話中にその場で参照します。ノートの参考資料には入りません。
-                    </p>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      className='w-fit'
-                      onClick={() => setSessionMcpOpen(true)}
-                    >
-                      このノートのMCP
-                      {connectedMcps.length > 0 ? `（On ${enabledMcpCount}）` : ''}
-                    </Button>
-                  </div>
-                </div>
-                {sourceCount === 0 ? (
-                  <p className='text-dns-14N-130 text-solid-gray-600'>未追加です。</p>
+                )}
+                {listedSourceCount === 0 && !sharedPending ? (
+                  <p className='text-dns-14N-130 text-solid-gray-600'>まだありません。</p>
                 ) : (
-                  <div className='flex flex-col gap-2'>
-                    {detail.files.map((f) => (
-                      <SourceCard
-                        key={`file-${f.id}`}
-                        kind='ファイル'
-                        name={f.filename}
-                        nodeCount={f.node_count}
-                        error={f.error}
-                        briefing={f.briefing}
-                        onDelete={() => void onDeleteFile(f.id)}
-                      />
-                    ))}
-                    {(detail.knowledge_refs ?? []).map((ref) => (
-                      <SourceCard
-                        key={`knowledge-${ref.id}`}
-                        kind='ナレッジ'
-                        name={ref.title || ref.source}
-                        nodeCount={ref.node_count}
-                        briefing={ref.briefing}
-                        onDelete={() => void onDeleteKnowledge(ref.id)}
-                      />
-                    ))}
+                  <div className='flex flex-col gap-6'>
+                    {detail.files.length > 0 && (
+                      <div className='flex flex-col gap-2'>
+                        <h3 className='text-std-16B-150 text-solid-gray-900'>ファイル</h3>
+                        {detail.files.map((file) => (
+                          <FileSourceCard
+                            key={file.id}
+                            file={file}
+                            onDelete={() => void onDeleteFile(file.id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {(registeredRefs.length > 0 || sharedScope) && (
+                      <div className='flex flex-col gap-2'>
+                        <h3 className='text-std-16B-150 text-solid-gray-900'>ナレッジ</h3>
+                        <KnowledgeSourceList
+                          refs={detail.knowledge_refs ?? []}
+                          sharedScope={sharedScope}
+                          sharedDocs={sharedDocs ?? null}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </section>
@@ -1134,30 +1268,29 @@ export const NotebookPage = () => {
               <div className='flex min-h-0 flex-1 flex-col gap-3'>
                 <NotebookChat
                   messages={detail.messages ?? []}
-                  items={detail.items ?? []}
-                  skills={skills}
-                  skillId={skillId}
-                  applyItemId={applyItemId}
                   draft={chatDraft}
-                  sources={chatSources}
-                  selectedSourceIds={selectedSourceIds}
-                  submitting={actions.submitting}
+                  submitting={sending}
                   llmEnabled={llmEnabled}
-                  onSkillIdChange={setSkillId}
-                  onApplyItemIdChange={setApplyItemId}
-                  onToggleSource={onToggleSource}
+                  attaching={addingFiles}
+                  knowledgeBusy={addingKnowledge}
+                  uploadLimitMb={maxUploadMb}
+                  notice={sourceNotice}
+                  fileNotices={fileNotices}
+                  webSearchOn={webSearchOn}
+                  webSearchAvailable={Boolean(webSearchMcp?.available)}
+                  onWebSearch={onWebSearch}
+                  onAttach={() => fileRef.current?.click()}
+                  onOpenKnowledge={() => setKnowledgeOpen(true)}
                   onDraftChange={setChatDraft}
                   onSend={() => void onChat()}
-                  onApplyMessage={(m) => void onChatToItem(m)}
-                  onAdoptDrafts={(chapters) => void onAdoptDrafts(chapters)}
-                  onUseAsInstruction={(m) => void onUseAsInstruction(m)}
-                  onOpenEditorTab={() => setPane('editor')}
+                  sessionId={sessionId}
+                  onRetry={() => void onRetry()}
                 />
               </div>
             )}
 
             {pane === 'items' && detail && (
-              <div className='flex min-h-0 flex-1 flex-col gap-3'>
+              <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-4'>
                 <div className='flex items-center justify-between gap-2'>
                   <h2 className='text-std-18B-160'>項目</h2>
                   <Button
@@ -1170,9 +1303,9 @@ export const NotebookPage = () => {
                   </Button>
                 </div>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  見出しが章の名前、本文が章の中身です。対話の下書きは、章ごとに項目にしてから正本になります。生成は参考資料の該当節だけを根拠にします。
+                  見出しが章の名前、本文が章の中身です。エージェントの下書きは、章ごとに項目にしてから正本になります。生成は参考資料の該当節だけを根拠にします。
                 </p>
-                <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2'>
+                <div className='flex flex-col gap-3 pb-2'>
                   {detail.items.length === 0 && (
                     <p className='text-dns-14N-130 text-solid-gray-600'>
                       「項目を追加」から章を増やしてください。
@@ -1290,205 +1423,66 @@ export const NotebookPage = () => {
             )}
 
             {pane === 'editor' && detail && (
-              <div className='flex flex-col gap-4'>
+              <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-4'>
                 <h2 className='text-std-18B-160'>Markdownエディタで編集</h2>
                 <p className='text-dns-14N-130 text-solid-gray-600'>
-                  見出しと本文を、Markdown エディタの編集画面へ渡します。Word
-                  などへの書き出しは、開いたあとのエディタで行います。
+                  エージェントで文書が揃うと、編集画面を開きます。章の手直しと書き出しは、開いたあとのエディタで行います。
                 </p>
-                <fieldset className='flex flex-col gap-2'>
-                  <legend className='text-std-16B-170 text-solid-gray-800'>渡し先</legend>
-                  <label className='flex items-center gap-2 text-std-16N-170'>
-                    <input
-                      type='radio'
-                      name='notebook-editor-mode'
-                      checked={editorMode === 'new'}
-                      onChange={() => setEditorMode('new')}
-                    />
-                    新しいプロジェクト
-                  </label>
-                  <label className='flex items-center gap-2 text-std-16N-170'>
-                    <input
-                      type='radio'
-                      name='notebook-editor-mode'
-                      checked={editorMode === 'existing'}
-                      onChange={() => setEditorMode('existing')}
-                    />
-                    自分の既存プロジェクトに足す
-                  </label>
-                </fieldset>
-                {editorMode === 'new' ? (
-                  <label className='flex max-w-md flex-col gap-1 text-dns-14N-130 text-solid-gray-700'>
-                    プロジェクト名
-                    <Input
-                      id='notebook-editor-name'
-                      blockSize='md'
-                      value={editorName}
-                      onChange={(e) => {
-                        editorNameTouched.current = true;
-                        setEditorName(e.target.value);
-                      }}
-                      placeholder={detail.title}
-                    />
-                  </label>
-                ) : (
-                  <div className='flex max-w-md flex-col gap-2'>
-                    <Label htmlFor='notebook-editor-project'>プロジェクト</Label>
-                    <Select
-                      id='notebook-editor-project'
-                      value={editorProjectId}
-                      onChange={(e) => setEditorProjectId(e.target.value)}
-                    >
-                      <option value=''>選択してください</option>
-                      {editorProjects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.name}
-                        </option>
-                      ))}
-                    </Select>
-                    {editorProjectsError && (
-                      <p className='text-dns-14N-130 text-error-1' role='alert'>
-                        {editorProjectsError}
-                      </p>
-                    )}
-                    <p className='text-dns-14N-130 text-solid-gray-600'>
-                      同じファイル名（生成文書.md や
-                      01_見出し.md）があるときは、そのファイルを上書きします。
-                    </p>
-                  </div>
-                )}
-                <div className='flex flex-col gap-2'>
-                  <Label htmlFor='notebook-instruction'>生成指示</Label>
-                  <p className='text-dns-14N-130 text-solid-gray-600'>
-                    エディタが成果物（生成文書.md）を書くときの指示です。空でも章は作れます。
+                {openingEditor && (
+                  <p className='inline-flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
+                    <Spinner />
+                    編集画面を開いています。
                   </p>
-                  <Textarea
-                    id='notebook-instruction'
-                    rows={4}
-                    value={instruction}
-                    onChange={(e) => setInstruction(e.target.value)}
-                    onBlur={() => void onSaveInstruction()}
-                  />
-                </div>
-                <div>
-                  <p className='mb-1 text-dns-14N-130 text-solid-gray-700'>渡す章</p>
-                  {adoptedItems.length === 0 ? (
-                    <p className='text-dns-14N-130 text-solid-gray-600'>
-                      見出しと本文の両方がある項目がありません。
-                    </p>
-                  ) : (
-                    <ul className='list-disc pl-5 text-dns-14N-130 text-solid-gray-800'>
-                      {adoptedItems.map((item) => (
-                        <li key={item.id}>{(drafts[item.id]?.label ?? item.label).trim()}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className='flex flex-wrap items-center gap-2'>
+                )}
+                {(pendingProjectId || detail.editor_project_id) && (
                   <Button
                     type='button'
-                    variant='solid-fill'
+                    variant='outline'
                     size='md'
-                    aria-disabled={
-                      openingEditor ||
-                      adoptedItems.length === 0 ||
-                      (editorMode === 'new' && !editorName.trim()) ||
-                      (editorMode === 'existing' && !editorProjectId) ||
-                      undefined
-                    }
                     onClick={() => {
-                      if (
-                        openingEditor ||
-                        adoptedItems.length === 0 ||
-                        (editorMode === 'new' && !editorName.trim()) ||
-                        (editorMode === 'existing' && !editorProjectId)
-                      ) {
-                        return;
-                      }
-                      void onOpenEditor();
+                      const projectId = pendingProjectId || detail.editor_project_id;
+                      if (!projectId) return;
+                      navigate(
+                        `/procuretech-editor?project=${encodeURIComponent(projectId)}`,
+                      );
                     }}
                   >
-                    <span className='inline-flex items-center gap-2'>
-                      {openingEditor && <Spinner />}
-                      編集画面を開く
-                    </span>
+                    編集画面を開く
                   </Button>
-                  {pendingProjectId && (
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='md'
-                      onClick={() =>
-                        navigate(
-                          `/procuretech-editor?project=${encodeURIComponent(pendingProjectId)}`,
-                        )
-                      }
-                    >
-                      作成したプロジェクトを開く
-                    </Button>
-                  )}
-                </div>
+                )}
               </div>
             )}
-
-            {(actions.error || openError) && (
-              <p className='text-std-16N-170 text-error-1' role='alert'>
-                {actions.error || openError}
-              </p>
-            )}
+            </div>
           </>
         )}
       </div>
 
-      <CustomDialog isOpen={sessionMcpOpen} onClose={() => setSessionMcpOpen(false)}>
-        <CustomDialogPanel className='max-w-xl'>
-          <CustomDialogHeader hasClose onClose={() => setSessionMcpOpen(false)}>
-            このノートのMCP
-          </CustomDialogHeader>
-          <CustomDialogBody>
-            <p className='mb-3 text-dns-14N-130 text-solid-gray-600'>
-              対話中にその場で参照します。ノートの参考資料には入りません。接続の追加・切り離しとプロンプトは「AIタイプとMCP」から行います。
-            </p>
-            {connectedMcps.length === 0 ? (
-              <p className='text-dns-14N-130 text-solid-gray-600'>
-                接続中の MCP がありません。「AIタイプとMCP」から接続してください。
-              </p>
-            ) : (
-              <ul className='flex flex-col gap-2'>
-                {connectedMcps.map((m) => (
-                  <li
-                    key={m.id}
-                    className='flex flex-col gap-1 rounded-8 border border-solid-gray-200 px-3 py-2 sm:flex-row sm:items-center sm:justify-between'
-                  >
-                    <div>
-                      <p className='text-std-16B-150 text-solid-gray-900'>{m.name}</p>
-                      <p className='text-dns-14N-130 text-solid-gray-600'>
-                        {m.catalog_id === 'knowledge'
-                          ? '共有ナレッジ（共通チーム）を対話中に検索します。'
-                          : m.description}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={!!m.enabled}
-                      label={m.enabled ? 'On' : 'Off'}
-                      onSwitch={(next) => void onToggleSessionMcp(m.id, next)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CustomDialogBody>
-        </CustomDialogPanel>
-      </CustomDialog>
+      <input
+        ref={fileRef}
+        type='file'
+        multiple
+        accept={accept}
+        className='sr-only'
+        onChange={(e) => void onPickFiles(e.target.files)}
+      />
+      <KnowledgeSelectDialog
+        isOpen={knowledgeOpen}
+        picks={knowledgePicks}
+        onChange={onKnowledgePicks}
+        onClose={() => setKnowledgeOpen(false)}
+        description={
+          sharedKnowledgeViaMcp
+            ? 'チームのタグを選ぶと、その文書を参考資料に写します。共有ナレッジは MCP が On のため、すべてのタグが対象です。一部だけにするには、MCP を Off にしてからタグを登録します。'
+            : 'タグを選ぶと、そのタグが付いた文書を参考資料に写します。チェックを外すと、その文書を参考資料から外します。'
+        }
+        sharedKnowledgeLocked={sharedKnowledgeViaMcp}
+      />
 
       <NotebookManageDialog
         open={manageOpen}
-        skills={skills}
         mcps={mcps}
         submitting={actions.submitting}
         onClose={() => setManageOpen(false)}
-        onCreate={onCreateSkill}
-        onDelete={onDeleteSkill}
         onUpdateMcp={onUpdateMcp}
         onCreateMcp={onCreateMcp}
         onDeleteMcp={onDeleteMcp}
@@ -1506,29 +1500,25 @@ export const NotebookPage = () => {
               <div className='flex flex-col gap-2 text-std-16N-170 text-solid-gray-700'>
                 <p>・「ノート一覧」でノートを作り、開きます。</p>
                 <p>
-                  ・「参考資料」にファイルを追加するか、ナレッジのタグを選んで文書を写します。項目の根拠になります。タグに後から足した文書は、もう一度追加するまで入りません。
+                  ・「エージェント」の入力欄から、ファイルを添付するか、ナレッジのタグを選びます。入った資料は「参考資料」に出ます。タグに後から足した文書は、もう一度選ぶまで入りません。
                 </p>
                 <p>
-                  ・「参考資料を追加」の「このノートのMCP」で、対話中に使う MCP を On/Off します。
+                  ・「参考資料」は、いま入っている資料の状況です。いらないファイルはここで外せます。ナレッジはチームの中のタグを開くとファイル名が出ます。文書ごとの削除はありません。
+                </p>
+                <p>・エージェントで使う MCP の On/Off、プロンプト、追加は右上の「MCP」から行います。</p>
+                <p>
+                  ・入力欄の「Web検索」は、MCP の「Web検索」と同じスイッチです。On
+                  にすると、対話の中でウェブを検索します。
                 </p>
                 <p>
-                  ・共有ナレッジ MCP
-                  は共通チームのナレッジをその場で検索します（取り込みではありません）。
+                  ・共有ナレッジの MCP が On のあいだは、共有ナレッジの文書がすべて対象です。一部のタグだけにするには、MCP を Off にしてからそのタグを登録します。
                 </p>
                 <p>
-                  ・「対話」で質問や整理をします。入力の上で資料を選ぶと、その送信はその資料だけを見ます。未選択ならすべての参考資料です。調べた手順は回答の上に出ます。回答は見出しでたたみ、直近だけ開きます。「指示に入れる」で
-                  [[回答 1]] を文の途中に差し込むと、その回答をこの送信の対象にします。
+                  ・「エージェント」で、何を作るかを話します。決まると、資料を調べて項目へ書きます。確認が必要なときだけ、そこで聞きます。
                 </p>
                 <p>
-                  ・文書の下書きは章の一覧で出ます。「この章を項目にする」まで正本ではありません。見出しだけの回答は、これまでのように「項目に追加」で分かれます。「生成指示にする」で、その回答を編集タブの生成指示へ入れます。
+                  ・項目が揃うと、そのゴールを生成指示として Markdown エディタを開きます。生成指示の入力や、渡し先の選択はありません。
                 </p>
-                <p>
-                  ・エディタで開くよう頼むと、「Markdownエディタで編集」タブへ進みます。新規か既存かはそこで選びます。
-                </p>
-                <p>
-                  ・「Markdownエディタで編集」で、新しいプロジェクトか、自分の既存プロジェクトを選んで編集画面を開きます。
-                </p>
-                <p>・MCP の接続・切り離しとプロンプトは「AIタイプとMCP」から行います。</p>
               </div>
             )}
           </CustomDialogBody>

@@ -25,7 +25,7 @@ interface ImportMetaEnv {
   readonly VITE_APP_GOVAIS_FOR_HOMEPAGE: string;
   readonly VITE_APP_TOP_CHAT_SYSTEM_PROMPT: string;
   readonly VITE_APP_TOP_CHAT_SYSTEM_PROMPT_TITLE: string;
-  /** ナビ配置: header（既定）| sidebar */
+  /** ナビ配置: sidebar（既定）| header */
   readonly VITE_APP_NAV_LAYOUT: string;
   /** 画像生成の初期ステップ数（既定 50。FastSD/LCM 向けは 4 など） */
   readonly VITE_APP_IMAGE_DEFAULT_STEP: string;

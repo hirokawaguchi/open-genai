@@ -32,12 +32,32 @@ import { useSetDefaultValues } from '@/features/chat/hooks/useSetDefaultValues';
 import { useChatStore } from '@/features/chat/stores/useChatStore';
 import { ExAppUsageMarkdownRenderer } from '@/features/exapp/components/ExAppUsageMarkdownRenderer';
 import { useChat } from '@/hooks/useChat';
+import { useChatApi } from '@/hooks/useChatApi';
 import { useFollow } from '@/hooks/useFollow';
 import { useLiveStatusMessage } from '@/hooks/useLiveStatusMessage';
 import { useScreen } from '@/hooks/useScreen';
 import { useUsecasePath } from '@/hooks/useUsecasePath';
 import { useSystemContext } from './hooks/useSystemContext';
 import { ChatPageQueryParams } from './types';
+
+const CHAT_LAST_KEY = 'chat-last-id';
+
+const rememberedChatId = () => {
+  try {
+    return sessionStorage.getItem(CHAT_LAST_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+const rememberChatId = (id: string) => {
+  try {
+    if (id) sessionStorage.setItem(CHAT_LAST_KEY, id);
+    else sessionStorage.removeItem(CHAT_LAST_KEY);
+  } catch {
+    /* 保存できなくても画面は動く */
+  }
+};
 
 export const ChatPage = () => {
   const {
@@ -54,6 +74,26 @@ export const ChatPage = () => {
   const { search, state } = useLocation();
   const { usecase, chatId } = useUsecasePath();
   const navigate = useNavigate();
+  const { error: missingChat } = useChatApi().findChatById(chatId);
+
+  useEffect(() => {
+    if (chatId) {
+      rememberChatId(chatId);
+      return;
+    }
+    if (state?.shouldReset) {
+      rememberChatId('');
+      return;
+    }
+    const lastId = rememberedChatId();
+    if (lastId) navigate(`/chat/${lastId}`, { replace: true });
+  }, [chatId, navigate, state]);
+
+  useEffect(() => {
+    if (!chatId || !missingChat) return;
+    rememberChatId('');
+    navigate('/chat', { replace: true, state: { shouldReset: true } });
+  }, [chatId, missingChat, navigate]);
   const { scrollTopAnchorRef, scrollBottomAnchorRef } = useScreen({
     useWindowScroll: true,
   });

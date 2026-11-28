@@ -223,7 +223,7 @@ export const useRecommendedNavItems = (): NavLinkItem[] => {
       items.push({
         label: nameOf('chat', 'チャット'),
         to: '/chat',
-        state: { shouldReset: true },
+        state: { shouldReset: false },
         description: descOf('chat', '着想や整理のための壁打ち'),
       });
     }

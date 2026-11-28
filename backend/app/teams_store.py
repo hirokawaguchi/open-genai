@@ -594,6 +594,10 @@ def upsert_seed_exapp(app: dict[str, Any]) -> None:
                 and description == "音声・動画ファイルをテキストに書き起こします（タイムスタンプ付き）。"
             ):
                 description = app.get("description", "")
+            if app.get("exAppId") == "notebook" and (
+                "指示に入れる" in how_to_use or "[[回答" in how_to_use
+            ):
+                how_to_use = app.get("howToUse", "")
             if (
                 app.get("exAppId") == "browser"
                 and description

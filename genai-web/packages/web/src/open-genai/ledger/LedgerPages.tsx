@@ -32,7 +32,7 @@ import { useRegisteredAppMeta } from '@/features/exapp/hooks/useRegisteredAppMet
 import { COMMON_EXAPPS_TEAM_ID } from '@/features/exapps/constants';
 import { LayoutBody } from '@/layout/LayoutBody';
 import { LEDGER_EXAPP_ID } from '@/layout/navItems';
-import { teamApi } from '@/lib/fetcher';
+import { ApiError, teamApi } from '@/lib/fetcher';
 import { officePathForFormat } from '../office/kinds';
 import type {
   LedgerExtra,
@@ -73,6 +73,25 @@ const rememberLedger = (id: string) => {
   try {
     if (id) sessionStorage.setItem(SELECTED_KEY, id);
     else sessionStorage.removeItem(SELECTED_KEY);
+  } catch {
+    /* 保存できなくても画面は動く */
+  }
+};
+
+const PATH_KEY = 'open-genai-ledger-path';
+
+const rememberedLedgerPath = () => {
+  try {
+    return sessionStorage.getItem(PATH_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+const rememberLedgerPath = (path: string) => {
+  try {
+    if (path.startsWith('/ledger/')) sessionStorage.setItem(PATH_KEY, path);
+    else sessionStorage.removeItem(PATH_KEY);
   } catch {
     /* 保存できなくても画面は動く */
   }
@@ -122,42 +141,66 @@ const Shell = ({
   );
   const [helpOpen, setHelpOpen] = useState(false);
   const openId = ledgerId || rememberedLedger();
+  const { error: openLedgerError } = useLedger(tab === 'list' ? undefined : openId);
 
   useEffect(() => {
     if (ledgerId) rememberLedger(ledgerId);
   }, [ledgerId]);
 
-  const openTab = (next: LedgerTab) => {
-    if (next === 'list') {
-      navigate('/ledger');
+  useEffect(() => {
+    if (tab === 'list' || !ledgerId) return;
+    if (tab === 'records') {
+      rememberLedgerPath(`/ledger/${ledgerId}`);
       return;
     }
-    if (!openId) {
-      navigate('/ledger');
+    if (tab === 'card') {
+      rememberLedgerPath(
+        rowId ? `/ledger/${ledgerId}/card/${rowId}` : `/ledger/${ledgerId}/card`,
+      );
+      return;
+    }
+    rememberLedgerPath(`/ledger/${ledgerId}/${tab}`);
+  }, [tab, ledgerId, rowId]);
+
+  useEffect(() => {
+    if (tab === 'list' || !openId) return;
+    if (!(openLedgerError instanceof ApiError) || openLedgerError.status !== 404) return;
+    rememberLedger('');
+    rememberLedgerPath('');
+    navigate('/ledger', { replace: true });
+  }, [tab, openId, openLedgerError, navigate]);
+
+  const openTab = (next: LedgerTab) => {
+    const go = (path: string) => {
+      rememberLedgerPath(path);
+      navigate(path);
+    };
+    if (next === 'list' || !openId) {
+      go('/ledger');
       return;
     }
     if (next === 'access') {
-      navigate(`/ledger/${openId}/access`);
+      go(`/ledger/${openId}/access`);
       return;
     }
     if (next === 'fields') {
-      navigate(`/ledger/${openId}/fields`);
+      go(`/ledger/${openId}/fields`);
       return;
     }
     if (next === 'export') {
-      navigate(`/ledger/${openId}/export`);
+      go(`/ledger/${openId}/export`);
       return;
     }
     if (next === 'api') {
-      navigate(`/ledger/${openId}/api`);
+      go(`/ledger/${openId}/api`);
       return;
     }
     if (next === 'card') {
       const cardId = rowId || rememberedRow(openId);
-      navigate(cardId ? `/ledger/${openId}/card/${cardId}` : `/ledger/${openId}/card`);
+      go(cardId ? `/ledger/${openId}/card/${cardId}` : `/ledger/${openId}/card`);
       return;
     }
-    navigate(`/ledger/${openId}`);
+    go(`/ledger/${openId}`);
   };
 
   const tabClass = (key: LedgerTab) =>
@@ -287,6 +330,11 @@ export const LedgerHomePage = () => {
   const [listNames, setListNames] = useState<Record<string, string>>({});
   const navigate = useNavigate();
   const ledgers = data?.ledgers || [];
+
+  useEffect(() => {
+    const path = rememberedLedgerPath();
+    if (path.startsWith('/ledger/')) navigate(path, { replace: true });
+  }, [navigate]);
   const myTeams = config?.team_ids || [];
 
   const choose = (id: string) => {

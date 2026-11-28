@@ -3,20 +3,33 @@ type Props = {
   checked: boolean;
   onSwitch: (newValue: boolean) => void;
   label: string;
+  disabled?: boolean;
+  title?: string;
 };
 
 export const Switch = (props: Props) => {
-  const { className, checked, onSwitch, label } = props;
+  const { className, checked, onSwitch, label, disabled, title } = props;
   return (
     <div className={`${className ?? ''}`}>
-      <label className='relative inline-flex cursor-pointer items-center gap-1.5 hover:underline'>
+      <label
+        title={title}
+        className={`relative inline-flex items-center gap-1.5 ${
+          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:underline'
+        }`}
+      >
         <input
           type='checkbox'
           role='switch'
           value=''
-          className='peer sr-only'
+          className='peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed'
           checked={checked}
+          disabled={disabled}
+          onMouseDown={(event) => {
+            // 画面外の入力へフォーカスが移ると、ブラウザがそこへスクロールする。
+            event.preventDefault();
+          }}
           onChange={() => {
+            if (disabled) return;
             onSwitch(!checked);
           }}
         />

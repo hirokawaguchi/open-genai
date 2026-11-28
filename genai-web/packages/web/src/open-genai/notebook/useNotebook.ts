@@ -9,7 +9,6 @@ import type {
   NotebookMcp,
   NotebookSessionDetail,
   NotebookSessionSummary,
-  NotebookSkill,
 } from './types';
 
 const BASE = 'notebook';
@@ -102,23 +101,6 @@ export const useNotebookMcps = () => {
   };
 };
 
-export const useNotebookSkills = () => {
-  const { data, error, isLoading, mutate } = useSWR<{
-    skills: NotebookSkill[];
-    tools?: string[];
-  }>(`${BASE}/skills`, teamApiFetcher, {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
-  });
-  return {
-    skills: data?.skills ?? [],
-    toolNames: data?.tools ?? [],
-    isLoading,
-    loadError: error ? errorMessage(error, 'AIタイプ一覧の取得に失敗しました。') : null,
-    mutate,
-  };
-};
-
 export const useNotebookSession = (sessionId: string | null) => {
   const key = sessionId ? `${BASE}/sessions/${encodeURIComponent(sessionId)}` : null;
   const { data, error, isLoading, mutate } = useSWR<NotebookSessionDetail>(key, teamApiFetcher, {
@@ -160,7 +142,12 @@ export const useNotebookActions = () => {
   const updateSession = useCallback(
     async (
       sessionId: string,
-      body: { title?: string; instruction?: string; mcps?: { id: string; enabled: boolean }[] },
+      body: {
+        title?: string;
+        instruction?: string;
+        editor_project_id?: string;
+        mcps?: { id: string; enabled: boolean }[];
+      },
     ): Promise<NotebookSessionDetail | null> => {
       setError(null);
       try {
@@ -360,11 +347,30 @@ export const useNotebookActions = () => {
     [],
   );
 
+  const retryChat = useCallback(
+    async (sessionId: string): Promise<NotebookSessionDetail | null> => {
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat/retry`,
+          {},
+        );
+        return res.data ?? null;
+      } catch (e) {
+        setError(errorMessage(e, '回答を作り直せませんでした。'));
+        return null;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   const chat = useCallback(
     async (
       sessionId: string,
       question: string,
-      skillId?: string,
       sourceIds?: string[],
     ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
@@ -374,35 +380,12 @@ export const useNotebookActions = () => {
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/chat`,
           {
             question,
-            skill_id: skillId || undefined,
             source_ids: sourceIds && sourceIds.length > 0 ? sourceIds : undefined,
           },
         );
         return res.data ?? null;
       } catch (e) {
-        setError(errorMessage(e, '対話に失敗しました。'));
-        return null;
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [],
-  );
-
-  const createSkill = useCallback(
-    async (body: {
-      name: string;
-      personality?: string;
-      instructions?: string;
-      tools?: string[];
-    }): Promise<NotebookSkill | null> => {
-      setSubmitting(true);
-      setError(null);
-      try {
-        const res = await teamApi.post<NotebookSkill>(`${BASE}/skills`, body);
-        return res.data ?? null;
-      } catch (e) {
-        setError(errorMessage(e, 'AIタイプの作成に失敗しました。'));
+        setError(errorMessage(e, '送信に失敗しました。'));
         return null;
       } finally {
         setSubmitting(false);
@@ -462,20 +445,6 @@ export const useNotebookActions = () => {
     }
   }, []);
 
-  const deleteSkill = useCallback(async (skillId: string): Promise<boolean> => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      await teamApi.delete(`${BASE}/skills/${encodeURIComponent(skillId)}`);
-      return true;
-    } catch (e) {
-      setError(errorMessage(e, 'AIタイプの削除に失敗しました。'));
-      return false;
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
-
   const generateItem = useCallback(
     async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
       setGeneratingId(itemId);
@@ -509,8 +478,7 @@ export const useNotebookActions = () => {
     addKnowledgeRefs,
     deleteKnowledgeRef,
     chat,
-    createSkill,
-    deleteSkill,
+    retryChat,
     updateMcp,
     createMcp,
     deleteMcp,

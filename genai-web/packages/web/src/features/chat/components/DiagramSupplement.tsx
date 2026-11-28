@@ -18,10 +18,12 @@ type Props = {
   messageId: string;
   content: string;
   modelId?: string;
+  /** チャット以外の回答。渡したときは、こちらの取得を使う。 */
+  load?: () => Promise<DiagramSupplementResponse>;
 };
 
 export const DiagramSupplement = (props: Props) => {
-  const { chatId, messageId, content, modelId } = props;
+  const { chatId, messageId, content, modelId, load } = props;
   const [isOpen, setIsOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>('loading');
   const [mermaid, setMermaid] = useState('');
@@ -55,7 +57,9 @@ export const DiagramSupplement = (props: Props) => {
     setPhase('loading');
     setErrorText('');
     try {
-      const result = await createDiagramSupplement(chatId, messageId, modelId);
+      const result = load
+        ? await load()
+        : await createDiagramSupplement(chatId, messageId, modelId);
       if (seq !== requestSeq.current) {
         return;
       }

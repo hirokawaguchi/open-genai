@@ -174,7 +174,7 @@ def citations_from_payload(text: str) -> list[dict[str, Any]]:
         cites.append(
             {
                 "n": i,
-                "display_name": f"{label}（共有ナレッジ・未ソース）",
+                "display_name": f"{label}（共有ナレッジ）",
                 "text": str(n.get("text") or ""),
             }
         )

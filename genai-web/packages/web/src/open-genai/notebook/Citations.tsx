@@ -1,11 +1,10 @@
-import type { MouseEvent } from 'react';
 import { Disclosure, DisclosureSummary } from '@/components/ui/dads/Disclosure';
 import { Markdown } from '@/components/Markdown';
 import {
   citationNumber,
   formatNotebookMarkdown,
-  linkifyCitationMarks,
   sourceLabel,
+  stripCitationMarks,
   usedCitations,
 } from './formatMarkdown';
 import type { NotebookCitation } from './types';
@@ -57,22 +56,10 @@ export const ChatAnswer = ({
   idPrefix: string;
 }) => {
   const used = usedCitations(content, citations);
-  const openCite = (e: MouseEvent<HTMLDivElement>) => {
-    const a = (e.target as HTMLElement).closest('a');
-    const href = a?.getAttribute('href') || '';
-    if (!href.startsWith(`#${idPrefix}-`)) return;
-    e.preventDefault();
-    const el = document.getElementById(href.slice(1)) as HTMLDetailsElement | null;
-    if (!el) return;
-    el.open = true;
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  };
   return (
     <div className='mt-1 text-solid-gray-900'>
-      <div onClick={openCite}>
-        <Markdown>{linkifyCitationMarks(formatNotebookMarkdown(content), idPrefix)}</Markdown>
-      </div>
-      <SourceList citations={used} numbered idPrefix={idPrefix} />
+      <Markdown>{formatNotebookMarkdown(stripCitationMarks(content))}</Markdown>
+      <SourceList citations={used} idPrefix={idPrefix} />
     </div>
   );
 };

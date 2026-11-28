@@ -152,6 +152,11 @@ def init_db() -> None:
             db.execute(
                 "ALTER TABLE messages ADD COLUMN open_editor INTEGER NOT NULL DEFAULT 0"
             )
+        sess_cols = {r[1] for r in db.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "editor_project_id" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN editor_project_id TEXT NOT NULL DEFAULT ''"
+            )
         db.commit()
 
 
@@ -249,6 +254,9 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         "id": row["id"],
         "title": row["title"],
         "instruction": row["instruction"],
+        "editor_project_id": row["editor_project_id"]
+        if "editor_project_id" in row.keys()
+        else "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "items": [_public_item(i) for i in items],
@@ -335,6 +343,7 @@ def update_session(
     *,
     title: str | None = None,
     instruction: str | None = None,
+    editor_project_id: str | None = None,
     mcp_enabled: dict[str, bool] | None = None,
 ) -> dict[str, Any] | None:
     db = connect()
@@ -351,6 +360,11 @@ def update_session(
             db.execute(
                 "UPDATE sessions SET instruction = ? WHERE id = ?",
                 (instruction, session_id),
+            )
+        if editor_project_id is not None:
+            db.execute(
+                "UPDATE sessions SET editor_project_id = ? WHERE id = ?",
+                (editor_project_id.strip(), session_id),
             )
         if mcp_enabled:
             _ensure_mcps_unlocked(db, user_id)
@@ -437,6 +451,50 @@ def update_item(
         _touch(db, session_id)
         db.commit()
     return get_session(session_id, user_id)
+
+
+def upsert_labeled_item(
+    session_id: str,
+    user_id: str,
+    *,
+    label: str,
+    value: str,
+    citations: list[dict[str, Any]],
+) -> bool:
+    """見出しが同じ項目は上書きし、無ければ末尾に足す。"""
+    db = connect()
+    key = label.strip()
+    with _lock:
+        if not _owned(session_id, user_id) or not key:
+            return False
+        rows = db.execute(
+            "SELECT id, label FROM items WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+        target = ""
+        for row in rows:
+            if str(row["label"] or "").strip() == key:
+                target = str(row["id"])
+                break
+        cites = json.dumps(citations, ensure_ascii=False)
+        if target:
+            db.execute(
+                "UPDATE items SET label = ?, value = ?, citations = ? WHERE id = ?",
+                (key, value, cites, target),
+            )
+        else:
+            pos = db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS n FROM items WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["n"]
+            db.execute(
+                "INSERT INTO items (id, session_id, position, label, value, citations)"
+                " VALUES (?,?,?,?,?,?)",
+                (str(uuid.uuid4()), session_id, pos, key, value, cites),
+            )
+        _touch(db, session_id)
+        db.commit()
+    return True
 
 
 def delete_item(session_id: str, user_id: str, item_id: str) -> dict[str, Any] | None:
@@ -531,6 +589,24 @@ def update_file(
     return True
 
 
+def fail_interrupted_ingests() -> None:
+    """再起動で止まった読み取りを、未完了のまま残さない。"""
+    db = connect()
+    with _lock:
+        rows = db.execute("SELECT id, briefing FROM files").fetchall()
+        changed = False
+        for row in rows:
+            briefing = _parse_json(row["briefing"], {})
+            if isinstance(briefing, dict) and briefing.get("ingest") == "processing":
+                db.execute(
+                    "UPDATE files SET error = ?, briefing = ? WHERE id = ?",
+                    ("読み取りが中断されました。もう一度添付してください。", "{}", row["id"]),
+                )
+                changed = True
+        if changed:
+            db.commit()
+
+
 def delete_file(session_id: str, user_id: str, file_id: str) -> dict[str, Any] | None:
     db = connect()
     with _lock:
@@ -593,7 +669,7 @@ def list_material_nodes(
         if not _owned(session_id, user_id):
             return None
         files = db.execute(
-            "SELECT id, filename, nodes FROM files WHERE session_id = ? AND error = ''",
+            "SELECT id, filename, nodes, briefing FROM files WHERE session_id = ? AND error = ''",
             (session_id,),
         ).fetchall()
         refs = db.execute(
@@ -602,6 +678,9 @@ def list_material_nodes(
         ).fetchall()
     out: list[dict[str, Any]] = []
     for f in files:
+        briefing = _parse_json(f["briefing"] if "briefing" in f.keys() else "", {})
+        if isinstance(briefing, dict) and briefing.get("ingest") == "processing":
+            continue
         if wanted and str(f["id"]) not in wanted:
             continue
         for n in _parse_json(f["nodes"], []):
@@ -717,6 +796,21 @@ def delete_knowledge_ref(
         _touch(db, session_id)
         db.commit()
     return get_session(session_id, user_id)
+
+
+def delete_message(session_id: str, user_id: str, message_id: str) -> bool:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return False
+        cur = db.execute(
+            "DELETE FROM messages WHERE id = ? AND session_id = ?",
+            (message_id, session_id),
+        )
+        if cur.rowcount:
+            _touch(db, session_id)
+        db.commit()
+    return cur.rowcount > 0
 
 
 def add_message(
@@ -1104,23 +1198,13 @@ def _ensure_mcps_unlocked(db: sqlite3.Connection, user_id: str) -> list[dict[str
 
 
 def _session_mcps_unlocked(
-    db: sqlite3.Connection, session_id: str, user_id: str
+    db: sqlite3.Connection, _session_id: str, user_id: str
 ) -> list[dict[str, Any]]:
     catalog = _ensure_mcps_unlocked(db, user_id)
-    flags = {
-        str(r["mcp_id"]): bool(r["enabled"])
-        for r in db.execute(
-            "SELECT mcp_id, enabled FROM session_mcps WHERE session_id = ?",
-            (session_id,),
-        ).fetchall()
-    }
     out: list[dict[str, Any]] = []
     for item in catalog:
-        connected = bool(item.get("connected"))
-        default_on = connected
-        enabled = flags.get(str(item["id"]), default_on)
         row = dict(item)
-        row["enabled"] = bool(enabled) and connected
+        row["enabled"] = bool(item.get("connected"))
         out.append(row)
     return out
 

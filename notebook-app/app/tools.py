@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+import httpx
+
 from . import firecrawl, mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
 
-# スキルのツール一覧に無くても、対話では常に使える。正本にはしない。
-FLOW_TOOLS = ("propose_drafts", "open_editor")
+# 対話が自分で項目を書き、揃ったらエディタへ渡す。
+FLOW_TOOLS = ("set_goal", "commit_items", "ask_user", "deliver", "write_office_draft")
 _CITE_NUM = re.compile(r"\[(\d+)\]")
 
 CORE_TOOL_NAMES = mcp_catalog.CORE_TOOLS
@@ -42,6 +46,8 @@ class ToolContext:
     source_ids: list[str] = field(default_factory=list)
     drafts: list[dict[str, Any]] = field(default_factory=list)
     open_editor: bool = False
+    ask_text: str = ""
+    forward_headers: dict[str, str] = field(default_factory=dict)
 
 
 def openai_tools(
@@ -218,8 +224,32 @@ def _citation_numbers(raw: Any, text: str) -> list[int]:
     return found
 
 
-async def _propose_drafts(ctx: ToolContext, args: dict[str, Any]) -> str:
-    """章の下書きをこの発言に置く。項目テーブルには書かない。"""
+async def _set_goal(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """対話で決まった一文を、画面に出さないゴールとして残す。"""
+    goal = str(args.get("goal") or "").strip()
+    if not goal:
+        return json.dumps({"error": "ゴールの文が空です。"}, ensure_ascii=False)
+    if len(goal) > 4000:
+        return json.dumps({"error": "ゴールは4000字以内にしてください。"}, ensure_ascii=False)
+    detail = store.update_session(ctx.session_id, ctx.user_id, instruction=goal)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    return json.dumps(
+        {"goal": goal, "note": "この文が、エディタへ渡す生成指示です。別の文は作りません。"},
+        ensure_ascii=False,
+    )
+
+
+async def _commit_items(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """見出しごとに項目へ書く。ゴールが無いあいだは書かない。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    if not str(detail.get("instruction") or "").strip():
+        return json.dumps(
+            {"error": "ゴールがまだありません。先に set_goal を呼んでください。"},
+            ensure_ascii=False,
+        )
     raw = args.get("chapters")
     if isinstance(raw, str) and raw.strip():
         try:
@@ -232,7 +262,7 @@ async def _propose_drafts(ctx: ToolContext, args: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
     by_n = {int(c.get("n") or 0): c for c in ctx.citations if c.get("n")}
-    chapters: list[dict[str, Any]] = []
+    written: list[str] = []
     for item in raw[:12]:
         if not isinstance(item, dict):
             continue
@@ -245,43 +275,127 @@ async def _propose_drafts(ctx: ToolContext, args: dict[str, Any]) -> str:
             src = by_n.get(n)
             if src and src not in cites:
                 cites.append(src)
-        chapters.append({"label": label, "value": value, "citations": cites})
-    if not chapters:
+        if not store.upsert_labeled_item(
+            ctx.session_id,
+            ctx.user_id,
+            label=label,
+            value=value,
+            citations=cites,
+        ):
+            return json.dumps({"error": "項目を書けませんでした。"}, ensure_ascii=False)
+        written.append(label)
+    if not written:
         return json.dumps(
             {"error": "見出しと本文が揃った章がありません。"},
             ensure_ascii=False,
         )
-    ctx.drafts = chapters
-    return json.dumps(
-        {
-            "adopted": False,
-            "count": len(chapters),
-            "chapters": [
-                {
-                    "label": c["label"],
-                    "citations": [x.get("display_name") or "" for x in c["citations"]],
-                }
-                for c in chapters
-            ],
-            "note": "未採用の下書きです。人が項目にするまで正本ではありません。",
-        },
-        ensure_ascii=False,
-    )
+    return json.dumps({"written": written}, ensure_ascii=False)
 
 
-async def _open_editor(ctx: ToolContext, _args: dict[str, Any]) -> str:
-    """編集タブを開く合図だけを残す。プロジェクトは作らない。"""
+async def _ask_user(ctx: ToolContext, args: dict[str, Any]) -> str:
+    question = str(args.get("question") or "").strip()
+    if not question:
+        return json.dumps({"error": "質問が空です。"}, ensure_ascii=False)
+    ctx.ask_text = question
+    return json.dumps({"stopped": True}, ensure_ascii=False)
+
+
+def _filled_items(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for item in detail.get("items") or []:
+        if str(item.get("label") or "").strip() and str(item.get("value") or "").strip():
+            out.append(item)
+    return out
+
+
+async def _deliver(ctx: ToolContext, _args: dict[str, Any]) -> str:
+    """ゴールの文を生成指示として、エディタ引き渡しの合図を出す。"""
+    detail = store.get_session(ctx.session_id, ctx.user_id)
+    if not detail:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    goal = str(detail.get("instruction") or "").strip()
+    if not goal:
+        return json.dumps(
+            {"error": "ゴールがまだありません。先に set_goal を呼んでください。"},
+            ensure_ascii=False,
+        )
+    filled = _filled_items(detail)
+    if not filled:
+        return json.dumps(
+            {"error": "見出しと本文のある項目がありません。先に commit_items を呼んでください。"},
+            ensure_ascii=False,
+        )
+    project_id = str(detail.get("editor_project_id") or "").strip()
     ctx.open_editor = True
+    mode = "existing" if project_id else "new"
     return json.dumps(
         {
-            "opened_tab": "editor",
-            "note": (
-                "Markdownエディタで編集タブを開きます。"
-                "新しいプロジェクトか既存かは人が選びます。あなたは決めないでください。"
-            ),
+            "open_editor": True,
+            "instruction": goal,
+            "mode": mode,
+            "name": detail.get("title") or "",
+            "project_id": project_id,
         },
         ensure_ascii=False,
     )
+
+
+def _ledger_url() -> str:
+    return os.environ.get("LEDGER_URL", "").strip().rstrip("/")
+
+
+async def _write_office_draft(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """文書台帳へ下書きの本体を書く。確定と削除はしない。"""
+    if args.get("status") or args.get("delete") or args.get("finalize"):
+        return json.dumps(
+            {"error": "確定と削除はできません。下書きのファイルだけ書けます。"},
+            ensure_ascii=False,
+        )
+    filename = str(args.get("filename") or "").strip()
+    if not filename.lower().endswith((".docx", ".xlsx", ".pptx")):
+        return json.dumps(
+            {"error": "文書、表計算、スライドのファイルだけ書けます。"},
+            ensure_ascii=False,
+        )
+    raw_b64 = str(args.get("content_base64") or "").strip()
+    if not raw_b64:
+        return json.dumps({"error": "ファイルの中身がありません。"}, ensure_ascii=False)
+    base = _ledger_url()
+    if not base:
+        return json.dumps(
+            {"error": "台帳が止まっています。ファイルは置けません。"},
+            ensure_ascii=False,
+        )
+    try:
+        data = base64.b64decode(raw_b64, validate=True)
+    except Exception:  # noqa: BLE001
+        return json.dumps({"error": "ファイルの中身を読めませんでした。"}, ensure_ascii=False)
+    if not data:
+        return json.dumps({"error": "ファイルが空です。"}, ensure_ascii=False)
+    headers = {
+        k: v
+        for k, v in (ctx.forward_headers or {}).items()
+        if k.lower().startswith("x-")
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.put(
+                f"{base}/office/files",
+                params={"name": filename},
+                content=data,
+                headers=headers,
+            )
+    except Exception as e:  # noqa: BLE001
+        return json.dumps(
+            {"error": f"台帳が止まっています。ファイルは置けません。{e}"},
+            ensure_ascii=False,
+        )
+    if res.status_code >= 400:
+        return json.dumps(
+            {"error": "台帳へ書けませんでした。確定や削除はしていません。"},
+            ensure_ascii=False,
+        )
+    return json.dumps({"saved": filename, "draft": True}, ensure_ascii=False)
 
 
 async def _list_items(ctx: ToolContext, _args: dict[str, Any]) -> str:
@@ -300,7 +414,7 @@ async def _list_items(ctx: ToolContext, _args: dict[str, Any]) -> str:
         {
             "items": items,
             "instruction": detail.get("instruction") or "",
-            "note": "これは採用済みの項目です。対話の下書きは含まれません。",
+            "note": "項目と、対話で決まったゴールです。ゴールは画面の欄ではありません。",
         },
         ensure_ascii=False,
     )
@@ -354,12 +468,12 @@ async def _knowledge_search(ctx: ToolContext, args: dict[str, Any]) -> str:
         listed = await _call_knowledge("knowledge_list_tags", ctx, {})
         found = _tag_names(listed)
         if found:
-            args = {**args, "tags": ",".join(found[:8])}
+            args = {**args, "tags": ",".join(found)}
         else:
             return (
                 listed
                 + "\n\n注意: 共有ナレッジの検索にはタグが必要です。"
-                "タグが一覧に無いときは、参考資料へナレッジを追加してください。"
+                "タグが一覧に無いときは、検索できません。"
             )
     text = await _call_knowledge("knowledge_search", ctx, args)
     extra = mcp_knowledge.citations_from_payload(text)
@@ -367,11 +481,7 @@ async def _knowledge_search(ctx: ToolContext, args: dict[str, Any]) -> str:
         offset = len(ctx.citations)
         for i, c in enumerate(extra, start=1):
             ctx.citations.append({**c, "n": offset + i})
-    return (
-        text
-        + "\n\n注意: 共有ナレッジのヒットは参照です。項目の根拠にするには、"
-        "人が参考資料タブから追加してください。"
-    )
+    return text
 
 
 async def _call_knowledge(name: str, ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -449,8 +559,11 @@ async def _firecrawl_scrape(_ctx: ToolContext, args: dict[str, Any]) -> str:
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = {
     "search_sources": _search_sources,
     "list_items": _list_items,
-    "propose_drafts": _propose_drafts,
-    "open_editor": _open_editor,
+    "set_goal": _set_goal,
+    "commit_items": _commit_items,
+    "ask_user": _ask_user,
+    "deliver": _deliver,
+    "write_office_draft": _write_office_draft,
     "knowledge_list_tags": _knowledge_list_tags,
     "knowledge_list_docs": _knowledge_list_docs,
     "knowledge_search": _knowledge_search,
@@ -484,24 +597,32 @@ _SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_items",
-            "description": "人が採用済みの項目と生成指示を見る。下書きは含まない。",
+            "description": "このノートの項目と、対話で決まったゴールを見る。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "propose_drafts",
-            "description": (
-                "文書の下書きを章の一覧として置く。項目にはしない。"
-                "人が画面で項目にしてから正本になる。"
-            ),
+            "name": "set_goal",
+            "description": "対話で決まった一文をゴールとして残す。この文が生成指示になる。画面の欄にはしない。",
+            "parameters": {
+                "type": "object",
+                "properties": {"goal": {"type": "string"}},
+                "required": ["goal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "commit_items",
+            "description": "見出しと本文を項目へ書く。ゴールが決まってから呼ぶ。節の選び方は自分で決める。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "chapters": {
                         "type": "array",
-                        "description": "章。label が見出し、value が本文、citations が資料番号",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -523,20 +644,43 @@ _SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "open_editor",
-            "description": (
-                "Markdownエディタで編集タブを開く。"
-                "利用者がエディタで開くと言ったときだけ呼ぶ。"
-                "新規か既存のプロジェクトは人が選ぶ。このツールはプロジェクトを作らない。"
-            ),
+            "name": "ask_user",
+            "description": "資料の矛盾か、ゴールに必要な事実が資料に無いときだけ、一つ聞いて止める。",
+            "parameters": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deliver",
+            "description": "項目が揃ったら、ゴールの文を生成指示として Markdown エディタへ渡す。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
+            "name": "write_office_draft",
+            "description": "docx、xlsx、pptx を文書台帳の下書きとして書く。確定と削除はできない。台帳が止まっていれば書かない。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string"},
+                    "content_base64": {"type": "string"},
+                },
+                "required": ["filename", "content_base64"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "knowledge_list_tags",
-            "description": "共有ナレッジ（共通チーム）のタグ一覧。参照用。参考資料には自動追加しない。",
+            "description": "共有ナレッジ（共通チーム）のタグ一覧。On のあいだ、これらの資料は対話の対象です。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -544,7 +688,7 @@ _SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "knowledge_list_docs",
-            "description": "共有ナレッジ（共通チーム）の文書一覧。参照用。",
+            "description": "共有ナレッジ（共通チーム）の文書一覧。On のあいだ、これらの資料は対話の対象です。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -561,7 +705,7 @@ _SPECS: list[dict[str, Any]] = [
         "function": {
             "name": "knowledge_search",
             "description": (
-                "共有ナレッジ（共通チーム）を検索する。参照のみ。"
+                "共有ナレッジ（共通チーム）を検索する。On のあいだ、ヒットは対話の根拠に使える。"
                 "tags が分からなければ空でもよい（サーバ側でタグ一覧を使う）。"
             ),
             "parameters": {

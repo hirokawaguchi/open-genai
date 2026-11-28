@@ -28,6 +28,17 @@ def test_rename_and_delete(tagstore) -> None:
     assert tagstore.list_tags("s1") == []
 
 
+def test_description_is_kept_on_rename(tagstore) -> None:
+    tagstore.create_tag("s1", "例規")
+    assert tagstore.set_description("s1", "例規", "庁内の例規集です。") == "庁内の例規集です。"
+    tagstore.rename_tag("s1", "例規", "規程")
+    saved = tagstore.list_tags("s1")
+    assert saved[0]["tag"] == "規程"
+    assert saved[0]["description"] == "庁内の例規集です。"
+    with pytest.raises(ValueError):
+        tagstore.set_description("s1", "規程", "あ" * 401)
+
+
 def test_rename_conflict(tagstore) -> None:
     tagstore.create_tag("s1", "a")
     tagstore.create_tag("s1", "b")

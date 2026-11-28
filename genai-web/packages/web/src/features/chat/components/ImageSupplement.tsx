@@ -20,10 +20,12 @@ type Props = {
   messageId: string;
   content: string;
   modelId?: string;
+  /** チャット以外の回答。渡したときは、こちらの取得を使う。 */
+  load?: () => Promise<ImageSupplementResponse>;
 };
 
 export const ImageSupplement = (props: Props) => {
-  const { chatId, messageId, content, modelId } = props;
+  const { chatId, messageId, content, modelId, load } = props;
   const { apps, loaded } = useExAppCatalog();
   const imageEnabled =
     isUseCaseEnabled('image') && loaded && isCatalogListed('image', apps, loaded);
@@ -59,7 +61,9 @@ export const ImageSupplement = (props: Props) => {
     setPhase('loading');
     setErrorText('');
     try {
-      const result = await createImageSupplement(chatId, messageId, modelId);
+      const result = load
+        ? await load()
+        : await createImageSupplement(chatId, messageId, modelId);
       if (seq !== requestSeq.current) {
         return;
       }

@@ -904,7 +904,7 @@ PROCURETECH_HEARING_SEED: dict[str, Any] = {
         "- 専用ページ「ノートブック」でノートを作成します。\n"
         "- 参考ファイルや既存ナレッジをソースに追加します（取込時に構造化します）。\n"
         "- 項目（設問）ごとに値を手入力または生成します。対話でも、取り込んだソースを使えます。\n"
-        "- 対話の回答には番号が付きます。「指示に入れる」で `[[回答 1]]` を文の途中に差し込むと、その回答をこの送信の対象にします。\n"
+        "- 対話の履歴はエージェントが見ます。過去の応答を番号で指定する必要はありません。\n"
         "- 記入済みヒアリングシートをダウンロードし、Markdown エディタの生成入力として使えます。\n"
         "- `docker compose up -d` で標準起動します。\n"
     ),
@@ -4085,6 +4085,17 @@ async def knowledge_delete_tag(request: Request) -> JSONResponse:
     if err:
         return err
     return await _knowledge_post("/knowledge/tags/delete", claims, scope, body)
+
+
+@app.post("/knowledge/tags/description")
+async def knowledge_describe_tag(request: Request) -> JSONResponse:
+    claims = _claims_from_request(request)
+    body = await request.json()
+    scope = _knowledge_scope_from_body(body)
+    err = _knowledge_authz(claims, scope, write=True)
+    if err:
+        return err
+    return await _knowledge_post("/knowledge/tags/description", claims, scope, body)
 
 
 @app.post("/knowledge/register")
@@ -8954,7 +8965,7 @@ async def procuretech_hearing_add_file(
         _procuretech_hearing_app_url(f"/sessions/{session_id}/files"),
         headers,
         body,
-        timeout=120,
+        timeout=300,
     )
 
 
@@ -9281,6 +9292,172 @@ async def procuretech_hearing_chat(
         body,
         timeout=240,
     )
+
+
+@app.post("/notebook/sessions/{session_id}/chat/retry")
+@app.post("/procuretech-hearing/sessions/{session_id}/chat/retry")
+async def notebook_retry_chat(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/chat/retry"),
+        headers,
+        {},
+        timeout=240,
+    )
+
+
+def _notebook_cache_id(session_id: str) -> str:
+    return f"notebook:{session_id}"
+
+
+async def _notebook_answer(
+    session_id: str, message_id: str, headers: dict[str, str]
+) -> tuple[dict[str, str] | None, JSONResponse | None]:
+    url = _procuretech_hearing_app_url(f"/sessions/{session_id}")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(url, headers=headers)
+    except httpx.HTTPError as e:
+        return None, JSONResponse(
+            status_code=503,
+            content={"error": f"ノートブックに接続できませんでした（{e}）"},
+        )
+    try:
+        detail = res.json()
+    except ValueError:
+        detail = {"error": "ノートブックから不正な応答を受け取りました"}
+    if res.status_code != 200 or not isinstance(detail, dict):
+        return None, JSONResponse(status_code=res.status_code, content=detail)
+    messages = detail.get("messages") or []
+    if not isinstance(messages, list):
+        messages = []
+    index = next(
+        (
+            i
+            for i, item in enumerate(messages)
+            if isinstance(item, dict)
+            and item.get("id") == message_id
+            and item.get("role") == "assistant"
+        ),
+        None,
+    )
+    if index is None:
+        return None, JSONResponse(status_code=404, content={"error": "回答が見つかりません"})
+    question = ""
+    for prev in reversed(messages[:index]):
+        if isinstance(prev, dict) and prev.get("role") == "user":
+            question = str(prev.get("content") or "")
+            break
+    return {
+        "content": str(messages[index].get("content") or ""),
+        "userContent": question,
+    }, None
+
+
+async def _notebook_supplement_model(request: Request) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    body: dict[str, Any] = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            parsed = await request.json()
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            body = parsed
+    model = body.get("model") if isinstance(body.get("model"), dict) else None
+    claims = _claims_from_request(request)
+    denied = _model_denied(claims, model)
+    if denied:
+        return None, JSONResponse(status_code=403, content={"error": denied})
+    return model, None
+
+
+@app.post("/notebook/sessions/{session_id}/messages/{message_id}/diagram")
+async def notebook_message_diagram(
+    session_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    """チャットの「図を見る」と同じ手順で、ノートの回答から補足図を作る。"""
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    user_id, tenant_id, _claims = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    answer, missing = await _notebook_answer(session_id, message_id, headers)
+    if missing:
+        return missing
+    cache_id = _notebook_cache_id(session_id)
+    cached = storage.get_message_diagram(cache_id, message_id)
+    if cached:
+        return JSONResponse(content=cached)
+    model, denied = await _notebook_supplement_model(request)
+    if denied:
+        return denied
+    try:
+        result = await diagram_supplement.build_diagram(
+            (answer or {}).get("content") or "",
+            (answer or {}).get("userContent") or "",
+            model,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"図を用意できませんでした（{type(exc).__name__}）"},
+        )
+    stored = storage.save_message_diagram(cache_id, user_id, message_id, result)
+    return JSONResponse(content=stored)
+
+
+@app.post("/notebook/sessions/{session_id}/messages/{message_id}/image")
+async def notebook_message_image(
+    session_id: str, message_id: str, request: Request
+) -> JSONResponse:
+    """チャットの「画像を見る」と同じ手順で、ノートの回答から補足画像を作る。"""
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    user_id, tenant_id, _claims = _request_scope(request)
+    if _has_no_tenant(tenant_id):
+        return JSONResponse(status_code=403, content={"error": _NO_TENANT_MESSAGE})
+    answer, missing = await _notebook_answer(session_id, message_id, headers)
+    if missing:
+        return missing
+    if not teams_store.builtin_feature_enabled(tenant_id, "image"):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "画像生成はこの棟では無効です。"},
+        )
+    if not await image_gen.is_image_available():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "画像生成のモデルが利用できません。"},
+        )
+    cache_id = _notebook_cache_id(session_id)
+    cached = storage.get_message_image(cache_id, message_id)
+    if cached:
+        return JSONResponse(content=_image_supplement_body(cached))
+    model, denied = await _notebook_supplement_model(request)
+    if denied:
+        return denied
+    try:
+        result = await image_supplement.build_image(
+            (answer or {}).get("content") or "",
+            (answer or {}).get("userContent") or "",
+            cache_id,
+            message_id,
+            model,
+        )
+    except image_gen.ImageGenError as exc:
+        return JSONResponse(status_code=exc.status, content={"error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"画像を用意できませんでした（{type(exc).__name__}）"},
+        )
+    stored = storage.save_message_image(cache_id, user_id, message_id, result)
+    return JSONResponse(content=_image_supplement_body(stored))
 
 
 # ---------------------------------------------------------------------------
