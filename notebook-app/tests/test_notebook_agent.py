@@ -453,6 +453,96 @@ def test_hermes_permission_prefers_once():
     assert chosen == "allow_once"
 
 
+def test_propose_schedule_keeps_a_candidate_without_creating(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    raw = asyncio.run(
+        tools.dispatch(
+            "propose_schedule",
+            {
+                "title": "DX推進の打ち合わせ",
+                "description": "計画の進め方を確認します。",
+                "dates": ["2026-12-01T10:00", "2026-12-02"],
+            },
+            ctx,
+        )
+    )
+    saved = json.loads(raw)
+    assert saved["proposed"] is True
+    detail = store.get_session(sid, "u1")
+    assert detail is not None
+    schedule = detail["schedule"]
+    assert schedule["status"] == "proposed"
+    assert schedule["title"] == "DX推進の打ち合わせ"
+    assert schedule["dates"][0]["is_all_day"] is False
+    assert schedule["dates"][1]["is_all_day"] is True
+    assert schedule["event_id"] == ""
+
+
+def test_propose_schedule_rejects_an_unparsed_date(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    raw = asyncio.run(
+        tools.dispatch(
+            "propose_schedule",
+            {"title": "打ち合わせ", "dates": ["来週の火曜"]},
+            ctx,
+        )
+    )
+    assert "YYYY-MM-DD" in raw
+    assert store.get_session(sid, "u1")["schedule"] is None
+
+
+def test_propose_schedule_refuses_an_invitation(tmp_path, monkeypatch):
+    sid = _session(tmp_path, monkeypatch)
+    ctx = tools.ToolContext(session_id=sid, user_id="u1", scope="team")
+    raw = asyncio.run(
+        tools.dispatch(
+            "propose_schedule",
+            {"title": "打ち合わせ", "dates": ["2026-12-01"], "invite": True},
+            ctx,
+        )
+    )
+    assert "招待" in raw
+    assert store.get_session(sid, "u1")["schedule"] is None
+
+
+def test_create_event_uses_the_returned_id(monkeypatch):
+    from app import schedule
+
+    class FakeResponse:
+        status_code = 201
+
+        def json(self):
+            return {"event": {"id": "event-1"}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            assert url.endswith("/events")
+            assert json["title"] == "打ち合わせ"
+            assert "event_password" not in json
+            return FakeResponse()
+
+    monkeypatch.setattr(schedule.httpx, "AsyncClient", FakeClient)
+    event_id, error = asyncio.run(
+        schedule.create_event(
+            {"x-user-id": "u1"},
+            {"title": "打ち合わせ", "description": "", "dates": [{"start_time": "2026-12-01"}]},
+        )
+    )
+    assert error == ""
+    assert event_id == "event-1"
+
+
 def test_sse_parser_skips_log_notification():
     text = """event: message
 data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}

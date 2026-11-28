@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from . import firecrawl, mcp_catalog, mcp_knowledge, retrieve, sample_mcp, store
+from . import firecrawl, mcp_catalog, mcp_knowledge, retrieve, sample_mcp, schedule, store
 
 # 対話が自分で項目を書き、揃ったらエディタへ渡す。
 FLOW_TOOLS = (
@@ -26,6 +26,7 @@ FLOW_TOOLS = (
     "deliver",
     "open_draft",
     "write_office_draft",
+    "propose_schedule",
 )
 _CITE_NUM = re.compile(r"\[(\d+)\]")
 
@@ -728,6 +729,36 @@ async def _write_office_draft(ctx: ToolContext, args: dict[str, Any]) -> str:
     )
 
 
+async def _propose_schedule(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """候補をノートに置く。案件の作成と招待はしない。"""
+    if any(args.get(key) for key in ("invite", "send_invite", "delete", "event_password")):
+        return json.dumps(
+            {"error": "招待、暗証番号、削除はできません。候補を出すだけです。"},
+            ensure_ascii=False,
+        )
+    built, err = schedule.proposal(
+        str(args.get("title") or ""),
+        str(args.get("description") or ""),
+        args.get("dates"),
+    )
+    if err or built is None:
+        return json.dumps(
+            {"error": err or "候補を出せません。"},
+            ensure_ascii=False,
+        )
+    saved = store.set_schedule(ctx.session_id, ctx.user_id, built)
+    if not saved:
+        return json.dumps({"error": "ノートが見つかりません"}, ensure_ascii=False)
+    return json.dumps(
+        {
+            "proposed": True,
+            "title": built["title"],
+            "dates": built["dates"],
+        },
+        ensure_ascii=False,
+    )
+
+
 async def _list_items(ctx: ToolContext, _args: dict[str, Any]) -> str:
     detail = store.get_session(ctx.session_id, ctx.user_id)
     if not detail:
@@ -898,6 +929,7 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Awaitable[str]]] = 
     "deliver": _deliver,
     "open_draft": _open_draft,
     "write_office_draft": _write_office_draft,
+    "propose_schedule": _propose_schedule,
     "knowledge_list_tags": _knowledge_list_tags,
     "knowledge_list_docs": _knowledge_list_docs,
     "knowledge_search": _knowledge_search,
@@ -1093,6 +1125,29 @@ _SPECS: list[dict[str, Any]] = [
                 "properties": {
                     "format": {"type": "string", "description": "docx または pptx。省略すると原稿の形に合わせる。"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_schedule",
+            "description": (
+                "日程調整の候補を画面に出す。タイトルと候補日が決まっているときだけ呼ぶ。"
+                "案件は作らず、招待も送らない。日付が曖昧なら呼ばず、一度だけ聞いて止まる。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "案件のタイトル。80文字まで。"},
+                    "description": {"type": "string", "description": "参加者に見せる説明。空でもよい。"},
+                    "dates": {
+                        "type": "array",
+                        "description": "候補日。YYYY-MM-DD は終日、YYYY-MM-DDTHH:MM は時刻あり。",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["title", "dates"],
             },
         },
     },

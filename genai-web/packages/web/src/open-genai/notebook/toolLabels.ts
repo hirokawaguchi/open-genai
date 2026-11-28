@@ -10,6 +10,7 @@ export const TOOL_LABELS: Record<string, string> = {
   deliver: '原稿を書き出す',
   open_draft: '原稿を書き出す',
   write_office_draft: 'ファイルを書き出す',
+  propose_schedule: '日程の候補を出す',
   knowledge_list_tags: '共有ナレッジのタグを一覧',
   knowledge_list_docs: '共有ナレッジの文書を一覧',
   knowledge_search: '共有ナレッジを検索',

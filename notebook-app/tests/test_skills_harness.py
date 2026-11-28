@@ -328,6 +328,7 @@ def test_sample_clock_and_allowed_tools():
         "deliver",
         "open_draft",
         "write_office_draft",
+        "propose_schedule",
     ]
     assert extras == []
 

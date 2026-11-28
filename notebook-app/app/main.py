@@ -19,7 +19,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools, vision
+from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, preview, retrieve, schedule, store, structure, tools, vision
 from .agent_session import HermesUnavailable, PoolFull, SessionKey, pool as agent_pool
 
 for parent in Path(__file__).resolve().parents:
@@ -241,6 +241,61 @@ async def put_session(session_id: str, request: Request) -> JSONResponse:
     if not detail:
         return JSONResponse(status_code=404, content={"error": "見つかりません"})
     return JSONResponse(content=detail)
+
+
+@app.post("/sessions/{session_id}/schedule")
+async def create_schedule(session_id: str, request: Request) -> JSONResponse:
+    """画面で確認された候補から、日程調整の案件を1件作る。招待は送らない。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail = store.get_session(session_id, uid)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    proposal = detail.get("schedule") or {}
+    if not isinstance(proposal, dict) or proposal.get("status") != "proposed":
+        return JSONResponse(status_code=400, content={"error": "確認できる候補がありません。"})
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower().startswith("x-")
+    }
+    event_id, failed = await schedule.create_event(headers, proposal)
+    if failed or not event_id:
+        return JSONResponse(
+            status_code=503,
+            content={"error": failed or "案件を作れませんでした。招待は送っていません。"},
+        )
+    saved = store.set_schedule(
+        session_id,
+        uid,
+        {**proposal, "status": "created", "event_id": event_id},
+    )
+    if not saved or (saved.get("schedule") or {}).get("event_id") != event_id:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "案件は作れましたが、ノートへ記録できませんでした。"},
+        )
+    return JSONResponse(content=saved)
+
+
+@app.post("/sessions/{session_id}/schedule/dismiss")
+def dismiss_schedule(session_id: str, request: Request) -> JSONResponse:
+    """まだ作っていない候補を消す。作った案件は削除しない。"""
+    err, uid = _auth(request)
+    if err:
+        return err
+    detail = store.get_session(session_id, uid)
+    proposal = (detail or {}).get("schedule") or {}
+    if isinstance(proposal, dict) and proposal.get("status") == "created":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "作った案件はここから削除できません。"},
+        )
+    saved = store.set_schedule(session_id, uid, None)
+    if not saved:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    return JSONResponse(content=saved)
 
 
 @app.delete("/sessions/{session_id}")
@@ -524,6 +579,27 @@ def file_content(session_id: str, file_id: str, request: Request) -> JSONRespons
             "content": base64.b64encode(raw).decode("ascii"),
         }
     )
+
+
+@app.get("/sessions/{session_id}/files/{file_id}/preview")
+def file_preview(session_id: str, file_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    found = store.get_file_bytes(session_id, uid, file_id)
+    if not found:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    filename, raw = found
+    try:
+        body = preview.office_preview(filename, raw)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        print(f"[notebook] プレビューに失敗: {exc}")
+        return JSONResponse(status_code=400, content={"error": "このファイルは画面では表示できません。"})
+    if body is None:
+        return JSONResponse(status_code=400, content={"error": "この形式は画面では表示できません。"})
+    return JSONResponse(content=body)
 
 
 @app.delete("/sessions/{session_id}/files/{file_id}")

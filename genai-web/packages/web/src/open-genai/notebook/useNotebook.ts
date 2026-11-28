@@ -507,6 +507,45 @@ export const useNotebookActions = () => {
     }
   }, []);
 
+  const confirmSchedule = useCallback(
+    async (sessionId: string): Promise<{ detail: NotebookSessionDetail | null; error: string }> => {
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/schedule`,
+          {},
+        );
+        return {
+          detail: res.data ?? null,
+          error: res.data ? '' : '案件を作れませんでした。招待は送っていません。',
+        };
+      } catch (e) {
+        return {
+          detail: null,
+          error: errorMessage(e, '案件を作れませんでした。招待は送っていません。'),
+        };
+      }
+    },
+    [],
+  );
+
+  const dismissSchedule = useCallback(
+    async (sessionId: string): Promise<{ detail: NotebookSessionDetail | null; error: string }> => {
+      try {
+        const res = await teamApi.post<NotebookSessionDetail>(
+          `${BASE}/sessions/${encodeURIComponent(sessionId)}/schedule/dismiss`,
+          {},
+        );
+        return {
+          detail: res.data ?? null,
+          error: res.data ? '' : '候補を消せませんでした。',
+        };
+      } catch (e) {
+        return { detail: null, error: errorMessage(e, '候補を消せませんでした。') };
+      }
+    },
+    [],
+  );
+
   const generateItem = useCallback(
     async (sessionId: string, itemId: string): Promise<NotebookSessionDetail | null> => {
       setGeneratingId(itemId);
@@ -547,6 +586,8 @@ export const useNotebookActions = () => {
     createMcp,
     deleteMcp,
     generateItem,
+    confirmSchedule,
+    dismissSchedule,
     submitting,
     generatingId,
     error,

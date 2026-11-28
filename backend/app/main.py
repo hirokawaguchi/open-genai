@@ -8917,6 +8917,34 @@ async def procuretech_hearing_put_session(
     )
 
 
+@app.post("/notebook/sessions/{session_id}/schedule")
+@app.post("/procuretech-hearing/sessions/{session_id}/schedule")
+async def notebook_create_schedule(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/schedule"),
+        headers,
+        {},
+    )
+
+
+@app.post("/notebook/sessions/{session_id}/schedule/dismiss")
+@app.post("/procuretech-hearing/sessions/{session_id}/schedule/dismiss")
+async def notebook_dismiss_schedule(session_id: str, request: Request) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "POST",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/schedule/dismiss"),
+        headers,
+        {},
+    )
+
+
 @app.delete("/notebook/sessions/{session_id}")
 @app.delete("/procuretech-hearing/sessions/{session_id}")
 async def procuretech_hearing_delete_session(
@@ -9029,6 +9057,21 @@ async def notebook_file_content(
     return await _proxy_procuretech_hearing(
         "GET",
         _procuretech_hearing_app_url(f"/sessions/{session_id}/files/{file_id}/content"),
+        headers,
+    )
+
+
+@app.get("/notebook/sessions/{session_id}/files/{file_id}/preview")
+@app.get("/procuretech-hearing/sessions/{session_id}/files/{file_id}/preview")
+async def notebook_file_preview(
+    session_id: str, file_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/files/{file_id}/preview"),
         headers,
     )
 

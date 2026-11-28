@@ -38,6 +38,7 @@ import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
 import { formatNotebookMarkdown } from './formatMarkdown';
 import { NotebookChat, type ManuscriptPlace } from './NotebookChat';
+import { NotebookFilePreview } from './NotebookFilePreview';
 import { NotebookEditorCopy } from './NotebookEditorCopy';
 import { notebookToolName } from './toolLabels';
 import { NotebookManageDialog } from './NotebookManageDialog';
@@ -148,7 +149,15 @@ const SourcePiiWarning = ({ briefing }: { briefing?: NotebookBriefing }) => {
   );
 };
 
-const FileSourceCard = ({ file, onDelete }: { file: NotebookFile; onDelete: () => void }) => {
+const FileSourceCard = ({
+  file,
+  onOpen,
+  onDelete,
+}: {
+  file: NotebookFile;
+  onOpen: () => void;
+  onDelete: () => void;
+}) => {
   const problem = fileProblem(file.error);
   const briefing = file.briefing;
   const reading = briefing?.ingest === 'processing';
@@ -163,7 +172,13 @@ const FileSourceCard = ({ file, onDelete }: { file: NotebookFile; onDelete: () =
     <article className='rounded-8 border border-solid-gray-300 px-3 py-3'>
       <div className='flex items-start justify-between gap-3'>
         <div className='min-w-0'>
-          <p className='break-all text-std-16N-170 text-solid-gray-900'>{file.filename}</p>
+          <button
+            type='button'
+            className='break-all text-left text-std-16N-170 text-blue-900 underline decoration-blue-900/40 underline-offset-2 hover:decoration-blue-900'
+            onClick={onOpen}
+          >
+            {file.filename}
+          </button>
           {status && (
             <p className='mt-1 flex items-center gap-2 text-dns-14N-130 text-solid-gray-600'>
               {reading && <Spinner />}
@@ -579,6 +594,9 @@ export const NotebookPage = () => {
   const [newNoteName, setNewNoteName] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { label: string; value: string }>>({});
   const [openError, setOpenError] = useState<string | null>(null);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [scheduleError, setScheduleError] = useState('');
+  const [previewFile, setPreviewFile] = useState<NotebookFile | null>(null);
   const [slideStatus, setSlideStatus] = useState('');
   const slideTicket = useRef(0);
   const [openingEditor, setOpeningEditor] = useState(false);
@@ -1262,23 +1280,20 @@ export const NotebookPage = () => {
 
   const fileSettled = (file: { briefing?: { ingest?: string } }) =>
     file.briefing?.ingest !== 'processing';
-  const fileNotices = useMemo(
-    () =>
-      (detail?.files ?? []).flatMap((file) => {
-        const pii = file.briefing?.pii;
-        if (!pii?.warned) return [];
-        return [
-          {
-            id: file.id,
-            filename: file.filename,
-            message: pii.message,
-            categories: pii.categories,
-            hits: pii.hits,
-          },
-        ];
-      }),
-    [detail],
+  const readingFiles = (detail?.files ?? []).filter(
+    (file) => file.briefing?.ingest === 'processing' || file.briefing?.ocr_pending,
   );
+  const readingNames = readingFiles
+    .slice(0, 3)
+    .map((file) => file.filename)
+    .join('、');
+  const readingMore =
+    readingFiles.length > 3 ? ` ほか${readingFiles.length - 3}件` : '';
+  const readingLabel = addingFileLabel
+    ? `${addingFileLabel} を登録しています。`
+    : readingFiles.length === 0
+      ? ''
+      : `${readingNames}${readingMore} を登録しています。`;
   const sharedKnowledgeViaMcp = mcps.some(
     (mcp) => mcp.catalog_id === 'knowledge' && mcp.connected && mcp.available,
   );
@@ -1526,7 +1541,7 @@ export const NotebookPage = () => {
                 <p className='text-dns-14N-130 text-solid-gray-600'>
                   いまこのノートの対象です。ファイルの添付と、チームのタグの選択は、エージェントの入力欄から行います。共有ナレッジの
                   MCP が On のあいだは、共有ナレッジの文書もすべて対象です。一部のタグだけにするには、MCP
-                  を Off にしてからそのタグを登録します。いらないファイルは、ここから外せます。
+                  を Off にしてからそのタグを登録します。ファイル名を押すと中身を表示します。いらないファイルは、ここから外せます。
                 </p>
                 {(addingFiles || addingKnowledge) && (
                   <p className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'>
@@ -1549,6 +1564,7 @@ export const NotebookPage = () => {
                           <FileSourceCard
                             key={file.id}
                             file={file}
+                            onOpen={() => setPreviewFile(file)}
                             onDelete={() => void onDeleteFile(file.id)}
                           />
                         ))}
@@ -1581,7 +1597,7 @@ export const NotebookPage = () => {
                   knowledgeBusy={addingKnowledge}
                   uploadLimitMb={maxUploadMb}
                   notice={sourceNotice}
-                  fileNotices={fileNotices}
+                  readingLabel={readingLabel}
                   webSearchOn={webSearchOn}
                   webSearchAvailable={Boolean(webSearchMcp?.available)}
                   onWebSearch={onWebSearch}
@@ -1609,6 +1625,41 @@ export const NotebookPage = () => {
                         }
                       : undefined
                   }
+                  schedule={detail.schedule}
+                  scheduleBusy={scheduleBusy}
+                  scheduleError={scheduleError}
+                  onConfirmSchedule={() => {
+                    if (!sessionId || scheduleBusy) return;
+                    setScheduleBusy(true);
+                    setScheduleError('');
+                    void actions.confirmSchedule(sessionId).then((result) => {
+                      if (result.detail) {
+                        void mutateDetail(result.detail, { revalidate: false });
+                      }
+                      setScheduleError(result.error);
+                      setScheduleBusy(false);
+                    });
+                  }}
+                  onDismissSchedule={() => {
+                    if (!sessionId || scheduleBusy) return;
+                    setScheduleBusy(true);
+                    setScheduleError('');
+                    void actions.dismissSchedule(sessionId).then((result) => {
+                      if (result.detail) {
+                        void mutateDetail(result.detail, { revalidate: false });
+                      }
+                      setScheduleError(result.error);
+                      setScheduleBusy(false);
+                    });
+                  }}
+                  onOpenSchedule={
+                    detail.schedule?.status === 'created' && detail.schedule.event_id
+                      ? () =>
+                          navigate(
+                            `/chosei/events/${encodeURIComponent(detail.schedule?.event_id || '')}`,
+                          )
+                      : undefined
+                  }
                   onOpenManuscript={() => {
                     if (!manuscriptPlace) return;
                     navigate(
@@ -1621,6 +1672,14 @@ export const NotebookPage = () => {
                 />
               </div>
             )}
+
+            {sessionId ? (
+              <NotebookFilePreview
+                sessionId={sessionId}
+                file={previewFile}
+                onClose={() => setPreviewFile(null)}
+              />
+            ) : null}
 
             {pane === 'editor' && detail && sessionId && (
               <NotebookEditorCopy

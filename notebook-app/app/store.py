@@ -179,6 +179,10 @@ def init_db() -> None:
             db.execute(
                 "ALTER TABLE sessions ADD COLUMN office_ref TEXT NOT NULL DEFAULT ''"
             )
+        if "schedule" not in sess_cols:
+            db.execute(
+                "ALTER TABLE sessions ADD COLUMN schedule TEXT NOT NULL DEFAULT ''"
+            )
         db.commit()
 
 
@@ -351,6 +355,7 @@ def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         "office_file": row["office_file"] if "office_file" in row.keys() else "",
         "office_ref": row["office_ref"] if "office_ref" in row.keys() else "",
         "slide_compose": row["slide_compose"] if "slide_compose" in row.keys() else "",
+        "schedule": _public_schedule(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "items": [_public_item(i) for i in items],
@@ -431,6 +436,55 @@ def _public_message(m: sqlite3.Row) -> dict[str, Any]:
         "open_editor": bool(m["open_editor"]) if "open_editor" in keys else False,
         "created_at": m["created_at"],
     }
+
+
+def _public_schedule(row: sqlite3.Row) -> dict[str, Any] | None:
+    raw = row["schedule"] if "schedule" in row.keys() else ""
+    data = _parse_json(raw, None)
+    if not isinstance(data, dict):
+        return None
+    title = str(data.get("title") or "").strip()
+    dates = data.get("dates")
+    if not title or not isinstance(dates, list) or not dates:
+        return None
+    clean: list[dict[str, Any]] = []
+    for item in dates:
+        if not isinstance(item, dict) or not str(item.get("start_time") or "").strip():
+            continue
+        clean.append(
+            {
+                "start_time": str(item.get("start_time") or ""),
+                "end_time": item.get("end_time") or None,
+                "is_all_day": bool(item.get("is_all_day")),
+            }
+        )
+    if not clean:
+        return None
+    status = "created" if data.get("status") == "created" else "proposed"
+    return {
+        "status": status,
+        "title": title,
+        "description": str(data.get("description") or ""),
+        "dates": clean,
+        "event_id": str(data.get("event_id") or ""),
+    }
+
+
+def set_schedule(
+    session_id: str, user_id: str, schedule: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        raw = "" if not schedule else json.dumps(schedule, ensure_ascii=False)
+        db.execute(
+            "UPDATE sessions SET schedule = ? WHERE id = ?",
+            (raw, session_id),
+        )
+        _touch(db, session_id)
+        db.commit()
+    return get_session(session_id, user_id)
 
 
 def update_session(

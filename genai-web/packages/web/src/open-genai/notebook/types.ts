@@ -154,6 +154,20 @@ export type NotebookManuscript = {
   markdown?: string;
 };
 
+export type NotebookScheduleDate = {
+  start_time: string;
+  end_time?: string | null;
+  is_all_day?: boolean;
+};
+
+export type NotebookSchedule = {
+  status: 'proposed' | 'created';
+  title: string;
+  description: string;
+  dates: NotebookScheduleDate[];
+  event_id?: string;
+};
+
 export type NotebookSessionDetail = {
   id: string;
   title: string;
@@ -164,6 +178,7 @@ export type NotebookSessionDetail = {
   office_file?: string;
   office_ref?: string;
   slide_compose?: string;
+  schedule?: NotebookSchedule | null;
   created_at: string;
   updated_at: string;
   items: NotebookItem[];

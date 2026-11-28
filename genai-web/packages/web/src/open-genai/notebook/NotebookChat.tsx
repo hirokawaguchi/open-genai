@@ -23,16 +23,8 @@ import { teamApi } from '@/lib/fetcher';
 import { useSubmitKey } from '@/hooks/useSubmitKey';
 import { requestSubmitOnEnter } from '@/utils/keyboard';
 import { ChatAnswer } from './Citations';
-import { toolLabel } from './toolLabels';
-import type { NotebookMessage, NotebookPiiHit, NotebookToolTrace } from './types';
-
-export type NotebookFileNotice = {
-  id: string;
-  filename: string;
-  message?: string;
-  categories?: string[];
-  hits?: NotebookPiiHit[];
-};
+import { notebookToolName, toolLabel } from './toolLabels';
+import type { NotebookMessage, NotebookSchedule, NotebookToolTrace } from './types';
 
 export type ManuscriptPlace = {
   projectId: string;
@@ -56,7 +48,7 @@ type Props = {
   knowledgeBusy: boolean;
   uploadLimitMb: number;
   notice?: string | null;
-  fileNotices?: NotebookFileNotice[];
+  readingLabel?: string;
   webSearchOn: boolean;
   webSearchAvailable: boolean;
   onWebSearch: (next: boolean) => void;
@@ -70,7 +62,96 @@ type Props = {
   clippedMessageIds?: string[];
   sourceNames?: string[];
   onSourcesChanged?: () => void;
+  schedule?: NotebookSchedule | null;
+  scheduleBusy?: boolean;
+  scheduleError?: string;
+  onConfirmSchedule?: () => void;
+  onDismissSchedule?: () => void;
+  onOpenSchedule?: () => void;
 };
+
+const formatScheduleWhen = (value: string, allDay?: boolean) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value.replaceAll('-', '/');
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    ...(allDay ? {} : { hour: 'numeric', minute: '2-digit' }),
+  }).format(date);
+};
+
+const proposedOn = (message: NotebookMessage) =>
+  (message.tool_trace ?? []).some((trace) => notebookToolName(trace.name) === 'propose_schedule');
+
+const ScheduleNote = ({
+  schedule,
+  busy,
+  error,
+  onConfirm,
+  onDismiss,
+  onOpen,
+}: {
+  schedule: NotebookSchedule;
+  busy?: boolean;
+  error?: string;
+  onConfirm?: () => void;
+  onDismiss?: () => void;
+  onOpen?: () => void;
+}) => (
+  <div className='mt-3 rounded-8 border border-solid-gray-420 bg-solid-gray-50 p-3'>
+    <p className='text-std-16N-170 text-solid-gray-800'>
+      {schedule.status === 'created'
+        ? `日程調整の案件「${schedule.title}」を作りました。招待は送っていません。`
+        : `この内容で日程調整の案件を作れます。「${schedule.title}」`}
+    </p>
+    {schedule.description ? (
+      <p className='mt-2 whitespace-pre-wrap text-dns-14N-130 text-solid-gray-700'>
+        {schedule.description}
+      </p>
+    ) : null}
+    <ul className='mt-2 list-disc pl-5 text-dns-14N-130 text-solid-gray-800'>
+      {schedule.dates.map((date) => (
+        <li key={`${date.start_time}-${date.end_time ?? ''}`}>
+          {formatScheduleWhen(date.start_time, date.is_all_day)}
+          {date.end_time ? ` 〜 ${formatScheduleWhen(date.end_time)}` : ''}
+          {date.is_all_day ? '（終日）' : ''}
+        </li>
+      ))}
+    </ul>
+    {error ? <p className='mt-2 text-dns-14N-130 text-error-1'>{error}</p> : null}
+    <div className='mt-3 flex flex-wrap gap-2'>
+      {schedule.status === 'created' && onOpen ? (
+        <Button type='button' variant='solid-fill' size='sm' onClick={onOpen}>
+          案件を開く
+        </Button>
+      ) : null}
+      {schedule.status === 'proposed' ? (
+        <>
+          <Button
+            type='button'
+            variant='solid-fill'
+            size='sm'
+            aria-disabled={busy || undefined}
+            onClick={() => onConfirm?.()}
+          >
+            {busy ? '作っています...' : 'この内容で案件を作る'}
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            aria-disabled={busy || undefined}
+            onClick={() => onDismiss?.()}
+          >
+            やめる
+          </Button>
+        </>
+      ) : null}
+    </div>
+  </div>
+);
 
 const stepTraces = (names: string[]): NotebookToolTrace[] =>
   names.map((name) => ({ name }));
@@ -99,30 +180,6 @@ const visibleSteps = (traces?: NotebookToolTrace[]) => {
     steps.push(trace);
   }
   return steps;
-};
-
-const FilePiiNotice = ({ notice }: { notice: NotebookFileNotice }) => {
-  const hits = notice.hits ?? [];
-  const lines = (notice.message || '').split('\n').filter(Boolean);
-  return (
-    <div className='text-orange-800 whitespace-pre-wrap'>
-      <p className='break-all text-solid-gray-800'>{notice.filename}</p>
-      <p>
-        ＊{lines[0] || `個人情報の可能性: ${(notice.categories ?? []).join('・')}`}
-      </p>
-      {hits.length > 0 ? (
-        <ul className='mt-1 list-disc pl-5'>
-          {hits.slice(0, 6).map((hit, index) => (
-            <li key={`${hit.category}-${hit.offset ?? index}-${hit.match}`}>
-              {hit.category}: 「{hit.context || hit.match}」
-            </li>
-          ))}
-        </ul>
-      ) : (
-        lines.slice(1).map((line) => <p key={line}>{line}</p>)
-      )}
-    </div>
-  );
 };
 
 const AnswerActions = ({
@@ -301,6 +358,12 @@ const AssistantTurn = ({
   onOpenOffice,
   sourceNames,
   onSourcesChanged,
+  schedule,
+  scheduleBusy,
+  scheduleError,
+  onConfirmSchedule,
+  onDismissSchedule,
+  onOpenSchedule,
 }: {
   message: NotebookMessage;
   sessionId: string | null;
@@ -318,6 +381,12 @@ const AssistantTurn = ({
   onOpenOffice?: () => void;
   sourceNames: string[];
   onSourcesChanged?: () => void;
+  schedule?: NotebookSchedule | null;
+  scheduleBusy?: boolean;
+  scheduleError?: string;
+  onConfirmSchedule?: () => void;
+  onDismissSchedule?: () => void;
+  onOpenSchedule?: () => void;
 }) => {
   const copyRef = useRef<HTMLDivElement>(null);
   const traces = pending && liveSteps.length ? stepTraces(liveSteps) : message.tool_trace;
@@ -340,10 +409,18 @@ const AssistantTurn = ({
               officeAttempted={officeAttempted}
               officeCompose={officeCompose}
               onOpenOffice={onOpenOffice}
-              sourceNames={sourceNames}
-              onSourcesChanged={onSourcesChanged}
             />
           )}
+          {schedule ? (
+            <ScheduleNote
+              schedule={schedule}
+              busy={scheduleBusy}
+              error={scheduleError}
+              onConfirm={onConfirmSchedule}
+              onDismiss={onDismissSchedule}
+              onOpen={onOpenSchedule}
+            />
+          ) : null}
         </div>
       )}
       {pending && <ThinkingLine steps={liveSteps} />}
@@ -393,7 +470,7 @@ export const NotebookChat = ({
   knowledgeBusy,
   uploadLimitMb,
   notice,
-  fileNotices = [],
+  readingLabel = '',
   webSearchOn,
   webSearchAvailable,
   onWebSearch,
@@ -413,6 +490,12 @@ export const NotebookChat = ({
   onOpenOffice,
   sourceNames = [],
   onSourcesChanged,
+  schedule = null,
+  scheduleBusy = false,
+  scheduleError = '',
+  onConfirmSchedule,
+  onDismissSchedule,
+  onOpenSchedule,
 }: Props) => {
   const { hint } = useSubmitKey();
   const listRef = useRef<HTMLDivElement>(null);
@@ -468,6 +551,19 @@ export const NotebookChat = ({
               onOpenOffice={showManuscript ? onOpenOffice : undefined}
               sourceNames={sourceNames}
               onSourcesChanged={onSourcesChanged}
+              schedule={
+                !pending &&
+                schedule &&
+                proposedOn(m) &&
+                !messages.slice(index + 1).some((later) => proposedOn(later))
+                  ? schedule
+                  : null
+              }
+              scheduleBusy={scheduleBusy}
+              scheduleError={scheduleError}
+              onConfirmSchedule={onConfirmSchedule}
+              onDismissSchedule={onDismissSchedule}
+              onOpenSchedule={onOpenSchedule}
             />
           ) : (
             <article
@@ -524,13 +620,15 @@ export const NotebookChat = ({
                 onKeyDown={requestSubmitOnEnter}
                 onChange={(e) => onDraftChange(e.target.value)}
               />
-              {fileNotices.length > 0 && (
-                <div className='flex flex-col gap-2 text-dns-14N-130'>
-                  {fileNotices.map((item) => (
-                    <FilePiiNotice key={item.id} notice={item} />
-                  ))}
-                </div>
-              )}
+              {readingLabel ? (
+                <p
+                  role='status'
+                  className='flex items-center gap-2 text-dns-14N-130 text-solid-gray-700'
+                >
+                  <PiSpinnerGap aria-hidden={true} className='size-4 shrink-0 animate-spin' />
+                  {readingLabel}
+                </p>
+              ) : null}
               <div className='flex w-full items-start gap-6'>
                 <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
                   <Button
