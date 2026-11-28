@@ -4,6 +4,11 @@ set -eu
 
 HERMES_HOME="${HERMES_HOME:-/root/.hermes}"
 export HERMES_HOME
+# 共有ホームは設定だけにする。対話の記録はここへ残さない。
+rm -rf \
+  "$HERMES_HOME/state.db" "$HERMES_HOME/state.db-shm" "$HERMES_HOME/state.db-wal" \
+  "$HERMES_HOME/sessions" "$HERMES_HOME/memories" "$HERMES_HOME/logs" \
+  "$HERMES_HOME/.hermes"
 mkdir -p "$HERMES_HOME/memories" "$HERMES_HOME/user-skills"
 if [ -d /opt/hermes/installs ] && [ ! -e "$HERMES_HOME/installs" ]; then
   ln -sfn /opt/hermes/installs "$HERMES_HOME/installs"
@@ -58,6 +63,10 @@ agent:
     - search
     - session_search
     - vision
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  provider: ""
 EOF
 
 cat > "$HERMES_HOME/SOUL.md" << 'EOF'
@@ -71,6 +80,12 @@ cat > "$HERMES_HOME/SOUL.md" << 'EOF'
 原稿を書き出すと、画面が文書は docx、スライドは見出しどおりの pptx にして、文書台帳の下書きに置きます。
 日程調整を頼まれたら、タイトルと候補日を画面に出して止まります。案件は作らず、招待も送りません。
 EOF
+
+# 公式イメージは hermes ユーザーで動き、ACP 子プロセスもそこに落ちる。
+# root のまま残すと /opt/data/logs へ書けず、対話が Internal error になる。
+if id hermes >/dev/null 2>&1; then
+  chown -R hermes:hermes "$HERMES_HOME"
+fi
 
 PY="$(python3 - << 'PY'
 import json
