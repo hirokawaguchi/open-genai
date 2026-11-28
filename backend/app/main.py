@@ -48,6 +48,7 @@ from . import (
     account_rate,
     audit,
     auth,
+    browser_relay,
     diagram_supplement,
     image_supplement,
     filesig,
@@ -2031,9 +2032,12 @@ async def auth_middleware(request: Request, call_next):
         else:
             # トークン検証のあとで起きた例外は 401 にしない。
             # ここに含めると、プロフィール取得の失敗がログアウトになる。
-            limited = _account_rate_response(claims)
-            if limited is not None:
-                return limited
+            # 画面の HTTP 中継は WebSocket の代わりに短い間隔で往復する。
+            # アカウント回数に含めると、操作中に他の API ごと 429 になる。
+            if not browser_relay.is_relay_path(path):
+                limited = _account_rate_response(claims)
+                if limited is not None:
+                    return limited
             return await call_next(request)
 
     if _patchform_service_request(request):
@@ -2051,13 +2055,18 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def audit_access_middleware(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in {
-        "/ssh/ws",
-        "/browser/ws",
-        "/browser/audio",
-        "/worldmonitor/gate",
-        "/office/gate",
-    }:
+    if (
+        request.method == "OPTIONS"
+        or browser_relay.is_relay_path(request.url.path)
+        or request.url.path
+        in {
+            "/ssh/ws",
+            "/browser/ws",
+            "/browser/audio",
+            "/worldmonitor/gate",
+            "/office/gate",
+        }
+    ):
         return await call_next(request)
     started = time.monotonic()
     response = await call_next(request)
@@ -7533,9 +7542,133 @@ async def browser_delete_session(session_id: str, request: Request) -> JSONRespo
     err, headers = _browser_headers(request)
     if err:
         return err
+    await browser_relay.hub.close_session(headers["x-user-id"], session_id)
     return await _proxy_browser(
         "DELETE", _browser_app_url(f"/sessions/{quote(session_id)}"), headers
     )
+
+
+_BROWSER_DOWN = (
+    "ブラウザサービスに接続できませんでした。"
+    "有効化するには `docker compose --profile browser up -d` "
+    "または `COMPOSE_PROFILES=browser` を設定してください。"
+)
+
+
+def _browser_relay_audit(claims: dict[str, Any], session_id: str, started: float, action: str) -> None:
+    audit.record(
+        action=action,
+        usecase="browser",
+        exAppId="browser",
+        teamId=COMMON_TEAM_ID,
+        input_text=f"sessionId={session_id}",
+        status=200,
+        latency_ms=int((time.monotonic() - started) * 1000) if action.endswith("_end") else None,
+        user_id=_user_id(claims),
+        user_email=claims.get("email"),
+        user_name=claims.get("name"),
+        groups=claims.get("groups") or [],
+    )
+
+
+async def _open_browser_relay(
+    request: Request, session_id: str, channel: str
+) -> tuple[JSONResponse | None, browser_relay.BrowserRelay | None]:
+    err, headers = _browser_headers(request)
+    if err:
+        return err, None
+    if not _BROWSER_ID.fullmatch(session_id or ""):
+        return JSONResponse(status_code=404, content={"error": "ブラウザセッションが見つかりません"}), None
+    claims = _claims_from_request(request)
+    started = time.monotonic()
+
+    def on_open() -> None:
+        _browser_relay_audit(claims, session_id, started, "browser.session_start")
+
+    def on_close() -> None:
+        _browser_relay_audit(claims, session_id, started, "browser.session_end")
+
+    ws_headers = {key: value for key, value in headers.items() if key.lower() != "content-type"}
+    url = _browser_ws_url("/audio" if channel == "audio" else "/ws")
+    try:
+        opened = await browser_relay.hub.open(
+            headers["x-user-id"],
+            session_id,
+            channel,
+            url,
+            ws_headers,
+            on_open=on_open if channel == "screen" else None,
+            on_close=on_close if channel == "screen" else None,
+        )
+    except browser_relay.RelayUnavailable as exc:
+        print(f"[browser] http relay error: {exc}")
+        return (
+            JSONResponse(
+                status_code=503,
+                content={"error": _BROWSER_DOWN, "enabled": False},
+            ),
+            None,
+        )
+    return None, opened
+
+
+async def _browser_relay_pull(relay: browser_relay.BrowserRelay, gone: str) -> Response:
+    payload = await relay.pull()
+    if payload is None:
+        return JSONResponse(status_code=410, content={"error": gone})
+    if not payload:
+        return Response(status_code=204)
+    return Response(content=payload, media_type="application/octet-stream")
+
+
+async def _browser_relay_push(
+    request: Request, relay: browser_relay.BrowserRelay, gone: str
+) -> Response:
+    body = await request.body()
+    if len(body) > browser_relay.MAX_BODY:
+        return JSONResponse(status_code=413, content={"error": "送信が大きすぎます"})
+    try:
+        frames = browser_relay.decode_frames(body)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "接続パラメータが不正です"})
+    try:
+        await relay.send_frames(frames)
+    except browser_relay.RelayClosed:
+        return JSONResponse(status_code=410, content={"error": gone})
+    return Response(status_code=204)
+
+
+@app.get("/browser/sessions/{session_id}/stream")
+async def browser_session_stream(session_id: str, request: Request) -> Response:
+    """画面のバイト列を、Upgrade なしの HTTP で一つ返す。"""
+    failed, relay = await _open_browser_relay(request, session_id, "screen")
+    if failed is not None or relay is None:
+        return failed or JSONResponse(status_code=503, content={"error": _BROWSER_DOWN})
+    return await _browser_relay_pull(relay, "画面の転送が切れました")
+
+
+@app.post("/browser/sessions/{session_id}/input")
+async def browser_session_input(session_id: str, request: Request) -> Response:
+    failed, relay = await _open_browser_relay(request, session_id, "screen")
+    if failed is not None or relay is None:
+        return failed or JSONResponse(status_code=503, content={"error": _BROWSER_DOWN})
+    return await _browser_relay_push(request, relay, "画面の転送が切れました")
+
+
+@app.get("/browser/sessions/{session_id}/audio/stream")
+async def browser_audio_stream(session_id: str, request: Request) -> Response:
+    failed, relay = await _open_browser_relay(request, session_id, "audio")
+    if failed is not None or relay is None:
+        return failed or JSONResponse(status_code=503, content={"error": _BROWSER_DOWN})
+    return await _browser_relay_pull(relay, "音声の転送が切れました")
+
+
+@app.post("/browser/sessions/{session_id}/audio/input")
+async def browser_audio_input(session_id: str, request: Request) -> Response:
+    failed, relay = await _open_browser_relay(request, session_id, "audio")
+    if failed is not None or relay is None:
+        return failed or JSONResponse(status_code=503, content={"error": _BROWSER_DOWN})
+    return await _browser_relay_push(request, relay, "音声の転送が切れました")
 
 
 @app.get("/browser/sessions/{session_id}/downloads")

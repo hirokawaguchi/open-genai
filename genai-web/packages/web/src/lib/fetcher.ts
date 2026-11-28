@@ -148,6 +148,63 @@ const createApiClient = (baseURL: string) => {
     };
   };
 
+  const getBinary = async (
+    path: string,
+    options?: RequestOptions,
+    retried = false,
+  ): Promise<{ data: ArrayBuffer; status: number }> => {
+    const url = buildUrl(baseURL, path, options?.params);
+    const authHeaders = await getAuthHeaders(false);
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { ...authHeaders, ...options?.headers },
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        if (!retried && (await refreshSession())) {
+          return getBinary(path, options, true);
+        }
+        handleUnauthorized();
+      }
+      const errorData = await parseResponseBody<unknown>(res);
+      throw new ApiError(res.status, errorData);
+    }
+    if (res.status === 204) {
+      return { data: new ArrayBuffer(0), status: 204 };
+    }
+    return { data: await res.arrayBuffer(), status: res.status };
+  };
+
+  const postBinary = async (
+    path: string,
+    body: Uint8Array,
+    retried = false,
+  ): Promise<{ status: number }> => {
+    const url = buildUrl(baseURL, path);
+    const token = await getIdToken();
+    const bytes = new ArrayBuffer(body.byteLength);
+    new Uint8Array(bytes).set(body);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Content-Type': 'application/octet-stream',
+      },
+      body: new Blob([bytes]),
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        if (!retried && (await refreshSession())) {
+          return postBinary(path, body, true);
+        }
+        handleUnauthorized();
+      }
+      const errorData = await parseResponseBody<unknown>(res);
+      throw new ApiError(res.status, errorData);
+    }
+    return { status: res.status };
+  };
+
   const putBinary = async <T>(
     path: string,
     body: Blob,
@@ -181,6 +238,8 @@ const createApiClient = (baseURL: string) => {
   return {
     get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
     getBlob,
+    getBinary,
+    postBinary,
     putBinary,
     post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
       request<T>('POST', path, body, options),

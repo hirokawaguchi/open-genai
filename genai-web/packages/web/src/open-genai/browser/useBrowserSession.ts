@@ -5,7 +5,12 @@ import { getIdToken } from '@/local/localAuth';
 import { releaseBrowserMic } from './browserMic';
 import { splitControlSocket } from './browserSocket';
 import { browserWsUrl } from './browserWsUrl';
+import { createHttpBrowserSocket, type HttpBrowserSocket } from './httpBrowserSocket';
 import type { BrowserSessionInfo } from './types';
+
+type ScreenSocket = WebSocket | HttpBrowserSocket;
+
+const SOCKET_OPEN_MS = 4000;
 
 /** サーバ上の Chromium へ接続し、画面の要素へ noVNC を載せる。 */
 export const useBrowserSession = (autoStart: boolean) => {
@@ -15,7 +20,7 @@ export const useBrowserSession = (autoStart: boolean) => {
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const screenRef = useRef<HTMLDivElement | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<ScreenSocket | null>(null);
   const rfbRef = useRef<RFB | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const closingRef = useRef(false);
@@ -105,76 +110,108 @@ export const useBrowserSession = (autoStart: boolean) => {
     setSessionId(created.id);
     lastTouchRef.current = 0;
     const api = import.meta.env.VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT as string;
+    const hello = JSON.stringify({ token, sessionId: created.id });
+    let openTimer = 0;
+
+    const attach = (socket: ScreenSocket, terminal: boolean) => {
+      let ready = false;
+      let rejected = false;
+      socket.binaryType = 'arraybuffer';
+      socket.onopen = () => {
+        window.clearTimeout(openTimer);
+        socket.send(hello);
+      };
+      socket.onmessage = (ev) => {
+        if (typeof ev.data !== 'string') {
+          return;
+        }
+        let msg: { type?: string; message?: string };
+        try {
+          msg = JSON.parse(ev.data) as { type?: string; message?: string };
+        } catch {
+          return;
+        }
+        if (msg.type === 'ready') {
+          ready = true;
+          const target = screenRef.current;
+          if (stale()) {
+            void disconnect();
+            return;
+          }
+          if (!target) {
+            setSessionError('画面の初期化に失敗しました。');
+            void disconnect();
+            return;
+          }
+          socket.onmessage = null;
+          const screen = splitControlSocket(socket as WebSocket, (text) => {
+            try {
+              const control = JSON.parse(text) as { type?: string; message?: string };
+              if (control.type === 'error') {
+                setSessionError(control.message || 'ブラウザの画面転送が切れました。');
+              }
+            } catch {
+              // 画面データのテキストフレームは無視する。
+            }
+          });
+          const rfb = new RFB(target, screen, { shared: true });
+          rfb.scaleViewport = true;
+          rfb.focusOnClick = false;
+          rfb.showDotCursor = true;
+          rfb.background = '#111827';
+          rfbRef.current = rfb;
+          setConnected(true);
+          setConnecting(false);
+          touch();
+          return;
+        }
+        if (msg.type === 'error') {
+          rejected = true;
+          setSessionError(msg.message || 'ブラウザの画面転送が切れました。');
+          setConnecting(false);
+          setConnected(false);
+        }
+      };
+      socket.onerror = () => {
+        if (stale() || ready || !terminal) {
+          return;
+        }
+        setSessionError((prev) => prev || '画面の転送に接続できませんでした。');
+        setConnecting(false);
+      };
+      socket.onclose = () => {
+        window.clearTimeout(openTimer);
+        if (socketRef.current !== socket) {
+          return;
+        }
+        if (!terminal && !ready && !rejected && !stale()) {
+          openHttp();
+          return;
+        }
+        setConnected(false);
+        setConnecting(false);
+        void disconnect();
+      };
+    };
+
+    const openHttp = () => {
+      const socket = createHttpBrowserSocket(
+        `browser/sessions/${encodeURIComponent(created.id)}/stream`,
+        `browser/sessions/${encodeURIComponent(created.id)}/input`,
+      );
+      socketRef.current = socket;
+      attach(socket, true);
+      socket.start();
+    };
+
     const ws = new WebSocket(browserWsUrl(api));
     socketRef.current = ws;
-    ws.binaryType = 'arraybuffer';
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ token, sessionId: created.id }));
-    };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data !== 'string') {
-        return;
+    attach(ws, false);
+    openTimer = window.setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
       }
-      let msg: { type?: string; message?: string };
-      try {
-        msg = JSON.parse(ev.data) as { type?: string; message?: string };
-      } catch {
-        return;
-      }
-      if (msg.type === 'ready') {
-        const target = screenRef.current;
-        if (stale()) {
-          void disconnect();
-          return;
-        }
-        if (!target) {
-          setSessionError('画面の初期化に失敗しました。');
-          void disconnect();
-          return;
-        }
-        ws.onmessage = null;
-        const screen = splitControlSocket(ws, (text) => {
-          try {
-            const control = JSON.parse(text) as { type?: string; message?: string };
-            if (control.type === 'error') {
-              setSessionError(control.message || 'ブラウザの画面転送が切れました。');
-            }
-          } catch {
-            // 画面データのテキストフレームは無視する。
-          }
-        });
-        const rfb = new RFB(target, screen, { shared: true });
-        rfb.scaleViewport = true;
-        rfb.focusOnClick = false;
-        rfb.showDotCursor = true;
-        rfb.background = '#111827';
-        rfbRef.current = rfb;
-        setConnected(true);
-        setConnecting(false);
-        touch();
-        return;
-      }
-      if (msg.type === 'error') {
-        setSessionError(msg.message || 'ブラウザの画面転送が切れました。');
-        setConnecting(false);
-        setConnected(false);
-      }
-    };
-    ws.onerror = () => {
-      if (stale()) {
-        return;
-      }
-      setSessionError((prev) => prev || 'WebSocket の接続に失敗しました。');
-      setConnecting(false);
-    };
-    ws.onclose = () => {
-      if (socketRef.current !== ws) {
-        return;
-      }
-      setConnected(false);
-      setConnecting(false);
-      void disconnect();
-    };
+    }, SOCKET_OPEN_MS);
   }, [disconnect, touch]);
 
   useEffect(() => {
