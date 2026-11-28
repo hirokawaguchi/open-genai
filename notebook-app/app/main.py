@@ -19,7 +19,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools
+from . import activity, extract, ground, harness, hermes_mcp, intauth, llm, mcp_catalog, mcp_knowledge, ocr, pii_warn, retrieve, store, structure, tools, vision
 from .agent_session import HermesUnavailable, PoolFull, SessionKey, pool as agent_pool
 
 for parent in Path(__file__).resolve().parents:
@@ -138,6 +138,7 @@ def get_config(request: Request) -> JSONResponse:
                 "base_url": llm.OPENAI_BASE_URL,
             },
             "ocr": ocr.status(),
+            "vision": {"enabled": vision.enabled(), "model": vision.model_name()},
             "tools": list(tools.ALL_TOOL_NAMES),
             "mcp": {
                 "knowledge": {
@@ -339,6 +340,24 @@ async def add_file(session_id: str, request: Request) -> JSONResponse:
         )
     tenant_id = request.headers.get("x-tenant-id")
     file_id = str(uuid.uuid4())
+    if extract.is_image_name(filename):
+        detail = store.add_file(
+            session_id,
+            uid,
+            filename=filename,
+            raw=raw,
+            error="",
+            nodes=[],
+            briefing={"kind": "image", "ingest": "processing"},
+            file_id=file_id,
+        )
+        if not detail:
+            return JSONResponse(status_code=404, content={"error": "見つかりません"})
+        want_description = body.get("describe") is not False and vision.enabled()
+        asyncio.create_task(
+            _finish_image(session_id, uid, file_id, filename, raw, want_description)
+        )
+        return JSONResponse(content=detail)
     # 本文抽出は待たない。参考資料の件数は、読み取りが終わってから増える。
     detail = store.add_file(
         session_id,
@@ -374,6 +393,57 @@ async def _build_file_briefing(
 
 def _pages_have_text(pages: list[dict]) -> bool:
     return any(str(p.get("text") or "").strip() for p in pages)
+
+
+def _image_media(filename: str) -> str:
+    name = filename.lower()
+    if name.endswith(".jpg") or name.endswith(".jpeg"):
+        return "image/jpeg"
+    if name.endswith(".webp"):
+        return "image/webp"
+    if name.endswith(".gif"):
+        return "image/gif"
+    return "image/png"
+
+
+async def _finish_image(
+    session_id: str,
+    uid: str,
+    file_id: str,
+    filename: str,
+    raw: bytes,
+    describe: bool,
+) -> None:
+    """画像はそのまま残し、画像対応モデルが有効なときだけ説明文を足す。"""
+    described = False
+    if describe:
+        text = await vision.describe_image(raw, media=_image_media(filename))
+        if text.strip():
+            note = f"# 画像の説明\n\n{text.strip()}\n"
+            note_name = vision.description_name(filename)
+            note_id = str(uuid.uuid4())
+            saved = store.add_file(
+                session_id,
+                uid,
+                filename=note_name,
+                raw=note.encode("utf-8"),
+                error="",
+                nodes=[],
+                briefing={"ingest": "processing"},
+                file_id=note_id,
+            )
+            if saved:
+                await _ingest_file(
+                    session_id, uid, note_id, note_name, note.encode("utf-8"), None
+                )
+                described = True
+    store.update_file(
+        session_id,
+        uid,
+        file_id,
+        briefing={"kind": "image", "ingest": "done", "described": described},
+        error="",
+    )
 
 
 async def _ingest_file(
@@ -437,6 +507,23 @@ async def _ingest_file(
         store.update_file(session_id, uid, file_id, briefing={}, error="読み取りに失敗しました")
         return
     store.update_file(session_id, uid, file_id, nodes=nodes, briefing=briefing, error="")
+
+
+@app.get("/sessions/{session_id}/files/{file_id}/content")
+def file_content(session_id: str, file_id: str, request: Request) -> JSONResponse:
+    err, uid = _auth(request)
+    if err:
+        return err
+    found = store.get_file_bytes(session_id, uid, file_id)
+    if not found:
+        return JSONResponse(status_code=404, content={"error": "見つかりません"})
+    filename, raw = found
+    return JSONResponse(
+        content={
+            "filename": filename,
+            "content": base64.b64encode(raw).decode("ascii"),
+        }
+    )
 
 
 @app.delete("/sessions/{session_id}/files/{file_id}")

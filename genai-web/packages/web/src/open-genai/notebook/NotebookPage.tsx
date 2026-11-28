@@ -38,6 +38,7 @@ import { newId } from '@/utils/uuid';
 import { SourceList } from './Citations';
 import { formatNotebookMarkdown } from './formatMarkdown';
 import { NotebookChat, type ManuscriptPlace } from './NotebookChat';
+import { NotebookEditorCopy } from './NotebookEditorCopy';
 import { notebookToolName } from './toolLabels';
 import { NotebookManageDialog } from './NotebookManageDialog';
 import type {
@@ -64,6 +65,7 @@ const PANE_TABS = [
   { id: 'chat' as const, label: 'エージェント' },
   { id: 'sources' as const, label: '参考資料' },
   { id: 'items' as const, label: 'クリップ' },
+  { id: 'editor' as const, label: 'Markdownエディタ' },
 ];
 
 type NotebookPane = (typeof PANE_TABS)[number]['id'];
@@ -153,7 +155,9 @@ const FileSourceCard = ({ file, onDelete }: { file: NotebookFile; onDelete: () =
   let status = '読み取りました。';
   if (problem) status = '';
   else if (reading && briefing?.ocr_pending) status = 'スキャン画像を読み取っています。';
+  else if (reading && briefing?.kind === 'image') status = '画像を保存しています。';
   else if (reading) status = '本文を読み取っています。';
+  else if (briefing?.kind === 'image') status = '画像を保存しました。';
   else if (briefing?.ocr) status = 'スキャンを OCR で読み取りました。';
   return (
     <article className='rounded-8 border border-solid-gray-300 px-3 py-3'>
@@ -1586,6 +1590,8 @@ export const NotebookPage = () => {
                   onDraftChange={setChatDraft}
                   onSend={() => void onChat()}
                   sessionId={sessionId}
+                  sourceNames={(detail.files ?? []).map((file) => file.filename)}
+                  onSourcesChanged={() => void mutateDetail()}
                   onRetry={() => void onRetry()}
                   onClip={(messageId) => void onClip(messageId)}
                   manuscriptPlace={manuscriptPlace}
@@ -1614,6 +1620,14 @@ export const NotebookPage = () => {
                     .filter((id): id is string => Boolean(id))}
                 />
               </div>
+            )}
+
+            {pane === 'editor' && detail && sessionId && (
+              <NotebookEditorCopy
+                sessionId={sessionId}
+                files={detail.files ?? []}
+                items={detail.items ?? []}
+              />
             )}
 
             {pane === 'items' && detail && (

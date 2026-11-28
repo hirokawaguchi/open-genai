@@ -1,6 +1,8 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { PiSpinnerGap } from 'react-icons/pi';
 import { latexToPlain } from '@/components/latexToPlain';
+import { saveDiagramFiles, saveGeneratedImage } from './notebookMedia';
+import { sourceFilename } from './NotebookSourceHandoff';
 import { AutoResizeTextarea } from '@/components/ui/AutoResizeTextarea';
 import { ButtonCopy } from '@/components/ui/ButtonCopy';
 import { Button } from '@/components/ui/dads/Button';
@@ -66,6 +68,8 @@ type Props = {
   onRetry: () => void;
   onClip: (messageId: string) => void;
   clippedMessageIds?: string[];
+  sourceNames?: string[];
+  onSourcesChanged?: () => void;
 };
 
 const stepTraces = (names: string[]): NotebookToolTrace[] =>
@@ -129,6 +133,8 @@ const AnswerActions = ({
   onClip,
   clipped,
   copyRef,
+  sourceNames,
+  onSourcesChanged,
 }: {
   sessionId: string | null;
   message: NotebookMessage;
@@ -137,24 +143,55 @@ const AnswerActions = ({
   onClip: (messageId: string) => void;
   clipped: boolean;
   copyRef: RefObject<HTMLDivElement | null>;
+  sourceNames: string[];
+  onSourcesChanged?: () => void;
 }) => {
+  const kept = useRef(new Set<string>());
   const text = message.content.trim();
   if (!text || !sessionId || message.id.startsWith('local-')) return null;
   const plain = latexToPlain(message.content);
+  const remember = async (key: string, name: string, save: () => Promise<string | null>) => {
+    if (kept.current.has(key) || sourceNames.includes(name)) return;
+    kept.current.add(key);
+    const failed = await save();
+    if (failed) {
+      kept.current.delete(key);
+      return;
+    }
+    onSourcesChanged?.();
+  };
   const loadDiagram = () =>
     teamApi
       .post<{ status: 'none' | 'ready'; mermaid?: string }>(
         `notebook/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(message.id)}/diagram`,
         {},
       )
-      .then((res) => res.data);
+      .then(async (res) => {
+        const code = res.data.mermaid?.trim() ?? '';
+        if (res.data.status === 'ready' && code) {
+          const name = sourceFilename('図.md', message.content);
+          await remember(`diagram:${message.id}`, name, () =>
+            saveDiagramFiles(sessionId, message.content, code),
+          );
+        }
+        return res.data;
+      });
   const loadImage = () =>
     teamApi
       .post<{ status: 'none' | 'ready'; image?: string }>(
         `notebook/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(message.id)}/image`,
         {},
       )
-      .then((res) => res.data);
+      .then(async (res) => {
+        const image = res.data.image ?? '';
+        if (res.data.status === 'ready' && image) {
+          const name = sourceFilename('画像.png', message.content);
+          await remember(`image:${message.id}`, name, () =>
+            saveGeneratedImage(sessionId, message.content, image),
+          );
+        }
+        return res.data;
+      });
   return (
     <div className='mt-1 flex flex-wrap items-center justify-end gap-x-1 gap-y-1 print:hidden [&_button]:shrink-0 [&_button]:whitespace-nowrap'>
       <DiagramSupplement
@@ -262,6 +299,8 @@ const AssistantTurn = ({
   officeAttempted,
   officeCompose,
   onOpenOffice,
+  sourceNames,
+  onSourcesChanged,
 }: {
   message: NotebookMessage;
   sessionId: string | null;
@@ -277,6 +316,8 @@ const AssistantTurn = ({
   officeAttempted?: boolean;
   officeCompose?: 'pptx' | 'docx' | '';
   onOpenOffice?: () => void;
+  sourceNames: string[];
+  onSourcesChanged?: () => void;
 }) => {
   const copyRef = useRef<HTMLDivElement>(null);
   const traces = pending && liveSteps.length ? stepTraces(liveSteps) : message.tool_trace;
@@ -299,6 +340,8 @@ const AssistantTurn = ({
               officeAttempted={officeAttempted}
               officeCompose={officeCompose}
               onOpenOffice={onOpenOffice}
+              sourceNames={sourceNames}
+              onSourcesChanged={onSourcesChanged}
             />
           )}
         </div>
@@ -313,6 +356,8 @@ const AssistantTurn = ({
           onClip={onClip}
           clipped={clipped}
           copyRef={copyRef}
+          sourceNames={sourceNames}
+          onSourcesChanged={onSourcesChanged}
         />
       )}
     </article>
@@ -366,6 +411,8 @@ export const NotebookChat = ({
   officeAttempted,
   officeCompose,
   onOpenOffice,
+  sourceNames = [],
+  onSourcesChanged,
 }: Props) => {
   const { hint } = useSubmitKey();
   const listRef = useRef<HTMLDivElement>(null);
@@ -419,6 +466,8 @@ export const NotebookChat = ({
               officeAttempted={showManuscript ? officeAttempted : false}
               officeCompose={showManuscript ? officeCompose : ''}
               onOpenOffice={showManuscript ? onOpenOffice : undefined}
+              sourceNames={sourceNames}
+              onSourcesChanged={onSourcesChanged}
             />
           ) : (
             <article

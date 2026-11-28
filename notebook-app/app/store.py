@@ -1033,6 +1033,22 @@ def add_message(
     return get_session(session_id, user_id)
 
 
+def get_file_bytes(
+    session_id: str, user_id: str, file_id: str
+) -> tuple[str, bytes] | None:
+    db = connect()
+    with _lock:
+        if not _owned(session_id, user_id):
+            return None
+        row = db.execute(
+            "SELECT filename, blob FROM files WHERE session_id = ? AND id = ?",
+            (session_id, file_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["filename"]), bytes(row["blob"])
+
+
 def list_file_blobs(session_id: str, user_id: str) -> list[tuple[str, bytes, str]] | None:
     db = connect()
     with _lock:

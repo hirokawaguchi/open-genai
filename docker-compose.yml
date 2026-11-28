@@ -817,6 +817,8 @@ services:
       # firecrawl-local（0.0.0.0 待受）へ送る Bearer トークン。サイドカーと同じ値。
       - FIRECRAWL_TOKEN=${FIRECRAWL_TOKEN:-}
       - NOTEBOOK_OCR=${NOTEBOOK_OCR:-1}
+      # 画像の説明。空や off なら説明文は作らず、画像ファイルだけ残す。
+      - NOTEBOOK_VISION_MODEL=${NOTEBOOK_VISION_MODEL:-gemma4:cloud}
       - NOTEBOOK_OCR_MAX_PAGES=${NOTEBOOK_OCR_MAX_PAGES:-40}
       # Hermes のイメージが空のあいだは、同じ道具をこのプロセスで実行する。
       # NOTEBOOK_HERMES_DOCKER=1 のときだけ、共有ディレクトリを持たない一時コンテナを起動する。

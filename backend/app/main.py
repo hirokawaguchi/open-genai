@@ -9018,6 +9018,21 @@ async def procuretech_hearing_add_file(
     )
 
 
+@app.get("/notebook/sessions/{session_id}/files/{file_id}/content")
+@app.get("/procuretech-hearing/sessions/{session_id}/files/{file_id}/content")
+async def notebook_file_content(
+    session_id: str, file_id: str, request: Request
+) -> JSONResponse:
+    err, headers = _procuretech_hearing_headers(request)
+    if err:
+        return err
+    return await _proxy_procuretech_hearing(
+        "GET",
+        _procuretech_hearing_app_url(f"/sessions/{session_id}/files/{file_id}/content"),
+        headers,
+    )
+
+
 @app.delete("/notebook/sessions/{session_id}/files/{file_id}")
 @app.delete("/procuretech-hearing/sessions/{session_id}/files/{file_id}")
 async def procuretech_hearing_delete_file(

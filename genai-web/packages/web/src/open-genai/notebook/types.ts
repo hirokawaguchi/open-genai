@@ -78,6 +78,8 @@ export type NotebookBriefing = {
   ocr?: boolean;
   // スキャン PDF の文字認識が登録後に走っている間 true。完了すると消える。
   ocr_pending?: boolean;
+  kind?: string;
+  described?: boolean;
   // 本文の読み取りが応答のあとで進んでいる間 "processing"。終わると消える。
   ingest?: string;
   pii?: {

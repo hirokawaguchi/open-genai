@@ -280,13 +280,18 @@ export const useNotebookActions = () => {
       sessionId: string,
       filename: string,
       content: string,
+      options?: { describe?: boolean },
     ): Promise<NotebookSessionDetail | null> => {
       setSubmitting(true);
       setError(null);
       try {
         const res = await teamApi.post<NotebookSessionDetail>(
           `${BASE}/sessions/${encodeURIComponent(sessionId)}/files`,
-          { filename, content },
+          {
+            filename,
+            content,
+            ...(options?.describe === false ? { describe: false } : {}),
+          },
         );
         return res.data ?? null;
       } catch (e) {
