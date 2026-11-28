@@ -2,7 +2,12 @@ import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { getIdToken } from '@/local/localAuth';
 import { getBrowserMic, subscribeBrowserMic } from './browserMic';
 import { browserWsUrl } from './browserWsUrl';
+import { createHttpBrowserSocket, type HttpBrowserSocket } from './httpBrowserSocket';
 import { MicFramer, PLAYBACK_RATE, stereoS16ToFloat } from './pcm';
+
+type AudioSocket = WebSocket | HttpBrowserSocket;
+
+const SOCKET_OPEN_MS = 4000;
 
 const viewOf = (screen: HTMLDivElement | null): Window =>
   screen?.ownerDocument.defaultView ?? window;
@@ -16,7 +21,7 @@ export const useBrowserAudio = (
   onNotice: (text: string) => void,
 ) => {
   const ctxRef = useRef<AudioContext | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<AudioSocket | null>(null);
   const nextTimeRef = useRef(0);
   const micRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -127,23 +132,16 @@ export const useBrowserAudio = (
     }
     let cancelled = false;
     let giveUp = false;
-    const connect = async () => {
-      const token = await getIdToken();
-      if (cancelled || !token) {
-        return;
-      }
-      const api = import.meta.env.VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT as string;
-      const ws = new WebSocket(browserWsUrl(api, window.location, '/browser/audio'));
+    let preferHttp = false;
+    const bindAudio = (ws: AudioSocket) => {
+      let sawReady = false;
       ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ token, sessionId }));
-      };
       ws.onmessage = (event) => {
         if (typeof event.data === 'string') {
           try {
             const message = JSON.parse(event.data) as { type?: string; message?: string };
             if (message.type === 'ready') {
+              sawReady = true;
               context();
               attachMic();
             }
@@ -162,13 +160,60 @@ export const useBrowserAudio = (
           play(event.data);
         }
       };
-      await new Promise<void>((resolve) => {
-        ws.onclose = () => resolve();
-        ws.onerror = () => resolve();
-      });
-      if (wsRef.current === ws) {
-        wsRef.current = null;
+      return {
+        get sawReady() {
+          return sawReady;
+        },
+        done: new Promise<void>((resolve) => {
+          ws.onclose = () => resolve();
+        }),
+      };
+    };
+    const connect = async () => {
+      const token = await getIdToken();
+      if (cancelled || !token) {
+        return;
       }
+      const hello = JSON.stringify({ token, sessionId });
+      const finish = async (socket: AudioSocket, opened: { sawReady: boolean; done: Promise<void> }) => {
+        await opened.done;
+        if (wsRef.current === socket) {
+          wsRef.current = null;
+        }
+        return opened.sawReady;
+      };
+      if (!preferHttp) {
+        const api = import.meta.env.VITE_APP_TEAM_ACCESS_CONTROL_API_ENDPOINT as string;
+        const ws = new WebSocket(browserWsUrl(api, window.location, '/browser/audio'));
+        wsRef.current = ws;
+        const opened = bindAudio(ws);
+        const timer = window.setTimeout(() => {
+          if (ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+          }
+        }, SOCKET_OPEN_MS);
+        ws.onopen = () => {
+          window.clearTimeout(timer);
+          ws.send(hello);
+        };
+        const sawReady = await finish(ws, opened);
+        window.clearTimeout(timer);
+        if (cancelled || giveUp || sawReady) {
+          return;
+        }
+        preferHttp = true;
+      }
+      const http = createHttpBrowserSocket(
+        `browser/sessions/${encodeURIComponent(sessionId)}/audio/stream`,
+        `browser/sessions/${encodeURIComponent(sessionId)}/audio/input`,
+      );
+      wsRef.current = http;
+      const opened = bindAudio(http);
+      http.onopen = () => {
+        http.send(hello);
+      };
+      http.start();
+      await finish(http, opened);
     };
     const run = async () => {
       let failures = 0;
